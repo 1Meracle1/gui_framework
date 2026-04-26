@@ -3,6 +3,7 @@
 #include <base/memory.h>
 #include <base/print.h>
 #include <base/str_ref.h>
+#include <base/string_buffer.h>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -10,6 +11,7 @@
 #include <string>
 #include <string_view>
 #include <test/test.h>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -346,6 +348,90 @@ namespace {
         TEST_EXPECT(context, word_parts[0] == "alpha");
         TEST_EXPECT(context, word_parts[1] == "beta");
         TEST_EXPECT(context, word_parts[2] == "gamma");
+    }
+
+    TEST_CASE(string_buffer_writes_and_views_dynamic_text) {
+        StringBuffer buffer;
+
+        TEST_EXPECT(context, !buffer.initialized());
+        TEST_EXPECT(context, buffer.write_string("gui") == 3u);
+        TEST_EXPECT(context, buffer.write_byte('_') == 1u);
+        TEST_EXPECT(context, buffer.write_fill('x', 3u) == 3u);
+
+        TEST_EXPECT(context, buffer.initialized());
+        TEST_EXPECT(context, buffer.str() == "gui_xxx");
+        TEST_EXPECT(context, buffer.size() == 7u);
+        TEST_EXPECT(context, buffer.capacity() >= buffer.size());
+        TEST_EXPECT(context, buffer.space() == buffer.capacity() - buffer.size());
+
+        char const* const c_text = buffer.c_str();
+
+        TEST_EXPECT(context, c_text != nullptr);
+        TEST_EXPECT(context, StrRef(c_text) == "gui_xxx");
+        TEST_EXPECT(context, buffer.pop_byte() == 'x');
+
+        buffer.truncate(4u);
+
+        TEST_EXPECT(context, buffer.str() == "gui_");
+
+        buffer.reset();
+
+        TEST_EXPECT(context, buffer.empty());
+        TEST_EXPECT(context, buffer.str().empty());
+    }
+
+    TEST_CASE(string_buffer_reserves_resizes_and_keeps_c_string_space) {
+        StringBuffer buffer;
+
+        TEST_EXPECT(context, buffer.init(2u));
+        TEST_EXPECT(context, buffer.capacity() == 2u);
+        TEST_EXPECT(context, buffer.append("ab"));
+        TEST_EXPECT(context, buffer.size() == buffer.capacity());
+        TEST_EXPECT(context, buffer.c_str() != nullptr);
+        TEST_EXPECT(context, StrRef(buffer.c_str()) == "ab");
+
+        TEST_EXPECT(context, buffer.append('c'));
+        TEST_EXPECT(context, buffer.capacity() >= 3u);
+        TEST_EXPECT(context, buffer.str() == "abc");
+        TEST_EXPECT(context, buffer.resize(6u, '.'));
+        TEST_EXPECT(context, buffer.str() == "abc...");
+        TEST_EXPECT(context, buffer.resize(2u));
+        TEST_EXPECT(context, buffer.str() == "ab");
+    }
+
+    TEST_CASE(string_buffer_uses_fixed_backing_without_growing) {
+        char backing[5] = {};
+        StringBuffer buffer;
+
+        TEST_EXPECT(context, buffer.init_with_backing(backing, sizeof(backing)));
+        TEST_EXPECT(context, buffer.fixed_capacity());
+        TEST_EXPECT(context, buffer.capacity() == sizeof(backing));
+        TEST_EXPECT(context, buffer.write_string("abcdef") == sizeof(backing));
+        TEST_EXPECT(context, buffer.str() == "abcde");
+        TEST_EXPECT(context, buffer.c_str() == nullptr);
+        TEST_EXPECT(context, !buffer.reserve(sizeof(backing) + 1u));
+        TEST_EXPECT(context, buffer.write_byte('!') == 0u);
+        TEST_EXPECT(context, buffer.pop_byte() == 'e');
+        TEST_EXPECT(context, buffer.c_str() != nullptr);
+        TEST_EXPECT(context, StrRef(buffer.c_str()) == "abcd");
+    }
+
+    TEST_CASE(string_buffer_self_appends_across_growth_and_moves) {
+        StringBuffer buffer;
+
+        TEST_EXPECT(context, buffer.init(4u));
+        TEST_EXPECT(context, buffer.write_string("abcd") == 4u);
+
+        StrRef const original = buffer.str();
+
+        TEST_EXPECT(context, buffer.write_string(original) == original.size());
+        TEST_EXPECT(context, buffer.str() == "abcdabcd");
+
+        StringBuffer moved = std::move(buffer);
+
+        TEST_EXPECT(context, moved.str() == "abcdabcd");
+        TEST_EXPECT(context, buffer.empty());
+        TEST_EXPECT(context, !buffer.initialized());
     }
 
     TEST_CASE(printf_prints_str_ref_values) {

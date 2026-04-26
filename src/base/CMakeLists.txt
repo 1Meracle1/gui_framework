@@ -3,6 +3,7 @@ add_library(base STATIC
     src/crash.cpp
     src/memory.cpp
     src/print.cpp
+    src/string_buffer.cpp
     src/virtual_memory.cpp
 )
 add_library(base::base ALIAS base)
