@@ -1,0 +1,34 @@
+---
+Checks: >
+  -*,
+  bugprone-assert-side-effect,
+  bugprone-bool-pointer-implicit-conversion,
+  bugprone-branch-clone,
+  bugprone-macro-parentheses,
+  bugprone-misplaced-widening-cast,
+  bugprone-sizeof-expression,
+  bugprone-suspicious-memset-usage,
+  clang-analyzer-*,
+  modernize-use-nullptr,
+  performance-*,
+  portability-*,
+  -portability-avoid-pragma-once,
+  readability-braces-around-statements,
+  readability-identifier-naming
+WarningsAsErrors: ''
+HeaderFilterRegex: '.*'
+CheckOptions:
+  - { key: readability-identifier-naming.NamespaceCase, value: lower_case }
+  - { key: readability-identifier-naming.ClassCase, value: CamelCase }
+  - { key: readability-identifier-naming.StructCase, value: CamelCase }
+  - { key: readability-identifier-naming.EnumCase, value: CamelCase }
+  - { key: readability-identifier-naming.TypeAliasCase, value: CamelCase }
+  - { key: readability-identifier-naming.TypeAliasIgnoredRegexp, value: '^(u8|u16|u32|u64|i8|i16|i32|i64|usize|isize)$' }
+  - { key: readability-identifier-naming.FunctionCase, value: lower_case }
+  - { key: readability-identifier-naming.VariableCase, value: lower_case }
+  - { key: readability-identifier-naming.ParameterCase, value: lower_case }
+  - { key: readability-identifier-naming.MemberCase, value: lower_case }
+  - { key: readability-identifier-naming.GlobalConstantCase, value: UPPER_CASE }
+  - { key: readability-identifier-naming.StaticConstantCase, value: UPPER_CASE }
+  - { key: readability-identifier-naming.ConstexprVariableCase, value: UPPER_CASE }
+  - { key: readability-identifier-naming.MacroDefinitionCase, value: UPPER_CASE }

@@ -1,0 +1,181 @@
+{
+  "version": 8,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 28,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "BUILD_TESTS": "ON",
+        "BUILD_BENCHMARKS": "ON",
+        "USE_CCACHE": "ON",
+        "ENABLE_CLANG_TIDY": "OFF",
+        "WARNINGS_AS_ERRORS": "OFF"
+      }
+    },
+    {
+      "name": "windows-msvc-base",
+      "hidden": true,
+      "inherits": "base",
+      "generator": "NMake Makefiles",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      }
+    },
+    {
+      "name": "windows-msvc-debug",
+      "displayName": "Windows MSVC Debug",
+      "inherits": "windows-msvc-base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "windows-msvc-release",
+      "displayName": "Windows MSVC Release",
+      "inherits": "windows-msvc-base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "windows-msvc-strict",
+      "displayName": "Windows MSVC Strict",
+      "inherits": "windows-msvc-debug",
+      "cacheVariables": {
+        "ENABLE_CLANG_TIDY": "ON",
+        "WARNINGS_AS_ERRORS": "ON"
+      }
+    },
+    {
+      "name": "windows-clang-debug",
+      "displayName": "Windows Clang Debug",
+      "inherits": "base",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_CXX_COMPILER": "clang++"
+      }
+    },
+    {
+      "name": "windows-clang-strict",
+      "displayName": "Windows Clang Strict",
+      "inherits": "windows-clang-debug",
+      "cacheVariables": {
+        "ENABLE_CLANG_TIDY": "ON",
+        "WARNINGS_AS_ERRORS": "ON"
+      }
+    },
+    {
+      "name": "windows-clangd",
+      "displayName": "Windows Clang clangd DB",
+      "inherits": "windows-clang-debug",
+      "binaryDir": "${sourceDir}/build/clangd"
+    },
+    {
+      "name": "macos-clang-base",
+      "hidden": true,
+      "inherits": "base",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Darwin"
+      },
+      "cacheVariables": {
+        "CMAKE_CXX_COMPILER": "clang++"
+      }
+    },
+    {
+      "name": "macos-clang-debug",
+      "displayName": "macOS Clang Debug",
+      "inherits": "macos-clang-base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "macos-clang-release",
+      "displayName": "macOS Clang Release",
+      "inherits": "macos-clang-base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "macos-clang-strict",
+      "displayName": "macOS Clang Strict",
+      "inherits": "macos-clang-debug",
+      "cacheVariables": {
+        "ENABLE_CLANG_TIDY": "ON",
+        "WARNINGS_AS_ERRORS": "ON"
+      }
+    },
+    {
+      "name": "macos-clangd",
+      "displayName": "macOS Clang clangd DB",
+      "inherits": "macos-clang-debug",
+      "binaryDir": "${sourceDir}/build/clangd"
+    }
+  ],
+  "buildPresets": [
+    { "name": "windows-msvc-debug", "configurePreset": "windows-msvc-debug" },
+    { "name": "windows-msvc-release", "configurePreset": "windows-msvc-release" },
+    { "name": "windows-msvc-strict", "configurePreset": "windows-msvc-strict" },
+    { "name": "windows-clang-debug", "configurePreset": "windows-clang-debug" },
+    { "name": "windows-clang-strict", "configurePreset": "windows-clang-strict" },
+    { "name": "macos-clang-debug", "configurePreset": "macos-clang-debug" },
+    { "name": "macos-clang-release", "configurePreset": "macos-clang-release" },
+    { "name": "macos-clang-strict", "configurePreset": "macos-clang-strict" }
+  ],
+  "testPresets": [
+    {
+      "name": "windows-msvc-debug",
+      "configurePreset": "windows-msvc-debug",
+      "output": { "outputOnFailure": true },
+      "execution": { "noTestsAction": "error" }
+    },
+    {
+      "name": "windows-msvc-strict",
+      "configurePreset": "windows-msvc-strict",
+      "output": { "outputOnFailure": true },
+      "execution": { "noTestsAction": "error" }
+    },
+    {
+      "name": "windows-clang-debug",
+      "configurePreset": "windows-clang-debug",
+      "output": { "outputOnFailure": true },
+      "execution": { "noTestsAction": "error" }
+    },
+    {
+      "name": "windows-clang-strict",
+      "configurePreset": "windows-clang-strict",
+      "output": { "outputOnFailure": true },
+      "execution": { "noTestsAction": "error" }
+    },
+    {
+      "name": "macos-clang-debug",
+      "configurePreset": "macos-clang-debug",
+      "output": { "outputOnFailure": true },
+      "execution": { "noTestsAction": "error" }
+    },
+    {
+      "name": "macos-clang-strict",
+      "configurePreset": "macos-clang-strict",
+      "output": { "outputOnFailure": true },
+      "execution": { "noTestsAction": "error" }
+    }
+  ]
+}
