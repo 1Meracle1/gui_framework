@@ -1,11 +1,14 @@
 #include <base/assert.h>
 #include <base/crash.h>
+#include <base/memory.h>
 #include <base/str_ref.h>
 #include <cstddef>
 #include <cstdint>
+#include <memory_resource>
 #include <string>
 #include <string_view>
 #include <test/test.h>
+#include <vector>
 
 namespace {
 
@@ -42,17 +45,145 @@ namespace {
                         "process fault");
     }
 
-    TEST_CASE(assert_handler_intercepts_base_assertions) {
+    TEST_CASE(assert_handler_intercepts_ASSERTions) {
         captured_assert = {};
         base::set_assert_handler(capture_assert_handler);
         uint32_t const assert_line = __LINE__ + 1u;
-        BASE_ASSERT_MSG(false, "captured by test");
+        ASSERT_MSG(false, "captured by test");
         base::set_assert_handler(nullptr);
 
         TEST_EXPECT(context, captured_assert.count == 1u);
         TEST_EXPECT(context, StrRef(captured_assert.expression) == "false");
         TEST_EXPECT(context, StrRef(captured_assert.file) == __FILE__);
         TEST_EXPECT(context, captured_assert.line == assert_line);
+    }
+
+    TEST_CASE(arena_allocates_aligned_memory_from_virtual_memory) {
+        Arena arena;
+        ArenaOptions options = {};
+        options.reserve_size = 256u * 1024u;
+        options.commit_size = 64u * 1024u;
+
+        TEST_EXPECT(context, arena.init(options));
+
+        void* const first = arena.allocate_bytes(13u, 8u);
+        void* const second = arena.allocate_bytes(32u, 32u);
+
+        TEST_EXPECT(context, first != nullptr);
+        TEST_EXPECT(context, second != nullptr);
+        TEST_EXPECT(context, (reinterpret_cast<uintptr_t>(first) % 8u) == 0u);
+        TEST_EXPECT(context, (reinterpret_cast<uintptr_t>(second) % 32u) == 0u);
+        TEST_EXPECT(context, arena.used_size() >= 45u);
+        TEST_EXPECT(context, arena.committed_size() >= arena.used_size());
+        TEST_EXPECT(context, arena.reserved_size() >= arena.committed_size());
+    }
+
+    TEST_CASE(arena_markers_and_reset_reuse_linear_storage) {
+        Arena arena;
+        ArenaOptions options = {};
+        options.reserve_size = 256u * 1024u;
+        options.commit_size = 64u * 1024u;
+
+        TEST_EXPECT(context, arena.init(options));
+
+        void* const first = arena.allocate_bytes(64u, 16u);
+        ArenaMarker const marker = arena.marker();
+        void* const second = arena.allocate_bytes(64u, 16u);
+
+        arena.reset_to(marker);
+        void* const second_again = arena.allocate_bytes(64u, 16u);
+
+        arena.reset();
+        void* const first_again = arena.allocate_bytes(64u, 16u);
+
+        TEST_EXPECT(context, second_again == second);
+        TEST_EXPECT(context, first_again == first);
+    }
+
+    TEST_CASE(arena_resource_interoperates_with_pmr_containers) {
+        Arena arena;
+        ArenaOptions options = {};
+        options.reserve_size = 256u * 1024u;
+        options.commit_size = 64u * 1024u;
+
+        TEST_EXPECT(context, arena.init(options));
+
+        std::pmr::vector<int> values(arena.resource());
+        values.push_back(10);
+        values.push_back(20);
+        values.push_back(30);
+
+        TEST_EXPECT(context, values.size() == 3u);
+        TEST_EXPECT(context, values[0] == 10);
+        TEST_EXPECT(context, values[1] == 20);
+        TEST_EXPECT(context, values[2] == 30);
+        TEST_EXPECT(context, arena.used_size() != 0u);
+    }
+
+    TEST_CASE(arena_temp_scope_rolls_back_to_marker) {
+        Arena arena;
+        ArenaOptions options = {};
+        options.reserve_size = 256u * 1024u;
+        options.commit_size = 64u * 1024u;
+
+        TEST_EXPECT(context, arena.init(options));
+
+        void* const stable = arena.allocate_bytes(32u, 8u);
+        size_t const used_before_temp = arena.used_size();
+        void* transient = nullptr;
+
+        {
+            ArenaTemp temp(arena);
+            TEST_EXPECT(context, temp.arena() == &arena);
+            transient = arena.allocate_bytes(128u, 8u);
+            TEST_EXPECT(context, arena.used_size() > used_before_temp);
+        }
+
+        TEST_EXPECT(context, arena.used_size() == used_before_temp);
+
+        void* const reused = arena.allocate_bytes(128u, 8u);
+
+        TEST_EXPECT(context, stable != nullptr);
+        TEST_EXPECT(context, reused == transient);
+        TEST_EXPECT(context, arena.used_size() == used_before_temp + 128u);
+    }
+
+    TEST_CASE(thread_temp_arenas_reset_each_frame) {
+        shutdown_thread_temp_arenas();
+
+        ThreadTempArenaOptions options = {};
+        options.reserve_size = 256u * 1024u;
+        options.commit_size = 64u * 1024u;
+
+        bool const initialized = init_thread_temp_arenas(options);
+        TEST_EXPECT(context, initialized);
+
+        if (!initialized) {
+            return;
+        }
+
+        Arena& arena = thread_temp_arena();
+        void* const first = arena.allocate_bytes(64u, 16u);
+
+        TEST_EXPECT(context, arena.used_size() != 0u);
+
+        reset_thread_temp_arenas();
+
+        TEST_EXPECT(context, arena.used_size() == 0u);
+
+        void* const first_again = arena.allocate_bytes(64u, 16u);
+
+        TEST_EXPECT(context, first_again == first);
+
+        {
+            ArenaTemp temp = begin_thread_temp_arena();
+            TEST_EXPECT(context, temp.arena() == &arena);
+            BASE_UNUSED(arena.allocate_bytes(32u, 8u));
+        }
+
+        TEST_EXPECT(context, arena.used_size() == 64u);
+
+        shutdown_thread_temp_arenas();
     }
 
     TEST_CASE(string_view_constructs_from_common_string_sources) {

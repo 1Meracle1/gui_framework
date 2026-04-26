@@ -25,10 +25,17 @@
 #elif defined(__APPLE__) && defined(__MACH__)
 #define BASE_PLATFORM_WINDOWS 0
 #define BASE_PLATFORM_MACOS 1
+#define BASE_PLATFORM_LINUX 0
+#define BASE_PLATFORM_UNKNOWN 0
+#elif defined(__linux__)
+#define BASE_PLATFORM_WINDOWS 0
+#define BASE_PLATFORM_MACOS 0
+#define BASE_PLATFORM_LINUX 1
 #define BASE_PLATFORM_UNKNOWN 0
 #else
 #define BASE_PLATFORM_WINDOWS 0
 #define BASE_PLATFORM_MACOS 0
+#define BASE_PLATFORM_LINUX 0
 #define BASE_PLATFORM_UNKNOWN 1
 #endif
 

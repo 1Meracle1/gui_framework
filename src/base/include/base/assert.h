@@ -18,7 +18,7 @@ namespace base {
 
 } // namespace base
 
-#define BASE_ASSERT(expression)                                                                    \
+#define ASSERT(expression)                                                                    \
     do {                                                                                           \
         if (!(expression)) {                                                                       \
             ::base::handle_assert_failure(                                                         \
@@ -26,7 +26,7 @@ namespace base {
         }                                                                                          \
     } while (false)
 
-#define BASE_ASSERT_MSG(expression, message)                                                       \
+#define ASSERT_MSG(expression, message)                                                       \
     do {                                                                                           \
         if (!(expression)) {                                                                       \
             ::base::handle_assert_failure(                                                         \

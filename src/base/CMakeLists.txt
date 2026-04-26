@@ -1,6 +1,8 @@
 add_library(base STATIC
     src/assert.cpp
     src/crash.cpp
+    src/memory.cpp
+    src/virtual_memory.cpp
 )
 add_library(base::base ALIAS base)
 

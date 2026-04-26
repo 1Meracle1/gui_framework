@@ -43,7 +43,7 @@ inline auto cstr_len(char const* s) noexcept -> size_t {
 
 [[nodiscard]] constexpr auto pointer_range_size(char const* begin, char const* end) noexcept
     -> size_t {
-    BASE_ASSERT(begin != nullptr && end != nullptr && begin <= end);
+    ASSERT(begin != nullptr && end != nullptr && begin <= end);
     return static_cast<size_t>(end - begin);
 }
 
