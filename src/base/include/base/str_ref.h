@@ -2,6 +2,7 @@
 
 #include "assert.h"
 
+#include <algorithm>
 #include <compare>
 #include <cstddef>
 #include <cstdint>
@@ -22,6 +23,10 @@ template <typename Char, size_t N>
 }
 
 constexpr auto cstr_len_constexpr(char const* s) noexcept -> size_t {
+    if (s == nullptr) {
+        return 0u;
+    }
+
     size_t n = 0;
     while (s[n] != '\0') {
         ++n;
@@ -30,6 +35,10 @@ constexpr auto cstr_len_constexpr(char const* s) noexcept -> size_t {
 }
 
 inline auto cstr_len(char const* s) noexcept -> size_t {
+    if (s == nullptr) {
+        return 0u;
+    }
+
     if (std::is_constant_evaluated()) {
         return cstr_len_constexpr(s);
     } else {
@@ -94,7 +103,8 @@ class StrRef {
     }
 
     constexpr StrRef(char const* text) noexcept
-        : m_data(text != nullptr ? text : ""), m_size(cstr_len_constexpr(text)) {}
+        : m_data(text != nullptr ? text : ""),
+          m_size(text != nullptr ? cstr_len_constexpr(text) : 0u) {}
 
     constexpr StrRef(char* text) noexcept : StrRef(static_cast<char const*>(text)) {}
 

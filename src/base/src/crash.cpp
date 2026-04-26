@@ -1,5 +1,6 @@
 #include <base/config.h>
 #include <base/crash.h>
+#include <base/print.h>
 
 #if BASE_PLATFORM_WINDOWS
 #ifndef NOMINMAX
@@ -120,24 +121,21 @@ namespace {
             SymGetLineFromAddr64(process, address, &line_displacement, &line) != FALSE;
 
         if (found_line && has_text(line.FileName)) {
-            std::fprintf(stderr,
-                         "  location: %s:%lu",
-                         line.FileName,
-                         static_cast<unsigned long>(line.LineNumber));
+            base::eprintf(
+                "  location: %s:%lu", line.FileName, static_cast<unsigned long>(line.LineNumber));
 
             if (found_symbol && has_text(symbol->Name)) {
-                std::fprintf(stderr, " in %s", symbol->Name);
+                base::eprintf(" in %s", symbol->Name);
             }
 
-            std::fprintf(stderr, "\n");
+            base::eprintf("\n");
             return true;
         }
 
         if (found_symbol && has_text(symbol->Name)) {
-            std::fprintf(stderr,
-                         "  symbol: %s + 0x%llx\n",
-                         symbol->Name,
-                         static_cast<unsigned long long>(symbol_displacement));
+            base::eprintf("  symbol: %s + 0x%llx\n",
+                          symbol->Name,
+                          static_cast<unsigned long long>(symbol_displacement));
             return true;
         }
 
@@ -149,8 +147,8 @@ namespace {
                                   unsigned frame_index,
                                   bool symbols_ready) -> void {
         if (!symbols_ready) {
-            std::fprintf(
-                stderr, "  %02u: 0x%llx\n", frame_index, static_cast<unsigned long long>(address));
+            base::eprintf(
+                "  %02u: 0x%llx\n", frame_index, static_cast<unsigned long long>(address));
             return;
         }
 
@@ -166,14 +164,12 @@ namespace {
             SymFromAddr(process, address, &symbol_displacement, symbol) != FALSE;
 
         if (found_symbol) {
-            std::fprintf(stderr,
-                         "  %02u: %s + 0x%llx",
-                         frame_index,
-                         symbol->Name,
-                         static_cast<unsigned long long>(symbol_displacement));
+            base::eprintf("  %02u: %s + 0x%llx",
+                          frame_index,
+                          symbol->Name,
+                          static_cast<unsigned long long>(symbol_displacement));
         } else {
-            std::fprintf(
-                stderr, "  %02u: 0x%llx", frame_index, static_cast<unsigned long long>(address));
+            base::eprintf("  %02u: 0x%llx", frame_index, static_cast<unsigned long long>(address));
         }
 
         IMAGEHLP_LINE64 line = {};
@@ -183,11 +179,10 @@ namespace {
             SymGetLineFromAddr64(process, address, &line_displacement, &line) != FALSE;
 
         if (found_line && has_text(line.FileName)) {
-            std::fprintf(
-                stderr, " (%s:%lu)", line.FileName, static_cast<unsigned long>(line.LineNumber));
+            base::eprintf(" (%s:%lu)", line.FileName, static_cast<unsigned long>(line.LineNumber));
         }
 
-        std::fprintf(stderr, "\n");
+        base::eprintf("\n");
     }
 
     auto write_stack_trace() -> void {
@@ -199,14 +194,14 @@ namespace {
             CaptureStackBackTrace(STACK_FRAMES_TO_SKIP, MAX_STACK_FRAMES, frames, nullptr);
 
         if (frame_count == 0u) {
-            std::fprintf(stderr, "stack backtrace unavailable\n");
+            base::eprintf("stack backtrace unavailable\n");
             return;
         }
 
         HANDLE const process = GetCurrentProcess();
         bool const symbols_ready = initialize_symbols(process);
 
-        std::fprintf(stderr, "stack backtrace:\n");
+        base::eprintf("stack backtrace:\n");
 
         for (USHORT index = 0u; index < frame_count; ++index) {
             DWORD64 const address =
@@ -254,7 +249,7 @@ namespace {
         frame.AddrFrame.Mode = AddrModeFlat;
         frame.AddrStack.Mode = AddrModeFlat;
 
-        std::fprintf(stderr, "stack backtrace:\n");
+        base::eprintf("stack backtrace:\n");
 
         DWORD64 previous_address = 0u;
         uint32_t printed_frame_count = 0u;
@@ -296,18 +291,15 @@ namespace {
                 ? exception_info->ExceptionRecord->ExceptionAddress
                 : nullptr;
 
-        std::fprintf(stderr,
-                     "fatal runtime error: %s\n",
-                     base::crash_reason_name(base::CrashReason::PROCESS_FAULT));
-        std::fprintf(stderr,
-                     "  exception: %s (0x%08lx)\n",
-                     exception_code_name(code),
-                     static_cast<unsigned long>(code));
+        base::eprintf("fatal runtime error: %s\n",
+                      base::crash_reason_name(base::CrashReason::PROCESS_FAULT));
+        base::eprintf("  exception: %s (0x%08lx)\n",
+                      exception_code_name(code),
+                      static_cast<unsigned long>(code));
 
         if (address != nullptr) {
-            std::fprintf(stderr,
-                         "  address: 0x%llx\n",
-                         static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(address)));
+            base::eprintf("  address: 0x%llx\n",
+                          static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(address)));
         }
 
         if (exception_info != nullptr && exception_info->ExceptionRecord != nullptr &&
@@ -316,10 +308,9 @@ namespace {
             ULONG_PTR const action = exception_info->ExceptionRecord->ExceptionInformation[0];
             ULONG_PTR const fault_address =
                 exception_info->ExceptionRecord->ExceptionInformation[1];
-            std::fprintf(stderr,
-                         "  detail: attempted to %s address 0x%llx\n",
-                         access_violation_action(action),
-                         static_cast<unsigned long long>(fault_address));
+            base::eprintf("  detail: attempted to %s address 0x%llx\n",
+                          access_violation_action(action),
+                          static_cast<unsigned long long>(fault_address));
         }
 
         if (address != nullptr) {
@@ -329,7 +320,7 @@ namespace {
                 static_cast<DWORD64>(reinterpret_cast<uintptr_t>(address));
 
             if (symbols_ready && !write_source_location_for_address(process, instruction_address)) {
-                std::fprintf(stderr, "  location: source unavailable for fault address\n");
+                base::eprintf("  location: source unavailable for fault address\n");
             }
         }
 
@@ -340,7 +331,7 @@ namespace {
     }
 
     auto WINAPI unhandled_exception_filter(EXCEPTION_POINTERS* exception_info) -> LONG {
-        std::fprintf(stderr, "\n");
+        base::eprintf("\n");
         write_native_exception_report(exception_info);
         std::fflush(stderr);
         return EXCEPTION_EXECUTE_HANDLER;
@@ -369,23 +360,22 @@ namespace {
         int const frame_count = backtrace(frames, MAX_STACK_FRAMES);
 
         if (frame_count <= STACK_FRAMES_TO_SKIP) {
-            std::fprintf(stderr, "stack backtrace unavailable\n");
+            base::eprintf("stack backtrace unavailable\n");
             return;
         }
 
-        std::fprintf(stderr, "stack backtrace:\n");
+        base::eprintf("stack backtrace:\n");
         backtrace_symbols_fd(
             frames + STACK_FRAMES_TO_SKIP, frame_count - STACK_FRAMES_TO_SKIP, STDERR_FILENO);
     }
 
     auto native_signal_handler(int signal_number, siginfo_t* signal_info, void*) -> void {
-        std::fprintf(stderr,
-                     "\nfatal runtime error: %s\n",
-                     base::crash_reason_name(base::CrashReason::PROCESS_FAULT));
-        std::fprintf(stderr, "  signal: %s (%d)\n", signal_name(signal_number), signal_number);
+        base::eprintf("\nfatal runtime error: %s\n",
+                      base::crash_reason_name(base::CrashReason::PROCESS_FAULT));
+        base::eprintf("  signal: %s (%d)\n", signal_name(signal_number), signal_number);
 
         if (signal_info != nullptr && signal_info->si_addr != nullptr) {
-            std::fprintf(stderr, "  address: %p\n", signal_info->si_addr);
+            base::eprintf("  address: %p\n", signal_info->si_addr);
         }
 
 #if BASE_DEBUG
@@ -397,32 +387,31 @@ namespace {
     }
 #else
     auto write_stack_trace() -> void {
-        std::fprintf(stderr, "stack backtrace unavailable on this platform\n");
+        base::eprintf("stack backtrace unavailable on this platform\n");
     }
 #endif
 
     auto write_location(base::SourceLocation const& location) -> void {
-        std::fprintf(stderr,
-                     "  location: %s:%u",
-                     safe_text(location.file, "<unknown>"),
-                     static_cast<unsigned>(location.line));
+        base::eprintf("  location: %s:%u",
+                      safe_text(location.file, "<unknown>"),
+                      static_cast<unsigned>(location.line));
 
         if (has_text(location.function)) {
-            std::fprintf(stderr, " in %s", location.function);
+            base::eprintf(" in %s", location.function);
         }
 
-        std::fprintf(stderr, "\n");
+        base::eprintf("\n");
     }
 
     auto write_crash_report(base::CrashReport const& report) -> void {
-        std::fprintf(stderr, "fatal runtime error: %s\n", base::crash_reason_name(report.reason));
+        base::eprintf("fatal runtime error: %s\n", base::crash_reason_name(report.reason));
 
         if (has_text(report.message)) {
-            std::fprintf(stderr, "  message: %s\n", report.message);
+            base::eprintf("  message: %s\n", report.message);
         }
 
         if (has_text(report.expression)) {
-            std::fprintf(stderr, "  condition: %s\n", report.expression);
+            base::eprintf("  condition: %s\n", report.expression);
         }
 
         write_location(report.location);

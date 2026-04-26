@@ -14,7 +14,7 @@ namespace bench {
         uint32_t iterations;
     };
 
-    void keep_alive(void const* value);
-    int run_benchmarks(BenchCase const* bench_cases, size_t bench_case_count);
+    auto keep_alive(void const* value) -> void;
+    auto run_benchmarks(BenchCase const* bench_cases, size_t bench_case_count) -> int;
 
 } // namespace bench

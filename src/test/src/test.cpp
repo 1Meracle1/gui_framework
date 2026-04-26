@@ -1,3 +1,4 @@
+#include <base/print.h>
 #include <cstdio>
 #include <test/test.h>
 
@@ -17,18 +18,17 @@ namespace test {
             char const* const name = test_case_name(test_case);
 
             if (test_case.fn == nullptr) {
-                std::fprintf(stderr, "[test] %s: missing function\n", name);
+                base::eprintf("[test] %s: missing function\n", name);
                 return false;
             }
 
-            std::printf("[test] %s\n", name);
+            base::printf("[test] %s\n", name);
             test_case.fn(&context);
 
             if (context.failed_assertions != 0) {
-                std::fprintf(stderr,
-                             "[test] %s: %u failed expectation(s)\n",
-                             name,
-                             static_cast<unsigned>(context.failed_assertions));
+                base::eprintf("[test] %s: %u failed expectation(s)\n",
+                              name,
+                              static_cast<unsigned>(context.failed_assertions));
                 return false;
             }
 
@@ -37,12 +37,11 @@ namespace test {
 
         auto finish_test_run(size_t test_case_count, size_t failed_test_count) -> int {
             if (failed_test_count == 0) {
-                std::printf("[test] all %zu test(s) passed\n", test_case_count);
+                base::printf("[test] all %zu test(s) passed\n", test_case_count);
                 return 0;
             }
 
-            std::fprintf(
-                stderr, "[test] %zu of %zu test(s) failed\n", failed_test_count, test_case_count);
+            base::eprintf("[test] %zu of %zu test(s) failed\n", failed_test_count, test_case_count);
             return 1;
         }
 
@@ -72,17 +71,14 @@ namespace test {
             context->failed_assertions += 1;
         }
 
-        std::fprintf(stderr,
-                     "expectation failed: %s (%s:%u)\n",
-                     expression,
-                     file,
-                     static_cast<unsigned>(line));
+        base::eprintf(
+            "expectation failed: %s (%s:%u)\n", expression, file, static_cast<unsigned>(line));
         return false;
     }
 
     auto run_tests(TestCase const* test_cases, size_t test_case_count) -> int {
         if (test_cases == nullptr && test_case_count != 0) {
-            std::fprintf(stderr, "test runner received a null test case array\n");
+            base::eprintf("test runner received a null test case array\n");
             return 1;
         }
 

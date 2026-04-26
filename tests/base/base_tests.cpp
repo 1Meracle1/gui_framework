@@ -1,9 +1,11 @@
 #include <base/assert.h>
 #include <base/crash.h>
 #include <base/memory.h>
+#include <base/print.h>
 #include <base/str_ref.h>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <memory_resource>
 #include <string>
 #include <string_view>
@@ -32,6 +34,30 @@ namespace {
     static_assert(StrRef("FRAMEWORK").equals_ignore_ascii_case("framework"));
     static_assert(StrRef("  text\t").trim() == "text");
 
+    auto expect_file_text(test::Context* context, std::FILE* file, StrRef expected) -> bool {
+        char buffer[256] = {};
+        bool const positioned = std::fseek(file, 0, SEEK_SET) == 0;
+        TEST_EXPECT(context, positioned);
+
+        if (!positioned) {
+            return false;
+        }
+
+        size_t const read_size = std::fread(buffer, 1u, sizeof(buffer), file);
+
+        TEST_EXPECT(context, read_size == expected.size());
+        return TEST_EXPECT(context, StrRef(buffer, read_size) == expected);
+    }
+
+    [[nodiscard]] auto open_temp_file() -> std::FILE* {
+#if defined(_MSC_VER)
+        std::FILE* file = nullptr;
+        return tmpfile_s(&file) == 0 ? file : nullptr;
+#else
+        return std::tmpfile();
+#endif
+    }
+
     TEST_CASE(crash_reason_names_are_stable) {
         TEST_EXPECT(context,
                     StrRef(base::crash_reason_name(base::CrashReason::ASSERTION_FAILURE)) ==
@@ -45,7 +71,7 @@ namespace {
                         "process fault");
     }
 
-    TEST_CASE(assert_handler_intercepts_ASSERTions) {
+    TEST_CASE(assert_handler_intercepts_assertions) {
         captured_assert = {};
         base::set_assert_handler(capture_assert_handler);
         uint32_t const assert_line = __LINE__ + 1u;
@@ -320,6 +346,47 @@ namespace {
         TEST_EXPECT(context, word_parts[0] == "alpha");
         TEST_EXPECT(context, word_parts[1] == "beta");
         TEST_EXPECT(context, word_parts[2] == "gamma");
+    }
+
+    TEST_CASE(printf_prints_str_ref_values) {
+        std::FILE* const file = open_temp_file();
+        TEST_EXPECT(context, file != nullptr);
+
+        if (file == nullptr) {
+            return;
+        }
+
+        char const text[] = {'a', 'l', 'p', 'h', 'a', '\0', 'o', 'm', 'e', 'g', 'a'};
+        StrRef const embedded_null_text(text, sizeof(text));
+
+        int const written =
+            base::fprintf(file, "name=%s size=%zu", embedded_null_text, embedded_null_text.size());
+
+        char const expected[] = {
+            'n', 'a', 'm', 'e', '=', 'a', 'l', 'p', 'h', 'a', '\0', 'o',
+            'm', 'e', 'g', 'a', ' ', 's', 'i', 'z', 'e', '=', '1',  '1',
+        };
+
+        TEST_EXPECT(context, written == static_cast<int>(sizeof(expected)));
+        expect_file_text(context, file, StrRef(expected, sizeof(expected)));
+        std::fclose(file);
+    }
+
+    TEST_CASE(printf_applies_width_and_precision_to_str_ref_values) {
+        std::FILE* const file = open_temp_file();
+        TEST_EXPECT(context, file != nullptr);
+
+        if (file == nullptr) {
+            return;
+        }
+
+        int const written =
+            base::fprintf(file, "[%8s][%.3s][%-5s]", StrRef("abc"), StrRef("abcdef"), StrRef("xy"));
+        StrRef const expected = "[     abc][abc][xy   ]";
+
+        TEST_EXPECT(context, written == static_cast<int>(expected.size()));
+        expect_file_text(context, file, expected);
+        std::fclose(file);
     }
 
 } // namespace

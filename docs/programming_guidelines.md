@@ -33,6 +33,17 @@ times.
   section for member variables.
 - Use East const style: `int const* ptr`, not `const int* ptr`.
 - Use trailing return types for functions and methods: `auto func() -> ReturnType`.
+- Prefer `StrRef` from the base layer for non-owning string parameters,
+  string-return views, parsing, and comparisons. Use `char const*` only when a
+  null-terminated C string is required at an API boundary, and avoid
+  `std::string` or `std::string_view` in production interfaces unless ownership
+  or interop makes them necessary.
+- Use `base::printf`, `base::eprintf`, and `base::fprintf` from `base/print.h`
+  for printf-style output in project code. Prefer `base::printf` for stdout,
+  `base::eprintf` for stderr, and `base::fprintf` only for other `FILE*`
+  streams. They accept `StrRef` directly with `%s`, including slices and
+  non-null-terminated text, so do not expand `StrRef` manually with `%.*s`,
+  `.data()`, or `.size()`.
 - Avoid hidden allocation, hidden control flow, and implicit ownership transfer.
 - Do not use exceptions. Return explicit result/error values.
 - Do not use RTTI, `dynamic_cast`, or `typeid`.

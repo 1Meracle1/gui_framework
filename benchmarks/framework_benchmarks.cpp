@@ -3,7 +3,7 @@
 
 namespace {
 
-    void query_version_string(void*) {
+    auto query_version_string(void*) -> void {
         bench::keep_alive(gui::version_string());
     }
 
@@ -13,7 +13,7 @@ namespace {
 
 } // namespace
 
-int main() {
+auto main() -> int {
     constexpr auto BENCHMARK_COUNT = sizeof(BENCHMARKS) / sizeof(BENCHMARKS[0]);
     return bench::run_benchmarks(BENCHMARKS, BENCHMARK_COUNT);
 }

@@ -10,8 +10,8 @@ namespace gui {
         uint32_t patch;
     };
 
-    [[nodiscard]] Version version();
-    [[nodiscard]] char const* version_string();
-    [[nodiscard]] char const* build_compiler();
+    [[nodiscard]] auto version() -> Version;
+    [[nodiscard]] auto version_string() -> char const*;
+    [[nodiscard]] auto build_compiler() -> char const*;
 
 } // namespace gui

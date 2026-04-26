@@ -65,6 +65,17 @@ test, and benchmark support code must not use namespace `gui`.
   `int32_t`, `int64_t`, `uint8_t`, `uint16_t`, `uint32_t`, and `uint64_t`, not
   `std::size_t`, `std::int8_t`, `std::int16_t`, `std::int32_t`, `std::int64_t`,
   `std::uint8_t`, `std::uint16_t`, `std::uint32_t`, or `std::uint64_t`.
+- Prefer `StrRef` from the base layer for non-owning string parameters,
+  string-return views, parsing, and comparisons. Use `char const*` only when a
+  null-terminated C string is required at an API boundary, and avoid
+  `std::string` or `std::string_view` in production interfaces unless ownership
+  or interop makes them necessary.
+- Use `base::printf`, `base::eprintf`, and `base::fprintf` from `base/print.h`
+  for printf-style output in project code. Prefer `base::printf` for stdout,
+  `base::eprintf` for stderr, and `base::fprintf` only for other `FILE*`
+  streams. They accept `StrRef` directly with `%s`, including slices and
+  non-null-terminated text, so do not expand `StrRef` manually with `%.*s`,
+  `.data()`, or `.size()`.
 - Avoid hidden allocation, hidden control flow, and implicit ownership transfer.
 - Avoid iostreams, STL containers, RTTI, exceptions, and template-heavy
   abstractions in production code unless there is a clear codegen, usability,
