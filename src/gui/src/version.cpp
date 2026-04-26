@@ -28,15 +28,15 @@ namespace {
 
 namespace gui {
 
-    Version version() {
+    auto version() -> Version {
         return VERSION;
     }
 
-    char const* version_string() {
+    auto version_string() -> char const* {
         return GUI_VERSION_STRING;
     }
 
-    char const* build_compiler() {
+    auto build_compiler() -> char const* {
 #if defined(__clang__) && defined(_MSC_VER)
         return "clang-cl";
 #elif defined(_MSC_VER)

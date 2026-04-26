@@ -54,6 +54,9 @@ macro(cpp_configure_project)
         set(CLANG_TIDY_COMMAND
             "${CLANG_TIDY_PROGRAM}"
             "--config-file=${PROJECT_SOURCE_DIR}/.clang-tidy"
+            "--extra-arg=-Wno-unused-command-line-argument"
+            "-p"
+            "${CMAKE_BINARY_DIR}"
         )
         set(CMAKE_CXX_CLANG_TIDY "${CLANG_TIDY_COMMAND}")
         message(STATUS "Using clang-tidy: ${CLANG_TIDY_PROGRAM}")
@@ -77,6 +80,19 @@ function(cpp_configure_target target_name)
             /EHs-c-
             /D_HAS_EXCEPTIONS=0
         )
+        target_compile_options("${target_name}" PRIVATE
+            $<$<CONFIG:Release>:/Zi>
+        )
+
+        get_target_property(target_type "${target_name}" TYPE)
+        if(NOT target_type STREQUAL "STATIC_LIBRARY")
+            target_link_options("${target_name}" PRIVATE
+                $<$<CONFIG:Release>:/DEBUG:FULL>
+                $<$<CONFIG:Release>:/OPT:REF>
+                $<$<CONFIG:Release>:/OPT:ICF>
+            )
+        endif()
+
         if(WARNINGS_AS_ERRORS)
             target_compile_options("${target_name}" PRIVATE /WX)
         endif()
@@ -93,6 +109,9 @@ function(cpp_configure_target target_name)
             -Wundef
             -fno-exceptions
             -fno-rtti
+        )
+        target_compile_options("${target_name}" PRIVATE
+            $<$<CONFIG:Release>:-gline-tables-only>
         )
         if(WARNINGS_AS_ERRORS)
             target_compile_options("${target_name}" PRIVATE -Werror)

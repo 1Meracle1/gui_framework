@@ -1,3 +1,5 @@
+#include <base/assert.h>
+#include <base/crash.h>
 #include <base/str_ref.h>
 #include <cstddef>
 #include <cstdint>
@@ -7,9 +9,51 @@
 
 namespace {
 
+    struct CapturedAssert {
+        char const* expression;
+        char const* file;
+        uint32_t line;
+        uint32_t count;
+    };
+
+    CapturedAssert captured_assert = {};
+
+    auto capture_assert_handler(char const* expression, char const* file, uint32_t line) -> void {
+        captured_assert.expression = expression;
+        captured_assert.file = file;
+        captured_assert.line = line;
+        captured_assert.count += 1u;
+    }
+
     static_assert(StrRef("framework").substr(5u, 4u) == "work");
     static_assert(StrRef("FRAMEWORK").equals_ignore_ascii_case("framework"));
     static_assert(StrRef("  text\t").trim() == "text");
+
+    TEST_CASE(crash_reason_names_are_stable) {
+        TEST_EXPECT(context,
+                    StrRef(base::crash_reason_name(base::CrashReason::ASSERTION_FAILURE)) ==
+                        "assertion failed");
+        TEST_EXPECT(context, StrRef(base::crash_reason_name(base::CrashReason::PANIC)) == "panic");
+        TEST_EXPECT(context,
+                    StrRef(base::crash_reason_name(base::CrashReason::UNREACHABLE_CODE)) ==
+                        "unreachable code reached");
+        TEST_EXPECT(context,
+                    StrRef(base::crash_reason_name(base::CrashReason::PROCESS_FAULT)) ==
+                        "process fault");
+    }
+
+    TEST_CASE(assert_handler_intercepts_base_assertions) {
+        captured_assert = {};
+        base::set_assert_handler(capture_assert_handler);
+        uint32_t const assert_line = __LINE__ + 1u;
+        BASE_ASSERT_MSG(false, "captured by test");
+        base::set_assert_handler(nullptr);
+
+        TEST_EXPECT(context, captured_assert.count == 1u);
+        TEST_EXPECT(context, StrRef(captured_assert.expression) == "false");
+        TEST_EXPECT(context, StrRef(captured_assert.file) == __FILE__);
+        TEST_EXPECT(context, captured_assert.line == assert_line);
+    }
 
     TEST_CASE(string_view_constructs_from_common_string_sources) {
         std::string owned = "owned";

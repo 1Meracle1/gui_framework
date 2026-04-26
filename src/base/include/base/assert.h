@@ -1,6 +1,6 @@
 #pragma once
 
-#include <base/config.h>
+#include <base/crash.h>
 #include <cstdint>
 
 namespace base {
@@ -8,7 +8,13 @@ namespace base {
     using AssertHandler = void (*)(char const* expression, char const* file, uint32_t line);
 
     void set_assert_handler(AssertHandler handler);
+
     void handle_assert_failure(char const* expression, char const* file, uint32_t line);
+    void handle_assert_failure(char const* expression,
+                               char const* message,
+                               char const* file,
+                               uint32_t line,
+                               char const* function);
 
 } // namespace base
 
@@ -16,6 +22,14 @@ namespace base {
     do {                                                                                           \
         if (!(expression)) {                                                                       \
             ::base::handle_assert_failure(                                                         \
-                #expression, __FILE__, static_cast<uint32_t>(__LINE__));                      \
+                #expression, nullptr, __FILE__, static_cast<uint32_t>(__LINE__), __func__);        \
+        }                                                                                          \
+    } while (false)
+
+#define BASE_ASSERT_MSG(expression, message)                                                       \
+    do {                                                                                           \
+        if (!(expression)) {                                                                       \
+            ::base::handle_assert_failure(                                                         \
+                #expression, (message), __FILE__, static_cast<uint32_t>(__LINE__), __func__);      \
         }                                                                                          \
     } while (false)

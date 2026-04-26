@@ -1,6 +1,4 @@
 #include <base/assert.h>
-#include <cstdio>
-#include <cstdlib>
 
 namespace {
 
@@ -15,17 +13,27 @@ namespace base {
     }
 
     void handle_assert_failure(char const* expression, char const* file, uint32_t line) {
+        handle_assert_failure(expression, nullptr, file, line, nullptr);
+    }
+
+    void handle_assert_failure(char const* expression,
+                               char const* message,
+                               char const* file,
+                               uint32_t line,
+                               char const* function) {
         if (assert_handler != nullptr) {
             assert_handler(expression, file, line);
             return;
         }
 
-        std::fprintf(stderr,
-                     "assertion failed: %s (%s:%u)\n",
-                     expression,
-                     file,
-                     static_cast<unsigned>(line));
-        std::abort();
+        CrashReport const report = {
+            CrashReason::ASSERTION_FAILURE,
+            message,
+            expression,
+            {file, function, line},
+        };
+
+        crash(report);
     }
 
 } // namespace base
