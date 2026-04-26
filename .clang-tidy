@@ -10,6 +10,7 @@ Checks: >
   bugprone-suspicious-memset-usage,
   clang-analyzer-*,
   modernize-use-nullptr,
+  modernize-use-trailing-return-type,
   performance-*,
   portability-*,
   -portability-avoid-pragma-once,
@@ -27,6 +28,8 @@ CheckOptions:
   - { key: readability-identifier-naming.FunctionCase, value: lower_case }
   - { key: readability-identifier-naming.VariableCase, value: lower_case }
   - { key: readability-identifier-naming.ParameterCase, value: lower_case }
+  - { key: readability-identifier-naming.ClassMemberCase, value: lower_case }
+  - { key: readability-identifier-naming.ClassMemberPrefix, value: m_ }
   - { key: readability-identifier-naming.MemberCase, value: lower_case }
   - { key: readability-identifier-naming.GlobalConstantCase, value: UPPER_CASE }
   - { key: readability-identifier-naming.StaticConstantCase, value: UPPER_CASE }

@@ -3,11 +3,67 @@
 
 namespace test {
 
-    bool expect(Context* context,
+    namespace {
+
+        Registration* first_registration = nullptr;
+        Registration* last_registration = nullptr;
+
+        auto test_case_name(TestCase const& test_case) -> char const* {
+            return test_case.name != nullptr ? test_case.name : "<unnamed>";
+        }
+
+        auto run_test(TestCase const& test_case) -> bool {
+            Context context = {};
+            char const* const name = test_case_name(test_case);
+
+            if (test_case.fn == nullptr) {
+                std::fprintf(stderr, "[test] %s: missing function\n", name);
+                return false;
+            }
+
+            std::printf("[test] %s\n", name);
+            test_case.fn(&context);
+
+            if (context.failed_assertions != 0) {
+                std::fprintf(stderr,
+                             "[test] %s: %u failed expectation(s)\n",
+                             name,
+                             static_cast<unsigned>(context.failed_assertions));
+                return false;
+            }
+
+            return true;
+        }
+
+        auto finish_test_run(size_t test_case_count, size_t failed_test_count) -> int {
+            if (failed_test_count == 0) {
+                std::printf("[test] all %zu test(s) passed\n", test_case_count);
+                return 0;
+            }
+
+            std::fprintf(
+                stderr, "[test] %zu of %zu test(s) failed\n", failed_test_count, test_case_count);
+            return 1;
+        }
+
+    } // namespace
+
+    Registration::Registration(char const* name, TestFn fn) noexcept
+        : test_case{name, fn}, next(nullptr) {
+        if (last_registration != nullptr) {
+            last_registration->next = this;
+        } else {
+            first_registration = this;
+        }
+
+        last_registration = this;
+    }
+
+    auto expect(Context* context,
                 bool condition,
                 char const* expression,
                 char const* file,
-                uint32_t line) {
+                uint32_t line) -> bool {
         if (condition) {
             return true;
         }
@@ -24,7 +80,7 @@ namespace test {
         return false;
     }
 
-    int run_tests(TestCase const* test_cases, size_t test_case_count) {
+    auto run_tests(TestCase const* test_cases, size_t test_case_count) -> int {
         if (test_cases == nullptr && test_case_count != 0) {
             std::fprintf(stderr, "test runner received a null test case array\n");
             return 1;
@@ -33,35 +89,28 @@ namespace test {
         size_t failed_test_count = 0;
 
         for (size_t index = 0; index < test_case_count; ++index) {
-            Context context = {};
-            TestCase const& test_case = test_cases[index];
-
-            if (test_case.fn == nullptr) {
-                std::fprintf(stderr, "[test] %s: missing function\n", test_case.name);
-                failed_test_count += 1;
-                continue;
-            }
-
-            std::printf("[test] %s\n", test_case.name);
-            test_case.fn(&context);
-
-            if (context.failed_assertions != 0) {
-                std::fprintf(stderr,
-                             "[test] %s: %u failed expectation(s)\n",
-                             test_case.name,
-                             static_cast<unsigned>(context.failed_assertions));
+            if (!run_test(test_cases[index])) {
                 failed_test_count += 1;
             }
         }
 
-        if (failed_test_count == 0) {
-            std::printf("[test] all %zu test(s) passed\n", test_case_count);
-            return 0;
+        return finish_test_run(test_case_count, failed_test_count);
+    }
+
+    auto run_registered_tests() -> int {
+        size_t test_case_count = 0;
+        size_t failed_test_count = 0;
+
+        for (Registration const* registration = first_registration; registration != nullptr;
+             registration = registration->next) {
+            if (!run_test(registration->test_case)) {
+                failed_test_count += 1;
+            }
+
+            test_case_count += 1;
         }
 
-        std::fprintf(
-            stderr, "[test] %zu of %zu test(s) failed\n", failed_test_count, test_case_count);
-        return 1;
+        return finish_test_run(test_case_count, failed_test_count);
     }
 
 } // namespace test

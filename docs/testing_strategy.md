@@ -7,6 +7,9 @@ The goal is to keep the first layer simple, portable, and easy to debug.
 
 - `gui_test` provides a tiny test runner and assertion helpers.
 - Tests are normal executables registered with CTest.
+- Prefer `TEST_CASE(name)` and `TEST_MAIN()` for new test files. The macro
+  registers tests without heap allocation and exposes the usual
+  `test::Context* context` parameter inside each test body.
 - Tests should avoid allocation unless allocation behavior is the subject under
   test.
 - Keep test names stable and descriptive.

@@ -20,6 +20,7 @@ times.
 - Base, test, and benchmark support code stays outside `gui`.
 - Files and directories: `snake_case`.
 - Functions and variables: `snake_case`.
+- Class member variables: `m_` prefix, no trailing underscore.
 - Types: `UpperCamelCase`.
 - Constants and macros: `UPPER_SNAKE_CASE`.
 - CMake options: `UPPER_SNAKE_CASE`.
@@ -27,6 +28,11 @@ times.
 ## C++ Style
 
 - Prefer C-like C++ where it keeps codegen, debugging, and compile times clear.
+- Put the public section of a class before private sections.
+- In classes, place private methods first, then use a separate `private:`
+  section for member variables.
+- Use East const style: `int const* ptr`, not `const int* ptr`.
+- Use trailing return types for functions and methods: `auto func() -> ReturnType`.
 - Avoid hidden allocation, hidden control flow, and implicit ownership transfer.
 - Do not use exceptions. Return explicit result/error values.
 - Do not use RTTI, `dynamic_cast`, or `typeid`.

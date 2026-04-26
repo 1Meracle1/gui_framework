@@ -9,6 +9,7 @@ UseTab: Never
 PointerAlignment: Left
 ReferenceAlignment: Left
 DerivePointerAlignment: false
+QualifierAlignment: Right
 BreakBeforeBraces: Attach
 AllowShortBlocksOnASingleLine: Never
 AllowShortCaseLabelsOnASingleLine: false
@@ -23,4 +24,3 @@ FixNamespaceComments: true
 IncludeBlocks: Regroup
 NamespaceIndentation: All
 SortIncludes: CaseSensitive
-

@@ -51,13 +51,20 @@ if(BUILD_TESTS)
     include(CTest)
     enable_testing()
 
-    add_executable(gui_framework_tests
-        tests/framework_tests.cpp
+    add_executable(base_tests
+        tests/base/base_tests.cpp
     )
-    target_link_libraries(gui_framework_tests PRIVATE gui::gui gui_test)
-    cpp_configure_target(gui_framework_tests)
+    target_link_libraries(base_tests PRIVATE base::base gui_test)
+    cpp_configure_target(base_tests)
 
-    add_test(NAME gui_framework_tests COMMAND gui_framework_tests)
+    add_executable(gui_tests
+        tests/gui/gui_tests.cpp
+    )
+    target_link_libraries(gui_tests PRIVATE gui::gui gui_test)
+    cpp_configure_target(gui_tests)
+
+    add_test(NAME base_tests COMMAND base_tests)
+    add_test(NAME gui_tests COMMAND gui_tests)
 endif()
 
 if(BUILD_BENCHMARKS)
