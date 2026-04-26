@@ -1,7 +1,8 @@
 #include <base/assert.h>
 #include <base/crash.h>
+#include <base/fmt.h>
+#include <base/io.h>
 #include <base/memory.h>
-#include <base/print.h>
 #include <base/str_ref.h>
 #include <base/string_buffer.h>
 #include <cstddef>
@@ -434,6 +435,30 @@ namespace {
         TEST_EXPECT(context, !buffer.initialized());
     }
 
+    TEST_CASE(io_writer_wraps_string_buffer_streams) {
+        char backing[8] = {};
+        StringBuffer buffer;
+
+        TEST_EXPECT(context, buffer.init_with_backing(backing, sizeof(backing)));
+
+        io::Writer const writer = io::string_buffer_writer(&buffer);
+        TEST_EXPECT(context, io::has_stream_mode(io::query(writer), io::StreamMode::WRITE));
+
+        size_t written = 0u;
+        TEST_EXPECT(context, io::write_full(writer, "abc", &written) == io::Error::NONE);
+        TEST_EXPECT(context, written == 3u);
+        TEST_EXPECT(context, buffer.str() == "abc");
+
+        TEST_EXPECT(context, io::write_fill(writer, 'x', 3u, &written) == io::Error::NONE);
+        TEST_EXPECT(context, written == 6u);
+        TEST_EXPECT(context, buffer.str() == "abcxxx");
+
+        TEST_EXPECT(context,
+                    io::write_full(writer, "overflow", &written) == io::Error::BUFFER_FULL);
+        TEST_EXPECT(context, written == 8u);
+        TEST_EXPECT(context, buffer.str() == "abcxxxov");
+    }
+
     TEST_CASE(printf_prints_str_ref_values) {
         std::FILE* const file = open_temp_file();
         TEST_EXPECT(context, file != nullptr);
@@ -446,7 +471,7 @@ namespace {
         StrRef const embedded_null_text(text, sizeof(text));
 
         int const written =
-            base::fprintf(file, "name=%s size=%zu", embedded_null_text, embedded_null_text.size());
+            fmt::fprintf(file, "name=%s size=%zu", embedded_null_text, embedded_null_text.size());
 
         char const expected[] = {
             'n', 'a', 'm', 'e', '=', 'a', 'l', 'p', 'h', 'a', '\0', 'o',
@@ -467,12 +492,133 @@ namespace {
         }
 
         int const written =
-            base::fprintf(file, "[%8s][%.3s][%-5s]", StrRef("abc"), StrRef("abcdef"), StrRef("xy"));
+            fmt::fprintf(file, "[%8s][%.3s][%-5s]", StrRef("abc"), StrRef("abcdef"), StrRef("xy"));
         StrRef const expected = "[     abc][abc][xy   ]";
 
         TEST_EXPECT(context, written == static_cast<int>(expected.size()));
         expect_file_text(context, file, expected);
         std::fclose(file);
+    }
+
+    TEST_CASE(printf_applies_dynamic_width_and_precision_to_str_ref_values) {
+        std::FILE* const file = open_temp_file();
+        TEST_EXPECT(context, file != nullptr);
+
+        if (file == nullptr) {
+            return;
+        }
+
+        int const written = fmt::fprintf(file,
+                                         "[%*s][%*s][%.*s][%.*s][%*.*s]",
+                                         6,
+                                         StrRef("abc"),
+                                         -5,
+                                         StrRef("xy"),
+                                         3,
+                                         StrRef("abcdef"),
+                                         -1,
+                                         StrRef("abcdef"),
+                                         8,
+                                         4,
+                                         StrRef("abcdef"));
+        StrRef const expected = "[   abc][xy   ][abc][abcdef][    abcd]";
+
+        TEST_EXPECT(context, written == static_cast<int>(expected.size()));
+        expect_file_text(context, file, expected);
+        std::fclose(file);
+    }
+
+    TEST_CASE(printf_applies_dynamic_width_and_precision_to_standard_values) {
+        std::FILE* const file = open_temp_file();
+        TEST_EXPECT(context, file != nullptr);
+
+        if (file == nullptr) {
+            return;
+        }
+
+        int const written =
+            fmt::fprintf(file, "[%0*d][%*d][%.*x][%*.*u]", 4, 7, -5, 9, 4, 0xabu, 6, 4, 7u);
+        StrRef const expected = "[0007][9    ][00ab][  0007]";
+
+        TEST_EXPECT(context, written == static_cast<int>(expected.size()));
+        expect_file_text(context, file, expected);
+        std::fclose(file);
+    }
+
+    TEST_CASE(printf_keeps_literal_text_when_extra_args_are_unused) {
+        std::FILE* const file = open_temp_file();
+        TEST_EXPECT(context, file != nullptr);
+
+        if (file == nullptr) {
+            return;
+        }
+
+        int const written = fmt::fprintf(file, "literal %% tail", 123);
+        StrRef const expected = "literal % tail";
+
+        TEST_EXPECT(context, written == static_cast<int>(expected.size()));
+        expect_file_text(context, file, expected);
+        std::fclose(file);
+    }
+
+    TEST_CASE(printf_formats_owned_integer_bool_pointer_and_float_values) {
+        std::FILE* const file = open_temp_file();
+        TEST_EXPECT(context, file != nullptr);
+
+        if (file == nullptr) {
+            return;
+        }
+
+        int value = 7;
+        int const written = fmt::fprintf(
+            file, "[%+05d][%#x][%#b][%v][%.2f][%p]", -42, 0x2au, 5u, true, 3.5, &value);
+        StrRef const prefix = "[-0042][0x2a][0b101][true][3.50][0x";
+
+        TEST_EXPECT(context, written > static_cast<int>(prefix.size()));
+
+        char buffer[128] = {};
+        bool const positioned = std::fseek(file, 0, SEEK_SET) == 0;
+        TEST_EXPECT(context, positioned);
+
+        if (positioned) {
+            size_t const read_size = std::fread(buffer, 1u, sizeof(buffer), file);
+            StrRef const text(buffer, read_size);
+
+            TEST_EXPECT(context, text.starts_with(prefix));
+            TEST_EXPECT(context, text.ends_with(']'));
+        }
+
+        std::fclose(file);
+    }
+
+    TEST_CASE(printf_formats_into_fixed_allocator_and_thread_temp_buffers) {
+        char fixed_backing[64] = {};
+        StrRef const fixed =
+            fmt::bprintf(fixed_backing, sizeof(fixed_backing), "%s:%04u", StrRef("item"), 9u);
+
+        TEST_EXPECT(context, fixed == "item:0009");
+        TEST_EXPECT(context, fixed.data() == fixed_backing);
+
+        Arena arena;
+        TEST_EXPECT(context, arena.init({64u * 1024u, 64u * 1024u}));
+
+        if (!arena.initialized()) {
+            return;
+        }
+
+        StringBuffer allocated = fmt::aprintf(arena.resource(), "value=%v", 42);
+        uintptr_t const allocated_address = reinterpret_cast<uintptr_t>(allocated.data());
+        uintptr_t const arena_begin = reinterpret_cast<uintptr_t>(arena.data());
+        uintptr_t const arena_end = arena_begin + arena.reserved_size();
+
+        TEST_EXPECT(context, allocated.str() == "value=42");
+        TEST_EXPECT(context, allocated_address >= arena_begin);
+        TEST_EXPECT(context, allocated_address < arena_end);
+
+        StrRef const temporary = fmt::tprintf("%s %v", StrRef("temp"), 13);
+
+        TEST_EXPECT(context, temporary == "temp 13");
+        TEST_EXPECT(context, !temporary.empty());
     }
 
 } // namespace

@@ -1,4 +1,4 @@
-# Programming Guidelines
+#Programming Guidelines
 
 The project is a performance-oriented C++ codebase with a gamedev-style bias:
 explicit data flow, predictable allocation, simple control flow, and low compile
@@ -31,19 +31,21 @@ times.
 - Put the public section of a class before private sections.
 - In classes, place private methods first, then use a separate `private:`
   section for member variables.
-- Use East const style: `int const* ptr`, not `const int* ptr`.
+- Use East const style: `int const* ptr`, not `int const* ptr`.
 - Use trailing return types for functions and methods: `auto func() -> ReturnType`.
 - Prefer `StrRef` from the base layer for non-owning string parameters,
   string-return views, parsing, and comparisons. Use `char const*` only when a
   null-terminated C string is required at an API boundary, and avoid
   `std::string` or `std::string_view` in production interfaces unless ownership
   or interop makes them necessary.
-- Use `base::printf`, `base::eprintf`, and `base::fprintf` from `base/print.h`
-  for printf-style output in project code. Prefer `base::printf` for stdout,
-  `base::eprintf` for stderr, and `base::fprintf` only for other `FILE*`
-  streams. They accept `StrRef` directly with `%s`, including slices and
-  non-null-terminated text, so do not expand `StrRef` manually with `%.*s`,
-  `.data()`, or `.size()`.
+- Use `fmt::printf`, `fmt::eprintf`, and `fmt::fprintf` from `base/fmt.h`
+  for printf-style output in project code. Prefer `fmt::printf` for stdout,
+  `fmt::eprintf` for stderr, and `fmt::fprintf` only for other `FILE*`
+  streams. Use `fmt::wprintf` for generic `io::Writer` targets, and
+  `fmt::bprintf`, `fmt::aprintf`, or `fmt::tprintf` for fixed-buffer,
+  allocator-backed, or thread-temporary formatted text. These accept `StrRef`
+  directly with `%s`, including slices and non-null-terminated text, so do not
+  expand `StrRef` manually with `%.*s`, `.data()`, or `.size()`.
 - Avoid hidden allocation, hidden control flow, and implicit ownership transfer.
 - Do not use exceptions. Return explicit result/error values.
 - Do not use RTTI, `dynamic_cast`, or `typeid`.

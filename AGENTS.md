@@ -1,4 +1,4 @@
-# AGENTS.md
+#AGENTS.md
 
 ## Project
 
@@ -15,7 +15,8 @@ in C++20. The project targets Windows with MSVC and macOS with Clang.
 - Enable strong compiler warnings for every target.
 - Strict builds enable warnings-as-errors and clang-tidy.
 - Use clangd, clang-format, and clang-tidy.
-- Use ccache where it is known to work; plain MSVC `cl.exe` skips automatic
+- Use ccache where it is known to work;
+plain MSVC `cl.exe` skips automatic
   ccache unless `CCACHE` is explicitly set.
 - Do not add dependency fetches to CMake.
 
@@ -45,12 +46,11 @@ test, and benchmark support code must not use namespace `gui`.
 
 - Files and directories use `snake_case`.
 - Functions and variables use `snake_case`.
-- Class member variables use an `m_` prefix and no trailing underscore; struct
-  member variables do not use the `m_` prefix.
-- Types use `UpperCamelCase`.
-- Constants and macros use `UPPER_SNAKE_CASE`.
-- Namespaces use `snake_case`.
-- CMake options use concise `UPPER_SNAKE_CASE`; do not prefix everything with
+- Class member variables use an `m_` prefix and no trailing underscore;
+struct member variables do not use the `m_` prefix.- Types use `UpperCamelCase`.- Constants and
+    macros use `UPPER_SNAKE_CASE`.- Namespaces use `snake_case`.-
+        CMake options use concise `UPPER_SNAKE_CASE`;
+do not prefix everything with
   `GUI_`.
 
 ## C++ Style
@@ -59,7 +59,7 @@ test, and benchmark support code must not use namespace `gui`.
 - Put the public section of a class before private sections.
 - In classes, place private methods first, then use a separate `private:`
   section for member variables.
-- Use East const style: `int const* ptr`, not `const int* ptr`.
+- Use East const style: `int const* ptr`, not `int const* ptr`.
 - Use trailing return types for functions and methods: `auto func() -> ReturnType`.
 - Use short integral type names where available: `size_t`, `int8_t`, `int16_t`,
   `int32_t`, `int64_t`, `uint8_t`, `uint16_t`, `uint32_t`, and `uint64_t`, not
@@ -70,12 +70,14 @@ test, and benchmark support code must not use namespace `gui`.
   null-terminated C string is required at an API boundary, and avoid
   `std::string` or `std::string_view` in production interfaces unless ownership
   or interop makes them necessary.
-- Use `base::printf`, `base::eprintf`, and `base::fprintf` from `base/print.h`
-  for printf-style output in project code. Prefer `base::printf` for stdout,
-  `base::eprintf` for stderr, and `base::fprintf` only for other `FILE*`
-  streams. They accept `StrRef` directly with `%s`, including slices and
-  non-null-terminated text, so do not expand `StrRef` manually with `%.*s`,
-  `.data()`, or `.size()`.
+- Use `fmt::printf`, `fmt::eprintf`, and `fmt::fprintf` from `base/fmt.h`
+  for printf-style output in project code. Prefer `fmt::printf` for stdout,
+  `fmt::eprintf` for stderr, and `fmt::fprintf` only for other `FILE*`
+  streams. Use `fmt::wprintf` for generic `io::Writer` targets, and
+  `fmt::bprintf`, `fmt::aprintf`, or `fmt::tprintf` for fixed-buffer,
+  allocator-backed, or thread-temporary formatted text. These accept `StrRef`
+  directly with `%s`, including slices and non-null-terminated text, so do not
+  expand `StrRef` manually with `%.*s`, `.data()`, or `.size()`.
 - Avoid hidden allocation, hidden control flow, and implicit ownership transfer.
 - Avoid iostreams, STL containers, RTTI, exceptions, and template-heavy
   abstractions in production code unless there is a clear codegen, usability,

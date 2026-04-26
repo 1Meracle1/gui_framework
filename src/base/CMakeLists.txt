@@ -1,8 +1,9 @@
 add_library(base STATIC
     src/assert.cpp
     src/crash.cpp
+    src/fmt.cpp
+    src/io.cpp
     src/memory.cpp
-    src/print.cpp
     src/string_buffer.cpp
     src/virtual_memory.cpp
 )

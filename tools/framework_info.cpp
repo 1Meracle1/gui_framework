@@ -1,11 +1,11 @@
 #include <base/crash.h>
-#include <base/print.h>
+#include <base/fmt.h>
 #include <cstdio>
 #include <gui/gui.h>
 
 auto check_crash() -> void {
     int const* ptr = nullptr;
-    base::printf("result: %d\n", *ptr);
+    fmt::printf("result: %d\n", *ptr);
 }
 
 auto main() -> int {
@@ -13,9 +13,9 @@ auto main() -> int {
 
     gui::Version const gui_version = gui::version();
 
-    base::printf("gui %s\n", gui::version_string());
-    base::printf("version: %u.%u.%u\n", gui_version.major, gui_version.minor, gui_version.patch);
-    base::printf("compiler: %s\n", gui::build_compiler());
+    fmt::printf("gui %s\n", gui::version_string());
+    fmt::printf("version: %u.%u.%u\n", gui_version.major, gui_version.minor, gui_version.patch);
+    fmt::printf("compiler: %s\n", gui::build_compiler());
     check_crash();
     return 0;
 }
