@@ -47,7 +47,7 @@ namespace test {
 
     } // namespace
 
-    Registration::Registration(char const* name, TestFn fn) noexcept
+    Registration::Registration(char const* name, TestFn fn) 
         : test_case{name, fn}, next(nullptr) {
         if (last_registration != nullptr) {
             last_registration->next = this;

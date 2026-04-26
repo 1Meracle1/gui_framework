@@ -1,5 +1,6 @@
 #pragma once
 
+#include <base/assert.h>
 #include <base/io.h>
 #include <base/str_ref.h>
 #include <base/string_buffer.h>
@@ -29,45 +30,40 @@ namespace fmt {
             bool uses_dynamic_precision = false;
         };
 
-        [[nodiscard]] auto add_print_count(int* written, size_t amount) noexcept -> bool;
-        [[nodiscard]] auto parse_print_spec(StrRef format,
-                                            size_t percent_index,
-                                            FormatSpec* out_spec) noexcept -> size_t;
-        [[nodiscard]] auto print_text(io::Writer writer, StrRef text, int* written) noexcept
+        [[nodiscard]] auto add_print_count(int* written, size_t amount) -> bool;
+        [[nodiscard]] auto
+        parse_print_spec(StrRef format, size_t percent_index, FormatSpec* out_spec) -> size_t;
+        [[nodiscard]] auto print_text(io::Writer writer, StrRef text, int* written) -> bool;
+        [[nodiscard]] auto print_repeated(io::Writer writer, char value, size_t count, int* written)
             -> bool;
         [[nodiscard]] auto
-        print_repeated(io::Writer writer, char value, size_t count, int* written) noexcept -> bool;
-        [[nodiscard]] auto print_string_arg(io::Writer writer,
-                                            FormatSpec const& spec,
-                                            StrRef value,
-                                            int* written) noexcept -> bool;
-        [[nodiscard]] auto
-        print_char_arg(io::Writer writer, FormatSpec const& spec, char value, int* written) noexcept
+        print_string_arg(io::Writer writer, FormatSpec const& spec, StrRef value, int* written)
             -> bool;
         [[nodiscard]] auto
-        print_bool_arg(io::Writer writer, FormatSpec const& spec, bool value, int* written) noexcept
-            -> bool;
+        print_char_arg(io::Writer writer, FormatSpec const& spec, char value, int* written) -> bool;
+        [[nodiscard]] auto
+        print_bool_arg(io::Writer writer, FormatSpec const& spec, bool value, int* written) -> bool;
         [[nodiscard]] auto print_signed_integer_arg(io::Writer writer,
                                                     FormatSpec const& spec,
                                                     int64_t value,
-                                                    int* written) noexcept -> bool;
+                                                    int* written) -> bool;
         [[nodiscard]] auto print_unsigned_integer_arg(io::Writer writer,
                                                       FormatSpec const& spec,
                                                       uint64_t value,
-                                                      int* written) noexcept -> bool;
+                                                      int* written) -> bool;
         [[nodiscard]] auto print_pointer_value_arg(io::Writer writer,
                                                    FormatSpec const& spec,
                                                    void const* value,
-                                                   int* written) noexcept -> bool;
+                                                   int* written) -> bool;
         [[nodiscard]] auto print_floating_arg(io::Writer writer,
                                               FormatSpec const& spec,
                                               long double value,
-                                              int* written) noexcept -> bool;
-        [[nodiscard]] auto
-        print_format_without_args(io::Writer writer, StrRef format, int* written) noexcept -> bool;
+                                              int* written) -> bool;
+        [[nodiscard]] auto print_format_without_args(io::Writer writer, StrRef format, int* written)
+            -> bool;
 
         template <typename Arg>
-        [[nodiscard]] auto print_dynamic_int_arg(Arg const& arg, int* out_value) noexcept -> bool {
+        [[nodiscard]] auto print_dynamic_int_arg(Arg const& arg, int* out_value) -> bool {
             if (out_value == nullptr) {
                 return false;
             }
@@ -98,8 +94,7 @@ namespace fmt {
         }
 
         template <typename Arg>
-        [[nodiscard]] auto resolve_dynamic_width(FormatSpec* spec, Arg const& arg) noexcept
-            -> bool {
+        [[nodiscard]] auto resolve_dynamic_width(FormatSpec* spec, Arg const& arg) -> bool {
             int width = 0;
             if (spec == nullptr || !print_dynamic_int_arg(arg, &width) || width == INT_MIN) {
                 return false;
@@ -118,8 +113,7 @@ namespace fmt {
         }
 
         template <typename Arg>
-        [[nodiscard]] auto resolve_dynamic_precision(FormatSpec* spec, Arg const& arg) noexcept
-            -> bool {
+        [[nodiscard]] auto resolve_dynamic_precision(FormatSpec* spec, Arg const& arg) -> bool {
             int precision = 0;
             if (spec == nullptr || !print_dynamic_int_arg(arg, &precision)) {
                 return false;
@@ -131,29 +125,25 @@ namespace fmt {
         }
 
         [[nodiscard]] inline auto
-        print_arg(io::Writer writer, FormatSpec const& spec, StrRef value, int* written) noexcept
-            -> bool {
+        print_arg(io::Writer writer, FormatSpec const& spec, StrRef value, int* written) -> bool {
             return print_string_arg(writer, spec, value, written);
         }
 
-        [[nodiscard]] inline auto print_arg(io::Writer writer,
-                                            FormatSpec const& spec,
-                                            std::string_view value,
-                                            int* written) noexcept -> bool {
+        [[nodiscard]] inline auto
+        print_arg(io::Writer writer, FormatSpec const& spec, std::string_view value, int* written)
+            -> bool {
             return print_string_arg(writer, spec, StrRef(value), written);
         }
 
-        [[nodiscard]] inline auto print_arg(io::Writer writer,
-                                            FormatSpec const& spec,
-                                            std::string const& value,
-                                            int* written) noexcept -> bool {
+        [[nodiscard]] inline auto
+        print_arg(io::Writer writer, FormatSpec const& spec, std::string const& value, int* written)
+            -> bool {
             return print_string_arg(writer, spec, StrRef(value), written);
         }
 
-        [[nodiscard]] inline auto print_arg(io::Writer writer,
-                                            FormatSpec const& spec,
-                                            char const* value,
-                                            int* written) noexcept -> bool {
+        [[nodiscard]] inline auto
+        print_arg(io::Writer writer, FormatSpec const& spec, char const* value, int* written)
+            -> bool {
             if (spec.conversion == 's' || spec.conversion == 'v') {
                 return print_string_arg(
                     writer, spec, value != nullptr ? StrRef(value) : StrRef("(null)"), written);
@@ -168,16 +158,14 @@ namespace fmt {
         }
 
         [[nodiscard]] inline auto
-        print_arg(io::Writer writer, FormatSpec const& spec, char* value, int* written) noexcept
-            -> bool {
+        print_arg(io::Writer writer, FormatSpec const& spec, char* value, int* written) -> bool {
             return print_arg(writer, spec, static_cast<char const*>(value), written);
         }
 
         template <size_t N>
-        [[nodiscard]] auto print_arg(io::Writer writer,
-                                     FormatSpec const& spec,
-                                     char const (&value)[N],
-                                     int* written) noexcept -> bool {
+        [[nodiscard]] auto
+        print_arg(io::Writer writer, FormatSpec const& spec, char const (&value)[N], int* written)
+            -> bool {
             if (spec.conversion == 's' || spec.conversion == 'v') {
                 return print_string_arg(writer, spec, StrRef(value), written);
             }
@@ -194,7 +182,7 @@ namespace fmt {
         [[nodiscard]] auto print_arg(io::Writer writer,
                                      FormatSpec const& spec,
                                      char8_t const (&value)[N],
-                                     int* written) noexcept -> bool {
+                                     int* written) -> bool {
             if (spec.conversion == 's' || spec.conversion == 'v') {
                 return print_string_arg(writer, spec, StrRef(value), written);
             }
@@ -203,8 +191,7 @@ namespace fmt {
         }
 
         [[nodiscard]] inline auto
-        print_arg(io::Writer writer, FormatSpec const& spec, std::nullptr_t, int* written) noexcept
-            -> bool {
+        print_arg(io::Writer writer, FormatSpec const& spec, std::nullptr_t, int* written) -> bool {
             if (spec.conversion == 's' || spec.conversion == 'v') {
                 return print_string_arg(writer, spec, StrRef("(null)"), written);
             }
@@ -217,8 +204,7 @@ namespace fmt {
         }
 
         [[nodiscard]] inline auto
-        print_arg(io::Writer writer, FormatSpec const& spec, bool value, int* written) noexcept
-            -> bool {
+        print_arg(io::Writer writer, FormatSpec const& spec, bool value, int* written) -> bool {
             if (spec.conversion == 't' || spec.conversion == 'v') {
                 return print_bool_arg(writer, spec, value, written);
             }
@@ -227,10 +213,9 @@ namespace fmt {
         }
 
         template <typename Arg>
-        [[nodiscard]] auto print_integral_arg(io::Writer writer,
-                                              FormatSpec const& spec,
-                                              Arg const& arg,
-                                              int* written) noexcept -> bool {
+        [[nodiscard]] auto
+        print_integral_arg(io::Writer writer, FormatSpec const& spec, Arg const& arg, int* written)
+            -> bool {
             using Value = std::remove_cvref_t<Arg>;
 
             if (spec.conversion == 'c') {
@@ -250,10 +235,9 @@ namespace fmt {
         }
 
         template <typename Pointer>
-        [[nodiscard]] auto print_pointer_arg(io::Writer writer,
-                                             FormatSpec const& spec,
-                                             Pointer value,
-                                             int* written) noexcept -> bool {
+        [[nodiscard]] auto
+        print_pointer_arg(io::Writer writer, FormatSpec const& spec, Pointer value, int* written)
+            -> bool {
             if constexpr (std::is_object_v<std::remove_pointer_t<Pointer>>) {
                 if (spec.conversion == 'p' || spec.conversion == 'v') {
                     return print_pointer_value_arg(
@@ -266,8 +250,7 @@ namespace fmt {
 
         template <typename Arg>
         [[nodiscard]] auto
-        print_arg(io::Writer writer, FormatSpec const& spec, Arg const& arg, int* written) noexcept
-            -> bool {
+        print_arg(io::Writer writer, FormatSpec const& spec, Arg const& arg, int* written) -> bool {
             using Value = std::remove_cvref_t<Arg>;
 
             if constexpr (std::is_pointer_v<Value>) {
@@ -281,21 +264,18 @@ namespace fmt {
             }
         }
 
-        [[nodiscard]] inline auto
-        print_format_args(io::Writer writer, StrRef format, int* written) noexcept -> bool {
+        [[nodiscard]] inline auto print_format_args(io::Writer writer, StrRef format, int* written)
+            -> bool {
             return print_format_without_args(writer, format, written);
         }
 
         template <typename Arg, typename... Rest>
-        [[nodiscard]] auto print_format_args(io::Writer writer,
-                                             StrRef format,
-                                             int* written,
-                                             Arg const& arg,
-                                             Rest const&... rest) noexcept -> bool;
+        [[nodiscard]] auto print_format_args(
+            io::Writer writer, StrRef format, int* written, Arg const& arg, Rest const&... rest)
+            -> bool;
 
         [[nodiscard]] inline auto
-        print_format_arg_after_fields(io::Writer, StrRef, int*, FormatSpec const&) noexcept
-            -> bool {
+        print_format_arg_after_fields(io::Writer, StrRef, int*, FormatSpec const&) -> bool {
             return false;
         }
 
@@ -305,7 +285,7 @@ namespace fmt {
                                                          int* written,
                                                          FormatSpec const& spec,
                                                          Arg const& arg,
-                                                         Rest const&... rest) noexcept -> bool {
+                                                         Rest const&... rest) -> bool {
             if (!print_arg(writer, spec, arg, written)) {
                 return false;
             }
@@ -314,8 +294,7 @@ namespace fmt {
         }
 
         [[nodiscard]] inline auto
-        print_format_arg_after_precision(io::Writer, StrRef, int*, FormatSpec const&) noexcept
-            -> bool {
+        print_format_arg_after_precision(io::Writer, StrRef, int*, FormatSpec const&) -> bool {
             return false;
         }
 
@@ -325,7 +304,7 @@ namespace fmt {
                                                             int* written,
                                                             FormatSpec spec,
                                                             Arg const& arg,
-                                                            Rest const&... rest) noexcept -> bool {
+                                                            Rest const&... rest) -> bool {
             if (spec.uses_dynamic_precision) {
                 if (!resolve_dynamic_precision(&spec, arg)) {
                     return false;
@@ -340,7 +319,7 @@ namespace fmt {
         }
 
         [[nodiscard]] inline auto
-        print_format_arg_after_width(io::Writer, StrRef, int*, FormatSpec const&) noexcept -> bool {
+        print_format_arg_after_width(io::Writer, StrRef, int*, FormatSpec const&) -> bool {
             return false;
         }
 
@@ -350,7 +329,7 @@ namespace fmt {
                                                         int* written,
                                                         FormatSpec spec,
                                                         Arg const& arg,
-                                                        Rest const&... rest) noexcept -> bool {
+                                                        Rest const&... rest) -> bool {
             if (spec.uses_dynamic_width) {
                 if (!resolve_dynamic_width(&spec, arg)) {
                     return false;
@@ -365,11 +344,9 @@ namespace fmt {
         }
 
         template <typename Arg, typename... Rest>
-        [[nodiscard]] auto print_format_args(io::Writer writer,
-                                             StrRef format,
-                                             int* written,
-                                             Arg const& arg,
-                                             Rest const&... rest) noexcept -> bool {
+        [[nodiscard]] auto print_format_args(
+            io::Writer writer, StrRef format, int* written, Arg const& arg, Rest const&... rest)
+            -> bool {
             size_t offset = 0u;
 
             while (offset < format.size()) {
@@ -411,12 +388,12 @@ namespace fmt {
 
     } // namespace detail
 
-    auto print(std::FILE* stream, StrRef text) noexcept -> int;
-    auto print(StrRef text) noexcept -> int;
-    auto eprint(StrRef text) noexcept -> int;
+    auto print(std::FILE* stream, StrRef text) -> int;
+    auto print(StrRef text) -> int;
+    auto eprint(StrRef text) -> int;
 
     template <typename... Args>
-    auto wprintf(io::Writer writer, StrRef format_text, Args const&... args) noexcept -> int {
+    auto wprintf(io::Writer writer, StrRef format_text, Args const&... args) -> int {
         int written = 0;
         if (!detail::print_format_args(writer, format_text, &written, args...)) {
             return -1;
@@ -426,14 +403,13 @@ namespace fmt {
     }
 
     template <typename... Args>
-    auto format(StringBuffer* buffer, StrRef format_text, Args const&... args) noexcept -> int {
+    auto format(StringBuffer* buffer, StrRef format_text, Args const&... args) -> int {
         return fmt::wprintf(io::string_buffer_writer(buffer), format_text, args...);
     }
 
     template <typename... Args>
-    [[nodiscard]] auto aprintf(MemoryResource* resource,
-                               StrRef format_text,
-                               Args const&... args) noexcept -> StringBuffer {
+    [[nodiscard]] auto aprintf(MemoryResource* resource, StrRef format_text, Args const&... args)
+        -> StringBuffer {
         StringBuffer buffer;
         if (!buffer.init(0u, resource)) {
             return buffer;
@@ -448,12 +424,15 @@ namespace fmt {
 
     template <typename... Args>
     [[nodiscard]] auto
-    bprintf(char* backing, size_t capacity, StrRef format_text, Args const&... args) noexcept
-        -> StrRef {
-        StringBuffer buffer;
-        if (!buffer.init_with_backing(backing, capacity)) {
+    bprintf(char* backing, size_t capacity, StrRef format_text, Args const&... args) -> StrRef {
+        ASSERT(backing != nullptr);
+        ASSERT(capacity > 0u);
+        if (backing == nullptr || capacity == 0u) {
             return {};
         }
+
+        StringBuffer buffer;
+        buffer.init_with_backing(backing, capacity);
 
         int const ignored_result = fmt::format(&buffer, format_text, args...);
         (void)ignored_result;
@@ -461,23 +440,21 @@ namespace fmt {
     }
 
     template <typename... Args>
-    [[nodiscard]] auto tprintf(StrRef format_text, Args const&... args) noexcept -> StrRef {
+    [[nodiscard]] auto tprintf(StrRef format_text, Args const&... args) -> StrRef {
         StringBuffer buffer = fmt::aprintf(thread_temp_resource(), format_text, args...);
         return buffer.str();
     }
 
     template <typename... Args>
-    auto fprintf(std::FILE* stream, StrRef format_text, Args const&... args) noexcept -> int {
+    auto fprintf(std::FILE* stream, StrRef format_text, Args const&... args) -> int {
         return fmt::wprintf(io::file_writer(stream), format_text, args...);
     }
 
-    template <typename... Args>
-    auto printf(StrRef format_text, Args const&... args) noexcept -> int {
+    template <typename... Args> auto printf(StrRef format_text, Args const&... args) -> int {
         return fmt::fprintf(stdout, format_text, args...);
     }
 
-    template <typename... Args>
-    auto eprintf(StrRef format_text, Args const&... args) noexcept -> int {
+    template <typename... Args> auto eprintf(StrRef format_text, Args const&... args) -> int {
         return fmt::fprintf(stderr, format_text, args...);
     }
 

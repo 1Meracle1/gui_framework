@@ -5,7 +5,7 @@
 
 namespace {
 
-    [[nodiscard]] auto add_count(size_t* out_count, size_t count) noexcept -> bool {
+    [[nodiscard]] auto add_count(size_t* out_count, size_t count)  -> bool {
         if (out_count == nullptr) {
             return true;
         }
@@ -21,7 +21,7 @@ namespace {
     [[nodiscard]] auto file_stream_proc(void* stream_data,
                                         io::StreamMode mode,
                                         StrRef bytes,
-                                        size_t* out_count) noexcept -> io::Error {
+                                        size_t* out_count)  -> io::Error {
         std::FILE* const stream = static_cast<std::FILE*>(stream_data);
         if (stream == nullptr) {
             return io::Error::UNKNOWN;
@@ -57,7 +57,7 @@ namespace {
     [[nodiscard]] auto string_buffer_stream_proc(void* stream_data,
                                                  io::StreamMode mode,
                                                  StrRef bytes,
-                                                 size_t* out_count) noexcept -> io::Error {
+                                                 size_t* out_count)  -> io::Error {
         StringBuffer* const buffer = static_cast<StringBuffer*>(stream_data);
         if (buffer == nullptr) {
             return io::Error::UNKNOWN;
@@ -84,7 +84,7 @@ namespace {
                 return io::Error::NONE;
             }
 
-            return buffer->fixed_capacity() ? io::Error::BUFFER_FULL : io::Error::SHORT_WRITE;
+            return io::Error::BUFFER_FULL;
         }
         default:
             return io::Error::UNSUPPORTED;
@@ -95,7 +95,7 @@ namespace {
 
 namespace io {
 
-    [[nodiscard]] auto query(Stream stream) noexcept -> StreamModeSet {
+    [[nodiscard]] auto query(Stream stream)  -> StreamModeSet {
         if (stream.procedure == nullptr) {
             return 0u;
         }
@@ -108,7 +108,7 @@ namespace io {
         return static_cast<StreamModeSet>(mode_bits);
     }
 
-    [[nodiscard]] auto to_writer(Stream stream, Writer* out_writer) noexcept -> bool {
+    [[nodiscard]] auto to_writer(Stream stream, Writer* out_writer)  -> bool {
         if (out_writer == nullptr || !has_stream_mode(query(stream), StreamMode::WRITE)) {
             return false;
         }
@@ -117,7 +117,7 @@ namespace io {
         return true;
     }
 
-    [[nodiscard]] auto to_flusher(Stream stream, Flusher* out_flusher) noexcept -> bool {
+    [[nodiscard]] auto to_flusher(Stream stream, Flusher* out_flusher)  -> bool {
         if (out_flusher == nullptr || !has_stream_mode(query(stream), StreamMode::FLUSH)) {
             return false;
         }
@@ -126,7 +126,7 @@ namespace io {
         return true;
     }
 
-    [[nodiscard]] auto write(Writer writer, StrRef bytes, size_t* out_count) noexcept -> Error {
+    [[nodiscard]] auto write(Writer writer, StrRef bytes, size_t* out_count)  -> Error {
         if (writer.procedure == nullptr) {
             return Error::UNSUPPORTED;
         }
@@ -134,7 +134,7 @@ namespace io {
         return writer.procedure(writer.data, StreamMode::WRITE, bytes, out_count);
     }
 
-    [[nodiscard]] auto write_full(Writer writer, StrRef bytes, size_t* out_count) noexcept
+    [[nodiscard]] auto write_full(Writer writer, StrRef bytes, size_t* out_count) 
         -> Error {
         size_t written = 0u;
         Error const error = write(writer, bytes, &written);
@@ -149,12 +149,12 @@ namespace io {
         return written == bytes.size() ? Error::NONE : Error::SHORT_WRITE;
     }
 
-    [[nodiscard]] auto write_byte(Writer writer, char value, size_t* out_count) noexcept -> Error {
+    [[nodiscard]] auto write_byte(Writer writer, char value, size_t* out_count)  -> Error {
         return write_full(writer, StrRef(&value, 1u), out_count);
     }
 
     [[nodiscard]] auto
-    write_fill(Writer writer, char value, size_t count, size_t* out_count) noexcept -> Error {
+    write_fill(Writer writer, char value, size_t count, size_t* out_count)  -> Error {
         char buffer[64] = {};
         std::memset(buffer, static_cast<int>(static_cast<unsigned char>(value)), sizeof(buffer));
 
@@ -172,7 +172,7 @@ namespace io {
         return Error::NONE;
     }
 
-    [[nodiscard]] auto flush(Flusher flusher) noexcept -> Error {
+    [[nodiscard]] auto flush(Flusher flusher)  -> Error {
         if (flusher.procedure == nullptr) {
             return Error::UNSUPPORTED;
         }
@@ -180,11 +180,11 @@ namespace io {
         return flusher.procedure(flusher.data, StreamMode::FLUSH, {}, nullptr);
     }
 
-    [[nodiscard]] auto file_writer(std::FILE* stream) noexcept -> Writer {
+    [[nodiscard]] auto file_writer(std::FILE* stream)  -> Writer {
         return Writer{file_stream_proc, stream};
     }
 
-    [[nodiscard]] auto string_buffer_writer(StringBuffer* buffer) noexcept -> Writer {
+    [[nodiscard]] auto string_buffer_writer(StringBuffer* buffer)  -> Writer {
         return Writer{string_buffer_stream_proc, buffer};
     }
 

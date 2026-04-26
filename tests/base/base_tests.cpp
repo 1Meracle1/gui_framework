@@ -354,12 +354,10 @@ namespace {
     TEST_CASE(string_buffer_writes_and_views_dynamic_text) {
         StringBuffer buffer;
 
-        TEST_EXPECT(context, !buffer.initialized());
         TEST_EXPECT(context, buffer.write_string("gui") == 3u);
         TEST_EXPECT(context, buffer.write_byte('_') == 1u);
         TEST_EXPECT(context, buffer.write_fill('x', 3u) == 3u);
 
-        TEST_EXPECT(context, buffer.initialized());
         TEST_EXPECT(context, buffer.str() == "gui_xxx");
         TEST_EXPECT(context, buffer.size() == 7u);
         TEST_EXPECT(context, buffer.capacity() >= buffer.size());
@@ -371,7 +369,7 @@ namespace {
         TEST_EXPECT(context, StrRef(c_text) == "gui_xxx");
         TEST_EXPECT(context, buffer.pop_byte() == 'x');
 
-        buffer.truncate(4u);
+        TEST_EXPECT(context, buffer.resize(4u));
 
         TEST_EXPECT(context, buffer.str() == "gui_");
 
@@ -386,12 +384,12 @@ namespace {
 
         TEST_EXPECT(context, buffer.init(2u));
         TEST_EXPECT(context, buffer.capacity() == 2u);
-        TEST_EXPECT(context, buffer.append("ab"));
+        TEST_EXPECT(context, buffer.write_string("ab") == 2u);
         TEST_EXPECT(context, buffer.size() == buffer.capacity());
         TEST_EXPECT(context, buffer.c_str() != nullptr);
         TEST_EXPECT(context, StrRef(buffer.c_str()) == "ab");
 
-        TEST_EXPECT(context, buffer.append('c'));
+        TEST_EXPECT(context, buffer.write_byte('c') == 1u);
         TEST_EXPECT(context, buffer.capacity() >= 3u);
         TEST_EXPECT(context, buffer.str() == "abc");
         TEST_EXPECT(context, buffer.resize(6u, '.'));
@@ -404,13 +402,11 @@ namespace {
         char backing[5] = {};
         StringBuffer buffer;
 
-        TEST_EXPECT(context, buffer.init_with_backing(backing, sizeof(backing)));
-        TEST_EXPECT(context, buffer.fixed_capacity());
+        buffer.init_with_backing(backing, sizeof(backing));
         TEST_EXPECT(context, buffer.capacity() == sizeof(backing));
         TEST_EXPECT(context, buffer.write_string("abcdef") == sizeof(backing));
         TEST_EXPECT(context, buffer.str() == "abcde");
         TEST_EXPECT(context, buffer.c_str() == nullptr);
-        TEST_EXPECT(context, !buffer.reserve(sizeof(backing) + 1u));
         TEST_EXPECT(context, buffer.write_byte('!') == 0u);
         TEST_EXPECT(context, buffer.pop_byte() == 'e');
         TEST_EXPECT(context, buffer.c_str() != nullptr);
@@ -432,14 +428,36 @@ namespace {
 
         TEST_EXPECT(context, moved.str() == "abcdabcd");
         TEST_EXPECT(context, buffer.empty());
-        TEST_EXPECT(context, !buffer.initialized());
+        TEST_EXPECT(context, buffer.data() == nullptr);
+    }
+
+    TEST_CASE(string_buffer_init_replaces_existing_storage) {
+        StringBuffer buffer;
+
+        TEST_EXPECT(context, buffer.init(4u));
+        TEST_EXPECT(context, buffer.write_string("dynamic") == 7u);
+        TEST_EXPECT(context, buffer.capacity() >= 7u);
+
+        char backing[4] = {};
+        buffer.init_with_backing(backing, sizeof(backing));
+
+        TEST_EXPECT(context, buffer.empty());
+        TEST_EXPECT(context, buffer.capacity() == sizeof(backing));
+        TEST_EXPECT(context, buffer.write_string("fixed") == sizeof(backing));
+        TEST_EXPECT(context, buffer.str() == "fixe");
+
+        TEST_EXPECT(context, buffer.init(2u));
+        TEST_EXPECT(context, buffer.empty());
+        TEST_EXPECT(context, buffer.capacity() == 2u);
+        TEST_EXPECT(context, buffer.write_string("abc") == 3u);
+        TEST_EXPECT(context, buffer.str() == "abc");
     }
 
     TEST_CASE(io_writer_wraps_string_buffer_streams) {
         char backing[8] = {};
         StringBuffer buffer;
 
-        TEST_EXPECT(context, buffer.init_with_backing(backing, sizeof(backing)));
+        buffer.init_with_backing(backing, sizeof(backing));
 
         io::Writer const writer = io::string_buffer_writer(&buffer);
         TEST_EXPECT(context, io::has_stream_mode(io::query(writer), io::StreamMode::WRITE));

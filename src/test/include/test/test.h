@@ -17,7 +17,7 @@ namespace test {
     };
 
     struct Registration {
-        Registration(char const* name, TestFn fn) noexcept;
+        Registration(char const* name, TestFn fn) ;
 
         TestCase test_case;
         Registration* next;

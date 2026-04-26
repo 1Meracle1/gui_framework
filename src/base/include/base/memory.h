@@ -24,7 +24,7 @@ struct ArenaMarker {
 
 class Arena final : public std::pmr::memory_resource {
   public:
-    Arena() noexcept = default;
+    Arena() = default;
     ~Arena() override;
 
     Arena(Arena&&) = delete;
@@ -32,33 +32,31 @@ class Arena final : public std::pmr::memory_resource {
     auto operator=(Arena&&) -> Arena& = delete;
     auto operator=(Arena const&) -> Arena& = delete;
 
-    [[nodiscard]] auto init(ArenaOptions const& options = {}) noexcept -> bool;
-    auto destroy() noexcept -> void;
+    [[nodiscard]] auto init(ArenaOptions const& options = {}) -> bool;
+    auto destroy() -> void;
 
     [[nodiscard]] auto allocate_bytes(size_t size, size_t alignment = alignof(void*)) -> void*;
-    [[nodiscard]] auto try_allocate_bytes(size_t size, size_t alignment = alignof(void*)) noexcept
-        -> void*;
+    [[nodiscard]] auto try_allocate_bytes(size_t size, size_t alignment = alignof(void*)) -> void*;
 
-    auto reset() noexcept -> void;
-    auto reset_to(ArenaMarker marker) noexcept -> void;
-    auto trim_committed_pages() noexcept -> bool;
+    auto reset() -> void;
+    auto reset_to(ArenaMarker marker) -> void;
+    auto trim_committed_pages() -> bool;
 
-    [[nodiscard]] auto marker() const noexcept -> ArenaMarker;
-    [[nodiscard]] auto initialized() const noexcept -> bool;
-    [[nodiscard]] auto data() noexcept -> void*;
-    [[nodiscard]] auto data() const noexcept -> void const*;
-    [[nodiscard]] auto used_size() const noexcept -> size_t;
-    [[nodiscard]] auto committed_size() const noexcept -> size_t;
-    [[nodiscard]] auto reserved_size() const noexcept -> size_t;
-    [[nodiscard]] auto remaining_size() const noexcept -> size_t;
-    [[nodiscard]] auto resource() noexcept -> std::pmr::memory_resource*;
+    [[nodiscard]] auto marker() const -> ArenaMarker;
+    [[nodiscard]] auto initialized() const -> bool;
+    [[nodiscard]] auto data() -> void*;
+    [[nodiscard]] auto data() const -> void const*;
+    [[nodiscard]] auto used_size() const -> size_t;
+    [[nodiscard]] auto committed_size() const -> size_t;
+    [[nodiscard]] auto reserved_size() const -> size_t;
+    [[nodiscard]] auto remaining_size() const -> size_t;
+    [[nodiscard]] auto resource() -> std::pmr::memory_resource*;
 
   private:
     auto do_allocate(size_t bytes, size_t alignment) -> void* override;
     auto do_deallocate(void* p, size_t bytes, size_t alignment) -> void override;
-    [[nodiscard]] auto do_is_equal(std::pmr::memory_resource const& other) const noexcept
-        -> bool override;
-    [[nodiscard]] auto commit_to(size_t needed_size) noexcept -> bool;
+    [[nodiscard]] auto do_is_equal(std::pmr::memory_resource const& other) const noexcept -> bool override;
+    [[nodiscard]] auto commit_to(size_t needed_size) -> bool;
 
   private:
     void* m_memory = nullptr;
@@ -71,19 +69,19 @@ class Arena final : public std::pmr::memory_resource {
 
 class ArenaTemp {
   public:
-    explicit ArenaTemp(Arena& arena) noexcept;
+    explicit ArenaTemp(Arena& arena);
     ~ArenaTemp();
 
-    ArenaTemp(ArenaTemp&& other) noexcept;
+    ArenaTemp(ArenaTemp&& other);
     ArenaTemp(ArenaTemp const&) = delete;
-    auto operator=(ArenaTemp&& other) noexcept -> ArenaTemp&;
+    auto operator=(ArenaTemp&& other) -> ArenaTemp&;
     auto operator=(ArenaTemp const&) -> ArenaTemp& = delete;
 
-    auto end() noexcept -> void;
-    auto keep() noexcept -> void;
+    auto end() -> void;
+    auto keep() -> void;
 
-    [[nodiscard]] auto arena() noexcept -> Arena*;
-    [[nodiscard]] auto arena() const noexcept -> Arena const*;
+    [[nodiscard]] auto arena() -> Arena*;
+    [[nodiscard]] auto arena() const -> Arena const*;
 
   private:
     Arena* m_arena = nullptr;
@@ -98,10 +96,10 @@ struct ThreadTempArenaOptions {
 // Call from a thread entry point to choose non-default temporary arena sizes.
 // First use on a thread initializes with defaults if this was not called.
 [[nodiscard]] auto init_thread_temp_arenas(ThreadTempArenaOptions const& options = {}) -> bool;
-auto shutdown_thread_temp_arenas() noexcept -> void;
+auto shutdown_thread_temp_arenas() -> void;
 
 // Call once per frame on each thread that uses thread-local temporary arenas.
-auto reset_thread_temp_arenas() noexcept -> void;
+auto reset_thread_temp_arenas() -> void;
 
 [[nodiscard]] auto thread_temp_arena(uint32_t index = 0u) -> Arena&;
 [[nodiscard]] auto thread_temp_resource(uint32_t index = 0u) -> std::pmr::memory_resource*;

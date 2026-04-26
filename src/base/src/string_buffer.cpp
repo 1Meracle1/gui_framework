@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <base/assert.h>
 #include <base/string_buffer.h>
 #include <cstdint>
 #include <cstring>
@@ -6,22 +7,18 @@
 #include <memory_resource>
 
 namespace {
-
     inline constexpr size_t MIN_GROWN_STRING_BUFFER_CAPACITY = 64u;
 
-    [[nodiscard]] auto add_overflows(size_t lhs, size_t rhs, size_t* out) noexcept -> bool {
+    [[nodiscard]] auto add_overflows(size_t lhs, size_t rhs, size_t* out) -> bool {
         if (lhs > std::numeric_limits<size_t>::max() - rhs) {
             return true;
         }
-
         *out = lhs + rhs;
         return false;
     }
 
-    [[nodiscard]] auto grown_capacity(size_t current_capacity, size_t needed_size) noexcept
-        -> size_t {
+    [[nodiscard]] auto grown_capacity(size_t current_capacity, size_t needed_size) -> size_t {
         size_t capacity = std::max(current_capacity, MIN_GROWN_STRING_BUFFER_CAPACITY);
-
         while (capacity < needed_size) {
             if (capacity > std::numeric_limits<size_t>::max() / 2u) {
                 return needed_size;
@@ -29,19 +26,25 @@ namespace {
 
             capacity *= 2u;
         }
-
         return capacity;
     }
 
-    [[nodiscard]] auto default_memory_resource() noexcept -> MemoryResource* {
+    [[nodiscard]] auto default_memory_resource() -> MemoryResource* {
         return std::pmr::get_default_resource();
+    }
+
+    [[nodiscard]] auto dynamic_allocation_size(size_t capacity) -> size_t {
+        size_t allocation_size = 0u;
+        bool const overflowed = add_overflows(capacity, 1u, &allocation_size);
+        ASSERT(!overflowed);
+        return allocation_size;
     }
 
     [[nodiscard]] auto pointer_in_range(void const* pointer,
                                         void const* begin,
                                         size_t size,
                                         size_t width,
-                                        size_t* out_offset) noexcept -> bool {
+                                        size_t* out_offset) -> bool {
         if (pointer == nullptr || begin == nullptr || width > size) {
             return false;
         }
@@ -62,11 +65,11 @@ StringBuffer::~StringBuffer() {
     destroy();
 }
 
-StringBuffer::StringBuffer(StringBuffer&& other) noexcept {
+StringBuffer::StringBuffer(StringBuffer&& other) {
     move_from(other);
 }
 
-auto StringBuffer::operator=(StringBuffer&& other) noexcept -> StringBuffer& {
+auto StringBuffer::operator=(StringBuffer&& other) -> StringBuffer& {
     if (this != &other) {
         destroy();
         move_from(other);
@@ -75,14 +78,10 @@ auto StringBuffer::operator=(StringBuffer&& other) noexcept -> StringBuffer& {
     return *this;
 }
 
-auto StringBuffer::init(size_t capacity, MemoryResource* resource) noexcept -> bool {
-    if (m_initialized) {
-        return false;
-    }
+auto StringBuffer::init(size_t capacity, MemoryResource* resource) -> bool {
+    destroy();
 
     m_resource = resource != nullptr ? resource : default_memory_resource();
-    m_initialized = true;
-    m_fixed_capacity = false;
 
     if (capacity == 0u) {
         return true;
@@ -96,58 +95,53 @@ auto StringBuffer::init(size_t capacity, MemoryResource* resource) noexcept -> b
 
     m_data = static_cast<char*>(m_resource->allocate(allocation_size, alignof(char)));
     m_capacity = capacity;
-    m_allocation_size = allocation_size;
     write_terminator();
     return true;
 }
 
-auto StringBuffer::init_with_backing(char* backing, size_t capacity) noexcept -> bool {
-    if (m_initialized || (backing == nullptr && capacity != 0u)) {
-        return false;
-    }
+auto StringBuffer::init_with_backing(char* backing, size_t capacity) -> void {
+    ASSERT(backing != nullptr);
+    ASSERT(capacity > 0u);
+
+    destroy();
 
     m_data = backing;
-    m_size = 0u;
     m_capacity = capacity;
-    m_allocation_size = capacity;
-    m_resource = nullptr;
-    m_initialized = true;
-    m_fixed_capacity = true;
     write_terminator();
-    return true;
 }
 
-auto StringBuffer::destroy() noexcept -> void {
-    if (m_data != nullptr && !m_fixed_capacity && m_resource != nullptr) {
-        m_resource->deallocate(m_data, m_allocation_size, alignof(char));
+auto StringBuffer::destroy() -> void {
+    if (m_data != nullptr && m_resource != nullptr) {
+        m_resource->deallocate(m_data, dynamic_allocation_size(m_capacity), alignof(char));
     }
 
     m_data = nullptr;
     m_size = 0u;
     m_capacity = 0u;
-    m_allocation_size = 0u;
     m_resource = nullptr;
-    m_initialized = false;
-    m_fixed_capacity = false;
 }
 
-auto StringBuffer::reset() noexcept -> void {
+auto StringBuffer::reset() -> void {
     m_size = 0u;
     write_terminator();
 }
 
-auto StringBuffer::reserve(size_t capacity) noexcept -> bool {
+auto StringBuffer::reserve(size_t capacity) -> void {
     if (capacity <= m_capacity) {
-        return true;
+        return;
     }
-
-    if (m_fixed_capacity || !ensure_dynamic_resource()) {
-        return false;
+    if (fixed_capacity()) {
+        return;
     }
 
     size_t allocation_size = 0u;
-    if (add_overflows(capacity, 1u, &allocation_size)) {
-        return false;
+    bool const overflowed = add_overflows(capacity, 1u, &allocation_size);
+    if (overflowed) {
+        return;
+    }
+
+    if (m_resource == nullptr) {
+        m_resource = default_memory_resource();
     }
 
     char* const new_data = static_cast<char*>(m_resource->allocate(allocation_size, alignof(char)));
@@ -157,57 +151,42 @@ auto StringBuffer::reserve(size_t capacity) noexcept -> bool {
     }
 
     if (m_data != nullptr) {
-        m_resource->deallocate(m_data, m_allocation_size, alignof(char));
+        m_resource->deallocate(m_data, dynamic_allocation_size(m_capacity), alignof(char));
     }
 
     m_data = new_data;
     m_capacity = capacity;
-    m_allocation_size = allocation_size;
     write_terminator();
-    return true;
 }
 
-auto StringBuffer::resize(size_t size, char fill) noexcept -> bool {
-    if (size <= m_size) {
-        m_size = size;
-        write_terminator();
-        return true;
+auto StringBuffer::resize(size_t size, char fill) -> bool {
+    if (size > m_capacity) {
+        if (fixed_capacity()) {
+            return false;
+        }
+
+        reserve(grown_capacity(m_capacity, size));
     }
 
-    if (!grow_to_fit(size)) {
+    if (size > m_capacity) {
         return false;
     }
 
-    std::memset(m_data + m_size, static_cast<int>(static_cast<unsigned char>(fill)), size - m_size);
+    if (size > m_size) {
+        std::memset(m_data + m_size, static_cast<int>(fill), size - m_size);
+    }
+
     m_size = size;
     write_terminator();
     return true;
 }
 
-auto StringBuffer::truncate(size_t size) noexcept -> void {
-    m_size = std::min(size, m_size);
-    write_terminator();
+auto StringBuffer::write_byte(char value) -> size_t {
+    return write_bytes(&value, 1u);
 }
 
-auto StringBuffer::write_byte(char value) noexcept -> size_t {
-    size_t needed_size = 0u;
-    if (add_overflows(m_size, 1u, &needed_size) || !grow_to_fit(needed_size)) {
-        return 0u;
-    }
-
-    m_data[m_size] = value;
-    m_size = needed_size;
-    write_terminator();
-    return 1u;
-}
-
-auto StringBuffer::write_bytes(void const* data, size_t size) noexcept -> size_t {
-    if (data == nullptr || size == 0u) {
-        return 0u;
-    }
-
-    size_t needed_size = 0u;
-    if (add_overflows(m_size, size, &needed_size)) {
+auto StringBuffer::write_bytes(void const* data, size_t size) -> size_t {
+    if (size == 0u || data == nullptr) {
         return 0u;
     }
 
@@ -215,16 +194,7 @@ auto StringBuffer::write_bytes(void const* data, size_t size) noexcept -> size_t
     bool const internal_source =
         pointer_in_range(data, m_data, m_size, size, &internal_source_offset);
 
-    size_t write_size = size;
-    if (needed_size > m_capacity) {
-        if (m_fixed_capacity) {
-            write_size = m_capacity - m_size;
-            needed_size = m_capacity;
-        } else if (!grow_to_fit(needed_size)) {
-            return 0u;
-        }
-    }
-
+    size_t const write_size = prepare_write(size);
     if (write_size == 0u) {
         return 0u;
     }
@@ -240,30 +210,16 @@ auto StringBuffer::write_bytes(void const* data, size_t size) noexcept -> size_t
     return write_size;
 }
 
-auto StringBuffer::write_string(StrRef text) noexcept -> size_t {
+auto StringBuffer::write_string(StrRef text) -> size_t {
     return write_bytes(text.data(), text.size());
 }
 
-auto StringBuffer::write_fill(char value, size_t count) noexcept -> size_t {
+auto StringBuffer::write_fill(char value, size_t count) -> size_t {
     if (count == 0u) {
         return 0u;
     }
 
-    size_t needed_size = 0u;
-    if (add_overflows(m_size, count, &needed_size)) {
-        return 0u;
-    }
-
-    size_t write_size = count;
-    if (needed_size > m_capacity) {
-        if (m_fixed_capacity) {
-            write_size = m_capacity - m_size;
-            needed_size = m_capacity;
-        } else if (!grow_to_fit(needed_size)) {
-            return 0u;
-        }
-    }
-
+    size_t const write_size = prepare_write(count);
     if (write_size == 0u) {
         return 0u;
     }
@@ -274,31 +230,20 @@ auto StringBuffer::write_fill(char value, size_t count) noexcept -> size_t {
     return write_size;
 }
 
-auto StringBuffer::append(char value) noexcept -> bool {
-    return write_byte(value) == 1u;
-}
-
-auto StringBuffer::append(StrRef text) noexcept -> bool {
-    return write_string(text) == text.size();
-}
-
-auto StringBuffer::pop_byte() noexcept -> char {
-    if (m_size == 0u) {
-        return '\0';
-    }
-
+auto StringBuffer::pop_byte() -> char {
+    ASSERT(m_size > 0u);
     m_size -= 1u;
     char const value = m_data[m_size];
     write_terminator();
     return value;
 }
 
-auto StringBuffer::c_str() noexcept -> char const* {
+auto StringBuffer::c_str() -> char const* {
     if (m_data == nullptr) {
         return "";
     }
 
-    if (m_allocation_size <= m_size) {
+    if (!has_terminator_space()) {
         return nullptr;
     }
 
@@ -306,97 +251,87 @@ auto StringBuffer::c_str() noexcept -> char const* {
     return m_data;
 }
 
-auto StringBuffer::str() const noexcept -> StrRef {
+auto StringBuffer::str() const -> StrRef {
     return StrRef(data(), m_size);
 }
 
-auto StringBuffer::view() const noexcept -> StrRef {
+StringBuffer::operator StrRef() const {
     return str();
 }
 
-StringBuffer::operator StrRef() const noexcept {
-    return str();
-}
-
-auto StringBuffer::data() noexcept -> char* {
+auto StringBuffer::data() -> char* {
     return m_data;
 }
 
-auto StringBuffer::data() const noexcept -> char const* {
+auto StringBuffer::data() const -> char const* {
     return m_data != nullptr ? m_data : "";
 }
 
-auto StringBuffer::size() const noexcept -> size_t {
+auto StringBuffer::size() const -> size_t {
     return m_size;
 }
 
-auto StringBuffer::capacity() const noexcept -> size_t {
+auto StringBuffer::capacity() const -> size_t {
     return m_capacity;
 }
 
-auto StringBuffer::space() const noexcept -> size_t {
+auto StringBuffer::space() const -> size_t {
     return m_capacity - m_size;
 }
 
-auto StringBuffer::empty() const noexcept -> bool {
+auto StringBuffer::empty() const -> bool {
     return m_size == 0u;
 }
 
-auto StringBuffer::initialized() const noexcept -> bool {
-    return m_initialized;
+auto StringBuffer::fixed_capacity() const -> bool {
+    return m_data != nullptr && m_resource == nullptr;
 }
 
-auto StringBuffer::fixed_capacity() const noexcept -> bool {
-    return m_fixed_capacity;
-}
-
-auto StringBuffer::resource() const noexcept -> MemoryResource* {
-    return m_resource;
-}
-
-auto StringBuffer::ensure_dynamic_resource() noexcept -> bool {
-    if (!m_initialized) {
-        m_resource = default_memory_resource();
-        m_initialized = true;
-        m_fixed_capacity = false;
-        return true;
-    }
-
-    return !m_fixed_capacity && m_resource != nullptr;
-}
-
-auto StringBuffer::grow_to_fit(size_t needed_size) noexcept -> bool {
-    if (needed_size <= m_capacity) {
-        return true;
-    }
-
-    if (m_fixed_capacity) {
+auto StringBuffer::has_terminator_space() const -> bool {
+    if (m_data == nullptr) {
         return false;
     }
 
-    return reserve(grown_capacity(m_capacity, needed_size));
+    if (fixed_capacity()) {
+        return m_size < m_capacity;
+    }
+
+    return m_size <= m_capacity;
 }
 
-auto StringBuffer::write_terminator() noexcept -> void {
-    if (m_data != nullptr && m_allocation_size > m_size) {
+auto StringBuffer::prepare_write(size_t size) -> size_t {
+    size_t needed_size = 0u;
+    if (add_overflows(m_size, size, &needed_size)) {
+        return 0u;
+    }
+
+    if (needed_size <= m_capacity) {
+        return size;
+    }
+
+    if (fixed_capacity()) {
+        ASSERT(m_size <= m_capacity);
+        return m_capacity - m_size;
+    }
+
+    reserve(grown_capacity(m_capacity, needed_size));
+    return needed_size <= m_capacity ? size : 0u;
+}
+
+auto StringBuffer::write_terminator() -> void {
+    if (has_terminator_space()) {
         m_data[m_size] = '\0';
     }
 }
 
-auto StringBuffer::move_from(StringBuffer& other) noexcept -> void {
+auto StringBuffer::move_from(StringBuffer& other) -> void {
     m_data = other.m_data;
     m_size = other.m_size;
     m_capacity = other.m_capacity;
-    m_allocation_size = other.m_allocation_size;
     m_resource = other.m_resource;
-    m_initialized = other.m_initialized;
-    m_fixed_capacity = other.m_fixed_capacity;
 
     other.m_data = nullptr;
     other.m_size = 0u;
     other.m_capacity = 0u;
-    other.m_allocation_size = 0u;
     other.m_resource = nullptr;
-    other.m_initialized = false;
-    other.m_fixed_capacity = false;
 }

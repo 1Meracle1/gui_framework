@@ -7,12 +7,11 @@
 
 namespace {
 
-    [[nodiscard]] auto is_power_of_two(size_t value) noexcept -> bool {
+    [[nodiscard]] auto is_power_of_two(size_t value) -> bool {
         return value != 0u && (value & (value - 1u)) == 0u;
     }
 
-    [[nodiscard]] auto align_forward_checked(size_t value, size_t alignment, size_t* out) noexcept
-        -> bool {
+    [[nodiscard]] auto align_forward_checked(size_t value, size_t alignment, size_t* out) -> bool {
         if (!is_power_of_two(alignment)) {
             return false;
         }
@@ -26,9 +25,8 @@ namespace {
         return true;
     }
 
-    [[nodiscard]] auto align_address_forward_checked(uintptr_t value,
-                                                     size_t alignment,
-                                                     uintptr_t* out) noexcept -> bool {
+    [[nodiscard]] auto
+    align_address_forward_checked(uintptr_t value, size_t alignment, uintptr_t* out) -> bool {
         if (!is_power_of_two(alignment)) {
             return false;
         }
@@ -42,7 +40,7 @@ namespace {
         return true;
     }
 
-    [[nodiscard]] auto byte_add(void* data, size_t offset) noexcept -> void* {
+    [[nodiscard]] auto byte_add(void* data, size_t offset) -> void* {
         return static_cast<void*>(static_cast<std::byte*>(data) + offset);
     }
 
@@ -65,7 +63,7 @@ namespace {
             return true;
         }
 
-        auto shutdown() noexcept -> void {
+        auto shutdown() -> void {
             for (uint32_t index = 0u; index < THREAD_TEMP_ARENA_COUNT; ++index) {
                 arenas[index].destroy();
             }
@@ -73,7 +71,7 @@ namespace {
             initialized = false;
         }
 
-        auto reset() noexcept -> void {
+        auto reset() -> void {
             if (!initialized) {
                 return;
             }
@@ -103,7 +101,7 @@ Arena::~Arena() {
     destroy();
 }
 
-auto Arena::init(ArenaOptions const& options) noexcept -> bool {
+auto Arena::init(ArenaOptions const& options) -> bool {
     if (m_memory != nullptr || options.reserve_size == 0u) {
         return false;
     }
@@ -138,7 +136,7 @@ auto Arena::init(ArenaOptions const& options) noexcept -> bool {
     return true;
 }
 
-auto Arena::destroy() noexcept -> void {
+auto Arena::destroy() -> void {
     if (m_memory != nullptr) {
         BASE_UNUSED(virtual_release(m_memory, m_reserved_size));
     }
@@ -160,7 +158,7 @@ auto Arena::allocate_bytes(size_t size, size_t alignment) -> void* {
     return result;
 }
 
-auto Arena::try_allocate_bytes(size_t size, size_t alignment) noexcept -> void* {
+auto Arena::try_allocate_bytes(size_t size, size_t alignment) -> void* {
     if (m_memory == nullptr || !is_power_of_two(alignment)) {
         return nullptr;
     }
@@ -192,11 +190,11 @@ auto Arena::try_allocate_bytes(size_t size, size_t alignment) noexcept -> void* 
     return std::bit_cast<void*>(aligned);
 }
 
-auto Arena::reset() noexcept -> void {
+auto Arena::reset() -> void {
     m_used_size = 0u;
 }
 
-auto Arena::reset_to(ArenaMarker marker) noexcept -> void {
+auto Arena::reset_to(ArenaMarker marker) -> void {
     ASSERT(marker.used_size <= m_used_size);
     ASSERT(marker.used_size <= m_reserved_size);
 
@@ -207,7 +205,7 @@ auto Arena::reset_to(ArenaMarker marker) noexcept -> void {
     m_used_size = marker.used_size;
 }
 
-auto Arena::trim_committed_pages() noexcept -> bool {
+auto Arena::trim_committed_pages() -> bool {
     if (m_memory == nullptr || m_committed_size <= m_initial_commit_size) {
         return true;
     }
@@ -236,39 +234,39 @@ auto Arena::trim_committed_pages() noexcept -> bool {
     return true;
 }
 
-auto Arena::marker() const noexcept -> ArenaMarker {
+auto Arena::marker() const -> ArenaMarker {
     return ArenaMarker{m_used_size};
 }
 
-auto Arena::initialized() const noexcept -> bool {
+auto Arena::initialized() const -> bool {
     return m_memory != nullptr;
 }
 
-auto Arena::data() noexcept -> void* {
+auto Arena::data() -> void* {
     return m_memory;
 }
 
-auto Arena::data() const noexcept -> void const* {
+auto Arena::data() const -> void const* {
     return m_memory;
 }
 
-auto Arena::used_size() const noexcept -> size_t {
+auto Arena::used_size() const -> size_t {
     return m_used_size;
 }
 
-auto Arena::committed_size() const noexcept -> size_t {
+auto Arena::committed_size() const -> size_t {
     return m_committed_size;
 }
 
-auto Arena::reserved_size() const noexcept -> size_t {
+auto Arena::reserved_size() const -> size_t {
     return m_reserved_size;
 }
 
-auto Arena::remaining_size() const noexcept -> size_t {
+auto Arena::remaining_size() const -> size_t {
     return m_reserved_size - m_used_size;
 }
 
-auto Arena::resource() noexcept -> std::pmr::memory_resource* {
+auto Arena::resource() -> std::pmr::memory_resource* {
     return this;
 }
 
@@ -286,7 +284,7 @@ auto Arena::do_is_equal(std::pmr::memory_resource const& other) const noexcept -
     return this == &other;
 }
 
-auto Arena::commit_to(size_t needed_size) noexcept -> bool {
+auto Arena::commit_to(size_t needed_size) -> bool {
     if (needed_size > m_reserved_size) {
         return false;
     }
@@ -313,19 +311,18 @@ auto Arena::commit_to(size_t needed_size) noexcept -> bool {
     return true;
 }
 
-ArenaTemp::ArenaTemp(Arena& arena) noexcept : m_arena(&arena), m_marker(arena.marker()) {}
+ArenaTemp::ArenaTemp(Arena& arena) : m_arena(&arena), m_marker(arena.marker()) {}
 
 ArenaTemp::~ArenaTemp() {
     end();
 }
 
-ArenaTemp::ArenaTemp(ArenaTemp&& other) noexcept
-    : m_arena(other.m_arena), m_marker(other.m_marker) {
+ArenaTemp::ArenaTemp(ArenaTemp&& other) : m_arena(other.m_arena), m_marker(other.m_marker) {
     other.m_arena = nullptr;
     other.m_marker = {};
 }
 
-auto ArenaTemp::operator=(ArenaTemp&& other) noexcept -> ArenaTemp& {
+auto ArenaTemp::operator=(ArenaTemp&& other) -> ArenaTemp& {
     if (this != &other) {
         end();
         m_arena = other.m_arena;
@@ -337,7 +334,7 @@ auto ArenaTemp::operator=(ArenaTemp&& other) noexcept -> ArenaTemp& {
     return *this;
 }
 
-auto ArenaTemp::end() noexcept -> void {
+auto ArenaTemp::end() -> void {
     if (m_arena != nullptr) {
         m_arena->reset_to(m_marker);
         m_arena = nullptr;
@@ -345,16 +342,16 @@ auto ArenaTemp::end() noexcept -> void {
     }
 }
 
-auto ArenaTemp::keep() noexcept -> void {
+auto ArenaTemp::keep() -> void {
     m_arena = nullptr;
     m_marker = {};
 }
 
-auto ArenaTemp::arena() noexcept -> Arena* {
+auto ArenaTemp::arena() -> Arena* {
     return m_arena;
 }
 
-auto ArenaTemp::arena() const noexcept -> Arena const* {
+auto ArenaTemp::arena() const -> Arena const* {
     return m_arena;
 }
 
@@ -362,11 +359,11 @@ auto init_thread_temp_arenas(ThreadTempArenaOptions const& options) -> bool {
     return thread_temp_state.init(options);
 }
 
-auto shutdown_thread_temp_arenas() noexcept -> void {
+auto shutdown_thread_temp_arenas() -> void {
     thread_temp_state.shutdown();
 }
 
-auto reset_thread_temp_arenas() noexcept -> void {
+auto reset_thread_temp_arenas() -> void {
     thread_temp_state.reset();
 }
 

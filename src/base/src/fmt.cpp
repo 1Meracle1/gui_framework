@@ -7,15 +7,15 @@
 
 namespace {
 
-    [[nodiscard]] auto is_print_flag(char value) noexcept -> bool {
+    [[nodiscard]] auto is_print_flag(char value)  -> bool {
         return value == '-' || value == '+' || value == ' ' || value == '#' || value == '0';
     }
 
-    [[nodiscard]] auto is_print_digit(char value) noexcept -> bool {
+    [[nodiscard]] auto is_print_digit(char value)  -> bool {
         return value >= '0' && value <= '9';
     }
 
-    [[nodiscard]] auto is_print_conversion(char value) noexcept -> bool {
+    [[nodiscard]] auto is_print_conversion(char value)  -> bool {
         switch (value) {
         case 'v':
         case 't':
@@ -43,21 +43,21 @@ namespace {
         }
     }
 
-    [[nodiscard]] auto is_decimal_conversion(char conversion) noexcept -> bool {
+    [[nodiscard]] auto is_decimal_conversion(char conversion)  -> bool {
         return conversion == 'd' || conversion == 'i';
     }
 
-    [[nodiscard]] auto is_unsigned_integer_conversion(char conversion) noexcept -> bool {
+    [[nodiscard]] auto is_unsigned_integer_conversion(char conversion)  -> bool {
         return conversion == 'u' || conversion == 'b' || conversion == 'o' || conversion == 'x' ||
                conversion == 'X';
     }
 
-    [[nodiscard]] auto is_floating_conversion(char conversion) noexcept -> bool {
+    [[nodiscard]] auto is_floating_conversion(char conversion)  -> bool {
         return conversion == 'f' || conversion == 'F' || conversion == 'e' || conversion == 'E' ||
                conversion == 'g' || conversion == 'G' || conversion == 'a' || conversion == 'A';
     }
 
-    [[nodiscard]] auto ascii_upper(char value) noexcept -> char {
+    [[nodiscard]] auto ascii_upper(char value)  -> char {
         if (value >= 'a' && value <= 'z') {
             return static_cast<char>(value - 'a' + 'A');
         }
@@ -65,7 +65,7 @@ namespace {
         return value;
     }
 
-    auto uppercase_ascii(char* text, size_t size) noexcept -> void {
+    auto uppercase_ascii(char* text, size_t size)  -> void {
         if (text == nullptr) {
             return;
         }
@@ -75,7 +75,7 @@ namespace {
         }
     }
 
-    [[nodiscard]] auto parse_decimal_field(StrRef format, size_t* index) noexcept -> int {
+    [[nodiscard]] auto parse_decimal_field(StrRef format, size_t* index)  -> int {
         int value = 0;
 
         while (*index < format.size() && is_print_digit(format[*index])) {
@@ -92,7 +92,7 @@ namespace {
         return value;
     }
 
-    auto skip_length_modifier(StrRef format, size_t* index) noexcept -> void {
+    auto skip_length_modifier(StrRef format, size_t* index)  -> void {
         if (*index >= format.size()) {
             return;
         }
@@ -113,7 +113,7 @@ namespace {
     [[nodiscard]] auto print_padded_text(io::Writer writer,
                                          fmt::detail::FormatSpec const& spec,
                                          StrRef text,
-                                         int* written) noexcept -> bool {
+                                         int* written)  -> bool {
         size_t const width = spec.width > 0 ? static_cast<size_t>(spec.width) : 0u;
         size_t const padding_size = width > text.size() ? width - text.size() : 0u;
 
@@ -136,7 +136,7 @@ namespace {
                                             uint32_t base,
                                             bool uppercase,
                                             char* buffer,
-                                            size_t buffer_size) noexcept -> StrRef {
+                                            size_t buffer_size)  -> StrRef {
         if (buffer == nullptr || buffer_size == 0u || base < 2u || base > 16u) {
             return {};
         }
@@ -158,7 +158,7 @@ namespace {
                                              fmt::detail::FormatSpec const& spec,
                                              StrRef prefix,
                                              StrRef digits,
-                                             int* written) noexcept -> bool {
+                                             int* written)  -> bool {
         size_t precision_zero_count = 0u;
         if (spec.precision > 0 && static_cast<size_t>(spec.precision) > digits.size()) {
             precision_zero_count = static_cast<size_t>(spec.precision) - digits.size();
@@ -205,7 +205,7 @@ namespace {
                                            StrRef prefix,
                                            StrRef text,
                                            bool allow_zero_padding,
-                                           int* written) noexcept -> bool {
+                                           int* written)  -> bool {
         size_t const body_size = prefix.size() + text.size();
         size_t const width = spec.width > 0 ? static_cast<size_t>(spec.width) : 0u;
         bool const use_zero_padding =
@@ -243,7 +243,7 @@ namespace {
                                            uint64_t magnitude,
                                            bool negative,
                                            bool signed_conversion,
-                                           int* written) noexcept -> bool {
+                                           int* written)  -> bool {
         char conversion = spec.conversion;
         if (conversion == 'v') {
             conversion = signed_conversion ? 'd' : 'u';
@@ -325,7 +325,7 @@ namespace {
                                       int precision,
                                       char* buffer,
                                       size_t buffer_size,
-                                      size_t* out_size) noexcept -> bool {
+                                      size_t* out_size)  -> bool {
         if (buffer == nullptr || out_size == nullptr || buffer_size == 0u) {
             return false;
         }
@@ -384,7 +384,7 @@ namespace {
     }
 
     [[nodiscard]] auto
-    ensure_float_decimal_point(char* buffer, size_t* size, size_t capacity) noexcept -> bool {
+    ensure_float_decimal_point(char* buffer, size_t* size, size_t capacity)  -> bool {
         if (buffer == nullptr || size == nullptr) {
             return false;
         }
@@ -423,7 +423,7 @@ namespace {
 
 namespace fmt::detail {
 
-    [[nodiscard]] auto add_print_count(int* written, size_t amount) noexcept -> bool {
+    [[nodiscard]] auto add_print_count(int* written, size_t amount)  -> bool {
         if (written == nullptr || amount > static_cast<size_t>(INT_MAX - *written)) {
             return false;
         }
@@ -433,7 +433,7 @@ namespace fmt::detail {
     }
 
     [[nodiscard]] auto
-    parse_print_spec(StrRef format, size_t percent_index, FormatSpec* out_spec) noexcept -> size_t {
+    parse_print_spec(StrRef format, size_t percent_index, FormatSpec* out_spec)  -> size_t {
         if (out_spec == nullptr || percent_index >= format.size() || format[percent_index] != '%') {
             return StrRef::NPOS;
         }
@@ -508,7 +508,7 @@ namespace fmt::detail {
         return index + 1u;
     }
 
-    [[nodiscard]] auto print_text(io::Writer writer, StrRef text, int* written) noexcept -> bool {
+    [[nodiscard]] auto print_text(io::Writer writer, StrRef text, int* written)  -> bool {
         if (text.empty()) {
             return true;
         }
@@ -523,7 +523,7 @@ namespace fmt::detail {
     }
 
     [[nodiscard]] auto
-    print_repeated(io::Writer writer, char value, size_t count, int* written) noexcept -> bool {
+    print_repeated(io::Writer writer, char value, size_t count, int* written)  -> bool {
         if (count == 0u) {
             return true;
         }
@@ -538,7 +538,7 @@ namespace fmt::detail {
     }
 
     [[nodiscard]] auto
-    print_string_arg(io::Writer writer, FormatSpec const& spec, StrRef value, int* written) noexcept
+    print_string_arg(io::Writer writer, FormatSpec const& spec, StrRef value, int* written) 
         -> bool {
         if (spec.conversion != 's' && spec.conversion != 'v') {
             return false;
@@ -553,7 +553,7 @@ namespace fmt::detail {
     }
 
     [[nodiscard]] auto
-    print_char_arg(io::Writer writer, FormatSpec const& spec, char value, int* written) noexcept
+    print_char_arg(io::Writer writer, FormatSpec const& spec, char value, int* written) 
         -> bool {
         if (spec.conversion != 'c' && spec.conversion != 'v') {
             return false;
@@ -563,7 +563,7 @@ namespace fmt::detail {
     }
 
     [[nodiscard]] auto
-    print_bool_arg(io::Writer writer, FormatSpec const& spec, bool value, int* written) noexcept
+    print_bool_arg(io::Writer writer, FormatSpec const& spec, bool value, int* written) 
         -> bool {
         if (spec.conversion != 't' && spec.conversion != 'v') {
             return false;
@@ -575,7 +575,7 @@ namespace fmt::detail {
     [[nodiscard]] auto print_signed_integer_arg(io::Writer writer,
                                                 FormatSpec const& spec,
                                                 int64_t value,
-                                                int* written) noexcept -> bool {
+                                                int* written)  -> bool {
         if (spec.conversion != 'v' && !is_decimal_conversion(spec.conversion)) {
             return false;
         }
@@ -590,7 +590,7 @@ namespace fmt::detail {
     [[nodiscard]] auto print_unsigned_integer_arg(io::Writer writer,
                                                   FormatSpec const& spec,
                                                   uint64_t value,
-                                                  int* written) noexcept -> bool {
+                                                  int* written)  -> bool {
         if (spec.conversion != 'v' && !is_decimal_conversion(spec.conversion) &&
             !is_unsigned_integer_conversion(spec.conversion)) {
             return false;
@@ -603,7 +603,7 @@ namespace fmt::detail {
     [[nodiscard]] auto print_pointer_value_arg(io::Writer writer,
                                                FormatSpec const& spec,
                                                void const* value,
-                                               int* written) noexcept -> bool {
+                                               int* written)  -> bool {
         if (spec.conversion != 'p' && spec.conversion != 'v') {
             return false;
         }
@@ -622,7 +622,7 @@ namespace fmt::detail {
     [[nodiscard]] auto print_floating_arg(io::Writer writer,
                                           FormatSpec const& spec,
                                           long double value,
-                                          int* written) noexcept -> bool {
+                                          int* written)  -> bool {
         char conversion = spec.conversion == 'v' ? 'g' : spec.conversion;
         if (!is_floating_conversion(conversion)) {
             return false;
@@ -682,7 +682,7 @@ namespace fmt::detail {
     }
 
     [[nodiscard]] auto
-    print_format_without_args(io::Writer writer, StrRef format, int* written) noexcept -> bool {
+    print_format_without_args(io::Writer writer, StrRef format, int* written)  -> bool {
         size_t offset = 0u;
 
         while (offset < format.size()) {
@@ -719,7 +719,7 @@ namespace fmt::detail {
 
 namespace fmt {
 
-    auto print(std::FILE* stream, StrRef text) noexcept -> int {
+    auto print(std::FILE* stream, StrRef text)  -> int {
         io::Writer const writer = io::file_writer(stream);
 
         int written = 0;
@@ -730,11 +730,11 @@ namespace fmt {
         return written;
     }
 
-    auto print(StrRef text) noexcept -> int {
+    auto print(StrRef text)  -> int {
         return print(stdout, text);
     }
 
-    auto eprint(StrRef text) noexcept -> int {
+    auto eprint(StrRef text)  -> int {
         return print(stderr, text);
     }
 
