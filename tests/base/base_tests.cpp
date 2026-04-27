@@ -1,3 +1,4 @@
+#include <array>
 #include <base/assert.h>
 #include <base/bit_set.h>
 #include <base/crash.h>
@@ -5,9 +6,11 @@
 #include <base/hash_map.h>
 #include <base/io.h>
 #include <base/memory.h>
+#include <base/slice.h>
 #include <base/small_array.h>
 #include <base/str_ref.h>
 #include <base/string_buffer.h>
+#include <base/vec.h>
 #include <base/xar.h>
 #include <cstddef>
 #include <cstdint>
@@ -37,6 +40,14 @@ namespace {
     static_assert(make_constexpr_small_array().len == 2u);
     static_assert(make_constexpr_small_array().data[0u] == 10);
     static_assert(make_constexpr_small_array().data[1u] == 15);
+
+    constexpr auto make_constexpr_slice_sum() -> int {
+        int values[] = {1, 2, 3, 4};
+        Slice<int> items = slice(values).drop_prefix(1u).prefix(2u);
+        return items[0u] + items[1u];
+    }
+
+    static_assert(make_constexpr_slice_sum() == 5);
 
     enum class Direction : uint8_t {
         NORTH = 1u,
@@ -308,6 +319,104 @@ namespace {
         TEST_EXPECT(context, !zero_capacity.push_back(1));
         TEST_EXPECT(context, !zero_capacity.inject_at(1, 0u));
         TEST_EXPECT(context, zero_capacity.slice().empty());
+    }
+
+    TEST_CASE(slice_views_raw_arrays_std_arrays_std_vectors_and_vecs) {
+        int raw_values[] = {1, 2, 3};
+        std::array<int, 3u> fixed_values = {4, 5, 6};
+        std::vector<int> standard_values = {7, 8, 9};
+        Vec<int> vec_values;
+
+        TEST_EXPECT(context, vec_values.append({10, 11, 12}) == 3u);
+
+        Slice<int> raw = slice(raw_values);
+        Slice<int> fixed = slice(fixed_values);
+        Slice<int> standard = slice(standard_values);
+        Slice<int> dynamic = slice(vec_values);
+        Slice<int const> const_dynamic = dynamic;
+
+        raw[1u] = 20;
+        fixed[2u] = 60;
+        standard[0u] = 70;
+        dynamic[1u] = 110;
+
+        TEST_EXPECT(context, raw_values[1u] == 20);
+        TEST_EXPECT(context, fixed_values[2u] == 60);
+        TEST_EXPECT(context, standard_values[0u] == 70);
+        TEST_EXPECT(context, vec_values.get(1u) == 110);
+        TEST_EXPECT(context, raw.size() == 3u);
+        TEST_EXPECT(context, fixed.prefix(2u).back() == 5);
+        TEST_EXPECT(context, standard.drop_prefix(1u).front() == 8);
+        TEST_EXPECT(context, const_dynamic.suffix(2u)[0u] == 110);
+    }
+
+    TEST_CASE(vec_grows_resizes_appends_and_removes_values) {
+        Vec<int> values;
+
+        TEST_EXPECT(context, values.empty());
+        TEST_EXPECT(context, values.append({1, 2, 3}) == 3u);
+        TEST_EXPECT(context, values.len() == 3u);
+        TEST_EXPECT(context, values.capacity() == 8u);
+        TEST_EXPECT(context, values.push_back(4));
+        TEST_EXPECT(context, values.get(3u) == 4);
+
+        Slice<int> view = values.slice();
+        view[1u] = 20;
+
+        TEST_EXPECT(context, values.get(1u) == 20);
+        TEST_EXPECT(context, values.resize(6u, 9));
+        TEST_EXPECT(context, values.len() == 6u);
+        TEST_EXPECT(context, values.get(4u) == 9);
+        TEST_EXPECT(context, values.get(5u) == 9);
+        TEST_EXPECT(context, values.pop() == 9);
+        TEST_EXPECT(context, values.len() == 5u);
+
+        values.ordered_remove(1u);
+
+        TEST_EXPECT(context, values.len() == 4u);
+        TEST_EXPECT(context, values.get(0u) == 1);
+        TEST_EXPECT(context, values.get(1u) == 3);
+        TEST_EXPECT(context, values.get(2u) == 4);
+        TEST_EXPECT(context, values.get(3u) == 9);
+
+        values.unordered_remove(1u);
+
+        TEST_EXPECT(context, values.len() == 3u);
+        TEST_EXPECT(context, values.get(0u) == 1);
+        TEST_EXPECT(context, values.get(1u) == 9);
+        TEST_EXPECT(context, values.get(2u) == 4);
+        values.clear();
+        TEST_EXPECT(context, values.empty());
+    }
+
+    TEST_CASE(vec_safe_access_zero_append_self_append_and_shrink) {
+        Vec<int> values;
+
+        TEST_EXPECT(context, values.append({1, 2, 3}) == 3u);
+        TEST_EXPECT(context, values.append(values.slice()) == 3u);
+        TEST_EXPECT(context, values.len() == 6u);
+        TEST_EXPECT(context, values.get(0u) == 1);
+        TEST_EXPECT(context, values.get(3u) == 1);
+
+        int* const zero = values.append_nothing();
+
+        TEST_EXPECT(context, zero != nullptr);
+        TEST_EXPECT(context, zero != nullptr && *zero == 0);
+        TEST_EXPECT(context, values.len() == 7u);
+
+        VecResult<int> const found = values.get_safe(2u);
+        VecResult<int> const missing = values.get_safe(99u);
+        VecPtrResult<int> const ptr = values.get_ptr_safe(1u);
+
+        TEST_EXPECT(context, found);
+        TEST_EXPECT(context, found.value == 3);
+        TEST_EXPECT(context, !missing);
+        TEST_EXPECT(context, ptr);
+        TEST_EXPECT(context, ptr.ptr != nullptr && *ptr.ptr == 2);
+        TEST_EXPECT(context, values.shrink(4u));
+        TEST_EXPECT(context, values.len() == 4u);
+        TEST_EXPECT(context, values.capacity() == 4u);
+        TEST_EXPECT(context, !values.shrink(8u));
     }
 
     TEST_CASE(bit_set_models_odin_style_set_operations) {
