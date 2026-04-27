@@ -19,6 +19,17 @@ namespace gui::render::d3d11 {
     [[nodiscard]] auto
     update_buffer(Context context, Buffer buffer, void const* data, size_t byte_size) -> Result;
 
+    [[nodiscard]] auto
+    create_shader(Arena& arena, Context context, ShaderDesc const& desc, Shader& out_shader)
+        -> Result;
+    auto destroy_shader(Context context, Shader& shader) -> void;
+
+    [[nodiscard]] auto
+    create_pipeline(Arena& arena, Context context, PipelineDesc const& desc, Pipeline& out_pipeline)
+        -> Result;
+    auto destroy_pipeline(Context context, Pipeline& pipeline) -> void;
+    auto bind_pipeline(Context context, Pipeline pipeline) -> void;
+
     [[nodiscard]] auto resize_window(Context context, Window window, SizeU32 size) -> Result;
     [[nodiscard]] auto begin_frame(Context context) -> Result;
     [[nodiscard]] auto begin_render_pass(Context context, RenderPassDesc const& desc) -> Result;

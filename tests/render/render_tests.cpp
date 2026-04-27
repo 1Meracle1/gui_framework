@@ -9,6 +9,12 @@ namespace {
         TEST_EXPECT(context, !gui::render::result_failed(gui::render::Result::OK));
         TEST_EXPECT(context, gui::render::result_failed(gui::render::Result::UNSUPPORTED_PLATFORM));
         TEST_EXPECT(context, gui::render::result_name(gui::render::Result::OK)[0] != '\0');
+        TEST_EXPECT(context,
+                    gui::render::result_name(gui::render::Result::SHADER_CREATION_FAILED)[0] !=
+                        '\0');
+        TEST_EXPECT(context,
+                    gui::render::result_name(gui::render::Result::PIPELINE_CREATION_FAILED)[0] !=
+                        '\0');
         TEST_EXPECT(context, gui::render::backend_name(gui::render::Backend::D3D11)[0] != '\0');
     }
 
@@ -69,6 +75,34 @@ namespace {
         TEST_EXPECT(context, desc.usage == gui::render::BufferUsage::IMMUTABLE);
         TEST_EXPECT(context, desc.byte_size == 0u);
         TEST_EXPECT(context, desc.initial_data == nullptr);
+    }
+
+    TEST_CASE(render_shader_defaults_describe_vertex_shader_without_bytecode) {
+        gui::render::ShaderDesc const desc = {};
+
+        TEST_EXPECT(context, desc.stage == gui::render::ShaderStage::VERTEX);
+        TEST_EXPECT(context, desc.bytecode == nullptr);
+        TEST_EXPECT(context, desc.byte_size == 0u);
+    }
+
+    TEST_CASE(render_pipeline_defaults_describe_empty_triangle_pipeline) {
+        gui::render::PipelineDesc const desc = {};
+
+        TEST_EXPECT(context, !gui::render::shader_valid(desc.vertex_shader));
+        TEST_EXPECT(context, !gui::render::shader_valid(desc.pixel_shader));
+        TEST_EXPECT(context, desc.vertex_attributes == nullptr);
+        TEST_EXPECT(context, desc.vertex_attribute_count == 0u);
+        TEST_EXPECT(context, desc.topology == gui::render::PrimitiveTopology::TRIANGLE_LIST);
+    }
+
+    TEST_CASE(render_vertex_attribute_defaults_describe_float2_attribute) {
+        gui::render::VertexAttributeDesc const desc = {};
+
+        TEST_EXPECT(context, desc.semantic_name == nullptr);
+        TEST_EXPECT(context, desc.semantic_index == 0u);
+        TEST_EXPECT(context, desc.format == gui::render::VertexFormat::FLOAT32_2);
+        TEST_EXPECT(context, desc.buffer_slot == 0u);
+        TEST_EXPECT(context, desc.byte_offset == 0u);
     }
 
 } // namespace

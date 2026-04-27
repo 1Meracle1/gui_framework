@@ -39,9 +39,9 @@ namespace {
     };
 
     struct TrianglePipeline {
-        ID3D11VertexShader* vertex_shader = nullptr;
-        ID3D11PixelShader* pixel_shader = nullptr;
-        ID3D11InputLayout* input_layout = nullptr;
+        gui::render::Shader vertex_shader = {};
+        gui::render::Shader pixel_shader = {};
+        gui::render::Pipeline pipeline = {};
         gui::render::Buffer vertex_buffer = {};
         gui::render::Buffer transform_constants = {};
         gui::render::Buffer tint_constants = {};
@@ -133,19 +133,20 @@ namespace {
         if (gui::render::buffer_valid(pipeline->vertex_buffer)) {
             gui::render::destroy_buffer(context, pipeline->vertex_buffer);
         }
-        release_com(pipeline->input_layout);
-        release_com(pipeline->pixel_shader);
-        release_com(pipeline->vertex_shader);
+        if (gui::render::pipeline_valid(pipeline->pipeline)) {
+            gui::render::destroy_pipeline(context, pipeline->pipeline);
+        }
+        if (gui::render::shader_valid(pipeline->pixel_shader)) {
+            gui::render::destroy_shader(context, pipeline->pixel_shader);
+        }
+        if (gui::render::shader_valid(pipeline->vertex_shader)) {
+            gui::render::destroy_shader(context, pipeline->vertex_shader);
+        }
     }
 
-    [[nodiscard]] auto create_pipeline(gui::render::Context render_context,
+    [[nodiscard]] auto create_pipeline(Arena& arena,
+                                       gui::render::Context render_context,
                                        TrianglePipeline* pipeline) -> bool {
-        ID3D11Device* const device =
-            static_cast<ID3D11Device*>(gui::render::native_device(render_context));
-        if (device == nullptr) {
-            return false;
-        }
-
         constexpr StrRef SHADER_SOURCE =
             "cbuffer TransformConstants : register(b0)\n"
             "{\n"
@@ -187,54 +188,60 @@ namespace {
             return false;
         }
 
-        HRESULT hr = device->CreateVertexShader(vertex_blob->GetBufferPointer(),
-                                                vertex_blob->GetBufferSize(),
-                                                nullptr,
-                                                &pipeline->vertex_shader);
-        if (FAILED(hr)) {
+        gui::render::ShaderDesc shader_desc = {};
+        shader_desc.stage = gui::render::ShaderStage::VERTEX;
+        shader_desc.bytecode = vertex_blob->GetBufferPointer();
+        shader_desc.byte_size = vertex_blob->GetBufferSize();
+
+        gui::render::Result result =
+            gui::render::create_shader(arena, render_context, shader_desc, pipeline->vertex_shader);
+        if (gui::render::result_failed(result)) {
             release_com(pixel_blob);
             release_com(vertex_blob);
             return false;
         }
 
-        hr = device->CreatePixelShader(pixel_blob->GetBufferPointer(),
-                                       pixel_blob->GetBufferSize(),
-                                       nullptr,
-                                       &pipeline->pixel_shader);
-        if (FAILED(hr)) {
+        shader_desc.stage = gui::render::ShaderStage::PIXEL;
+        shader_desc.bytecode = pixel_blob->GetBufferPointer();
+        shader_desc.byte_size = pixel_blob->GetBufferSize();
+
+        result =
+            gui::render::create_shader(arena, render_context, shader_desc, pipeline->pixel_shader);
+        if (gui::render::result_failed(result)) {
             release_com(pixel_blob);
             release_com(vertex_blob);
             return false;
         }
 
-        D3D11_INPUT_ELEMENT_DESC input_elements[] = {
-            {"POSITION",
-             0u,
-             DXGI_FORMAT_R32G32_FLOAT,
-             0u,
-             static_cast<UINT>(offsetof(Vertex, position)),
-             D3D11_INPUT_PER_VERTEX_DATA,
-             0u},
-            {"COLOR",
-             0u,
-             DXGI_FORMAT_R32G32B32_FLOAT,
-             0u,
-             static_cast<UINT>(offsetof(Vertex, color)),
-             D3D11_INPUT_PER_VERTEX_DATA,
-             0u},
+        gui::render::VertexAttributeDesc input_attributes[] = {
+            {
+                "POSITION",
+                0u,
+                gui::render::VertexFormat::FLOAT32_2,
+                0u,
+                static_cast<uint32_t>(offsetof(Vertex, position)),
+            },
+            {
+                "COLOR",
+                0u,
+                gui::render::VertexFormat::FLOAT32_3,
+                0u,
+                static_cast<uint32_t>(offsetof(Vertex, color)),
+            },
         };
 
-        hr = device->CreateInputLayout(
-            input_elements,
-            static_cast<UINT>(sizeof(input_elements) / sizeof(input_elements[0u])),
-            vertex_blob->GetBufferPointer(),
-            vertex_blob->GetBufferSize(),
-            &pipeline->input_layout);
+        gui::render::PipelineDesc pipeline_desc = {};
+        pipeline_desc.vertex_shader = pipeline->vertex_shader;
+        pipeline_desc.pixel_shader = pipeline->pixel_shader;
+        pipeline_desc.vertex_attributes = input_attributes;
+        pipeline_desc.vertex_attribute_count =
+            sizeof(input_attributes) / sizeof(input_attributes[0u]);
 
+        result =
+            gui::render::create_pipeline(arena, render_context, pipeline_desc, pipeline->pipeline);
         release_com(pixel_blob);
         release_com(vertex_blob);
-
-        if (FAILED(hr)) {
+        if (gui::render::result_failed(result)) {
             return false;
         }
 
@@ -248,8 +255,7 @@ namespace {
         vertex_desc.byte_size = sizeof(vertices);
         vertex_desc.initial_data = vertices;
 
-        gui::render::Result result =
-            gui::render::create_buffer(render_context, vertex_desc, pipeline->vertex_buffer);
+        result = gui::render::create_buffer(render_context, vertex_desc, pipeline->vertex_buffer);
         if (gui::render::result_failed(result)) {
             return false;
         }
@@ -308,12 +314,9 @@ namespace {
         ID3D11Buffer* const transform_constants = d3d11_buffer(pipeline.transform_constants);
         ID3D11Buffer* const tint_constants = d3d11_buffer(pipeline.tint_constants);
 
-        device_context->IASetInputLayout(pipeline.input_layout);
+        gui::render::bind_pipeline(context, pipeline.pipeline);
         device_context->IASetVertexBuffers(0u, 1u, &vertex_buffer, &stride, &offset);
-        device_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-        device_context->VSSetShader(pipeline.vertex_shader, nullptr, 0u);
         device_context->VSSetConstantBuffers(0u, 1u, &transform_constants);
-        device_context->PSSetShader(pipeline.pixel_shader, nullptr, 0u);
         device_context->PSSetConstantBuffers(0u, 1u, &tint_constants);
         device_context->Draw(3u, 0u);
         return true;
@@ -443,7 +446,7 @@ auto main() -> int {
 
     TrianglePipeline pipeline = {};
 
-    if (!create_pipeline(render_context, &pipeline)) {
+    if (!create_pipeline(app_arena, render_context, &pipeline)) {
         fmt::eprintf("failed to create D3D11 triangle pipeline\n");
         destroy_pipeline(render_context, &pipeline);
         gui::render::destroy_window(render_window);

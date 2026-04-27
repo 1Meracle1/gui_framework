@@ -43,6 +43,10 @@ namespace gui::render {
             return "buffer creation failed";
         case Result::BUFFER_UPDATE_FAILED:
             return "buffer update failed";
+        case Result::SHADER_CREATION_FAILED:
+            return "shader creation failed";
+        case Result::PIPELINE_CREATION_FAILED:
+            return "pipeline creation failed";
         }
 
         return "unknown";
@@ -182,6 +186,78 @@ namespace gui::render {
         BASE_UNUSED(data);
         BASE_UNUSED(byte_size);
         return Result::UNSUPPORTED_PLATFORM;
+#endif
+    }
+
+    auto create_shader(Arena& arena, Context context, ShaderDesc const& desc, Shader& out_shader)
+        -> Result {
+        ASSERT(context_valid(context));
+        ASSERT(out_shader.handle == nullptr);
+        ASSERT(desc.bytecode != nullptr);
+        ASSERT(desc.byte_size != 0u);
+
+#if BASE_PLATFORM_WINDOWS
+        return d3d11::create_shader(arena, context, desc, out_shader);
+#else
+        BASE_UNUSED(arena);
+        BASE_UNUSED(context);
+        BASE_UNUSED(desc);
+        return Result::UNSUPPORTED_PLATFORM;
+#endif
+    }
+
+    auto destroy_shader(Context context, Shader& shader) -> void {
+        ASSERT(context_valid(context));
+        ASSERT(shader_valid(shader));
+
+#if BASE_PLATFORM_WINDOWS
+        d3d11::destroy_shader(context, shader);
+#else
+        BASE_UNUSED(context);
+        shader.handle = nullptr;
+#endif
+    }
+
+    auto
+    create_pipeline(Arena& arena, Context context, PipelineDesc const& desc, Pipeline& out_pipeline)
+        -> Result {
+        ASSERT(context_valid(context));
+        ASSERT(out_pipeline.handle == nullptr);
+        ASSERT(shader_valid(desc.vertex_shader));
+        ASSERT(shader_valid(desc.pixel_shader));
+        ASSERT(desc.vertex_attribute_count == 0u || desc.vertex_attributes != nullptr);
+
+#if BASE_PLATFORM_WINDOWS
+        return d3d11::create_pipeline(arena, context, desc, out_pipeline);
+#else
+        BASE_UNUSED(arena);
+        BASE_UNUSED(context);
+        BASE_UNUSED(desc);
+        return Result::UNSUPPORTED_PLATFORM;
+#endif
+    }
+
+    auto destroy_pipeline(Context context, Pipeline& pipeline) -> void {
+        ASSERT(context_valid(context));
+        ASSERT(pipeline_valid(pipeline));
+
+#if BASE_PLATFORM_WINDOWS
+        d3d11::destroy_pipeline(context, pipeline);
+#else
+        BASE_UNUSED(context);
+        pipeline.handle = nullptr;
+#endif
+    }
+
+    auto bind_pipeline(Context context, Pipeline pipeline) -> void {
+        ASSERT(context_valid(context));
+        ASSERT(pipeline_valid(pipeline));
+
+#if BASE_PLATFORM_WINDOWS
+        d3d11::bind_pipeline(context, pipeline);
+#else
+        BASE_UNUSED(context);
+        BASE_UNUSED(pipeline);
 #endif
     }
 

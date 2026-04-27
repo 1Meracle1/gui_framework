@@ -25,6 +25,8 @@ namespace gui::render {
         PRESENT_FAILED = -9,
         BUFFER_CREATION_FAILED = -10,
         BUFFER_UPDATE_FAILED = -11,
+        SHADER_CREATION_FAILED = -12,
+        PIPELINE_CREATION_FAILED = -13,
     };
 
     enum class PresentMode : uint8_t {
@@ -51,6 +53,21 @@ namespace gui::render {
     enum class BufferUsage : uint8_t {
         IMMUTABLE,
         DYNAMIC,
+    };
+
+    enum class ShaderStage : uint8_t {
+        VERTEX,
+        PIXEL,
+    };
+
+    enum class VertexFormat : uint8_t {
+        FLOAT32_2,
+        FLOAT32_3,
+        FLOAT32_4,
+    };
+
+    enum class PrimitiveTopology : uint8_t {
+        TRIANGLE_LIST,
     };
 
     struct SizeU32 {
@@ -124,6 +141,28 @@ namespace gui::render {
         void const* initial_data = nullptr;
     };
 
+    struct ShaderDesc {
+        ShaderStage stage = ShaderStage::VERTEX;
+        void const* bytecode = nullptr;
+        size_t byte_size = 0u;
+    };
+
+    struct VertexAttributeDesc {
+        char const* semantic_name = nullptr;
+        uint32_t semantic_index = 0u;
+        VertexFormat format = VertexFormat::FLOAT32_2;
+        uint32_t buffer_slot = 0u;
+        uint32_t byte_offset = 0u;
+    };
+
+    struct PipelineDesc {
+        Shader vertex_shader = {};
+        Shader pixel_shader = {};
+        VertexAttributeDesc const* vertex_attributes = nullptr;
+        size_t vertex_attribute_count = 0u;
+        PrimitiveTopology topology = PrimitiveTopology::TRIANGLE_LIST;
+    };
+
     [[nodiscard]] auto result_succeeded(Result result) -> bool;
     [[nodiscard]] auto result_failed(Result result) -> bool;
     [[nodiscard]] auto result_name(Result result) -> char const*;
@@ -150,6 +189,17 @@ namespace gui::render {
     auto destroy_buffer(Context context, Buffer& buffer) -> void;
     [[nodiscard]] auto
     update_buffer(Context context, Buffer buffer, void const* data, size_t byte_size) -> Result;
+
+    [[nodiscard]] auto
+    create_shader(Arena& arena, Context context, ShaderDesc const& desc, Shader& out_shader)
+        -> Result;
+    auto destroy_shader(Context context, Shader& shader) -> void;
+
+    [[nodiscard]] auto
+    create_pipeline(Arena& arena, Context context, PipelineDesc const& desc, Pipeline& out_pipeline)
+        -> Result;
+    auto destroy_pipeline(Context context, Pipeline& pipeline) -> void;
+    auto bind_pipeline(Context context, Pipeline pipeline) -> void;
 
     [[nodiscard]] auto resize_window(Context context, Window window, SizeU32 size) -> Result;
     [[nodiscard]] auto begin_frame(Context context) -> Result;

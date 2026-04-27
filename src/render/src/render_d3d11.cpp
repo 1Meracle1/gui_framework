@@ -32,6 +32,21 @@ namespace gui::render::d3d11 {
             PresentMode present_mode = PresentMode::VSYNC;
         };
 
+        struct D3D11Shader {
+            ID3D11VertexShader* vertex_shader = nullptr;
+            ID3D11PixelShader* pixel_shader = nullptr;
+            void const* bytecode = nullptr;
+            size_t byte_size = 0u;
+            ShaderStage stage = ShaderStage::VERTEX;
+        };
+
+        struct D3D11Pipeline {
+            ID3D11VertexShader* vertex_shader = nullptr;
+            ID3D11PixelShader* pixel_shader = nullptr;
+            ID3D11InputLayout* input_layout = nullptr;
+            PrimitiveTopology topology = PrimitiveTopology::TRIANGLE_LIST;
+        };
+
         template <typename T> auto release_com(T*& value) -> void {
             if (value != nullptr) {
                 value->Release();
@@ -51,12 +66,42 @@ namespace gui::render::d3d11 {
             return static_cast<ID3D11Buffer*>(buffer.handle);
         }
 
+        [[nodiscard]] auto shader_from_handle(Shader shader) -> D3D11Shader* {
+            return static_cast<D3D11Shader*>(shader.handle);
+        }
+
+        [[nodiscard]] auto pipeline_from_handle(Pipeline pipeline) -> D3D11Pipeline* {
+            return static_cast<D3D11Pipeline*>(pipeline.handle);
+        }
+
         [[nodiscard]] auto buffer_byte_width(BufferDesc const& desc) -> UINT {
             UINT byte_width = static_cast<UINT>(desc.byte_size);
             if (desc.binding == BufferBinding::UNIFORM) {
                 byte_width = (byte_width + 15u) & ~15u;
             }
             return byte_width;
+        }
+
+        [[nodiscard]] auto d3d_format(VertexFormat format) -> DXGI_FORMAT {
+            switch (format) {
+            case VertexFormat::FLOAT32_2:
+                return DXGI_FORMAT_R32G32_FLOAT;
+            case VertexFormat::FLOAT32_3:
+                return DXGI_FORMAT_R32G32B32_FLOAT;
+            case VertexFormat::FLOAT32_4:
+                return DXGI_FORMAT_R32G32B32A32_FLOAT;
+            }
+
+            return DXGI_FORMAT_UNKNOWN;
+        }
+
+        [[nodiscard]] auto d3d_topology(PrimitiveTopology topology) -> D3D_PRIMITIVE_TOPOLOGY {
+            switch (topology) {
+            case PrimitiveTopology::TRIANGLE_LIST:
+                return D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
+            }
+
+            return D3D11_PRIMITIVE_TOPOLOGY_UNDEFINED;
         }
 
         [[nodiscard]] auto try_create_device(D3D_DRIVER_TYPE driver_type,
@@ -173,6 +218,21 @@ namespace gui::render::d3d11 {
             release_com(window->swap_chain);
             window->size = {};
             window->present_mode = PresentMode::VSYNC;
+        }
+
+        auto destroy_shader_impl(D3D11Shader* shader) -> void {
+            release_com(shader->pixel_shader);
+            release_com(shader->vertex_shader);
+            shader->bytecode = nullptr;
+            shader->byte_size = 0u;
+            shader->stage = ShaderStage::VERTEX;
+        }
+
+        auto destroy_pipeline_impl(D3D11Pipeline* pipeline) -> void {
+            release_com(pipeline->input_layout);
+            release_com(pipeline->pixel_shader);
+            release_com(pipeline->vertex_shader);
+            pipeline->topology = PrimitiveTopology::TRIANGLE_LIST;
         }
 
     } // namespace
@@ -327,6 +387,132 @@ namespace gui::render::d3d11 {
         std::memcpy(mapped.pData, data, byte_size);
         context_impl->device_context->Unmap(buffer_impl, 0u);
         return Result::OK;
+    }
+
+    auto create_shader(Arena& arena, Context context, ShaderDesc const& desc, Shader& out_shader)
+        -> Result {
+        D3D11Context* context_impl = context_from_handle(context);
+        ASSERT(context_impl != nullptr);
+
+        ArenaMarker const marker = arena.marker();
+        D3D11Shader* shader = arena_new<D3D11Shader>(arena);
+        uint8_t* const bytecode = arena_alloc<uint8_t>(arena, desc.byte_size);
+        std::memcpy(bytecode, desc.bytecode, desc.byte_size);
+
+        shader->bytecode = bytecode;
+        shader->byte_size = desc.byte_size;
+        shader->stage = desc.stage;
+
+        HRESULT hr = E_INVALIDARG;
+        switch (desc.stage) {
+        case ShaderStage::VERTEX:
+            hr = context_impl->device->CreateVertexShader(
+                bytecode, desc.byte_size, nullptr, &shader->vertex_shader);
+            break;
+        case ShaderStage::PIXEL:
+            hr = context_impl->device->CreatePixelShader(
+                bytecode, desc.byte_size, nullptr, &shader->pixel_shader);
+            break;
+        }
+
+        if (FAILED(hr)) {
+            destroy_shader_impl(shader);
+            arena.reset_to(marker);
+            return Result::SHADER_CREATION_FAILED;
+        }
+
+        out_shader.handle = shader;
+        return Result::OK;
+    }
+
+    auto destroy_shader(Context context, Shader& shader) -> void {
+        BASE_UNUSED(context);
+        D3D11Shader* impl = shader_from_handle(shader);
+        ASSERT(impl != nullptr);
+        destroy_shader_impl(impl);
+        shader.handle = nullptr;
+    }
+
+    auto
+    create_pipeline(Arena& arena, Context context, PipelineDesc const& desc, Pipeline& out_pipeline)
+        -> Result {
+        D3D11Context* context_impl = context_from_handle(context);
+        D3D11Shader* vertex_shader = shader_from_handle(desc.vertex_shader);
+        D3D11Shader* pixel_shader = shader_from_handle(desc.pixel_shader);
+        ASSERT(context_impl != nullptr);
+        ASSERT(vertex_shader != nullptr);
+        ASSERT(pixel_shader != nullptr);
+        ASSERT(desc.vertex_attribute_count <= static_cast<size_t>(UINT_MAX));
+
+        if (vertex_shader->stage != ShaderStage::VERTEX ||
+            pixel_shader->stage != ShaderStage::PIXEL || vertex_shader->vertex_shader == nullptr ||
+            pixel_shader->pixel_shader == nullptr) {
+            return Result::PIPELINE_CREATION_FAILED;
+        }
+
+        ArenaMarker const marker = arena.marker();
+        D3D11Pipeline* pipeline = arena_new<D3D11Pipeline>(arena);
+        pipeline->topology = desc.topology;
+
+        if (desc.vertex_attribute_count != 0u) {
+            ArenaTemp temp = begin_thread_temp_arena();
+            D3D11_INPUT_ELEMENT_DESC* input_elements =
+                arena_alloc<D3D11_INPUT_ELEMENT_DESC>(*temp.arena(), desc.vertex_attribute_count);
+
+            for (size_t index = 0u; index < desc.vertex_attribute_count; ++index) {
+                VertexAttributeDesc const& attribute = desc.vertex_attributes[index];
+                ASSERT(attribute.semantic_name != nullptr);
+
+                D3D11_INPUT_ELEMENT_DESC& element = input_elements[index];
+                element.SemanticName = attribute.semantic_name;
+                element.SemanticIndex = attribute.semantic_index;
+                element.Format = d3d_format(attribute.format);
+                element.InputSlot = attribute.buffer_slot;
+                element.AlignedByteOffset = attribute.byte_offset;
+                element.InputSlotClass = D3D11_INPUT_PER_VERTEX_DATA;
+                element.InstanceDataStepRate = 0u;
+            }
+
+            HRESULT const hr = context_impl->device->CreateInputLayout(
+                input_elements,
+                static_cast<UINT>(desc.vertex_attribute_count),
+                vertex_shader->bytecode,
+                vertex_shader->byte_size,
+                &pipeline->input_layout);
+            if (FAILED(hr)) {
+                destroy_pipeline_impl(pipeline);
+                arena.reset_to(marker);
+                return Result::PIPELINE_CREATION_FAILED;
+            }
+        }
+
+        pipeline->vertex_shader = vertex_shader->vertex_shader;
+        pipeline->pixel_shader = pixel_shader->pixel_shader;
+        pipeline->vertex_shader->AddRef();
+        pipeline->pixel_shader->AddRef();
+
+        out_pipeline.handle = pipeline;
+        return Result::OK;
+    }
+
+    auto destroy_pipeline(Context context, Pipeline& pipeline) -> void {
+        BASE_UNUSED(context);
+        D3D11Pipeline* impl = pipeline_from_handle(pipeline);
+        ASSERT(impl != nullptr);
+        destroy_pipeline_impl(impl);
+        pipeline.handle = nullptr;
+    }
+
+    auto bind_pipeline(Context context, Pipeline pipeline) -> void {
+        D3D11Context* context_impl = context_from_handle(context);
+        D3D11Pipeline* pipeline_impl = pipeline_from_handle(pipeline);
+        ASSERT(context_impl != nullptr);
+        ASSERT(pipeline_impl != nullptr);
+
+        context_impl->device_context->IASetInputLayout(pipeline_impl->input_layout);
+        context_impl->device_context->IASetPrimitiveTopology(d3d_topology(pipeline_impl->topology));
+        context_impl->device_context->VSSetShader(pipeline_impl->vertex_shader, nullptr, 0u);
+        context_impl->device_context->PSSetShader(pipeline_impl->pixel_shader, nullptr, 0u);
     }
 
     auto resize_window(Context context, Window window, SizeU32 size) -> Result {
