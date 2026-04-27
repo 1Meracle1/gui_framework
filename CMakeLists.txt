@@ -19,6 +19,7 @@ include(cpp_project_options)
 cpp_configure_project()
 
 add_subdirectory(src/base)
+add_subdirectory(src/render)
 add_subdirectory(src/gui)
 
 add_executable(gui_framework_info
@@ -26,6 +27,23 @@ add_executable(gui_framework_info
 )
 target_link_libraries(gui_framework_info PRIVATE gui::gui)
 cpp_configure_target(gui_framework_info)
+
+if(WIN32)
+    add_executable(render_triangle_testbed
+        tools/render_triangle_testbed.cpp
+    )
+    target_compile_definitions(render_triangle_testbed PRIVATE
+        WIN32_LEAN_AND_MEAN
+        NOMINMAX
+    )
+    target_link_libraries(render_triangle_testbed PRIVATE
+        base::base
+        render::render
+        d3d11
+        d3dcompiler
+    )
+    cpp_configure_target(render_triangle_testbed)
+endif()
 
 add_library(gui_test STATIC
     src/test/src/test.cpp
@@ -63,8 +81,15 @@ if(BUILD_TESTS)
     target_link_libraries(gui_tests PRIVATE gui::gui gui_test)
     cpp_configure_target(gui_tests)
 
+    add_executable(render_tests
+        tests/render/render_tests.cpp
+    )
+    target_link_libraries(render_tests PRIVATE render::render gui_test)
+    cpp_configure_target(render_tests)
+
     add_test(NAME base_tests COMMAND base_tests)
     add_test(NAME gui_tests COMMAND gui_tests)
+    add_test(NAME render_tests COMMAND render_tests)
 endif()
 
 if(BUILD_BENCHMARKS)

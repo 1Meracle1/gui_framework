@@ -27,6 +27,10 @@ Windows with MSVC:
 .\bench.bat
 ```
 
+`run.bat` builds and launches `render_triangle_testbed` by default. Pass a
+target name as the second argument to run another tool, for example
+`.\run.bat windows-msvc-debug gui_framework_info`.
+
 Windows with Clang, useful for local clangd/tooling checks:
 
 ```powershell
@@ -59,6 +63,7 @@ pinned with `CCACHE`.
 
 - `src/base`: reusable low-level building blocks such as config, asserts, and
   future containers, allocators, algorithms, and custom types.
+- `src/render`: renderer abstraction with a Windows Direct3D 11 backend.
 - `src/gui`: public GUI API.
 - `src/test`: custom no-dependency test harness.
 - `src/bench`: custom no-dependency benchmark harness.

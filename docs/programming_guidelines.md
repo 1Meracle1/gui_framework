@@ -79,7 +79,6 @@ The following areas are intentionally not scaffolded as empty modules yet:
 
 - Memory allocators and arena primitives.
 - Platform/window/input layer.
-- GPU renderer backend abstraction.
 - UI layout, text, styling, and interaction systems.
 
 Add them when there is a concrete first behavior to compile and test.

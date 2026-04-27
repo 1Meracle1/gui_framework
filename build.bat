@@ -3,6 +3,7 @@ setlocal
 
 set "PRESET=%~1"
 if "%PRESET%"=="" set "PRESET=windows-msvc-debug"
+set "BUILD_TARGET=%~2"
 
 call "%~dp0scripts\windows_build_env.bat" "%PRESET%" || exit /b %ERRORLEVEL%
 
@@ -18,4 +19,8 @@ if defined CMAKE_MAKE_PROGRAM_ARG (
 ) else (
     cmake %CMAKE_FRESH_ARG% --preset "%PRESET%" || exit /b %ERRORLEVEL%
 )
-cmake --build --preset "%PRESET%" || exit /b %ERRORLEVEL%
+if "%BUILD_TARGET%"=="" (
+    cmake --build --preset "%PRESET%" || exit /b %ERRORLEVEL%
+) else (
+    cmake --build --preset "%PRESET%" --target "%BUILD_TARGET%" || exit /b %ERRORLEVEL%
+)

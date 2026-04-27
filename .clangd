@@ -1,4 +1,4 @@
 CompileFlags:
-  CompilationDatabase: build/windows-clang-debug
+  CompilationDatabase: build/clangd
   Add:
     - -DGUI_CLANGD=1
