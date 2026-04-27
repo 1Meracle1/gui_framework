@@ -4,6 +4,7 @@
 #include <base/hash_map.h>
 #include <base/io.h>
 #include <base/memory.h>
+#include <base/small_array.h>
 #include <base/str_ref.h>
 #include <base/string_buffer.h>
 #include <cstddef>
@@ -37,6 +38,19 @@ namespace {
     static_assert(StrRef("framework").substr(5u, 4u) == "work");
     static_assert(StrRef("FRAMEWORK").equals_ignore_ascii_case("framework"));
     static_assert(StrRef("  text\t").trim() == "text");
+
+    constexpr auto make_constexpr_small_array() -> SmallArray<int, 4u> {
+        SmallArray<int, 4u> values;
+        BASE_UNUSED(values.push_back(10));
+        BASE_UNUSED(values.push_back(20));
+        values.consume(1u);
+        BASE_UNUSED(values.inject_at(15, 1u));
+        return values;
+    }
+
+    static_assert(make_constexpr_small_array().len == 2u);
+    static_assert(make_constexpr_small_array().data[0u] == 10);
+    static_assert(make_constexpr_small_array().data[1u] == 15);
 
     auto expect_file_text(test::Context* context, std::FILE* file, StrRef expected) -> bool {
         char buffer[256] = {};
@@ -183,6 +197,100 @@ namespace {
         TEST_EXPECT(context, stable != nullptr);
         TEST_EXPECT(context, reused == transient);
         TEST_EXPECT(context, arena.used_size() == used_before_temp + 128u);
+    }
+
+    TEST_CASE(small_array_pushes_pops_and_clamps_resize_to_capacity) {
+        SmallArray<int, 3u> values;
+
+        TEST_EXPECT(context, values.empty());
+        TEST_EXPECT(context, values.capacity() == 3u);
+        TEST_EXPECT(context, values.space() == 3u);
+        TEST_EXPECT(context, values.push_back(1));
+        TEST_EXPECT(context, values.push_back(2));
+        TEST_EXPECT(context, values.push_front(0));
+        TEST_EXPECT(context, !values.push_back(3));
+        TEST_EXPECT(context, values.full());
+        TEST_EXPECT(context, values.len == 3u);
+        TEST_EXPECT(context, values.data[0u] == 0);
+        TEST_EXPECT(context, values.data[1u] == 1);
+        TEST_EXPECT(context, values.data[2u] == 2);
+
+        TEST_EXPECT(context, values.pop_front() == 0);
+        TEST_EXPECT(context, values.pop_back() == 2);
+        TEST_EXPECT(context, values.len == 1u);
+        TEST_EXPECT(context, values.data[0u] == 1);
+
+        values.resize(5u);
+        values[2u] = 7;
+        SmallArray<int, 3u> const& const_values = values;
+
+        TEST_EXPECT(context, values.len == 3u);
+        TEST_EXPECT(context, values.data[0u] == 1);
+        TEST_EXPECT(context, values.data[1u] == 0);
+        TEST_EXPECT(context, const_values[2u] == 7);
+    }
+
+    TEST_CASE(small_array_safe_access_and_bulk_append_report_failure_without_mutating) {
+        SmallArray<int, 4u> values;
+        int more_values[] = {2, 3, 4};
+
+        TEST_EXPECT(context, values.push_back(1));
+        TEST_EXPECT(context, values.push_back_elems(more_values));
+        TEST_EXPECT(context, values.len == 4u);
+        TEST_EXPECT(context, !values.push_back_elems({5, 6}));
+        TEST_EXPECT(context, values.len == 4u);
+
+        SmallArrayResult<int> const found = values.get_safe(2u);
+        SmallArrayResult<int> const missing = values.get_safe(4u);
+        SmallArrayPtrResult<int> const found_ptr = values.get_ptr_safe(1u);
+
+        TEST_EXPECT(context, found);
+        TEST_EXPECT(context, found.value == 3);
+        TEST_EXPECT(context, !missing);
+        TEST_EXPECT(context, found_ptr);
+        TEST_EXPECT(context, found_ptr.ptr != nullptr && *found_ptr.ptr == 2);
+    }
+
+    TEST_CASE(small_array_insert_remove_clear_and_zero_capacity_behave_like_odin_container) {
+        SmallArray<int, 5u> values;
+
+        TEST_EXPECT(context, values.append({0, 1, 2, 3}));
+        TEST_EXPECT(context, values.inject_at(9, 2u));
+        TEST_EXPECT(context, values.len == 5u);
+        TEST_EXPECT(context, values.data[0u] == 0);
+        TEST_EXPECT(context, values.data[1u] == 1);
+        TEST_EXPECT(context, values.data[2u] == 9);
+        TEST_EXPECT(context, values.data[3u] == 2);
+        TEST_EXPECT(context, values.data[4u] == 3);
+
+        values.ordered_remove(1u);
+
+        TEST_EXPECT(context, values.len == 4u);
+        TEST_EXPECT(context, values.data[0u] == 0);
+        TEST_EXPECT(context, values.data[1u] == 9);
+        TEST_EXPECT(context, values.data[2u] == 2);
+        TEST_EXPECT(context, values.data[3u] == 3);
+
+        values.unordered_remove(1u);
+
+        TEST_EXPECT(context, values.len == 3u);
+        TEST_EXPECT(context, values.data[0u] == 0);
+        TEST_EXPECT(context, values.data[1u] == 3);
+        TEST_EXPECT(context, values.data[2u] == 2);
+
+        values.clear();
+
+        TEST_EXPECT(context, values.empty());
+        TEST_EXPECT(context, !values.pop_back_safe());
+        TEST_EXPECT(context, !values.pop_front_safe());
+
+        SmallArray<int, 0u> zero_capacity;
+
+        TEST_EXPECT(context, zero_capacity.capacity() == 0u);
+        TEST_EXPECT(context, zero_capacity.space() == 0u);
+        TEST_EXPECT(context, !zero_capacity.push_back(1));
+        TEST_EXPECT(context, !zero_capacity.inject_at(1, 0u));
+        TEST_EXPECT(context, zero_capacity.slice().empty());
     }
 
     TEST_CASE(thread_temp_arenas_reset_each_frame) {

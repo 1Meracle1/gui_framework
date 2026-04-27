@@ -148,12 +148,12 @@ namespace hash_map_detail {
     template <typename T>
     [[nodiscard]] auto cell_storage_size(size_t capacity, size_t* out) -> bool {
         size_t cells = 0u;
-        if (add_overflows(capacity, CELL_ELEMENTS<T> - 1u, &cells)) {
+        if (add_overflows(capacity, CELL_ELEMENTS<T> - 1u, cells)) {
             return false;
         }
 
         cells /= CELL_ELEMENTS<T>;
-        return !mul_overflows(cells, CELL_SIZE<T>, out);
+        return !mul_overflows(cells, CELL_SIZE<T>, *out);
     }
 
     template <typename T> [[nodiscard]] auto cell_index(std::byte* base, size_t index) -> T* {
@@ -682,28 +682,28 @@ class HashMap final {
     [[nodiscard]] auto values_base() -> std::byte* {
         size_t values_offset = 0u;
         size_t hashes_offset = 0u;
-        BASE_UNUSED(section_offsets(capacity(), &values_offset, &hashes_offset));
+        BASE_UNUSED(section_offsets(capacity(), values_offset, hashes_offset));
         return raw_data() + values_offset;
     }
 
     [[nodiscard]] auto values_base() const -> std::byte const* {
         size_t values_offset = 0u;
         size_t hashes_offset = 0u;
-        BASE_UNUSED(section_offsets(capacity(), &values_offset, &hashes_offset));
+        BASE_UNUSED(section_offsets(capacity(), values_offset, hashes_offset));
         return raw_data() + values_offset;
     }
 
     [[nodiscard]] auto hashes_base() -> std::byte* {
         size_t values_offset = 0u;
         size_t hashes_offset = 0u;
-        BASE_UNUSED(section_offsets(capacity(), &values_offset, &hashes_offset));
+        BASE_UNUSED(section_offsets(capacity(), values_offset, hashes_offset));
         return raw_data() + hashes_offset;
     }
 
     [[nodiscard]] auto hashes_base() const -> std::byte const* {
         size_t values_offset = 0u;
         size_t hashes_offset = 0u;
-        BASE_UNUSED(section_offsets(capacity(), &values_offset, &hashes_offset));
+        BASE_UNUSED(section_offsets(capacity(), values_offset, hashes_offset));
         return raw_data() + hashes_offset;
     }
 
@@ -802,7 +802,7 @@ class HashMap final {
         size_t const old_log2 = static_cast<size_t>(tagged_data & hash_map_detail::DATA_TAG_MASK);
         size_t const old_capacity = size_t{1u} << old_log2;
         size_t allocation_size = 0u;
-        auto _ = total_allocation_size(old_capacity, allocation_size);
+        BASE_UNUSED(total_allocation_size(old_capacity, allocation_size));
 
         void* const data = std::bit_cast<void*>(tagged_data & ~hash_map_detail::DATA_TAG_MASK);
         m_resource->deallocate(data, allocation_size, hash_map_detail::MAP_CACHE_LINE_SIZE);
