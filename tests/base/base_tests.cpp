@@ -1,4 +1,5 @@
 #include <base/assert.h>
+#include <base/bit_set.h>
 #include <base/crash.h>
 #include <base/fmt.h>
 #include <base/hash_map.h>
@@ -52,6 +53,29 @@ namespace {
     static_assert(make_constexpr_small_array().len == 2u);
     static_assert(make_constexpr_small_array().data[0u] == 10);
     static_assert(make_constexpr_small_array().data[1u] == 15);
+
+    enum class Direction : uint8_t {
+        NORTH = 1u,
+        EAST = 2u,
+        SOUTH = 3u,
+        WEST = 4u,
+    };
+
+    using DirectionSet = BitSet<Direction, 4u, Direction::NORTH, uint8_t>;
+    using UppercaseSet = BitSet<char, 26u, 'A'>;
+
+    constexpr auto make_constexpr_bit_set() -> DirectionSet {
+        DirectionSet values;
+        BASE_UNUSED(values.add(Direction::NORTH));
+        BASE_UNUSED(values.add(Direction::WEST));
+        BASE_UNUSED(values.toggle(Direction::NORTH));
+        return values;
+    }
+
+    static_assert(make_constexpr_bit_set().contains(Direction::WEST));
+    static_assert(!make_constexpr_bit_set().contains(Direction::NORTH));
+    static_assert(card(make_constexpr_bit_set()) == 1u);
+    static_assert(sizeof(UppercaseSet) == sizeof(uint64_t));
 
     auto expect_file_text(test::Context* context, std::FILE* file, StrRef expected) -> bool {
         char buffer[256] = {};
@@ -292,6 +316,69 @@ namespace {
         TEST_EXPECT(context, !zero_capacity.push_back(1));
         TEST_EXPECT(context, !zero_capacity.inject_at(1, 0u));
         TEST_EXPECT(context, zero_capacity.slice().empty());
+    }
+
+    TEST_CASE(bit_set_models_odin_style_set_operations) {
+        DirectionSet north_west = {Direction::NORTH, Direction::WEST};
+        DirectionSet south_west = {Direction::SOUTH, Direction::WEST};
+
+        TEST_EXPECT(context, north_west.contains(Direction::NORTH));
+        TEST_EXPECT(context, north_west[Direction::WEST]);
+        TEST_EXPECT(context, !north_west.contains(Direction::EAST));
+        TEST_EXPECT(context, north_west.word(0u) == 0b1001u);
+        TEST_EXPECT(context, card(north_west) == 2u);
+
+        DirectionSet const combined = north_west | south_west;
+        DirectionSet const plus_combined = north_west + south_west;
+        DirectionSet const intersection = north_west & south_west;
+        DirectionSet const difference = combined - north_west;
+        DirectionSet const symmetric = north_west ^ south_west;
+        DirectionSet const west = {Direction::WEST};
+        DirectionSet const south = {Direction::SOUTH};
+        DirectionSet const north_south = {Direction::NORTH, Direction::SOUTH};
+
+        TEST_EXPECT(context, combined == plus_combined);
+        TEST_EXPECT(context, combined.contains(Direction::NORTH));
+        TEST_EXPECT(context, combined.contains(Direction::SOUTH));
+        TEST_EXPECT(context, combined.contains(Direction::WEST));
+        TEST_EXPECT(context, card(combined) == 3u);
+
+        TEST_EXPECT(context, intersection == west);
+        TEST_EXPECT(context, difference == south);
+        TEST_EXPECT(context, symmetric == north_south);
+
+        TEST_EXPECT(context, north_west <= combined);
+        TEST_EXPECT(context, north_west < combined);
+        TEST_EXPECT(context, combined >= north_west);
+        TEST_EXPECT(context, combined > north_west);
+        TEST_EXPECT(context, combined.contains_all(north_west));
+        TEST_EXPECT(context, north_west.contains_any(south_west));
+    }
+
+    TEST_CASE(bit_set_supports_ranges_membership_and_cardinality) {
+        UppercaseSet letters = {'A', 'B', 'Y'};
+
+        TEST_EXPECT(context, letters.contains('A'));
+        TEST_EXPECT(context, letters.contains('Y'));
+        TEST_EXPECT(context, !letters.contains('Z'));
+        TEST_EXPECT(context, !letters.add('@'));
+        TEST_EXPECT(context, !letters.add('['));
+        TEST_EXPECT(context, letters.add('Z'));
+        TEST_EXPECT(context, letters.remove('B'));
+        TEST_EXPECT(context, !letters.contains('B'));
+        TEST_EXPECT(context, card(letters) == 3u);
+
+        UppercaseSet all_letters;
+        all_letters.fill();
+
+        TEST_EXPECT(context, all_letters.all());
+        TEST_EXPECT(context, letters < all_letters);
+        TEST_EXPECT(context, (~letters).contains('B'));
+        TEST_EXPECT(context, !(~letters).contains('A'));
+
+        letters.clear();
+
+        TEST_EXPECT(context, letters.empty());
     }
 
     TEST_CASE(xar_array_grows_in_exponential_chunks_and_keeps_stable_addresses) {
