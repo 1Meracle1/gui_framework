@@ -69,6 +69,22 @@ namespace gui::render {
         return buffer.handle != nullptr;
     }
 
+    auto texture_valid(Texture texture) -> bool {
+        return texture.handle != nullptr;
+    }
+
+    auto shader_valid(Shader shader) -> bool {
+        return shader.handle != nullptr;
+    }
+
+    auto pipeline_valid(Pipeline pipeline) -> bool {
+        return pipeline.handle != nullptr;
+    }
+
+    auto bind_group_valid(BindGroup bind_group) -> bool {
+        return bind_group.handle != nullptr;
+    }
+
     auto create_context(Arena& arena, ContextDesc const& desc, Context& out_context) -> Result {
         ASSERT(out_context.handle == nullptr);
         if (desc.backend != Backend::D3D11) {

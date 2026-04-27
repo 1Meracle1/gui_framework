@@ -90,6 +90,22 @@ namespace gui::render {
         void* handle = nullptr;
     };
 
+    struct Texture {
+        void* handle = nullptr;
+    };
+
+    struct Shader {
+        void* handle = nullptr;
+    };
+
+    struct Pipeline {
+        void* handle = nullptr;
+    };
+
+    struct BindGroup {
+        void* handle = nullptr;
+    };
+
     struct ColorAttachmentDesc {
         Window window = {};
         LoadOp load_op = LoadOp::CLEAR;
@@ -115,6 +131,10 @@ namespace gui::render {
     [[nodiscard]] auto context_valid(Context context) -> bool;
     [[nodiscard]] auto window_valid(Window window) -> bool;
     [[nodiscard]] auto buffer_valid(Buffer buffer) -> bool;
+    [[nodiscard]] auto texture_valid(Texture texture) -> bool;
+    [[nodiscard]] auto shader_valid(Shader shader) -> bool;
+    [[nodiscard]] auto pipeline_valid(Pipeline pipeline) -> bool;
+    [[nodiscard]] auto bind_group_valid(BindGroup bind_group) -> bool;
 
     [[nodiscard]] auto create_context(Arena& arena, ContextDesc const& desc, Context& out_context)
         -> Result;
