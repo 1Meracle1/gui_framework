@@ -70,6 +70,13 @@ namespace gui::render {
         TRIANGLE_LIST,
     };
 
+    enum class BindGroupSlot : uint8_t {
+        FRAME,
+        PASS,
+        MATERIAL,
+        DRAW,
+    };
+
     struct SizeU32 {
         uint32_t width = 0u;
         uint32_t height = 0u;
@@ -108,6 +115,10 @@ namespace gui::render {
     };
 
     struct Texture {
+        void* handle = nullptr;
+    };
+
+    struct Sampler {
         void* handle = nullptr;
     };
 
@@ -163,6 +174,35 @@ namespace gui::render {
         PrimitiveTopology topology = PrimitiveTopology::TRIANGLE_LIST;
     };
 
+    struct BindGroupBufferBinding {
+        ShaderStage stage = ShaderStage::VERTEX;
+        uint32_t slot = 0u;
+        Buffer buffer = {};
+    };
+
+    struct BindGroupTextureBinding {
+        ShaderStage stage = ShaderStage::PIXEL;
+        uint32_t slot = 0u;
+        Texture texture = {};
+    };
+
+    struct BindGroupSamplerBinding {
+        ShaderStage stage = ShaderStage::PIXEL;
+        uint32_t slot = 0u;
+        Sampler sampler = {};
+    };
+
+    // Resource handles are referenced, not owned.
+    struct BindGroupDesc {
+        BindGroupSlot slot = BindGroupSlot::DRAW;
+        BindGroupBufferBinding const* buffers = nullptr;
+        size_t buffer_count = 0u;
+        BindGroupTextureBinding const* textures = nullptr;
+        size_t texture_count = 0u;
+        BindGroupSamplerBinding const* samplers = nullptr;
+        size_t sampler_count = 0u;
+    };
+
     [[nodiscard]] auto result_succeeded(Result result) -> bool;
     [[nodiscard]] auto result_failed(Result result) -> bool;
     [[nodiscard]] auto result_name(Result result) -> char const*;
@@ -171,6 +211,7 @@ namespace gui::render {
     [[nodiscard]] auto window_valid(Window window) -> bool;
     [[nodiscard]] auto buffer_valid(Buffer buffer) -> bool;
     [[nodiscard]] auto texture_valid(Texture texture) -> bool;
+    [[nodiscard]] auto sampler_valid(Sampler sampler) -> bool;
     [[nodiscard]] auto shader_valid(Shader shader) -> bool;
     [[nodiscard]] auto pipeline_valid(Pipeline pipeline) -> bool;
     [[nodiscard]] auto bind_group_valid(BindGroup bind_group) -> bool;
@@ -200,6 +241,13 @@ namespace gui::render {
         -> Result;
     auto destroy_pipeline(Context context, Pipeline& pipeline) -> void;
     auto bind_pipeline(Context context, Pipeline pipeline) -> void;
+
+    [[nodiscard]] auto create_bind_group(Arena& arena,
+                                         Context context,
+                                         BindGroupDesc const& desc,
+                                         BindGroup& out_group) -> Result;
+    auto destroy_bind_group(Context context, BindGroup& bind_group) -> void;
+    auto bind_group(Context context, BindGroup bind_group) -> void;
 
     [[nodiscard]] auto resize_window(Context context, Window window, SizeU32 size) -> Result;
     [[nodiscard]] auto begin_frame(Context context) -> Result;

@@ -77,6 +77,10 @@ namespace gui::render {
         return texture.handle != nullptr;
     }
 
+    auto sampler_valid(Sampler sampler) -> bool {
+        return sampler.handle != nullptr;
+    }
+
     auto shader_valid(Shader shader) -> bool {
         return shader.handle != nullptr;
     }
@@ -258,6 +262,61 @@ namespace gui::render {
 #else
         BASE_UNUSED(context);
         BASE_UNUSED(pipeline);
+#endif
+    }
+
+    auto create_bind_group(Arena& arena,
+                           Context context,
+                           BindGroupDesc const& desc,
+                           BindGroup& out_group) -> Result {
+        ASSERT(context_valid(context));
+        ASSERT(out_group.handle == nullptr);
+        ASSERT(desc.buffer_count == 0u || desc.buffers != nullptr);
+        ASSERT(desc.texture_count == 0u || desc.textures != nullptr);
+        ASSERT(desc.sampler_count == 0u || desc.samplers != nullptr);
+
+        for (size_t index = 0u; index < desc.buffer_count; ++index) {
+            ASSERT(buffer_valid(desc.buffers[index].buffer));
+        }
+        for (size_t index = 0u; index < desc.texture_count; ++index) {
+            ASSERT(texture_valid(desc.textures[index].texture));
+        }
+        for (size_t index = 0u; index < desc.sampler_count; ++index) {
+            ASSERT(sampler_valid(desc.samplers[index].sampler));
+        }
+
+#if BASE_PLATFORM_WINDOWS
+        return d3d11::create_bind_group(arena, context, desc, out_group);
+#else
+        BASE_UNUSED(arena);
+        BASE_UNUSED(context);
+        BASE_UNUSED(desc);
+        BASE_UNUSED(out_group);
+        return Result::UNSUPPORTED_PLATFORM;
+#endif
+    }
+
+    auto destroy_bind_group(Context context, BindGroup& group) -> void {
+        ASSERT(context_valid(context));
+        ASSERT(bind_group_valid(group));
+
+#if BASE_PLATFORM_WINDOWS
+        d3d11::destroy_bind_group(context, group);
+#else
+        BASE_UNUSED(context);
+        group.handle = nullptr;
+#endif
+    }
+
+    auto bind_group(Context context, BindGroup group) -> void {
+        ASSERT(context_valid(context));
+        ASSERT(bind_group_valid(group));
+
+#if BASE_PLATFORM_WINDOWS
+        d3d11::bind_group(context, group);
+#else
+        BASE_UNUSED(context);
+        BASE_UNUSED(group);
 #endif
     }
 

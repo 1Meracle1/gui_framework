@@ -45,6 +45,8 @@ namespace {
         gui::render::Buffer vertex_buffer = {};
         gui::render::Buffer transform_constants = {};
         gui::render::Buffer tint_constants = {};
+        gui::render::BindGroup transform_bind_group = {};
+        gui::render::BindGroup tint_bind_group = {};
     };
 
     struct AppState {
@@ -124,6 +126,12 @@ namespace {
             return;
         }
 
+        if (gui::render::bind_group_valid(pipeline->tint_bind_group)) {
+            gui::render::destroy_bind_group(context, pipeline->tint_bind_group);
+        }
+        if (gui::render::bind_group_valid(pipeline->transform_bind_group)) {
+            gui::render::destroy_bind_group(context, pipeline->transform_bind_group);
+        }
         if (gui::render::buffer_valid(pipeline->tint_constants)) {
             gui::render::destroy_buffer(context, pipeline->tint_constants);
         }
@@ -273,6 +281,36 @@ namespace {
         constant_desc.byte_size = sizeof(TintConstants);
         result =
             gui::render::create_buffer(render_context, constant_desc, pipeline->tint_constants);
+        if (gui::render::result_failed(result)) {
+            return false;
+        }
+
+        gui::render::BindGroupBufferBinding transform_binding = {};
+        transform_binding.stage = gui::render::ShaderStage::VERTEX;
+        transform_binding.slot = 0u;
+        transform_binding.buffer = pipeline->transform_constants;
+
+        gui::render::BindGroupDesc bind_group_desc = {};
+        bind_group_desc.slot = gui::render::BindGroupSlot::DRAW;
+        bind_group_desc.buffers = &transform_binding;
+        bind_group_desc.buffer_count = 1u;
+
+        result = gui::render::create_bind_group(
+            arena, render_context, bind_group_desc, pipeline->transform_bind_group);
+        if (gui::render::result_failed(result)) {
+            return false;
+        }
+
+        gui::render::BindGroupBufferBinding tint_binding = {};
+        tint_binding.stage = gui::render::ShaderStage::PIXEL;
+        tint_binding.slot = 0u;
+        tint_binding.buffer = pipeline->tint_constants;
+
+        bind_group_desc.slot = gui::render::BindGroupSlot::MATERIAL;
+        bind_group_desc.buffers = &tint_binding;
+
+        result = gui::render::create_bind_group(
+            arena, render_context, bind_group_desc, pipeline->tint_bind_group);
         return gui::render::result_succeeded(result);
     }
 
@@ -311,13 +349,11 @@ namespace {
         UINT const stride = sizeof(Vertex);
         UINT const offset = 0u;
         ID3D11Buffer* const vertex_buffer = d3d11_buffer(pipeline.vertex_buffer);
-        ID3D11Buffer* const transform_constants = d3d11_buffer(pipeline.transform_constants);
-        ID3D11Buffer* const tint_constants = d3d11_buffer(pipeline.tint_constants);
 
         gui::render::bind_pipeline(context, pipeline.pipeline);
+        gui::render::bind_group(context, pipeline.transform_bind_group);
+        gui::render::bind_group(context, pipeline.tint_bind_group);
         device_context->IASetVertexBuffers(0u, 1u, &vertex_buffer, &stride, &offset);
-        device_context->VSSetConstantBuffers(0u, 1u, &transform_constants);
-        device_context->PSSetConstantBuffers(0u, 1u, &tint_constants);
         device_context->Draw(3u, 0u);
         return true;
     }

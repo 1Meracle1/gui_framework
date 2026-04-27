@@ -23,6 +23,7 @@ namespace {
         gui::render::Window const window_handle = {};
         gui::render::Buffer const buffer_handle = {};
         gui::render::Texture const texture_handle = {};
+        gui::render::Sampler const sampler_handle = {};
         gui::render::Shader const shader_handle = {};
         gui::render::Pipeline const pipeline_handle = {};
         gui::render::BindGroup const bind_group_handle = {};
@@ -32,6 +33,7 @@ namespace {
         TEST_EXPECT(context, !gui::render::window_valid(window_handle));
         TEST_EXPECT(context, !gui::render::buffer_valid(buffer_handle));
         TEST_EXPECT(context, !gui::render::texture_valid(texture_handle));
+        TEST_EXPECT(context, !gui::render::sampler_valid(sampler_handle));
         TEST_EXPECT(context, !gui::render::shader_valid(shader_handle));
         TEST_EXPECT(context, !gui::render::pipeline_valid(pipeline_handle));
         TEST_EXPECT(context, !gui::render::bind_group_valid(bind_group_handle));
@@ -48,12 +50,14 @@ namespace {
 
         gui::render::Buffer const buffer_handle = {&value};
         gui::render::Texture const texture_handle = {&value};
+        gui::render::Sampler const sampler_handle = {&value};
         gui::render::Shader const shader_handle = {&value};
         gui::render::Pipeline const pipeline_handle = {&value};
         gui::render::BindGroup const bind_group_handle = {&value};
 
         TEST_EXPECT(context, gui::render::buffer_valid(buffer_handle));
         TEST_EXPECT(context, gui::render::texture_valid(texture_handle));
+        TEST_EXPECT(context, gui::render::sampler_valid(sampler_handle));
         TEST_EXPECT(context, gui::render::shader_valid(shader_handle));
         TEST_EXPECT(context, gui::render::pipeline_valid(pipeline_handle));
         TEST_EXPECT(context, gui::render::bind_group_valid(bind_group_handle));
@@ -93,6 +97,18 @@ namespace {
         TEST_EXPECT(context, desc.vertex_attributes == nullptr);
         TEST_EXPECT(context, desc.vertex_attribute_count == 0u);
         TEST_EXPECT(context, desc.topology == gui::render::PrimitiveTopology::TRIANGLE_LIST);
+    }
+
+    TEST_CASE(render_bind_group_defaults_describe_draw_frequency_group) {
+        gui::render::BindGroupDesc const desc = {};
+
+        TEST_EXPECT(context, desc.slot == gui::render::BindGroupSlot::DRAW);
+        TEST_EXPECT(context, desc.buffers == nullptr);
+        TEST_EXPECT(context, desc.buffer_count == 0u);
+        TEST_EXPECT(context, desc.textures == nullptr);
+        TEST_EXPECT(context, desc.texture_count == 0u);
+        TEST_EXPECT(context, desc.samplers == nullptr);
+        TEST_EXPECT(context, desc.sampler_count == 0u);
     }
 
     TEST_CASE(render_vertex_attribute_defaults_describe_float2_attribute) {

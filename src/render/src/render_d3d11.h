@@ -30,6 +30,13 @@ namespace gui::render::d3d11 {
     auto destroy_pipeline(Context context, Pipeline& pipeline) -> void;
     auto bind_pipeline(Context context, Pipeline pipeline) -> void;
 
+    [[nodiscard]] auto create_bind_group(Arena& arena,
+                                         Context context,
+                                         BindGroupDesc const& desc,
+                                         BindGroup& out_group) -> Result;
+    auto destroy_bind_group(Context context, BindGroup& bind_group) -> void;
+    auto bind_group(Context context, BindGroup bind_group) -> void;
+
     [[nodiscard]] auto resize_window(Context context, Window window, SizeU32 size) -> Result;
     [[nodiscard]] auto begin_frame(Context context) -> Result;
     [[nodiscard]] auto begin_render_pass(Context context, RenderPassDesc const& desc) -> Result;
