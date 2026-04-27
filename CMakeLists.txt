@@ -4,6 +4,7 @@ project(gui_framework VERSION 0.1.0 LANGUAGES CXX)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON CACHE BOOL "Export compile_commands.json" FORCE)
 set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
 
 option(BUILD_TESTS "Build gui_framework tests" ON)
 option(BUILD_BENCHMARKS "Build gui_framework benchmarks" ON)
@@ -18,12 +19,16 @@ include(cpp_project_options)
 
 cpp_configure_project()
 
+add_library(gui_framework STATIC)
+
 add_subdirectory(src/base)
 add_subdirectory(src/font_provider)
 add_subdirectory(src/font_cache)
 add_subdirectory(src/render)
 add_subdirectory(src/draw)
 add_subdirectory(src/gui)
+
+cpp_configure_target(gui_framework)
 
 add_executable(gui_framework_info
     tools/framework_info.cpp

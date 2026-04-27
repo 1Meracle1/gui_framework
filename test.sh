@@ -10,5 +10,5 @@ esac
 preset="${1:-$default_preset}"
 
 cmake --preset "$preset"
-cmake --build --preset "$preset"
+cmake --build --preset "$preset" --parallel
 ctest --preset "$preset"

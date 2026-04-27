@@ -6,6 +6,9 @@ if "%PRESET%"=="" set "PRESET=windows-msvc-debug"
 set "CMAKE_MAKE_PROGRAM_ARG="
 set "CMAKE_EXPECTED_GENERATOR="
 set "VSCMD_SKIP_SENDTELEMETRY=1"
+set "ORIGINAL_PATH=%PATH%"
+set PATH=
+set "Path=%ORIGINAL_PATH%"
 set "PRESET_PREFIX=%PRESET:~0,8%"
 if /I "%PRESET_PREFIX%"=="windows-" goto configure_windows
 exit /b 0
@@ -20,10 +23,10 @@ exit /b 1
 
 :have_visual_studio
 set "MSVC_PREFIX=%PRESET:~0,12%"
-if /I not "%MSVC_PREFIX%"=="windows-msvc" goto configure_ninja
+if /I "%MSVC_PREFIX%"=="windows-msvc" set "WANT_MSVC_GENERATOR=1"
 
 where cl.exe >nul 2>nul
-if not errorlevel 1 goto configure_ninja
+if not errorlevel 1 goto have_compiler_env
 
 set "VCVARS=%VS_INSTALL%\VC\Auxiliary\Build\vcvars64.bat"
 if exist "%VCVARS%" goto call_vcvars
@@ -35,12 +38,13 @@ exit /b 1
 call "%VCVARS%" >nul
 if errorlevel 1 exit /b %ERRORLEVEL%
 
-:configure_ninja
-if /I "%MSVC_PREFIX%"=="windows-msvc" (
-    set "CMAKE_EXPECTED_GENERATOR=NMake Makefiles"
+:have_compiler_env
+if defined WANT_MSVC_GENERATOR (
+    set "CMAKE_EXPECTED_GENERATOR=Visual Studio 17 2022"
     exit /b 0
 )
 
+:configure_ninja
 set "NINJA_EXE=%VS_INSTALL%\Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja\ninja.exe"
 set "CMAKE_EXPECTED_GENERATOR=Ninja"
 if not exist "%NINJA_EXE%" exit /b 0

@@ -8,6 +8,14 @@ case "$(uname -s)" in
 esac
 
 preset="${1:-$default_preset}"
+config=Debug
+case "$preset" in
+    *release*) config=Release ;;
+esac
 
 "$(dirname "$0")/build.sh" "$preset"
-"$(dirname "$0")/build/$preset/gui_framework_info$exe_suffix"
+exe="$(dirname "$0")/build/$preset/gui_framework_info$exe_suffix"
+if [ ! -x "$exe" ]; then
+    exe="$(dirname "$0")/build/$preset/$config/gui_framework_info$exe_suffix"
+fi
+"$exe"

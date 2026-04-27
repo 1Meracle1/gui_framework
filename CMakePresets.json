@@ -24,7 +24,11 @@
       "name": "windows-msvc-base",
       "hidden": true,
       "inherits": "base",
-      "generator": "NMake Makefiles",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "x64",
+      "cacheVariables": {
+        "CMAKE_VS_GLOBALS": "VcpkgEnabled=false"
+      },
       "condition": {
         "type": "equals",
         "lhs": "${hostSystemName}",
@@ -36,16 +40,14 @@
       "displayName": "Windows MSVC Debug",
       "inherits": "windows-msvc-base",
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Debug"
+        "CMAKE_VS_GLOBALS": "VcpkgEnabled=false",
+        "CMAKE_MSVC_DEBUG_INFORMATION_FORMAT": "Embedded"
       }
     },
     {
       "name": "windows-msvc-release",
       "displayName": "Windows MSVC Release",
-      "inherits": "windows-msvc-base",
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Release"
-      }
+      "inherits": "windows-msvc-base"
     },
     {
       "name": "windows-msvc-strict",
@@ -131,9 +133,9 @@
     }
   ],
   "buildPresets": [
-    { "name": "windows-msvc-debug", "configurePreset": "windows-msvc-debug" },
-    { "name": "windows-msvc-release", "configurePreset": "windows-msvc-release" },
-    { "name": "windows-msvc-strict", "configurePreset": "windows-msvc-strict" },
+    { "name": "windows-msvc-debug", "configurePreset": "windows-msvc-debug", "configuration": "Debug" },
+    { "name": "windows-msvc-release", "configurePreset": "windows-msvc-release", "configuration": "Release" },
+    { "name": "windows-msvc-strict", "configurePreset": "windows-msvc-strict", "configuration": "Debug" },
     { "name": "windows-clang-debug", "configurePreset": "windows-clang-debug" },
     { "name": "windows-clang-strict", "configurePreset": "windows-clang-strict" },
     { "name": "macos-clang-debug", "configurePreset": "macos-clang-debug" },
@@ -144,12 +146,14 @@
     {
       "name": "windows-msvc-debug",
       "configurePreset": "windows-msvc-debug",
+      "configuration": "Debug",
       "output": { "outputOnFailure": true },
       "execution": { "noTestsAction": "error" }
     },
     {
       "name": "windows-msvc-strict",
       "configurePreset": "windows-msvc-strict",
+      "configuration": "Debug",
       "output": { "outputOnFailure": true },
       "execution": { "noTestsAction": "error" }
     },
