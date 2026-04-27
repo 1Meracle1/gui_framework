@@ -65,6 +65,8 @@ do not prefix everything with
   `int32_t`, `int64_t`, `uint8_t`, `uint16_t`, `uint32_t`, and `uint64_t`, not
   `std::size_t`, `std::int8_t`, `std::int16_t`, `std::int32_t`, `std::int64_t`,
   `std::uint8_t`, `std::uint16_t`, `std::uint32_t`, or `std::uint64_t`.
+- Use `std::min`, `std::max`, and `std::clamp` instead of inline ternary
+  operators for min, max, and clamping logic.
 - Prefer `StrRef` from the base layer for non-owning string parameters,
   string-return views, parsing, and comparisons. Use `char const*` only when a
   null-terminated C string is required at an API boundary, and avoid

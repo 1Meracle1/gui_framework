@@ -1,6 +1,7 @@
 #include <base/assert.h>
 #include <base/crash.h>
 #include <base/fmt.h>
+#include <base/hash_map.h>
 #include <base/io.h>
 #include <base/memory.h>
 #include <base/str_ref.h>
@@ -60,6 +61,13 @@ namespace {
         return std::tmpfile();
 #endif
     }
+
+    struct CollidingIntHasher {
+        [[nodiscard]] auto operator()(int const& key, uintptr_t seed) const -> uintptr_t {
+            BASE_UNUSED(seed);
+            return (static_cast<uintptr_t>(key) & 3u) + 1u;
+        }
+    };
 
     TEST_CASE(crash_reason_names_are_stable) {
         TEST_EXPECT(context,
@@ -213,6 +221,117 @@ namespace {
         TEST_EXPECT(context, arena.used_size() == 64u);
 
         shutdown_thread_temp_arenas();
+    }
+
+    TEST_CASE(hash_map_sets_gets_updates_and_iterates_entries) {
+        HashMap<int, int> map;
+
+        TEST_EXPECT(context, map.init());
+        TEST_EXPECT(context, map.empty());
+        TEST_EXPECT(context, map.set(10, 100) != nullptr);
+        TEST_EXPECT(context, map.set(20, 200) != nullptr);
+        TEST_EXPECT(context, map.set(10, 150) != nullptr);
+
+        int* const ten = map.get(10);
+        int* const twenty = map.get(20);
+
+        TEST_EXPECT(context, ten != nullptr);
+        TEST_EXPECT(context, twenty != nullptr);
+        TEST_EXPECT(context, ten != nullptr && *ten == 150);
+        TEST_EXPECT(context, twenty != nullptr && *twenty == 200);
+        TEST_EXPECT(context, map.get(30) == nullptr);
+        TEST_EXPECT(context, map.size() == 2u);
+        TEST_EXPECT(context, map.capacity() >= 8u);
+
+        int key_sum = 0;
+        int value_sum = 0;
+        size_t entry_count = 0u;
+
+        for (HashMap<int, int>::Entry entry : map) {
+            key_sum += *entry.key;
+            value_sum += *entry.value;
+            entry_count += 1u;
+        }
+
+        TEST_EXPECT(context, entry_count == 2u);
+        TEST_EXPECT(context, key_sum == 30);
+        TEST_EXPECT(context, value_sum == 350);
+    }
+
+    TEST_CASE(hash_map_grows_and_preserves_entries) {
+        HashMap<int, int> map;
+
+        TEST_EXPECT(context, map.init());
+
+        for (int value = 0; value < 200; ++value) {
+            TEST_EXPECT(context, map.set(value, value * 10) != nullptr);
+        }
+
+        TEST_EXPECT(context, map.size() == 200u);
+        TEST_EXPECT(context, map.capacity() >= 256u);
+
+        for (int value = 0; value < 200; ++value) {
+            int const* const found = map.get(value);
+            TEST_EXPECT(context, found != nullptr);
+            TEST_EXPECT(context, found != nullptr && *found == value * 10);
+        }
+    }
+
+    TEST_CASE(hash_map_uses_str_ref_content_for_default_hashing) {
+        char first_key[] = "panel";
+        char equivalent_key[] = "panel";
+        char other_key[] = "dock";
+        HashMap<StrRef, int> map;
+
+        TEST_EXPECT(context, map.init());
+        TEST_EXPECT(context, map.set(StrRef(first_key), 7) != nullptr);
+        TEST_EXPECT(context, map.set(StrRef(other_key), 3) != nullptr);
+
+        int const* const found = map.get(StrRef(equivalent_key));
+        int const* const other = map.get(StrRef("dock"));
+
+        TEST_EXPECT(context, found != nullptr);
+        TEST_EXPECT(context, found != nullptr && *found == 7);
+        TEST_EXPECT(context, other != nullptr);
+        TEST_EXPECT(context, other != nullptr && *other == 3);
+    }
+
+    TEST_CASE(hash_map_erases_tombstones_and_reuses_collision_slots) {
+        HashMap<int, int, CollidingIntHasher> map;
+
+        TEST_EXPECT(context, map.init());
+
+        for (int value = 0; value < 32; ++value) {
+            TEST_EXPECT(context, map.set(value, value + 1000) != nullptr);
+        }
+
+        for (int value = 0; value < 32; value += 3) {
+            int old_key = -1;
+            int old_value = -1;
+            TEST_EXPECT(context, map.erase(value, &old_key, &old_value));
+            TEST_EXPECT(context, old_key == value);
+            TEST_EXPECT(context, old_value == value + 1000);
+        }
+
+        for (int value = 0; value < 32; ++value) {
+            int const* const found = map.get(value);
+            if ((value % 3) == 0) {
+                TEST_EXPECT(context, found == nullptr);
+            } else {
+                TEST_EXPECT(context, found != nullptr);
+                TEST_EXPECT(context, found != nullptr && *found == value + 1000);
+            }
+        }
+
+        for (int value = 100; value < 116; ++value) {
+            TEST_EXPECT(context, map.set(value, value + 2000) != nullptr);
+        }
+
+        for (int value = 100; value < 116; ++value) {
+            int const* const found = map.get(value);
+            TEST_EXPECT(context, found != nullptr);
+            TEST_EXPECT(context, found != nullptr && *found == value + 2000);
+        }
     }
 
     TEST_CASE(string_view_constructs_from_common_string_sources) {
