@@ -157,6 +157,22 @@ namespace {
         TEST_EXPECT(context, arena.reserved_size() >= arena.committed_size());
     }
 
+    TEST_CASE(arena_commits_more_pages_when_needed) {
+        Arena arena;
+        ArenaOptions options = {};
+        options.reserve_size = 256u * 1024u;
+        options.commit_size = 64u * 1024u;
+
+        arena.init(options);
+
+        size_t const initial_committed_size = arena.committed_size();
+        void* const data = arena.allocate_bytes(initial_committed_size + 1u, 8u);
+
+        TEST_EXPECT(context, data != nullptr);
+        TEST_EXPECT(context, arena.used_size() > initial_committed_size);
+        TEST_EXPECT(context, arena.committed_size() >= arena.used_size());
+    }
+
     TEST_CASE(arena_markers_and_reset_reuse_linear_storage) {
         Arena arena;
         ArenaOptions options = {};

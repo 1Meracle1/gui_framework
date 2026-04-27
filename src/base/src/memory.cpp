@@ -116,8 +116,8 @@ auto Arena::allocate_bytes(size_t size, size_t alignment) -> void* {
     ASSERT(offset <= m_reserved_size && size <= m_reserved_size - offset);
 
     size_t const new_used_size = offset + size;
-    ASSERT(new_used_size <= m_committed_size);
     commit_to(new_used_size);
+    ASSERT(new_used_size <= m_committed_size);
     m_used_size = new_used_size;
     return std::bit_cast<void*>(aligned);
 }

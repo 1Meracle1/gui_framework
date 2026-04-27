@@ -12,8 +12,8 @@ if /I "%PRESET:~-7%"=="release" set "CONFIG=Release"
 call "%~dp0scripts\windows_build_env.bat" "%PRESET%" || exit /b %ERRORLEVEL%
 call "%~dp0build.bat" "%PRESET%" "%RUN_TARGET%" || exit /b %ERRORLEVEL%
 
-set "EXE=%~dp0build\%PRESET%\%RUN_TARGET%.exe"
-if not exist "%EXE%" set "EXE=%~dp0build\%PRESET%\%CONFIG%\%RUN_TARGET%.exe"
+set "EXE=%~dp0build\%PRESET%\%CONFIG%\%RUN_TARGET%.exe"
+if not exist "%EXE%" set "EXE=%~dp0build\%PRESET%\%RUN_TARGET%.exe"
 if not exist "%EXE%" (
     echo Expected executable not found: "%EXE%"
     exit /b 1

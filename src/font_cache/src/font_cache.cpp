@@ -1,4 +1,6 @@
 #include <base/memory.h>
+#include <base/slice.h>
+#include <base/vec.h>
 #include <cstring>
 #include <font_cache/font_cache.h>
 #include <limits>
@@ -92,20 +94,6 @@ namespace gui::font_cache {
             char* const data = arena_alloc<char>(arena, text.size());
             std::memcpy(data, text.data(), text.size());
             out_text = StrRef(data, text.size());
-        }
-
-        auto copy_pixels(Arena& arena,
-                         uint8_t const* pixels,
-                         size_t byte_count,
-                         uint8_t const*& out_pixels) -> void {
-            if (byte_count == 0u) {
-                out_pixels = nullptr;
-                return;
-            }
-
-            uint8_t* const data = arena_alloc<uint8_t>(arena, byte_count);
-            std::memcpy(data, pixels, byte_count);
-            out_pixels = data;
         }
 
         auto close_fonts(CacheImpl* impl) -> void {
@@ -243,7 +231,12 @@ namespace gui::font_cache {
 
         entry->run.size = raster.size;
         entry->run.stride = raster.stride;
-        copy_pixels(impl->cache_arena, raster.rgba_pixels, bytes, entry->run.rgba_pixels);
+
+        if (bytes) {
+            auto data = arena_alloc<uint8_t>(impl->cache_arena, bytes);
+            std::memcpy(data, raster.rgba_pixels, bytes);
+            entry->run.rgba_pixels = data;
+        }
 
         entry->run.advance = raster.advance;
         entry->run.height = raster.height;
