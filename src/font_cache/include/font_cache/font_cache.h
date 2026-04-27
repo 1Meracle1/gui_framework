@@ -8,8 +8,6 @@
 
 namespace gui::font_cache {
 
-    using Result = font_provider::Result;
-
     struct CacheDesc {
         size_t cache_slot_count = 1024u;
         size_t arena_reserve_size = 16u * 1024u * 1024u;
@@ -35,19 +33,17 @@ namespace gui::font_cache {
     [[nodiscard]] auto cache_valid(Cache cache) -> bool;
     [[nodiscard]] auto font_valid(Font font) -> bool;
 
-    [[nodiscard]] auto create_cache(Arena& arena,
-                                    font_provider::Context provider,
-                                    CacheDesc const& desc,
-                                    Cache* out_cache) -> Result;
-    auto destroy_cache(Cache* cache) -> void;
+    auto create_cache(Arena& arena,
+                      font_provider::Context provider,
+                      CacheDesc const& desc,
+                      Cache& out_cache) -> void;
+    auto destroy_cache(Cache& cache) -> void;
     auto clear_cache(Cache cache) -> void;
 
-    [[nodiscard]] auto open_system_font(Cache cache, StrRef family_name, Font* out_font) -> Result;
-    [[nodiscard]] auto open_font_file(Cache cache, StrRef file_path, Font* out_font) -> Result;
-    [[nodiscard]] auto metrics_from_font(Font font, float size, font_provider::Metrics* out_metrics)
-        -> Result;
+    auto open_system_font(Cache cache, StrRef family_name, Font& out_font) -> void;
+    auto open_font_file(Cache cache, StrRef file_path, Font& out_font) -> void;
+    auto metrics_from_font(Font font, float size, font_provider::Metrics& out_metrics) -> void;
 
-    [[nodiscard]] auto text_run(Cache cache, Font font, float size, StrRef text, TextRun* out_run)
-        -> Result;
+    auto text_run(Cache cache, Font font, float size, StrRef text, TextRun& out_run) -> void;
 
 } // namespace gui::font_cache

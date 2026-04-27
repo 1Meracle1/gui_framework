@@ -4,14 +4,14 @@
 
 namespace gui::render::d3d11 {
 
-    [[nodiscard]] auto create_context(Arena& arena, ContextDesc const& desc, Context* out_context)
+    [[nodiscard]] auto create_context(Arena& arena, ContextDesc const& desc, Context& out_context)
         -> Result;
-    auto destroy_context(Context* context) -> void;
+    auto destroy_context(Context& context) -> void;
 
     [[nodiscard]] auto
-    create_window(Arena& arena, Context context, WindowDesc const& desc, Window* out_window)
+    create_window(Arena& arena, Context context, WindowDesc const& desc, Window& out_window)
         -> Result;
-    auto destroy_window(Window* window) -> void;
+    auto destroy_window(Window& window) -> void;
 
     [[nodiscard]] auto resize_window(Context context, Window window, SizeU32 size) -> Result;
     [[nodiscard]] auto begin_frame(Context context) -> Result;

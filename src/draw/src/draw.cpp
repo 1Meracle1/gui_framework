@@ -17,15 +17,15 @@ namespace gui::draw {
             return static_cast<ContextImpl*>(context.handle);
         }
 
-        auto copy_frame_text(Arena& arena, StrRef text, StrRef* out_text) -> void {
+        auto copy_frame_text(Arena& arena, StrRef text, StrRef& out_text) -> void {
             if (text.empty()) {
-                *out_text = {};
+                out_text = {};
                 return;
             }
 
             char* const data = arena_alloc<char>(arena, text.size());
             std::memcpy(data, text.data(), text.size());
-            *out_text = StrRef(data, text.size());
+            out_text = StrRef(data, text.size());
         }
 
     } // namespace
@@ -34,12 +34,12 @@ namespace gui::draw {
         return context.handle != nullptr;
     }
 
-    auto create_context(Arena& arena, ContextDesc const& desc, Context* out_context) -> Result {
-        if (!font_cache::cache_valid(desc.font_cache) || out_context == nullptr ||
-            out_context->handle != nullptr || desc.initial_command_capacity == 0u ||
-            desc.frame_arena_reserve_size == 0u || desc.frame_arena_commit_size == 0u) {
-            return Result::INVALID_ARGUMENT;
-        }
+    auto create_context(Arena& arena, ContextDesc const& desc, Context& out_context) -> void {
+        ASSERT(font_cache::cache_valid(desc.font_cache));
+        ASSERT(out_context.handle == nullptr);
+        ASSERT(desc.initial_command_capacity != 0u);
+        ASSERT(desc.frame_arena_reserve_size != 0u);
+        ASSERT(desc.frame_arena_commit_size != 0u);
 
         ContextImpl* const impl = arena_new<ContextImpl>(arena);
 
@@ -50,28 +50,23 @@ namespace gui::draw {
         impl->commands = arena_alloc<TextCommand>(arena, desc.initial_command_capacity);
         impl->command_capacity = desc.initial_command_capacity;
         impl->font_cache = desc.font_cache;
-        out_context->handle = impl;
-        return Result::OK;
+        out_context.handle = impl;
     }
 
-    auto destroy_context(Context* context) -> void {
-        if (context == nullptr || context->handle == nullptr) {
-            return;
-        }
+    auto destroy_context(Context& context) -> void {
+        ASSERT(context.handle != nullptr);
 
-        ContextImpl* const impl = context_from_handle(*context);
+        ContextImpl* const impl = context_from_handle(context);
         impl->commands = nullptr;
         impl->command_count = 0u;
         impl->command_capacity = 0u;
         impl->frame_arena.destroy();
-        context->handle = nullptr;
+        context.handle = nullptr;
     }
 
     auto begin_frame(Context context) -> void {
         ContextImpl* const impl = context_from_handle(context);
-        if (impl == nullptr) {
-            return;
-        }
+        ASSERT(impl != nullptr);
 
         impl->frame_arena.reset();
         impl->command_count = 0u;
@@ -83,25 +78,17 @@ namespace gui::draw {
                    Vec2 position,
                    TextStyle const& style,
                    StrRef text,
-                   float* out_advance) -> Result {
+                   float* out_advance) -> void {
         ContextImpl* const impl = context_from_handle(context);
-        if (impl == nullptr) {
-            return Result::INVALID_ARGUMENT;
-        }
+        ASSERT(impl != nullptr);
 
         font_cache::TextRun run = {};
-        Result const run_result =
-            font_cache::text_run(impl->font_cache, style.font, style.size, text, &run);
-        if (font_provider::result_failed(run_result)) {
-            return run_result;
-        }
+        font_cache::text_run(impl->font_cache, style.font, style.size, text, run);
 
-        if (impl->command_count == impl->command_capacity) {
-            return Result::OUT_OF_MEMORY;
-        }
+        ASSERT(impl->command_count < impl->command_capacity);
 
         StrRef frame_text = {};
-        copy_frame_text(impl->frame_arena, text, &frame_text);
+        copy_frame_text(impl->frame_arena, text, frame_text);
 
         TextCommand* const command = impl->commands + impl->command_count;
         *command = {};
@@ -114,7 +101,6 @@ namespace gui::draw {
         if (out_advance != nullptr) {
             *out_advance = run.advance;
         }
-        return Result::OK;
     }
 
     auto text_command_count(Context context) -> size_t {

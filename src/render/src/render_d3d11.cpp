@@ -47,7 +47,7 @@ namespace gui::render::d3d11 {
 
         [[nodiscard]] auto try_create_device(D3D_DRIVER_TYPE driver_type,
                                              UINT creation_flags,
-                                             D3D11Context* out_context) -> HRESULT {
+                                             D3D11Context& out_context) -> HRESULT {
             D3D_FEATURE_LEVEL levels_with_11_1[] = {
                 D3D_FEATURE_LEVEL_11_1,
                 D3D_FEATURE_LEVEL_11_0,
@@ -98,9 +98,9 @@ namespace gui::render::d3d11 {
                 return hr;
             }
 
-            out_context->device = device;
-            out_context->device_context = device_context;
-            out_context->feature_level = feature_level;
+            out_context.device = device;
+            out_context.device_context = device_context;
+            out_context.feature_level = feature_level;
             return hr;
         }
 
@@ -163,7 +163,7 @@ namespace gui::render::d3d11 {
 
     } // namespace
 
-    auto create_context(Arena& arena, ContextDesc const& desc, Context* out_context) -> Result {
+    auto create_context(Arena& arena, ContextDesc const& desc, Context& out_context) -> Result {
         ArenaMarker const marker = arena.marker();
         D3D11Context* context = arena_new<D3D11Context>(arena);
 
@@ -172,18 +172,18 @@ namespace gui::render::d3d11 {
             creation_flags |= D3D11_CREATE_DEVICE_DEBUG;
         }
 
-        HRESULT hr = try_create_device(D3D_DRIVER_TYPE_HARDWARE, creation_flags, context);
+        HRESULT hr = try_create_device(D3D_DRIVER_TYPE_HARDWARE, creation_flags, *context);
         if (hr == DXGI_ERROR_SDK_COMPONENT_MISSING && desc.enable_debug_layer) {
             creation_flags &= ~static_cast<UINT>(D3D11_CREATE_DEVICE_DEBUG);
-            hr = try_create_device(D3D_DRIVER_TYPE_HARDWARE, creation_flags, context);
+            hr = try_create_device(D3D_DRIVER_TYPE_HARDWARE, creation_flags, *context);
         }
 
         if (FAILED(hr)) {
-            hr = try_create_device(D3D_DRIVER_TYPE_WARP, creation_flags, context);
+            hr = try_create_device(D3D_DRIVER_TYPE_WARP, creation_flags, *context);
             if (hr == DXGI_ERROR_SDK_COMPONENT_MISSING &&
                 (creation_flags & D3D11_CREATE_DEVICE_DEBUG) != 0u) {
                 creation_flags &= ~static_cast<UINT>(D3D11_CREATE_DEVICE_DEBUG);
-                hr = try_create_device(D3D_DRIVER_TYPE_WARP, creation_flags, context);
+                hr = try_create_device(D3D_DRIVER_TYPE_WARP, creation_flags, *context);
             }
         }
 
@@ -199,19 +199,18 @@ namespace gui::render::d3d11 {
             return Result::FACTORY_CREATION_FAILED;
         }
 
-        out_context->handle = context;
+        out_context.handle = context;
         return Result::OK;
     }
 
-    auto destroy_context(Context* context) -> void {
-        ASSERT(context != nullptr);
-        D3D11Context* impl = context_from_handle(*context);
+    auto destroy_context(Context& context) -> void {
+        D3D11Context* impl = context_from_handle(context);
         ASSERT(impl != nullptr);
         destroy_context_impl(impl);
-        context->handle = nullptr;
+        context.handle = nullptr;
     }
 
-    auto create_window(Arena& arena, Context context, WindowDesc const& desc, Window* out_window)
+    auto create_window(Arena& arena, Context context, WindowDesc const& desc, Window& out_window)
         -> Result {
         D3D11Context* context_impl = context_from_handle(context);
         ASSERT(context_impl != nullptr);
@@ -251,16 +250,15 @@ namespace gui::render::d3d11 {
 
         window->size = desc.size;
         window->present_mode = desc.present_mode;
-        out_window->handle = window;
+        out_window.handle = window;
         return Result::OK;
     }
 
-    auto destroy_window(Window* window) -> void {
-        ASSERT(window != nullptr);
-        D3D11Window* impl = window_from_handle(*window);
+    auto destroy_window(Window& window) -> void {
+        D3D11Window* impl = window_from_handle(window);
         ASSERT(impl != nullptr);
         destroy_window_impl(impl);
-        window->handle = nullptr;
+        window.handle = nullptr;
     }
 
     auto resize_window(Context context, Window window, SizeU32 size) -> Result {
@@ -298,9 +296,7 @@ namespace gui::render::d3d11 {
         D3D11Window* window_impl = window_from_handle(window);
         ASSERT(context_impl != nullptr);
         ASSERT(window_impl != nullptr);
-        if (window_impl->render_target_view == nullptr) {
-            return Result::INVALID_ARGUMENT;
-        }
+        ASSERT(window_impl->render_target_view != nullptr);
 
         float const clear_color[] = {color.r, color.g, color.b, color.a};
         context_impl->device_context->OMSetRenderTargets(

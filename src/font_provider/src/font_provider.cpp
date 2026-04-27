@@ -20,18 +20,8 @@ namespace gui::font_provider {
             return "unsupported platform";
         case Result::UNSUPPORTED_BACKEND:
             return "unsupported backend";
-        case Result::INVALID_ARGUMENT:
-            return "invalid argument";
-        case Result::OUT_OF_MEMORY:
-            return "out of memory";
         case Result::BACKEND_FAILURE:
             return "backend failure";
-        case Result::FONT_NOT_FOUND:
-            return "font not found";
-        case Result::TEXT_CONVERSION_FAILED:
-            return "text conversion failed";
-        case Result::RASTERIZATION_FAILED:
-            return "rasterization failed";
         }
 
         return "unknown";
@@ -58,10 +48,8 @@ namespace gui::font_provider {
         return font.handle != nullptr;
     }
 
-    auto create_context(Arena& arena, ContextDesc const& desc, Context* out_context) -> Result {
-        if (out_context == nullptr || out_context->handle != nullptr) {
-            return Result::INVALID_ARGUMENT;
-        }
+    auto create_context(Arena& arena, ContextDesc const& desc, Context& out_context) -> Result {
+        ASSERT(out_context.handle == nullptr);
 
 #if BASE_PLATFORM_WINDOWS
         if (desc.backend != Backend::DEFAULT && desc.backend != Backend::DWRITE) {
@@ -80,50 +68,43 @@ namespace gui::font_provider {
         return platform::create_context(arena, desc, out_context);
     }
 
-    auto destroy_context(Context* context) -> void {
-        if (context == nullptr || context->handle == nullptr) {
-            return;
-        }
+    auto destroy_context(Context& context) -> void {
+        ASSERT(context.handle != nullptr);
 
         platform::destroy_context(context);
     }
 
-    auto open_font(Arena& arena, Context context, FontDesc const& desc, Font* out_font) -> Result {
-        if (!context_valid(context) || out_font == nullptr || out_font->handle != nullptr) {
-            return Result::INVALID_ARGUMENT;
-        }
+    auto open_font(Arena& arena, Context context, FontDesc const& desc, Font& out_font) -> void {
+        ASSERT(context_valid(context));
+        ASSERT(out_font.handle == nullptr);
 
-        return platform::open_font(arena, context, desc, out_font);
+        platform::open_font(arena, context, desc, out_font);
     }
 
-    auto close_font(Font* font) -> void {
-        if (font == nullptr || font->handle == nullptr) {
-            return;
-        }
+    auto close_font(Font& font) -> void {
+        ASSERT(font.handle != nullptr);
 
         platform::close_font(font);
     }
 
-    auto metrics_from_font(Font font, float size, Metrics* out_metrics) -> Result {
-        if (!font_valid(font) || size <= 0.0f || out_metrics == nullptr) {
-            return Result::INVALID_ARGUMENT;
-        }
+    auto metrics_from_font(Font font, float size, Metrics& out_metrics) -> void {
+        ASSERT(font_valid(font));
+        ASSERT(size > 0.0f);
 
-        return platform::metrics_from_font(font, size, out_metrics);
+        platform::metrics_from_font(font, size, out_metrics);
     }
 
-    auto raster_text(Font font, float size, StrRef text, Arena& arena, RasterResult* out_raster)
-        -> Result {
-        if (!font_valid(font) || size <= 0.0f || out_raster == nullptr) {
-            return Result::INVALID_ARGUMENT;
-        }
+    auto raster_text(Font font, float size, StrRef text, Arena& arena, RasterResult& out_raster)
+        -> void {
+        ASSERT(font_valid(font));
+        ASSERT(size > 0.0f);
 
-        *out_raster = {};
+        out_raster = {};
         if (text.empty()) {
-            return Result::OK;
+            return;
         }
 
-        return platform::raster_text(font, size, text, arena, out_raster);
+        platform::raster_text(font, size, text, arena, out_raster);
     }
 
     auto native_factory(Context context) -> void* {

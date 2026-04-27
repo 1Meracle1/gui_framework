@@ -431,7 +431,7 @@ auto main() -> int {
 #endif
 
     gui::render::Result result =
-        gui::render::create_context(app_arena, context_desc, &render_context);
+        gui::render::create_context(app_arena, context_desc, render_context);
     if (gui::render::result_failed(result)) {
         log_result("render::create_context", result);
         DestroyWindow(app_state.hwnd);
@@ -445,10 +445,10 @@ auto main() -> int {
     window_desc.buffer_count = 2u;
     window_desc.present_mode = gui::render::PresentMode::VSYNC;
 
-    result = gui::render::create_window(app_arena, render_context, window_desc, &render_window);
+    result = gui::render::create_window(app_arena, render_context, window_desc, render_window);
     if (gui::render::result_failed(result)) {
         log_result("render::create_window", result);
-        gui::render::destroy_context(&render_context);
+        gui::render::destroy_context(render_context);
         DestroyWindow(app_state.hwnd);
         return 1;
     }
@@ -460,8 +460,8 @@ auto main() -> int {
     if (device == nullptr || !create_pipeline(device, &pipeline)) {
         fmt::eprintf("failed to create D3D11 triangle pipeline\n");
         destroy_pipeline(&pipeline);
-        gui::render::destroy_window(&render_window);
-        gui::render::destroy_context(&render_context);
+        gui::render::destroy_window(render_window);
+        gui::render::destroy_context(render_context);
         DestroyWindow(app_state.hwnd);
         return 1;
     }
@@ -526,8 +526,8 @@ auto main() -> int {
     }
 
     destroy_pipeline(&pipeline);
-    gui::render::destroy_window(&render_window);
-    gui::render::destroy_context(&render_context);
+    gui::render::destroy_window(render_window);
+    gui::render::destroy_context(render_context);
 
     if (app_state.hwnd != nullptr && IsWindow(app_state.hwnd)) {
         DestroyWindow(app_state.hwnd);

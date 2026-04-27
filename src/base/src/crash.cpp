@@ -426,11 +426,9 @@ namespace base {
 
     void install_crash_handlers() {
         static bool crash_handlers_installed = false;
-
         if (crash_handlers_installed) {
             return;
         }
-
         crash_handlers_installed = true;
 
 #if BASE_PLATFORM_WINDOWS

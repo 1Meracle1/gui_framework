@@ -7,8 +7,6 @@
 
 namespace gui::draw {
 
-    using Result = font_provider::Result;
-
     struct Vec2 {
         float x = 0.0f;
         float y = 0.0f;
@@ -47,18 +45,17 @@ namespace gui::draw {
 
     [[nodiscard]] auto context_valid(Context context) -> bool;
 
-    [[nodiscard]] auto create_context(Arena& arena, ContextDesc const& desc, Context* out_context)
-        -> Result;
-    auto destroy_context(Context* context) -> void;
+    auto create_context(Arena& arena, ContextDesc const& desc, Context& out_context) -> void;
+    auto destroy_context(Context& context) -> void;
 
     auto begin_frame(Context context) -> void;
     auto end_frame(Context context) -> void;
 
-    [[nodiscard]] auto draw_text(Context context,
-                                 Vec2 position,
-                                 TextStyle const& style,
-                                 StrRef text,
-                                 float* out_advance) -> Result;
+    auto draw_text(Context context,
+                   Vec2 position,
+                   TextStyle const& style,
+                   StrRef text,
+                   float* out_advance) -> void;
 
     [[nodiscard]] auto text_command_count(Context context) -> size_t;
     [[nodiscard]] auto text_command(Context context, size_t index) -> TextCommand const*;

@@ -4,19 +4,12 @@
 
 namespace {
 
-    TEST_CASE(font_cache_handles_start_empty_and_reject_invalid_contexts) {
+    TEST_CASE(font_cache_handles_start_empty) {
         gui::font_cache::Cache const cache = {};
         gui::font_cache::Font const font = {};
-        Arena owner_arena = {};
 
         TEST_EXPECT(context, !gui::font_cache::cache_valid(cache));
         TEST_EXPECT(context, !gui::font_cache::font_valid(font));
-        TEST_EXPECT(context,
-                    gui::font_cache::create_cache(owner_arena, {}, {}, nullptr) ==
-                        gui::font_provider::Result::INVALID_ARGUMENT);
-        TEST_EXPECT(context,
-                    gui::font_cache::open_system_font(cache, {}, nullptr) ==
-                        gui::font_provider::Result::INVALID_ARGUMENT);
     }
 
     TEST_CASE(font_cache_can_cache_default_text_runs_on_supported_platforms) {
@@ -25,44 +18,34 @@ namespace {
 
         gui::font_provider::Context provider = {};
         gui::font_provider::Result const provider_result =
-            gui::font_provider::create_context(owner_arena, {}, &provider);
+            gui::font_provider::create_context(owner_arena, {}, provider);
 
 #if BASE_PLATFORM_WINDOWS
         TEST_EXPECT(context, provider_result == gui::font_provider::Result::OK);
 
         gui::font_cache::Cache cache = {};
-        TEST_EXPECT(context,
-                    gui::font_cache::create_cache(owner_arena, provider, {}, &cache) ==
-                        gui::font_provider::Result::OK);
+        gui::font_cache::create_cache(owner_arena, provider, {}, cache);
         TEST_EXPECT(context, gui::font_cache::cache_valid(cache));
 
         gui::font_cache::Font font = {};
-        TEST_EXPECT(context,
-                    gui::font_cache::open_system_font(cache, {}, &font) ==
-                        gui::font_provider::Result::OK);
+        gui::font_cache::open_system_font(cache, {}, font);
         TEST_EXPECT(context, gui::font_cache::font_valid(font));
 
         gui::font_provider::Metrics metrics = {};
-        TEST_EXPECT(context,
-                    gui::font_cache::metrics_from_font(font, 18.0f, &metrics) ==
-                        gui::font_provider::Result::OK);
+        gui::font_cache::metrics_from_font(font, 18.0f, metrics);
         TEST_EXPECT(context, metrics.ascent > 0.0f);
 
         gui::font_cache::TextRun first = {};
         gui::font_cache::TextRun second = {};
-        TEST_EXPECT(context,
-                    gui::font_cache::text_run(cache, font, 18.0f, "cached text", &first) ==
-                        gui::font_provider::Result::OK);
-        TEST_EXPECT(context,
-                    gui::font_cache::text_run(cache, font, 18.0f, "cached text", &second) ==
-                        gui::font_provider::Result::OK);
+        gui::font_cache::text_run(cache, font, 18.0f, "cached text", first);
+        gui::font_cache::text_run(cache, font, 18.0f, "cached text", second);
         TEST_EXPECT(context, first.rgba_pixels != nullptr);
         TEST_EXPECT(context, first.rgba_pixels == second.rgba_pixels);
         TEST_EXPECT(context, first.advance == second.advance);
 
-        gui::font_cache::destroy_cache(&cache);
+        gui::font_cache::destroy_cache(cache);
         TEST_EXPECT(context, !gui::font_cache::cache_valid(cache));
-        gui::font_provider::destroy_context(&provider);
+        gui::font_provider::destroy_context(provider);
 #else
         TEST_EXPECT(context, provider_result == gui::font_provider::Result::UNSUPPORTED_PLATFORM);
 #endif

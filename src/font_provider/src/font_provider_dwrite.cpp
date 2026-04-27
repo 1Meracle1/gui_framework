@@ -51,30 +51,27 @@ namespace gui::font_provider::platform {
             return static_cast<FontImpl*>(font.handle);
         }
 
-        [[nodiscard]] auto text_size_to_int(StrRef text, int* out_size) -> bool {
+        [[nodiscard]] auto text_size_to_int(StrRef text, int& out_size) -> bool {
             if (text.size() > static_cast<size_t>(std::numeric_limits<int>::max())) {
                 return false;
             }
 
-            *out_size = static_cast<int>(text.size());
+            out_size = static_cast<int>(text.size());
             return true;
         }
 
-        [[nodiscard]] auto utf8_to_wide(StrRef text, Arena& arena, wchar_t** out_text, int* out_len)
+        [[nodiscard]] auto utf8_to_wide(StrRef text, Arena& arena, wchar_t*& out_text, int& out_len)
             -> bool {
-            ASSERT(out_text != nullptr);
-            ASSERT(out_len != nullptr);
-
             int input_size = 0;
-            if (!text_size_to_int(text, &input_size)) {
+            if (!text_size_to_int(text, input_size)) {
                 return false;
             }
 
             if (text.empty()) {
                 wchar_t* const wide_text = arena_alloc<wchar_t>(arena, 1u);
                 wide_text[0] = L'\0';
-                *out_text = wide_text;
-                *out_len = 0;
+                out_text = wide_text;
+                out_len = 0;
                 return true;
             }
 
@@ -93,8 +90,8 @@ namespace gui::font_provider::platform {
             }
 
             wide_text[wide_len] = L'\0';
-            *out_text = wide_text;
-            *out_len = wide_len;
+            out_text = wide_text;
+            out_len = wide_len;
             return true;
         }
 
@@ -165,17 +162,15 @@ namespace gui::font_provider::platform {
         }
 
         [[nodiscard]] auto
-        utf8_to_codepoints(StrRef text, Arena& arena, uint32_t** out_codepoints, uint32_t* out_len)
+        utf8_to_codepoints(StrRef text, Arena& arena, uint32_t*& out_codepoints, uint32_t& out_len)
             -> bool {
-            ASSERT(out_codepoints != nullptr);
-            ASSERT(out_len != nullptr);
             if (text.size() > static_cast<size_t>(std::numeric_limits<uint32_t>::max())) {
                 return false;
             }
 
             if (text.empty()) {
-                *out_codepoints = nullptr;
-                *out_len = 0u;
+                out_codepoints = nullptr;
+                out_len = 0u;
                 return true;
             }
 
@@ -196,8 +191,8 @@ namespace gui::font_provider::platform {
                 offset += decoded.advance;
             }
 
-            *out_codepoints = codepoints;
-            *out_len = count;
+            out_codepoints = codepoints;
+            out_len = count;
             return true;
         }
 
@@ -215,20 +210,16 @@ namespace gui::font_provider::platform {
             font->context = nullptr;
         }
 
-        [[nodiscard]] auto
-        open_system_font(Arena& arena, ContextImpl* context, StrRef family_name, Font* out_font)
-            -> Result {
-            ArenaMarker const marker = arena.marker();
+        auto
+        open_system_font(Arena& arena, ContextImpl* context, StrRef family_name, Font& out_font)
+            -> void {
             FontImpl* const font = create_font_impl(arena, context);
 
             ArenaTemp temp = begin_thread_temp_arena();
             wchar_t* wide_family = nullptr;
             int wide_family_len = 0;
             StrRef const selected_family = family_name.empty() ? DEFAULT_FONT_FAMILY : family_name;
-            if (!utf8_to_wide(selected_family, *temp.arena(), &wide_family, &wide_family_len)) {
-                arena.reset_to(marker);
-                return Result::TEXT_CONVERSION_FAILED;
-            }
+            ASSERT(utf8_to_wide(selected_family, *temp.arena(), wide_family, wide_family_len));
             BASE_UNUSED(wide_family_len);
 
             IDWriteFontCollection* collection = nullptr;
@@ -258,31 +249,23 @@ namespace gui::font_provider::platform {
             release_com(family);
             release_com(collection);
 
-            if (FAILED(hr) || family_exists == FALSE || font->font_face == nullptr) {
-                destroy_font_impl(font);
-                arena.reset_to(marker);
-                return family_exists == FALSE ? Result::FONT_NOT_FOUND : Result::BACKEND_FAILURE;
-            }
+            ASSERT(SUCCEEDED(hr));
+            ASSERT(family_exists != FALSE);
+            ASSERT(font->font_face != nullptr);
 
-            out_font->handle = font;
-            return Result::OK;
+            out_font.handle = font;
         }
 
-        [[nodiscard]] auto
-        open_file_font(Arena& arena, ContextImpl* context, StrRef file_path, Font* out_font)
-            -> Result {
+        auto open_file_font(Arena& arena, ContextImpl* context, StrRef file_path, Font& out_font)
+            -> void {
             ASSERT(!file_path.empty());
 
-            ArenaMarker const marker = arena.marker();
             FontImpl* const font = create_font_impl(arena, context);
 
             ArenaTemp temp = begin_thread_temp_arena();
             wchar_t* wide_path = nullptr;
             int wide_path_len = 0;
-            if (!utf8_to_wide(file_path, *temp.arena(), &wide_path, &wide_path_len)) {
-                arena.reset_to(marker);
-                return Result::TEXT_CONVERSION_FAILED;
-            }
+            ASSERT(utf8_to_wide(file_path, *temp.arena(), wide_path, wide_path_len));
             BASE_UNUSED(wide_path_len);
 
             HRESULT hr =
@@ -301,15 +284,12 @@ namespace gui::font_provider::platform {
             }
 
             BASE_UNUSED(file_type);
-            if (FAILED(hr) || supported == FALSE || face_count == 0u ||
-                font->font_face == nullptr) {
-                destroy_font_impl(font);
-                arena.reset_to(marker);
-                return Result::FONT_NOT_FOUND;
-            }
+            ASSERT(SUCCEEDED(hr));
+            ASSERT(supported != FALSE);
+            ASSERT(face_count != 0u);
+            ASSERT(font->font_face != nullptr);
 
-            out_font->handle = font;
-            return Result::OK;
+            out_font.handle = font;
         }
 
         [[nodiscard]] auto metrics_scale(DWRITE_FONT_METRICS const& metrics, float size) -> float {
@@ -317,17 +297,17 @@ namespace gui::font_provider::platform {
             return POINTS_TO_DIPS * size / static_cast<float>(metrics.designUnitsPerEm);
         }
 
-        [[nodiscard]] auto ceil_u32(float value, uint32_t* out_value) -> bool {
+        [[nodiscard]] auto ceil_u32(float value, uint32_t& out_value) -> bool {
             if (!(value >= 0.0f) ||
                 value > static_cast<float>(std::numeric_limits<uint32_t>::max())) {
                 return false;
             }
 
-            *out_value = static_cast<uint32_t>(std::ceil(value));
+            out_value = static_cast<uint32_t>(std::ceil(value));
             return true;
         }
 
-        [[nodiscard]] auto checked_bitmap_size(uint32_t width, uint32_t height, size_t* out_size)
+        [[nodiscard]] auto checked_bitmap_size(uint32_t width, uint32_t height, size_t& out_size)
             -> bool {
             if (width > std::numeric_limits<uint32_t>::max() / 4u) {
                 return false;
@@ -338,7 +318,7 @@ namespace gui::font_provider::platform {
                 return false;
             }
 
-            *out_size = row_size * static_cast<size_t>(height);
+            out_size = row_size * static_cast<size_t>(height);
             return true;
         }
 
@@ -354,7 +334,7 @@ namespace gui::font_provider::platform {
 
     } // namespace
 
-    auto create_context(Arena& arena, ContextDesc const& desc, Context* out_context) -> Result {
+    auto create_context(Arena& arena, ContextDesc const& desc, Context& out_context) -> Result {
         BASE_UNUSED(desc);
 
         ArenaMarker const marker = arena.marker();
@@ -390,63 +370,59 @@ namespace gui::font_provider::platform {
             return Result::BACKEND_FAILURE;
         }
 
-        out_context->handle = context;
+        out_context.handle = context;
         return Result::OK;
     }
 
-    auto destroy_context(Context* context) -> void {
-        ASSERT(context != nullptr);
-        ContextImpl* const impl = context_from_handle(*context);
+    auto destroy_context(Context& context) -> void {
+        ContextImpl* const impl = context_from_handle(context);
         ASSERT(impl != nullptr);
         release_com(impl->rendering_params);
         release_com(impl->base_rendering_params);
         release_com(impl->gdi_interop);
         release_com(impl->factory);
-        context->handle = nullptr;
+        context.handle = nullptr;
     }
 
-    auto open_font(Arena& arena, Context context, FontDesc const& desc, Font* out_font) -> Result {
+    auto open_font(Arena& arena, Context context, FontDesc const& desc, Font& out_font) -> void {
         ContextImpl* const impl = context_from_handle(context);
         ASSERT(impl != nullptr);
 
         if (!desc.file_path.empty()) {
-            return open_file_font(arena, impl, desc.file_path, out_font);
+            open_file_font(arena, impl, desc.file_path, out_font);
+            return;
         }
 
-        return open_system_font(arena, impl, desc.family_name, out_font);
+        open_system_font(arena, impl, desc.family_name, out_font);
     }
 
-    auto close_font(Font* font) -> void {
-        ASSERT(font != nullptr);
-        FontImpl* const impl = font_from_handle(*font);
-        ASSERT(impl != nullptr);
-        destroy_font_impl(impl);
-        font->handle = nullptr;
-    }
-
-    auto metrics_from_font(Font font, float size, Metrics* out_metrics) -> Result {
+    auto close_font(Font& font) -> void {
         FontImpl* const impl = font_from_handle(font);
         ASSERT(impl != nullptr);
-        ASSERT(out_metrics != nullptr);
+        destroy_font_impl(impl);
+        font.handle = nullptr;
+    }
+
+    auto metrics_from_font(Font font, float size, Metrics& out_metrics) -> void {
+        FontImpl* const impl = font_from_handle(font);
+        ASSERT(impl != nullptr);
         ASSERT(impl->font_face != nullptr);
 
         DWRITE_FONT_METRICS dwrite_metrics = {};
         impl->font_face->GetMetrics(&dwrite_metrics);
 
         float const scale = metrics_scale(dwrite_metrics, size);
-        *out_metrics = {};
-        out_metrics->line_gap = static_cast<float>(dwrite_metrics.lineGap) * scale;
-        out_metrics->ascent = static_cast<float>(dwrite_metrics.ascent) * scale;
-        out_metrics->descent = static_cast<float>(dwrite_metrics.descent) * scale;
-        out_metrics->capital_height = static_cast<float>(dwrite_metrics.capHeight) * scale;
-        return Result::OK;
+        out_metrics = {};
+        out_metrics.line_gap = static_cast<float>(dwrite_metrics.lineGap) * scale;
+        out_metrics.ascent = static_cast<float>(dwrite_metrics.ascent) * scale;
+        out_metrics.descent = static_cast<float>(dwrite_metrics.descent) * scale;
+        out_metrics.capital_height = static_cast<float>(dwrite_metrics.capHeight) * scale;
     }
 
-    auto raster_text(Font font, float size, StrRef text, Arena& arena, RasterResult* out_raster)
-        -> Result {
+    auto raster_text(Font font, float size, StrRef text, Arena& arena, RasterResult& out_raster)
+        -> void {
         FontImpl* const impl = font_from_handle(font);
         ASSERT(impl != nullptr);
-        ASSERT(out_raster != nullptr);
         ASSERT(impl->font_face != nullptr);
         ASSERT(impl->context != nullptr);
         ASSERT(impl->context->gdi_interop != nullptr);
@@ -454,24 +430,18 @@ namespace gui::font_provider::platform {
         ArenaTemp temp = begin_thread_temp_arena();
         uint32_t* codepoints = nullptr;
         uint32_t glyph_count = 0u;
-        if (!utf8_to_codepoints(text, *temp.arena(), &codepoints, &glyph_count)) {
-            return Result::TEXT_CONVERSION_FAILED;
-        }
+        ASSERT(utf8_to_codepoints(text, *temp.arena(), codepoints, glyph_count));
 
         ASSERT(glyph_count != 0u);
 
         uint16_t* const glyph_indices = arena_alloc<uint16_t>(*temp.arena(), glyph_count);
         HRESULT hr = impl->font_face->GetGlyphIndices(codepoints, glyph_count, glyph_indices);
-        if (FAILED(hr)) {
-            return Result::RASTERIZATION_FAILED;
-        }
+        ASSERT(SUCCEEDED(hr));
 
         auto* const glyph_metrics = arena_alloc<DWRITE_GLYPH_METRICS>(*temp.arena(), glyph_count);
         hr = impl->font_face->GetGdiCompatibleGlyphMetrics(
             size, 1.0f, nullptr, TRUE, glyph_indices, glyph_count, glyph_metrics, FALSE);
-        if (FAILED(hr)) {
-            return Result::RASTERIZATION_FAILED;
-        }
+        ASSERT(SUCCEEDED(hr));
 
         DWRITE_FONT_METRICS font_metrics = {};
         impl->font_face->GetMetrics(&font_metrics);
@@ -483,23 +453,19 @@ namespace gui::font_provider::platform {
 
         uint32_t bitmap_width = 0u;
         uint32_t bitmap_height = 0u;
-        if (!ceil_u32(std::max(1.0f, advance + 4.0f), &bitmap_width) ||
-            !ceil_u32(std::max(1.0f,
-                               (static_cast<float>(font_metrics.ascent) +
-                                static_cast<float>(font_metrics.descent)) *
-                                       scale +
-                                   4.0f),
-                      &bitmap_height)) {
-            return Result::RASTERIZATION_FAILED;
-        }
+        ASSERT(ceil_u32(std::max(1.0f, advance + 4.0f), bitmap_width));
+        ASSERT(ceil_u32(std::max(1.0f,
+                                 (static_cast<float>(font_metrics.ascent) +
+                                  static_cast<float>(font_metrics.descent)) *
+                                         scale +
+                                     4.0f),
+                        bitmap_height));
 
         IDWriteBitmapRenderTarget* render_target = nullptr;
         hr = impl->context->gdi_interop->CreateBitmapRenderTarget(
             nullptr, bitmap_width, bitmap_height, &render_target);
-        if (FAILED(hr) || render_target == nullptr) {
-            release_com(render_target);
-            return Result::RASTERIZATION_FAILED;
-        }
+        ASSERT(SUCCEEDED(hr));
+        ASSERT(render_target != nullptr);
 
         render_target->SetPixelsPerDip(1.0f);
         HDC const dc = render_target->GetMemoryDC();
@@ -522,23 +488,15 @@ namespace gui::font_provider::platform {
                                          impl->context->rendering_params,
                                          RGB(255, 255, 255),
                                          &bounding_box);
-        if (FAILED(hr)) {
-            release_com(render_target);
-            return Result::RASTERIZATION_FAILED;
-        }
+        ASSERT(SUCCEEDED(hr));
 
         DIBSECTION dib = {};
         HBITMAP const bitmap = static_cast<HBITMAP>(GetCurrentObject(dc, OBJ_BITMAP));
-        if (bitmap == nullptr || GetObjectW(bitmap, sizeof(dib), &dib) == 0) {
-            release_com(render_target);
-            return Result::RASTERIZATION_FAILED;
-        }
+        ASSERT(bitmap != nullptr);
+        ASSERT(GetObjectW(bitmap, sizeof(dib), &dib) != 0);
 
         size_t bitmap_byte_count = 0u;
-        if (!checked_bitmap_size(bitmap_width, bitmap_height, &bitmap_byte_count)) {
-            release_com(render_target);
-            return Result::RASTERIZATION_FAILED;
-        }
+        ASSERT(checked_bitmap_size(bitmap_width, bitmap_height, bitmap_byte_count));
 
         uint8_t* const out_pixels = arena_alloc<uint8_t>(arena, bitmap_byte_count);
         auto const* in_data = static_cast<uint8_t const*>(dib.dsBm.bmBits);
@@ -562,15 +520,14 @@ namespace gui::font_provider::platform {
             out_line += out_pitch;
         }
 
-        *out_raster = {};
-        out_raster->size = {bitmap_width, bitmap_height};
-        out_raster->stride = out_pitch;
-        out_raster->rgba_pixels = out_pixels;
-        out_raster->advance = advance;
-        out_raster->height = static_cast<float>(bounding_box.bottom - bounding_box.top);
+        out_raster = {};
+        out_raster.size = {bitmap_width, bitmap_height};
+        out_raster.stride = out_pitch;
+        out_raster.rgba_pixels = out_pixels;
+        out_raster.advance = advance;
+        out_raster.height = static_cast<float>(bounding_box.bottom - bounding_box.top);
 
         release_com(render_target);
-        return Result::OK;
     }
 
     auto native_factory(Context context) -> void* {

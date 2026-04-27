@@ -25,8 +25,6 @@ namespace gui::render {
             return "unsupported platform";
         case Result::UNSUPPORTED_BACKEND:
             return "unsupported backend";
-        case Result::INVALID_ARGUMENT:
-            return "invalid argument";
         case Result::OUT_OF_MEMORY:
             return "out of memory";
         case Result::DEVICE_CREATION_FAILED:
@@ -63,10 +61,8 @@ namespace gui::render {
         return window.handle != nullptr;
     }
 
-    auto create_context(Arena& arena, ContextDesc const& desc, Context* out_context) -> Result {
-        if (out_context == nullptr || out_context->handle != nullptr) {
-            return Result::INVALID_ARGUMENT;
-        }
+    auto create_context(Arena& arena, ContextDesc const& desc, Context& out_context) -> Result {
+        ASSERT(out_context.handle == nullptr);
         if (desc.backend != Backend::D3D11) {
             return Result::UNSUPPORTED_BACKEND;
         }
@@ -80,25 +76,24 @@ namespace gui::render {
 #endif
     }
 
-    auto destroy_context(Context* context) -> void {
-        if (context == nullptr || context->handle == nullptr) {
-            return;
-        }
+    auto destroy_context(Context& context) -> void {
+        ASSERT(context.handle != nullptr);
 
 #if BASE_PLATFORM_WINDOWS
         d3d11::destroy_context(context);
 #else
-        context->handle = nullptr;
+        context.handle = nullptr;
 #endif
     }
 
-    auto create_window(Arena& arena, Context context, WindowDesc const& desc, Window* out_window)
+    auto create_window(Arena& arena, Context context, WindowDesc const& desc, Window& out_window)
         -> Result {
-        if (!context_valid(context) || out_window == nullptr || out_window->handle != nullptr ||
-            desc.native_window == nullptr || desc.size.width == 0u || desc.size.height == 0u ||
-            desc.buffer_count == 0u) {
-            return Result::INVALID_ARGUMENT;
-        }
+        ASSERT(context_valid(context));
+        ASSERT(out_window.handle == nullptr);
+        ASSERT(desc.native_window != nullptr);
+        ASSERT(desc.size.width != 0u);
+        ASSERT(desc.size.height != 0u);
+        ASSERT(desc.buffer_count != 0u);
 
 #if BASE_PLATFORM_WINDOWS
         return d3d11::create_window(arena, context, desc, out_window);
@@ -111,23 +106,21 @@ namespace gui::render {
 #endif
     }
 
-    auto destroy_window(Window* window) -> void {
-        if (window == nullptr || window->handle == nullptr) {
-            return;
-        }
+    auto destroy_window(Window& window) -> void {
+        ASSERT(window.handle != nullptr);
 
 #if BASE_PLATFORM_WINDOWS
         d3d11::destroy_window(window);
 #else
-        window->handle = nullptr;
+        window.handle = nullptr;
 #endif
     }
 
     auto resize_window(Context context, Window window, SizeU32 size) -> Result {
-        if (!context_valid(context) || !window_valid(window) || size.width == 0u ||
-            size.height == 0u) {
-            return Result::INVALID_ARGUMENT;
-        }
+        ASSERT(context_valid(context));
+        ASSERT(window_valid(window));
+        ASSERT(size.width != 0u);
+        ASSERT(size.height != 0u);
 
 #if BASE_PLATFORM_WINDOWS
         return d3d11::resize_window(context, window, size);
@@ -140,9 +133,7 @@ namespace gui::render {
     }
 
     auto begin_frame(Context context) -> Result {
-        if (!context_valid(context)) {
-            return Result::INVALID_ARGUMENT;
-        }
+        ASSERT(context_valid(context));
 
 #if BASE_PLATFORM_WINDOWS
         return d3d11::begin_frame(context);
@@ -153,9 +144,8 @@ namespace gui::render {
     }
 
     auto clear_window(Context context, Window window, Color color) -> Result {
-        if (!context_valid(context) || !window_valid(window)) {
-            return Result::INVALID_ARGUMENT;
-        }
+        ASSERT(context_valid(context));
+        ASSERT(window_valid(window));
 
 #if BASE_PLATFORM_WINDOWS
         return d3d11::clear_window(context, window, color);
@@ -168,9 +158,7 @@ namespace gui::render {
     }
 
     auto present_window(Window window) -> Result {
-        if (!window_valid(window)) {
-            return Result::INVALID_ARGUMENT;
-        }
+        ASSERT(window_valid(window));
 
 #if BASE_PLATFORM_WINDOWS
         return d3d11::present_window(window);

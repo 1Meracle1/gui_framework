@@ -27,7 +27,7 @@ namespace {
         TEST_EXPECT(context, !gui::font_provider::result_failed(gui::font_provider::Result::OK));
         TEST_EXPECT(
             context,
-            gui::font_provider::result_failed(gui::font_provider::Result::INVALID_ARGUMENT));
+            gui::font_provider::result_failed(gui::font_provider::Result::UNSUPPORTED_PLATFORM));
         TEST_EXPECT(context,
                     gui::font_provider::result_name(gui::font_provider::Result::OK)[0] != '\0');
         TEST_EXPECT(context,
@@ -38,18 +38,11 @@ namespace {
     TEST_CASE(font_provider_handles_start_empty_and_validate_by_handle_value) {
         gui::font_provider::Context const provider = {};
         gui::font_provider::Font const font = {};
-        Arena owner_arena = {};
 
         TEST_EXPECT(context, !gui::font_provider::context_valid(provider));
         TEST_EXPECT(context, !gui::font_provider::font_valid(font));
         TEST_EXPECT(context, gui::font_provider::native_factory(provider) == nullptr);
         TEST_EXPECT(context, gui::font_provider::native_font_face(font) == nullptr);
-        TEST_EXPECT(context,
-                    gui::font_provider::create_context(owner_arena, {}, nullptr) ==
-                        gui::font_provider::Result::INVALID_ARGUMENT);
-        TEST_EXPECT(context,
-                    gui::font_provider::open_font(owner_arena, provider, {}, nullptr) ==
-                        gui::font_provider::Result::INVALID_ARGUMENT);
     }
 
     TEST_CASE(font_provider_can_create_default_font_and_raster_text_on_supported_platforms) {
@@ -58,7 +51,7 @@ namespace {
 
         gui::font_provider::Context provider = {};
         gui::font_provider::Result const create_result =
-            gui::font_provider::create_context(owner_arena, {}, &provider);
+            gui::font_provider::create_context(owner_arena, {}, provider);
 
 #if BASE_PLATFORM_WINDOWS
         TEST_EXPECT(context, create_result == gui::font_provider::Result::OK);
@@ -66,25 +59,19 @@ namespace {
         TEST_EXPECT(context, gui::font_provider::native_factory(provider) != nullptr);
 
         gui::font_provider::Font font = {};
-        TEST_EXPECT(context,
-                    gui::font_provider::open_font(owner_arena, provider, {}, &font) ==
-                        gui::font_provider::Result::OK);
+        gui::font_provider::open_font(owner_arena, provider, {}, font);
         TEST_EXPECT(context, gui::font_provider::font_valid(font));
         TEST_EXPECT(context, gui::font_provider::native_font_face(font) != nullptr);
 
         gui::font_provider::Metrics metrics = {};
-        TEST_EXPECT(context,
-                    gui::font_provider::metrics_from_font(font, 16.0f, &metrics) ==
-                        gui::font_provider::Result::OK);
+        gui::font_provider::metrics_from_font(font, 16.0f, metrics);
         TEST_EXPECT(context, metrics.ascent > 0.0f);
         TEST_EXPECT(context, metrics.descent >= 0.0f);
 
         Arena arena = {};
         arena.init({4u * 1024u * 1024u, DEFAULT_ARENA_COMMIT_SIZE});
         gui::font_provider::RasterResult raster = {};
-        TEST_EXPECT(context,
-                    gui::font_provider::raster_text(font, 16.0f, "hello", arena, &raster) ==
-                        gui::font_provider::Result::OK);
+        gui::font_provider::raster_text(font, 16.0f, "hello", arena, raster);
         TEST_EXPECT(context, raster.size.width > 0u);
         TEST_EXPECT(context, raster.size.height > 0u);
         TEST_EXPECT(context, raster.stride >= raster.size.width * 4u);
@@ -93,9 +80,9 @@ namespace {
         TEST_EXPECT(context, raster_has_alpha(raster));
         arena.destroy();
 
-        gui::font_provider::close_font(&font);
+        gui::font_provider::close_font(font);
         TEST_EXPECT(context, !gui::font_provider::font_valid(font));
-        gui::font_provider::destroy_context(&provider);
+        gui::font_provider::destroy_context(provider);
         TEST_EXPECT(context, !gui::font_provider::context_valid(provider));
 #else
         TEST_EXPECT(context, create_result == gui::font_provider::Result::UNSUPPORTED_PLATFORM);

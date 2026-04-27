@@ -7,7 +7,7 @@ namespace {
         TEST_EXPECT(context, gui::render::result_succeeded(gui::render::Result::OK));
         TEST_EXPECT(context, gui::render::result_succeeded(gui::render::Result::OCCLUDED));
         TEST_EXPECT(context, !gui::render::result_failed(gui::render::Result::OK));
-        TEST_EXPECT(context, gui::render::result_failed(gui::render::Result::INVALID_ARGUMENT));
+        TEST_EXPECT(context, gui::render::result_failed(gui::render::Result::UNSUPPORTED_PLATFORM));
         TEST_EXPECT(context, gui::render::result_name(gui::render::Result::OK)[0] != '\0');
         TEST_EXPECT(context, gui::render::backend_name(gui::render::Backend::D3D11)[0] != '\0');
     }
@@ -25,28 +25,6 @@ namespace {
         TEST_EXPECT(context, gui::render::native_device_context(context_handle) == nullptr);
         TEST_EXPECT(context, gui::render::native_swap_chain(window_handle) == nullptr);
         TEST_EXPECT(context, gui::render::native_render_target_view(window_handle) == nullptr);
-    }
-
-    TEST_CASE(render_lifecycle_rejects_invalid_empty_handles) {
-        gui::render::Context const context_handle = {};
-        gui::render::Window const window_handle = {};
-        Arena owner_arena = {};
-
-        TEST_EXPECT(context,
-                    gui::render::create_context(owner_arena, gui::render::ContextDesc{}, nullptr) ==
-                        gui::render::Result::INVALID_ARGUMENT);
-        TEST_EXPECT(context,
-                    gui::render::begin_frame(context_handle) ==
-                        gui::render::Result::INVALID_ARGUMENT);
-        TEST_EXPECT(context,
-                    gui::render::resize_window(context_handle, window_handle, {1u, 1u}) ==
-                        gui::render::Result::INVALID_ARGUMENT);
-        TEST_EXPECT(context,
-                    gui::render::clear_window(context_handle, window_handle, {}) ==
-                        gui::render::Result::INVALID_ARGUMENT);
-        TEST_EXPECT(context,
-                    gui::render::present_window(window_handle) ==
-                        gui::render::Result::INVALID_ARGUMENT);
     }
 
 } // namespace

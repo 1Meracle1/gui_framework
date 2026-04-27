@@ -15,14 +15,13 @@ namespace gui::render {
 
         UNSUPPORTED_PLATFORM = -1,
         UNSUPPORTED_BACKEND = -2,
-        INVALID_ARGUMENT = -3,
-        OUT_OF_MEMORY = -4,
-        DEVICE_CREATION_FAILED = -5,
-        FACTORY_CREATION_FAILED = -6,
-        WINDOW_CREATION_FAILED = -7,
-        RENDER_TARGET_CREATION_FAILED = -8,
-        RESIZE_FAILED = -9,
-        PRESENT_FAILED = -10,
+        OUT_OF_MEMORY = -3,
+        DEVICE_CREATION_FAILED = -4,
+        FACTORY_CREATION_FAILED = -5,
+        WINDOW_CREATION_FAILED = -6,
+        RENDER_TARGET_CREATION_FAILED = -7,
+        RESIZE_FAILED = -8,
+        PRESENT_FAILED = -9,
     };
 
     enum class PresentMode : uint8_t {
@@ -70,14 +69,14 @@ namespace gui::render {
     [[nodiscard]] auto context_valid(Context context) -> bool;
     [[nodiscard]] auto window_valid(Window window) -> bool;
 
-    [[nodiscard]] auto create_context(Arena& arena, ContextDesc const& desc, Context* out_context)
+    [[nodiscard]] auto create_context(Arena& arena, ContextDesc const& desc, Context& out_context)
         -> Result;
-    auto destroy_context(Context* context) -> void;
+    auto destroy_context(Context& context) -> void;
 
     [[nodiscard]] auto
-    create_window(Arena& arena, Context context, WindowDesc const& desc, Window* out_window)
+    create_window(Arena& arena, Context context, WindowDesc const& desc, Window& out_window)
         -> Result;
-    auto destroy_window(Window* window) -> void;
+    auto destroy_window(Window& window) -> void;
 
     [[nodiscard]] auto resize_window(Context context, Window window, SizeU32 size) -> Result;
     [[nodiscard]] auto begin_frame(Context context) -> Result;

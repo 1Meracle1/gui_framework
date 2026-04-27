@@ -431,49 +431,38 @@ namespace {
             return;
         }
 
-        gui::draw::destroy_context(&text_state->draw_context);
-        gui::font_cache::destroy_cache(&text_state->cache);
-        gui::font_provider::destroy_context(&text_state->provider);
+        if (gui::draw::context_valid(text_state->draw_context)) {
+            gui::draw::destroy_context(text_state->draw_context);
+        }
+        if (gui::font_cache::cache_valid(text_state->cache)) {
+            gui::font_cache::destroy_cache(text_state->cache);
+        }
+        if (gui::font_provider::context_valid(text_state->provider)) {
+            gui::font_provider::destroy_context(text_state->provider);
+        }
         text_state->font = {};
     }
 
     [[nodiscard]] auto create_text_state(Arena& arena, TextState* text_state) -> bool {
         gui::font_provider::Result font_result =
-            gui::font_provider::create_context(arena, {}, &text_state->provider);
+            gui::font_provider::create_context(arena, {}, text_state->provider);
         if (gui::font_provider::result_failed(font_result)) {
             log_font_result("font_provider::create_context", font_result);
             return false;
         }
 
-        font_result =
-            gui::font_cache::create_cache(arena, text_state->provider, {}, &text_state->cache);
-        if (gui::font_provider::result_failed(font_result)) {
-            log_font_result("font_cache::create_cache", font_result);
-            destroy_text_state(text_state);
-            return false;
-        }
+        gui::font_cache::create_cache(arena, text_state->provider, {}, text_state->cache);
 
-        font_result =
-            gui::font_cache::open_system_font(text_state->cache, "Segoe UI", &text_state->font);
-        if (gui::font_provider::result_failed(font_result)) {
-            log_font_result("font_cache::open_system_font", font_result);
-            destroy_text_state(text_state);
-            return false;
-        }
+        gui::font_cache::open_system_font(text_state->cache, "Segoe UI", text_state->font);
 
         gui::draw::ContextDesc draw_desc = {};
         draw_desc.font_cache = text_state->cache;
-        font_result = gui::draw::create_context(arena, draw_desc, &text_state->draw_context);
-        if (gui::font_provider::result_failed(font_result)) {
-            log_font_result("draw::create_context", font_result);
-            destroy_text_state(text_state);
-            return false;
-        }
+        gui::draw::create_context(arena, draw_desc, text_state->draw_context);
 
         return true;
     }
 
-    [[nodiscard]] auto build_text_commands(TextState* text_state) -> bool {
+    auto build_text_commands(TextState* text_state) -> void {
         gui::draw::begin_frame(text_state->draw_context);
 
         gui::draw::TextStyle title = {};
@@ -495,53 +484,31 @@ namespace {
         caption.color = {0.58f, 0.98f, 0.64f, 1.0f};
 
         float title_advance = 0.0f;
-        gui::font_provider::Result result = gui::draw::draw_text(
+        gui::draw::draw_text(
             text_state->draw_context, {72.0f, 72.0f}, title, "Text rendering ", &title_advance);
-        if (gui::font_provider::result_failed(result)) {
-            log_font_result("draw::draw_text", result);
-            return false;
-        }
 
-        result = gui::draw::draw_text(
+        gui::draw::draw_text(
             text_state->draw_context, {72.0f + title_advance, 72.0f}, accent, "testbed", nullptr);
-        if (gui::font_provider::result_failed(result)) {
-            log_font_result("draw::draw_text", result);
-            return false;
-        }
 
-        result = gui::draw::draw_text(text_state->draw_context,
-                                      {74.0f, 150.0f},
-                                      body,
-                                      "DirectWrite rasterization through font_provider",
-                                      nullptr);
-        if (gui::font_provider::result_failed(result)) {
-            log_font_result("draw::draw_text", result);
-            return false;
-        }
+        gui::draw::draw_text(text_state->draw_context,
+                             {74.0f, 150.0f},
+                             body,
+                             "DirectWrite rasterization through font_provider",
+                             nullptr);
 
-        result = gui::draw::draw_text(text_state->draw_context,
-                                      {74.0f, 194.0f},
-                                      body,
-                                      "font_cache owns cached RGBA text runs",
-                                      nullptr);
-        if (gui::font_provider::result_failed(result)) {
-            log_font_result("draw::draw_text", result);
-            return false;
-        }
+        gui::draw::draw_text(text_state->draw_context,
+                             {74.0f, 194.0f},
+                             body,
+                             "font_cache owns cached RGBA text runs",
+                             nullptr);
 
-        result = gui::draw::draw_text(
-            text_state->draw_context,
-            {74.0f, 252.0f},
-            caption,
-            "draw records text commands, then this testbed submits textured quads",
-            nullptr);
-        if (gui::font_provider::result_failed(result)) {
-            log_font_result("draw::draw_text", result);
-            return false;
-        }
+        gui::draw::draw_text(text_state->draw_context,
+                             {74.0f, 252.0f},
+                             caption,
+                             "draw records text commands, then this testbed submits textured quads",
+                             nullptr);
 
         gui::draw::end_frame(text_state->draw_context);
-        return true;
     }
 
     auto window_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) -> LRESULT {
@@ -644,7 +611,7 @@ auto main() -> int {
 #endif
 
     gui::render::Result render_result =
-        gui::render::create_context(app_arena, context_desc, &render_context);
+        gui::render::create_context(app_arena, context_desc, render_context);
     if (gui::render::result_failed(render_result)) {
         log_render_result("render::create_context", render_result);
         DestroyWindow(app_state.hwnd);
@@ -659,10 +626,10 @@ auto main() -> int {
     window_desc.present_mode = gui::render::PresentMode::VSYNC;
 
     render_result =
-        gui::render::create_window(app_arena, render_context, window_desc, &render_window);
+        gui::render::create_window(app_arena, render_context, window_desc, render_window);
     if (gui::render::result_failed(render_result)) {
         log_render_result("render::create_window", render_result);
-        gui::render::destroy_context(&render_context);
+        gui::render::destroy_context(render_context);
         DestroyWindow(app_state.hwnd);
         return 1;
     }
@@ -677,8 +644,8 @@ auto main() -> int {
         fmt::eprintf("failed to initialize text rendering testbed\n");
         destroy_text_state(&text_state);
         destroy_pipeline(&pipeline);
-        gui::render::destroy_window(&render_window);
-        gui::render::destroy_context(&render_context);
+        gui::render::destroy_window(render_window);
+        gui::render::destroy_context(render_context);
         DestroyWindow(app_state.hwnd);
         return 1;
     }
@@ -722,8 +689,8 @@ auto main() -> int {
             break;
         }
 
-        if (!build_text_commands(&text_state) ||
-            !render_text_commands(
+        build_text_commands(&text_state);
+        if (!render_text_commands(
                 render_context, render_window, pipeline, text_state.draw_context)) {
             fmt::eprintf("failed to render text commands\n");
             break;
@@ -742,8 +709,8 @@ auto main() -> int {
 
     destroy_text_state(&text_state);
     destroy_pipeline(&pipeline);
-    gui::render::destroy_window(&render_window);
-    gui::render::destroy_context(&render_context);
+    gui::render::destroy_window(render_window);
+    gui::render::destroy_context(render_context);
 
     if (app_state.hwnd != nullptr && IsWindow(app_state.hwnd)) {
         DestroyWindow(app_state.hwnd);
