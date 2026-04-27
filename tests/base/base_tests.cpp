@@ -7,6 +7,7 @@
 #include <base/small_array.h>
 #include <base/str_ref.h>
 #include <base/string_buffer.h>
+#include <base/xar.h>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -291,6 +292,114 @@ namespace {
         TEST_EXPECT(context, !zero_capacity.push_back(1));
         TEST_EXPECT(context, !zero_capacity.inject_at(1, 0u));
         TEST_EXPECT(context, zero_capacity.slice().empty());
+    }
+
+    TEST_CASE(xar_array_grows_in_exponential_chunks_and_keeps_stable_addresses) {
+        XarArray<int, 2u> values;
+
+        TEST_EXPECT(context, values.init());
+        TEST_EXPECT(context, values.empty());
+
+        int* const first = values.push_back_and_get_ptr(10);
+        int* const second = values.push_back_and_get_ptr(20);
+
+        TEST_EXPECT(context, first != nullptr);
+        TEST_EXPECT(context, second != nullptr);
+        TEST_EXPECT(context, values.capacity() == 4u);
+
+        for (int value = 30; value < 180; value += 10) {
+            TEST_EXPECT(context, values.push_back(value));
+        }
+
+        TEST_EXPECT(context, values.len() == 17u);
+        TEST_EXPECT(context, values.capacity() == 32u);
+        TEST_EXPECT(context, first == values.get_ptr(0u));
+        TEST_EXPECT(context, second == values.get_ptr(1u));
+        TEST_EXPECT(context, first != nullptr && *first == 10);
+        TEST_EXPECT(context, second != nullptr && *second == 20);
+        TEST_EXPECT(context, values.get(16u) == 170);
+
+        int sum = 0;
+        for (int const value : values) {
+            sum += value;
+        }
+
+        TEST_EXPECT(context, sum == 1530);
+    }
+
+    TEST_CASE(xar_array_safe_access_pop_and_unordered_remove_match_odin_container) {
+        XarArray<int, 3u> values;
+
+        TEST_EXPECT(context, values.append({1, 2, 3, 4}) == 4u);
+
+        XarResult<int> const found = values.get_safe(2u);
+        XarResult<int> const missing = values.get_safe(9u);
+
+        TEST_EXPECT(context, found);
+        TEST_EXPECT(context, found.value == 3);
+        TEST_EXPECT(context, !missing);
+
+        values.unordered_remove(1u);
+
+        TEST_EXPECT(context, values.len() == 3u);
+        TEST_EXPECT(context, values.get(0u) == 1);
+        TEST_EXPECT(context, values.get(1u) == 4);
+        TEST_EXPECT(context, values.get(2u) == 3);
+
+        TEST_EXPECT(context, values.pop() == 3);
+        TEST_EXPECT(context, values.pop_safe().value == 4);
+        TEST_EXPECT(context, values.pop_safe().value == 1);
+        TEST_EXPECT(context, !values.pop_safe());
+    }
+
+    struct XarFreelistValue {
+        uintptr_t id;
+        uintptr_t payload;
+
+        [[nodiscard]] friend auto operator==(XarFreelistValue const& lhs,
+                                             XarFreelistValue const& rhs) -> bool {
+            return lhs.id == rhs.id && lhs.payload == rhs.payload;
+        }
+    };
+
+    TEST_CASE(xar_freelist_reuses_released_slots_and_skips_them_when_iterating) {
+        XarFreelistArray<XarFreelistValue, 2u> values;
+
+        TEST_EXPECT(context, values.init());
+
+        XarPushResult<XarFreelistValue> const first = values.push_with_index({1u, 10u});
+        XarPushResult<XarFreelistValue> const second = values.push_with_index({2u, 20u});
+        XarPushResult<XarFreelistValue> const third = values.push_with_index({3u, 30u});
+
+        TEST_EXPECT(context, first);
+        TEST_EXPECT(context, second);
+        TEST_EXPECT(context, third);
+        TEST_EXPECT(context, first.index == 0u);
+        TEST_EXPECT(context, second.index == 1u);
+        TEST_EXPECT(context, third.index == 2u);
+
+        XarFreelistValue const removed = values.pop(1u);
+
+        TEST_EXPECT(context, removed.id == 2u);
+        TEST_EXPECT(context, values.is_freed(1u));
+
+        size_t iterated_count = 0u;
+        uintptr_t id_sum = 0u;
+        for (XarFreelistValue const& value : values) {
+            iterated_count += 1u;
+            id_sum += value.id;
+        }
+
+        TEST_EXPECT(context, iterated_count == 2u);
+        TEST_EXPECT(context, id_sum == 4u);
+
+        XarPushResult<XarFreelistValue> const reused = values.push_with_index({4u, 40u});
+
+        TEST_EXPECT(context, reused);
+        TEST_EXPECT(context, reused.index == 1u);
+        TEST_EXPECT(context, reused.ptr == second.ptr);
+        TEST_EXPECT(context, values.get(1u).id == 4u);
+        TEST_EXPECT(context, !values.is_freed(1u));
     }
 
     TEST_CASE(thread_temp_arenas_reset_each_frame) {
