@@ -14,7 +14,6 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
-#include <cstring>
 #include <d3d11.h>
 #include <d3dcompiler.h>
 #include <render/render.h>
@@ -43,9 +42,9 @@ namespace {
         ID3D11VertexShader* vertex_shader = nullptr;
         ID3D11PixelShader* pixel_shader = nullptr;
         ID3D11InputLayout* input_layout = nullptr;
-        ID3D11Buffer* vertex_buffer = nullptr;
-        ID3D11Buffer* transform_constants = nullptr;
-        ID3D11Buffer* tint_constants = nullptr;
+        gui::render::Buffer vertex_buffer = {};
+        gui::render::Buffer transform_constants = {};
+        gui::render::Buffer tint_constants = {};
     };
 
     struct AppState {
@@ -74,6 +73,10 @@ namespace {
 
     auto log_result(char const* operation, gui::render::Result result) -> void {
         fmt::eprintf("%s failed: %s\n", operation, gui::render::result_name(result));
+    }
+
+    [[nodiscard]] auto d3d11_buffer(gui::render::Buffer buffer) -> ID3D11Buffer* {
+        return static_cast<ID3D11Buffer*>(buffer.handle);
     }
 
     [[nodiscard]] auto
@@ -116,48 +119,33 @@ namespace {
         return true;
     }
 
-    [[nodiscard]] auto create_dynamic_constant_buffer(ID3D11Device* device,
-                                                      size_t byte_size,
-                                                      ID3D11Buffer** out_buffer) -> bool {
-        D3D11_BUFFER_DESC desc = {};
-        desc.ByteWidth = static_cast<UINT>((byte_size + 15u) & ~15u);
-        desc.Usage = D3D11_USAGE_DYNAMIC;
-        desc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
-        desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
-
-        HRESULT const hr = device->CreateBuffer(&desc, nullptr, out_buffer);
-        return SUCCEEDED(hr);
-    }
-
-    [[nodiscard]] auto update_buffer(ID3D11DeviceContext* device_context,
-                                     ID3D11Buffer* buffer,
-                                     void const* data,
-                                     size_t byte_size) -> bool {
-        D3D11_MAPPED_SUBRESOURCE mapped = {};
-        HRESULT const hr = device_context->Map(buffer, 0u, D3D11_MAP_WRITE_DISCARD, 0u, &mapped);
-        if (FAILED(hr)) {
-            return false;
-        }
-
-        std::memcpy(mapped.pData, data, byte_size);
-        device_context->Unmap(buffer, 0u);
-        return true;
-    }
-
-    auto destroy_pipeline(TrianglePipeline* pipeline) -> void {
+    auto destroy_pipeline(gui::render::Context context, TrianglePipeline* pipeline) -> void {
         if (pipeline == nullptr) {
             return;
         }
 
-        release_com(pipeline->tint_constants);
-        release_com(pipeline->transform_constants);
-        release_com(pipeline->vertex_buffer);
+        if (gui::render::buffer_valid(pipeline->tint_constants)) {
+            gui::render::destroy_buffer(context, pipeline->tint_constants);
+        }
+        if (gui::render::buffer_valid(pipeline->transform_constants)) {
+            gui::render::destroy_buffer(context, pipeline->transform_constants);
+        }
+        if (gui::render::buffer_valid(pipeline->vertex_buffer)) {
+            gui::render::destroy_buffer(context, pipeline->vertex_buffer);
+        }
         release_com(pipeline->input_layout);
         release_com(pipeline->pixel_shader);
         release_com(pipeline->vertex_shader);
     }
 
-    [[nodiscard]] auto create_pipeline(ID3D11Device* device, TrianglePipeline* pipeline) -> bool {
+    [[nodiscard]] auto create_pipeline(gui::render::Context render_context,
+                                       TrianglePipeline* pipeline) -> bool {
+        ID3D11Device* const device =
+            static_cast<ID3D11Device*>(gui::render::native_device(render_context));
+        if (device == nullptr) {
+            return false;
+        }
+
         constexpr StrRef SHADER_SOURCE =
             "cbuffer TransformConstants : register(b0)\n"
             "{\n"
@@ -256,37 +244,39 @@ namespace {
             {{-0.55f, -0.42f}, {0.1f, 0.35f, 1.0f}},
         };
 
-        D3D11_SUBRESOURCE_DATA vertex_data = {};
-        vertex_data.pSysMem = vertices;
+        gui::render::BufferDesc vertex_desc = {};
+        vertex_desc.byte_size = sizeof(vertices);
+        vertex_desc.initial_data = vertices;
 
-        D3D11_BUFFER_DESC vertex_desc = {};
-        vertex_desc.ByteWidth = static_cast<UINT>(sizeof(vertices));
-        vertex_desc.Usage = D3D11_USAGE_IMMUTABLE;
-        vertex_desc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
-
-        hr = device->CreateBuffer(&vertex_desc, &vertex_data, &pipeline->vertex_buffer);
-        if (FAILED(hr)) {
+        gui::render::Result result =
+            gui::render::create_buffer(render_context, vertex_desc, pipeline->vertex_buffer);
+        if (gui::render::result_failed(result)) {
             return false;
         }
 
-        return create_dynamic_constant_buffer(
-                   device, sizeof(TransformConstants), &pipeline->transform_constants) &&
-               create_dynamic_constant_buffer(
-                   device, sizeof(TintConstants), &pipeline->tint_constants);
+        gui::render::BufferDesc constant_desc = {};
+        constant_desc.binding = gui::render::BufferBinding::UNIFORM;
+        constant_desc.usage = gui::render::BufferUsage::DYNAMIC;
+        constant_desc.byte_size = sizeof(TransformConstants);
+        result = gui::render::create_buffer(
+            render_context, constant_desc, pipeline->transform_constants);
+        if (gui::render::result_failed(result)) {
+            return false;
+        }
+
+        constant_desc.byte_size = sizeof(TintConstants);
+        result =
+            gui::render::create_buffer(render_context, constant_desc, pipeline->tint_constants);
+        return gui::render::result_succeeded(result);
     }
 
     [[nodiscard]] auto render_triangle(gui::render::Context context,
-                                       gui::render::Window window,
                                        TrianglePipeline const& pipeline,
                                        float time_seconds) -> bool {
         ID3D11DeviceContext* const device_context =
             static_cast<ID3D11DeviceContext*>(gui::render::native_device_context(context));
-        ID3D11RenderTargetView* render_target_view =
-            static_cast<ID3D11RenderTargetView*>(gui::render::native_render_target_view(window));
-        gui::render::SizeU32 const size = gui::render::window_size(window);
 
-        if (device_context == nullptr || render_target_view == nullptr || size.width == 0u ||
-            size.height == 0u) {
+        if (device_context == nullptr) {
             return false;
         }
 
@@ -301,32 +291,30 @@ namespace {
         tint.color_scale[2] = 1.0f;
         tint.color_scale[3] = 1.0f;
 
-        if (!update_buffer(
-                device_context, pipeline.transform_constants, &transform, sizeof(transform)) ||
-            !update_buffer(device_context, pipeline.tint_constants, &tint, sizeof(tint))) {
+        gui::render::Result result = gui::render::update_buffer(
+            context, pipeline.transform_constants, &transform, sizeof(transform));
+        if (gui::render::result_failed(result)) {
             return false;
         }
 
-        D3D11_VIEWPORT viewport = {};
-        viewport.TopLeftX = 0.0f;
-        viewport.TopLeftY = 0.0f;
-        viewport.Width = static_cast<float>(size.width);
-        viewport.Height = static_cast<float>(size.height);
-        viewport.MinDepth = 0.0f;
-        viewport.MaxDepth = 1.0f;
+        result = gui::render::update_buffer(context, pipeline.tint_constants, &tint, sizeof(tint));
+        if (gui::render::result_failed(result)) {
+            return false;
+        }
 
         UINT const stride = sizeof(Vertex);
         UINT const offset = 0u;
+        ID3D11Buffer* const vertex_buffer = d3d11_buffer(pipeline.vertex_buffer);
+        ID3D11Buffer* const transform_constants = d3d11_buffer(pipeline.transform_constants);
+        ID3D11Buffer* const tint_constants = d3d11_buffer(pipeline.tint_constants);
 
-        device_context->OMSetRenderTargets(1u, &render_target_view, nullptr);
-        device_context->RSSetViewports(1u, &viewport);
         device_context->IASetInputLayout(pipeline.input_layout);
-        device_context->IASetVertexBuffers(0u, 1u, &pipeline.vertex_buffer, &stride, &offset);
+        device_context->IASetVertexBuffers(0u, 1u, &vertex_buffer, &stride, &offset);
         device_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         device_context->VSSetShader(pipeline.vertex_shader, nullptr, 0u);
-        device_context->VSSetConstantBuffers(0u, 1u, &pipeline.transform_constants);
+        device_context->VSSetConstantBuffers(0u, 1u, &transform_constants);
         device_context->PSSetShader(pipeline.pixel_shader, nullptr, 0u);
-        device_context->PSSetConstantBuffers(0u, 1u, &pipeline.tint_constants);
+        device_context->PSSetConstantBuffers(0u, 1u, &tint_constants);
         device_context->Draw(3u, 0u);
         return true;
     }
@@ -453,13 +441,11 @@ auto main() -> int {
         return 1;
     }
 
-    ID3D11Device* const device =
-        static_cast<ID3D11Device*>(gui::render::native_device(render_context));
     TrianglePipeline pipeline = {};
 
-    if (device == nullptr || !create_pipeline(device, &pipeline)) {
+    if (!create_pipeline(render_context, &pipeline)) {
         fmt::eprintf("failed to create D3D11 triangle pipeline\n");
-        destroy_pipeline(&pipeline);
+        destroy_pipeline(render_context, &pipeline);
         gui::render::destroy_window(render_window);
         gui::render::destroy_context(render_context);
         DestroyWindow(app_state.hwnd);
@@ -500,16 +486,21 @@ auto main() -> int {
             break;
         }
 
-        result =
-            gui::render::clear_window(render_context, render_window, {0.03f, 0.08f, 0.11f, 1.0f});
+        gui::render::RenderPassDesc pass_desc = {};
+        pass_desc.color.window = render_window;
+        pass_desc.color.clear_color = {0.03f, 0.08f, 0.11f, 1.0f};
+
+        result = gui::render::begin_render_pass(render_context, pass_desc);
         if (gui::render::result_failed(result)) {
-            log_result("render::clear_window", result);
+            log_result("render::begin_render_pass", result);
             break;
         }
 
         uint64_t const elapsed_ticks = GetTickCount64() - start_ticks;
         float const time_seconds = static_cast<float>(elapsed_ticks) * 0.001f;
-        if (!render_triangle(render_context, render_window, pipeline, time_seconds)) {
+        bool const rendered = render_triangle(render_context, pipeline, time_seconds);
+        gui::render::end_render_pass(render_context);
+        if (!rendered) {
             fmt::eprintf("failed to render triangle\n");
             break;
         }
@@ -525,7 +516,7 @@ auto main() -> int {
         }
     }
 
-    destroy_pipeline(&pipeline);
+    destroy_pipeline(render_context, &pipeline);
     gui::render::destroy_window(render_window);
     gui::render::destroy_context(render_context);
 

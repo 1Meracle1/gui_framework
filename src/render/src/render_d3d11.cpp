@@ -9,6 +9,7 @@
 #include "render_d3d11.h"
 
 #include <base/config.h>
+#include <cstring>
 #include <d3d11.h>
 #include <dxgi.h>
 #include <windows.h>
@@ -21,6 +22,7 @@ namespace gui::render::d3d11 {
             ID3D11DeviceContext* device_context = nullptr;
             IDXGIFactory* factory = nullptr;
             D3D_FEATURE_LEVEL feature_level = D3D_FEATURE_LEVEL_10_0;
+            bool render_pass_active = false;
         };
 
         struct D3D11Window {
@@ -43,6 +45,18 @@ namespace gui::render::d3d11 {
 
         [[nodiscard]] auto window_from_handle(Window window) -> D3D11Window* {
             return static_cast<D3D11Window*>(window.handle);
+        }
+
+        [[nodiscard]] auto buffer_from_handle(Buffer buffer) -> ID3D11Buffer* {
+            return static_cast<ID3D11Buffer*>(buffer.handle);
+        }
+
+        [[nodiscard]] auto buffer_byte_width(BufferDesc const& desc) -> UINT {
+            UINT byte_width = static_cast<UINT>(desc.byte_size);
+            if (desc.binding == BufferBinding::UNIFORM) {
+                byte_width = (byte_width + 15u) & ~15u;
+            }
+            return byte_width;
         }
 
         [[nodiscard]] auto try_create_device(D3D_DRIVER_TYPE driver_type,
@@ -261,11 +275,66 @@ namespace gui::render::d3d11 {
         window.handle = nullptr;
     }
 
+    auto create_buffer(Context context, BufferDesc const& desc, Buffer& out_buffer) -> Result {
+        D3D11Context* context_impl = context_from_handle(context);
+        ASSERT(context_impl != nullptr);
+
+        D3D11_BUFFER_DESC buffer_desc = {};
+        buffer_desc.ByteWidth = buffer_byte_width(desc);
+        buffer_desc.Usage =
+            desc.usage == BufferUsage::DYNAMIC ? D3D11_USAGE_DYNAMIC : D3D11_USAGE_IMMUTABLE;
+        buffer_desc.BindFlags = desc.binding == BufferBinding::UNIFORM ? D3D11_BIND_CONSTANT_BUFFER
+                                                                       : D3D11_BIND_VERTEX_BUFFER;
+        buffer_desc.CPUAccessFlags =
+            desc.usage == BufferUsage::DYNAMIC ? D3D11_CPU_ACCESS_WRITE : 0u;
+
+        D3D11_SUBRESOURCE_DATA initial_data = {};
+        initial_data.pSysMem = desc.initial_data;
+
+        ID3D11Buffer* buffer = nullptr;
+        HRESULT const hr = context_impl->device->CreateBuffer(
+            &buffer_desc, desc.initial_data != nullptr ? &initial_data : nullptr, &buffer);
+        if (FAILED(hr) || buffer == nullptr) {
+            return Result::BUFFER_CREATION_FAILED;
+        }
+
+        out_buffer.handle = buffer;
+        return Result::OK;
+    }
+
+    auto destroy_buffer(Context context, Buffer& buffer) -> void {
+        BASE_UNUSED(context);
+        ID3D11Buffer* impl = buffer_from_handle(buffer);
+        ASSERT(impl != nullptr);
+        release_com(impl);
+        buffer.handle = nullptr;
+    }
+
+    auto update_buffer(Context context, Buffer buffer, void const* data, size_t byte_size)
+        -> Result {
+        D3D11Context* context_impl = context_from_handle(context);
+        ID3D11Buffer* buffer_impl = buffer_from_handle(buffer);
+        ASSERT(context_impl != nullptr);
+        ASSERT(buffer_impl != nullptr);
+
+        D3D11_MAPPED_SUBRESOURCE mapped = {};
+        HRESULT const hr = context_impl->device_context->Map(
+            buffer_impl, 0u, D3D11_MAP_WRITE_DISCARD, 0u, &mapped);
+        if (FAILED(hr)) {
+            return Result::BUFFER_UPDATE_FAILED;
+        }
+
+        std::memcpy(mapped.pData, data, byte_size);
+        context_impl->device_context->Unmap(buffer_impl, 0u);
+        return Result::OK;
+    }
+
     auto resize_window(Context context, Window window, SizeU32 size) -> Result {
         D3D11Context* context_impl = context_from_handle(context);
         D3D11Window* window_impl = window_from_handle(window);
         ASSERT(context_impl != nullptr);
         ASSERT(window_impl != nullptr);
+        ASSERT(!context_impl->render_pass_active);
 
         context_impl->device_context->OMSetRenderTargets(0u, nullptr, nullptr);
         context_impl->device_context->Flush();
@@ -287,23 +356,49 @@ namespace gui::render::d3d11 {
     }
 
     auto begin_frame(Context context) -> Result {
-        BASE_UNUSED(context);
+        D3D11Context* context_impl = context_from_handle(context);
+        ASSERT(context_impl != nullptr);
+        ASSERT(!context_impl->render_pass_active);
         return Result::OK;
     }
 
-    auto clear_window(Context context, Window window, Color color) -> Result {
+    auto begin_render_pass(Context context, RenderPassDesc const& desc) -> Result {
         D3D11Context* context_impl = context_from_handle(context);
-        D3D11Window* window_impl = window_from_handle(window);
+        D3D11Window* window_impl = window_from_handle(desc.color.window);
         ASSERT(context_impl != nullptr);
         ASSERT(window_impl != nullptr);
         ASSERT(window_impl->render_target_view != nullptr);
+        ASSERT(!context_impl->render_pass_active);
 
-        float const clear_color[] = {color.r, color.g, color.b, color.a};
+        D3D11_VIEWPORT viewport = {};
+        viewport.TopLeftX = 0.0f;
+        viewport.TopLeftY = 0.0f;
+        viewport.Width = static_cast<float>(window_impl->size.width);
+        viewport.Height = static_cast<float>(window_impl->size.height);
+        viewport.MinDepth = 0.0f;
+        viewport.MaxDepth = 1.0f;
+
         context_impl->device_context->OMSetRenderTargets(
             1u, &window_impl->render_target_view, nullptr);
-        context_impl->device_context->ClearRenderTargetView(window_impl->render_target_view,
-                                                            clear_color);
+        context_impl->device_context->RSSetViewports(1u, &viewport);
+
+        if (desc.color.load_op == LoadOp::CLEAR) {
+            Color const color = desc.color.clear_color;
+            float const clear_color[] = {color.r, color.g, color.b, color.a};
+            context_impl->device_context->ClearRenderTargetView(window_impl->render_target_view,
+                                                                clear_color);
+        }
+
+        BASE_UNUSED(desc.color.store_op);
+        context_impl->render_pass_active = true;
         return Result::OK;
+    }
+
+    auto end_render_pass(Context context) -> void {
+        D3D11Context* context_impl = context_from_handle(context);
+        ASSERT(context_impl != nullptr);
+        ASSERT(context_impl->render_pass_active);
+        context_impl->render_pass_active = false;
     }
 
     auto present_window(Window window) -> Result {

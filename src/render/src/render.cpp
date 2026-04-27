@@ -39,6 +39,10 @@ namespace gui::render {
             return "resize failed";
         case Result::PRESENT_FAILED:
             return "present failed";
+        case Result::BUFFER_CREATION_FAILED:
+            return "buffer creation failed";
+        case Result::BUFFER_UPDATE_FAILED:
+            return "buffer update failed";
         }
 
         return "unknown";
@@ -59,6 +63,10 @@ namespace gui::render {
 
     auto window_valid(Window window) -> bool {
         return window.handle != nullptr;
+    }
+
+    auto buffer_valid(Buffer buffer) -> bool {
+        return buffer.handle != nullptr;
     }
 
     auto create_context(Arena& arena, ContextDesc const& desc, Context& out_context) -> Result {
@@ -116,6 +124,51 @@ namespace gui::render {
 #endif
     }
 
+    auto create_buffer(Context context, BufferDesc const& desc, Buffer& out_buffer) -> Result {
+        ASSERT(context_valid(context));
+        ASSERT(out_buffer.handle == nullptr);
+        ASSERT(desc.byte_size != 0u);
+        ASSERT(desc.usage != BufferUsage::IMMUTABLE || desc.initial_data != nullptr);
+
+#if BASE_PLATFORM_WINDOWS
+        return d3d11::create_buffer(context, desc, out_buffer);
+#else
+        BASE_UNUSED(context);
+        BASE_UNUSED(desc);
+        return Result::UNSUPPORTED_PLATFORM;
+#endif
+    }
+
+    auto destroy_buffer(Context context, Buffer& buffer) -> void {
+        ASSERT(context_valid(context));
+        ASSERT(buffer_valid(buffer));
+
+#if BASE_PLATFORM_WINDOWS
+        d3d11::destroy_buffer(context, buffer);
+#else
+        BASE_UNUSED(context);
+        buffer.handle = nullptr;
+#endif
+    }
+
+    auto update_buffer(Context context, Buffer buffer, void const* data, size_t byte_size)
+        -> Result {
+        ASSERT(context_valid(context));
+        ASSERT(buffer_valid(buffer));
+        ASSERT(data != nullptr);
+        ASSERT(byte_size != 0u);
+
+#if BASE_PLATFORM_WINDOWS
+        return d3d11::update_buffer(context, buffer, data, byte_size);
+#else
+        BASE_UNUSED(context);
+        BASE_UNUSED(buffer);
+        BASE_UNUSED(data);
+        BASE_UNUSED(byte_size);
+        return Result::UNSUPPORTED_PLATFORM;
+#endif
+    }
+
     auto resize_window(Context context, Window window, SizeU32 size) -> Result {
         ASSERT(context_valid(context));
         ASSERT(window_valid(window));
@@ -143,18 +196,45 @@ namespace gui::render {
 #endif
     }
 
+    auto begin_render_pass(Context context, RenderPassDesc const& desc) -> Result {
+        ASSERT(context_valid(context));
+        ASSERT(window_valid(desc.color.window));
+
+#if BASE_PLATFORM_WINDOWS
+        return d3d11::begin_render_pass(context, desc);
+#else
+        BASE_UNUSED(context);
+        BASE_UNUSED(desc);
+        return Result::UNSUPPORTED_PLATFORM;
+#endif
+    }
+
+    auto end_render_pass(Context context) -> void {
+        ASSERT(context_valid(context));
+
+#if BASE_PLATFORM_WINDOWS
+        d3d11::end_render_pass(context);
+#else
+        BASE_UNUSED(context);
+#endif
+    }
+
     auto clear_window(Context context, Window window, Color color) -> Result {
         ASSERT(context_valid(context));
         ASSERT(window_valid(window));
 
-#if BASE_PLATFORM_WINDOWS
-        return d3d11::clear_window(context, window, color);
-#else
-        BASE_UNUSED(context);
-        BASE_UNUSED(window);
-        BASE_UNUSED(color);
-        return Result::UNSUPPORTED_PLATFORM;
-#endif
+        RenderPassDesc desc = {};
+        desc.color.window = window;
+        desc.color.load_op = LoadOp::CLEAR;
+        desc.color.clear_color = color;
+
+        Result const result = begin_render_pass(context, desc);
+        if (result_failed(result)) {
+            return result;
+        }
+
+        end_render_pass(context);
+        return Result::OK;
     }
 
     auto present_window(Window window) -> Result {

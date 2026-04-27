@@ -393,25 +393,12 @@ namespace {
             static_cast<ID3D11Device*>(gui::render::native_device(render_context));
         ID3D11DeviceContext* const device_context =
             static_cast<ID3D11DeviceContext*>(gui::render::native_device_context(render_context));
-        ID3D11RenderTargetView* render_target_view = static_cast<ID3D11RenderTargetView*>(
-            gui::render::native_render_target_view(render_window));
         gui::render::SizeU32 const window_size = gui::render::window_size(render_window);
 
-        if (device == nullptr || device_context == nullptr || render_target_view == nullptr ||
-            window_size.width == 0u || window_size.height == 0u) {
+        if (device == nullptr || device_context == nullptr || window_size.width == 0u ||
+            window_size.height == 0u) {
             return false;
         }
-
-        D3D11_VIEWPORT viewport = {};
-        viewport.TopLeftX = 0.0f;
-        viewport.TopLeftY = 0.0f;
-        viewport.Width = static_cast<float>(window_size.width);
-        viewport.Height = static_cast<float>(window_size.height);
-        viewport.MinDepth = 0.0f;
-        viewport.MaxDepth = 1.0f;
-
-        device_context->OMSetRenderTargets(1u, &render_target_view, nullptr);
-        device_context->RSSetViewports(1u, &viewport);
 
         size_t const command_count = gui::draw::text_command_count(draw_context);
         for (size_t index = 0u; index < command_count; ++index) {
@@ -682,16 +669,22 @@ auto main() -> int {
             break;
         }
 
-        render_result = gui::render::clear_window(
-            render_context, render_window, {0.025f, 0.045f, 0.055f, 1.0f});
+        build_text_commands(&text_state);
+
+        gui::render::RenderPassDesc pass_desc = {};
+        pass_desc.color.window = render_window;
+        pass_desc.color.clear_color = {0.025f, 0.045f, 0.055f, 1.0f};
+
+        render_result = gui::render::begin_render_pass(render_context, pass_desc);
         if (gui::render::result_failed(render_result)) {
-            log_render_result("render::clear_window", render_result);
+            log_render_result("render::begin_render_pass", render_result);
             break;
         }
 
-        build_text_commands(&text_state);
-        if (!render_text_commands(
-                render_context, render_window, pipeline, text_state.draw_context)) {
+        bool const rendered =
+            render_text_commands(render_context, render_window, pipeline, text_state.draw_context);
+        gui::render::end_render_pass(render_context);
+        if (!rendered) {
             fmt::eprintf("failed to render text commands\n");
             break;
         }
