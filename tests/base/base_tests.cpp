@@ -21,22 +21,6 @@
 
 namespace {
 
-    struct CapturedAssert {
-        char const* expression;
-        char const* file;
-        uint32_t line;
-        uint32_t count;
-    };
-
-    CapturedAssert captured_assert = {};
-
-    auto capture_assert_handler(char const* expression, char const* file, uint32_t line) -> void {
-        captured_assert.expression = expression;
-        captured_assert.file = file;
-        captured_assert.line = line;
-        captured_assert.count += 1u;
-    }
-
     static_assert(StrRef("framework").substr(5u, 4u) == "work");
     static_assert(StrRef("FRAMEWORK").equals_ignore_ascii_case("framework"));
     static_assert(StrRef("  text\t").trim() == "text");
@@ -108,6 +92,18 @@ namespace {
         }
     };
 
+    uint32_t assert_continued_count = 0u;
+
+    auto function_that_asserts() -> void {
+        ASSERT(false);
+    }
+
+    auto test_case_that_asserts(test::Context* context) -> void {
+        BASE_UNUSED(context);
+        function_that_asserts();
+        assert_continued_count += 1u;
+    }
+
     TEST_CASE(crash_reason_names_are_stable) {
         TEST_EXPECT(context,
                     StrRef(base::crash_reason_name(base::CrashReason::ASSERTION_FAILURE)) ==
@@ -121,17 +117,13 @@ namespace {
                         "process fault");
     }
 
-    TEST_CASE(assert_handler_intercepts_assertions) {
-        captured_assert = {};
-        base::set_assert_handler(capture_assert_handler);
-        uint32_t const assert_line = __LINE__ + 1u;
-        ASSERT_MSG(false, "captured by test");
-        base::set_assert_handler(nullptr);
+    TEST_CASE(assert_failures_are_reported_as_test_case_failures) {
+        test::TestCase const test_case = {"test_case_that_asserts", test_case_that_asserts};
 
-        TEST_EXPECT(context, captured_assert.count == 1u);
-        TEST_EXPECT(context, StrRef(captured_assert.expression) == "false");
-        TEST_EXPECT(context, StrRef(captured_assert.file) == __FILE__);
-        TEST_EXPECT(context, captured_assert.line == assert_line);
+        assert_continued_count = 0u;
+
+        TEST_EXPECT(context, test::run_tests(&test_case, 1u) == 1);
+        TEST_EXPECT(context, assert_continued_count == 0u);
     }
 
     TEST_CASE(arena_allocates_aligned_memory_from_virtual_memory) {
@@ -443,8 +435,8 @@ namespace {
         uintptr_t id;
         uintptr_t payload;
 
-        [[nodiscard]] friend auto operator==(XarFreelistValue const& lhs,
-                                             XarFreelistValue const& rhs) -> bool {
+        [[nodiscard]] [[maybe_unused]] friend auto operator==(XarFreelistValue const& lhs,
+                                                              XarFreelistValue const& rhs) -> bool {
             return lhs.id == rhs.id && lhs.payload == rhs.payload;
         }
     };

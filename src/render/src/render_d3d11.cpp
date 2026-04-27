@@ -174,7 +174,7 @@ namespace gui::render::d3d11 {
 
         HRESULT hr = try_create_device(D3D_DRIVER_TYPE_HARDWARE, creation_flags, context);
         if (hr == DXGI_ERROR_SDK_COMPONENT_MISSING && desc.enable_debug_layer) {
-            creation_flags &= ~D3D11_CREATE_DEVICE_DEBUG;
+            creation_flags &= ~static_cast<UINT>(D3D11_CREATE_DEVICE_DEBUG);
             hr = try_create_device(D3D_DRIVER_TYPE_HARDWARE, creation_flags, context);
         }
 
@@ -182,7 +182,7 @@ namespace gui::render::d3d11 {
             hr = try_create_device(D3D_DRIVER_TYPE_WARP, creation_flags, context);
             if (hr == DXGI_ERROR_SDK_COMPONENT_MISSING &&
                 (creation_flags & D3D11_CREATE_DEVICE_DEBUG) != 0u) {
-                creation_flags &= ~D3D11_CREATE_DEVICE_DEBUG;
+                creation_flags &= ~static_cast<UINT>(D3D11_CREATE_DEVICE_DEBUG);
                 hr = try_create_device(D3D_DRIVER_TYPE_WARP, creation_flags, context);
             }
         }
