@@ -20,7 +20,7 @@ namespace base {
 
 #define ASSERT(expression)                                                                    \
     do {                                                                                           \
-        if (!(expression)) {                                                                       \
+        if (!(expression)) [[unlikely]] {                                                                       \
             ::base::handle_assert_failure(                                                         \
                 #expression, nullptr, __FILE__, static_cast<uint32_t>(__LINE__), __func__);        \
         }                                                                                          \
@@ -28,7 +28,7 @@ namespace base {
 
 #define ASSERT_MSG(expression, message)                                                       \
     do {                                                                                           \
-        if (!(expression)) {                                                                       \
+        if (!(expression)) [[unlikely]] {                                                                       \
             ::base::handle_assert_failure(                                                         \
                 #expression, (message), __FILE__, static_cast<uint32_t>(__LINE__), __func__);      \
         }                                                                                          \

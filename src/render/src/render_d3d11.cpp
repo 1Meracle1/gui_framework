@@ -8,9 +8,9 @@
 
 #include "render_d3d11.h"
 
+#include <base/config.h>
 #include <d3d11.h>
 #include <dxgi.h>
-#include <new>
 #include <windows.h>
 
 namespace gui::render::d3d11 {
@@ -45,19 +45,6 @@ namespace gui::render::d3d11 {
             return static_cast<D3D11Window*>(window.handle);
         }
 
-        [[nodiscard]] auto handle_from_context(D3D11Context* context) -> Context {
-            return Context{context};
-        }
-
-        [[nodiscard]] auto handle_from_window(D3D11Window* window) -> Window {
-            return Window{window};
-        }
-
-        [[nodiscard]] auto feature_level_count(D3D_FEATURE_LEVEL const* begin,
-                                               D3D_FEATURE_LEVEL const* end) -> UINT {
-            return static_cast<UINT>(end - begin);
-        }
-
         [[nodiscard]] auto try_create_device(D3D_DRIVER_TYPE driver_type,
                                              UINT creation_flags,
                                              D3D11Context* out_context) -> HRESULT {
@@ -83,9 +70,7 @@ namespace gui::render::d3d11 {
                 nullptr,
                 creation_flags,
                 levels_with_11_1,
-                feature_level_count(levels_with_11_1,
-                                    levels_with_11_1 +
-                                        (sizeof(levels_with_11_1) / sizeof(levels_with_11_1[0u]))),
+                static_cast<UINT>(sizeof(levels_with_11_1) / sizeof(levels_with_11_1[0u])),
                 D3D11_SDK_VERSION,
                 &device,
                 &feature_level,
@@ -94,19 +79,17 @@ namespace gui::render::d3d11 {
             if (hr == E_INVALIDARG) {
                 release_com(device);
                 release_com(device_context);
-                hr = D3D11CreateDevice(
-                    nullptr,
-                    driver_type,
-                    nullptr,
-                    creation_flags,
-                    levels_without_11_1,
-                    feature_level_count(levels_without_11_1,
-                                        levels_without_11_1 + (sizeof(levels_without_11_1) /
-                                                               sizeof(levels_without_11_1[0u]))),
-                    D3D11_SDK_VERSION,
-                    &device,
-                    &feature_level,
-                    &device_context);
+                hr = D3D11CreateDevice(nullptr,
+                                       driver_type,
+                                       nullptr,
+                                       creation_flags,
+                                       levels_without_11_1,
+                                       static_cast<UINT>(sizeof(levels_without_11_1) /
+                                                         sizeof(levels_without_11_1[0u])),
+                                       D3D11_SDK_VERSION,
+                                       &device,
+                                       &feature_level,
+                                       &device_context);
             }
 
             if (FAILED(hr)) {
@@ -139,10 +122,6 @@ namespace gui::render::d3d11 {
         }
 
         auto destroy_context_impl(D3D11Context* context) -> void {
-            if (context == nullptr) {
-                return;
-            }
-
             if (context->device_context != nullptr) {
                 context->device_context->ClearState();
             }
@@ -172,16 +151,10 @@ namespace gui::render::d3d11 {
         }
 
         auto release_render_target(D3D11Window* window) -> void {
-            if (window != nullptr) {
-                release_com(window->render_target_view);
-            }
+            release_com(window->render_target_view);
         }
 
         auto destroy_window_impl(D3D11Window* window) -> void {
-            if (window == nullptr) {
-                return;
-            }
-
             release_render_target(window);
             release_com(window->swap_chain);
             window->size = {};
@@ -190,11 +163,9 @@ namespace gui::render::d3d11 {
 
     } // namespace
 
-    auto create_context(ContextDesc const& desc, Context* out_context) -> Result {
-        D3D11Context* context = new (std::nothrow) D3D11Context();
-        if (context == nullptr) {
-            return Result::OUT_OF_MEMORY;
-        }
+    auto create_context(Arena& arena, ContextDesc const& desc, Context* out_context) -> Result {
+        ArenaMarker const marker = arena.marker();
+        D3D11Context* context = arena_new<D3D11Context>(arena);
 
         UINT creation_flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
         if (desc.enable_debug_layer) {
@@ -218,41 +189,35 @@ namespace gui::render::d3d11 {
 
         if (FAILED(hr)) {
             destroy_context_impl(context);
-            delete context;
+            arena.reset_to(marker);
             return Result::DEVICE_CREATION_FAILED;
         }
 
         if (!init_factory(context)) {
             destroy_context_impl(context);
-            delete context;
+            arena.reset_to(marker);
             return Result::FACTORY_CREATION_FAILED;
         }
 
-        *out_context = handle_from_context(context);
+        out_context->handle = context;
         return Result::OK;
     }
 
     auto destroy_context(Context* context) -> void {
-        if (context == nullptr) {
-            return;
-        }
-
+        ASSERT(context != nullptr);
         D3D11Context* impl = context_from_handle(*context);
+        ASSERT(impl != nullptr);
         destroy_context_impl(impl);
-        delete impl;
         context->handle = nullptr;
     }
 
-    auto create_window(Context context, WindowDesc const& desc, Window* out_window) -> Result {
+    auto create_window(Arena& arena, Context context, WindowDesc const& desc, Window* out_window)
+        -> Result {
         D3D11Context* context_impl = context_from_handle(context);
-        if (context_impl == nullptr) {
-            return Result::INVALID_ARGUMENT;
-        }
+        ASSERT(context_impl != nullptr);
 
-        D3D11Window* window = new (std::nothrow) D3D11Window();
-        if (window == nullptr) {
-            return Result::OUT_OF_MEMORY;
-        }
+        ArenaMarker const marker = arena.marker();
+        D3D11Window* window = arena_new<D3D11Window>(arena);
 
         DXGI_SWAP_CHAIN_DESC swap_desc = {};
         swap_desc.BufferCount = desc.buffer_count;
@@ -271,7 +236,7 @@ namespace gui::render::d3d11 {
         HRESULT hr = context_impl->factory->CreateSwapChain(
             context_impl->device, &swap_desc, &window->swap_chain);
         if (FAILED(hr) || window->swap_chain == nullptr) {
-            delete window;
+            arena.reset_to(marker);
             return Result::WINDOW_CREATION_FAILED;
         }
 
@@ -280,33 +245,29 @@ namespace gui::render::d3d11 {
         Result const render_target_result = create_render_target(context_impl, window);
         if (result_failed(render_target_result)) {
             destroy_window_impl(window);
-            delete window;
+            arena.reset_to(marker);
             return render_target_result;
         }
 
         window->size = desc.size;
         window->present_mode = desc.present_mode;
-        *out_window = handle_from_window(window);
+        out_window->handle = window;
         return Result::OK;
     }
 
     auto destroy_window(Window* window) -> void {
-        if (window == nullptr) {
-            return;
-        }
-
+        ASSERT(window != nullptr);
         D3D11Window* impl = window_from_handle(*window);
+        ASSERT(impl != nullptr);
         destroy_window_impl(impl);
-        delete impl;
         window->handle = nullptr;
     }
 
     auto resize_window(Context context, Window window, SizeU32 size) -> Result {
         D3D11Context* context_impl = context_from_handle(context);
         D3D11Window* window_impl = window_from_handle(window);
-        if (context_impl == nullptr || window_impl == nullptr) {
-            return Result::INVALID_ARGUMENT;
-        }
+        ASSERT(context_impl != nullptr);
+        ASSERT(window_impl != nullptr);
 
         context_impl->device_context->OMSetRenderTargets(0u, nullptr, nullptr);
         context_impl->device_context->Flush();
@@ -328,15 +289,16 @@ namespace gui::render::d3d11 {
     }
 
     auto begin_frame(Context context) -> Result {
-        D3D11Context* context_impl = context_from_handle(context);
-        return context_impl != nullptr ? Result::OK : Result::INVALID_ARGUMENT;
+        BASE_UNUSED(context);
+        return Result::OK;
     }
 
     auto clear_window(Context context, Window window, Color color) -> Result {
         D3D11Context* context_impl = context_from_handle(context);
         D3D11Window* window_impl = window_from_handle(window);
-        if (context_impl == nullptr || window_impl == nullptr ||
-            window_impl->render_target_view == nullptr) {
+        ASSERT(context_impl != nullptr);
+        ASSERT(window_impl != nullptr);
+        if (window_impl->render_target_view == nullptr) {
             return Result::INVALID_ARGUMENT;
         }
 
@@ -350,9 +312,8 @@ namespace gui::render::d3d11 {
 
     auto present_window(Window window) -> Result {
         D3D11Window* window_impl = window_from_handle(window);
-        if (window_impl == nullptr || window_impl->swap_chain == nullptr) {
-            return Result::INVALID_ARGUMENT;
-        }
+        ASSERT(window_impl != nullptr);
+        ASSERT(window_impl->swap_chain != nullptr);
 
         UINT const sync_interval = window_impl->present_mode == PresentMode::VSYNC ? 1u : 0u;
         HRESULT const hr = window_impl->swap_chain->Present(sync_interval, 0u);
@@ -368,27 +329,32 @@ namespace gui::render::d3d11 {
 
     auto window_size(Window window) -> SizeU32 {
         D3D11Window const* const window_impl = window_from_handle(window);
-        return window_impl != nullptr ? window_impl->size : SizeU32{};
+        ASSERT(window_impl != nullptr);
+        return window_impl->size;
     }
 
     auto native_device(Context context) -> void* {
         D3D11Context const* const context_impl = context_from_handle(context);
-        return context_impl != nullptr ? context_impl->device : nullptr;
+        ASSERT(context_impl != nullptr);
+        return context_impl->device;
     }
 
     auto native_device_context(Context context) -> void* {
         D3D11Context const* const context_impl = context_from_handle(context);
-        return context_impl != nullptr ? context_impl->device_context : nullptr;
+        ASSERT(context_impl != nullptr);
+        return context_impl->device_context;
     }
 
     auto native_swap_chain(Window window) -> void* {
         D3D11Window const* const window_impl = window_from_handle(window);
-        return window_impl != nullptr ? window_impl->swap_chain : nullptr;
+        ASSERT(window_impl != nullptr);
+        return window_impl->swap_chain;
     }
 
     auto native_render_target_view(Window window) -> void* {
         D3D11Window const* const window_impl = window_from_handle(window);
-        return window_impl != nullptr ? window_impl->render_target_view : nullptr;
+        ASSERT(window_impl != nullptr);
+        return window_impl->render_target_view;
     }
 
 } // namespace gui::render::d3d11

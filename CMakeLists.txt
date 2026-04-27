@@ -19,7 +19,10 @@ include(cpp_project_options)
 cpp_configure_project()
 
 add_subdirectory(src/base)
+add_subdirectory(src/font_provider)
+add_subdirectory(src/font_cache)
 add_subdirectory(src/render)
+add_subdirectory(src/draw)
 add_subdirectory(src/gui)
 
 add_executable(gui_framework_info
@@ -43,6 +46,22 @@ if(WIN32)
         d3dcompiler
     )
     cpp_configure_target(render_triangle_testbed)
+
+    add_executable(text_rendering_testbed
+        tools/text_rendering_testbed.cpp
+    )
+    target_compile_definitions(text_rendering_testbed PRIVATE
+        WIN32_LEAN_AND_MEAN
+        NOMINMAX
+    )
+    target_link_libraries(text_rendering_testbed PRIVATE
+        base::base
+        draw::draw
+        render::render
+        d3d11
+        d3dcompiler
+    )
+    cpp_configure_target(text_rendering_testbed)
 endif()
 
 add_library(gui_test STATIC
@@ -87,9 +106,30 @@ if(BUILD_TESTS)
     target_link_libraries(render_tests PRIVATE render::render gui_test)
     cpp_configure_target(render_tests)
 
+    add_executable(font_provider_tests
+        tests/font_provider/font_provider_tests.cpp
+    )
+    target_link_libraries(font_provider_tests PRIVATE font_provider::font_provider gui_test)
+    cpp_configure_target(font_provider_tests)
+
+    add_executable(font_cache_tests
+        tests/font_cache/font_cache_tests.cpp
+    )
+    target_link_libraries(font_cache_tests PRIVATE font_cache::font_cache gui_test)
+    cpp_configure_target(font_cache_tests)
+
+    add_executable(draw_tests
+        tests/draw/draw_tests.cpp
+    )
+    target_link_libraries(draw_tests PRIVATE draw::draw gui_test)
+    cpp_configure_target(draw_tests)
+
     add_test(NAME base_tests COMMAND base_tests)
     add_test(NAME gui_tests COMMAND gui_tests)
     add_test(NAME render_tests COMMAND render_tests)
+    add_test(NAME font_provider_tests COMMAND font_provider_tests)
+    add_test(NAME font_cache_tests COMMAND font_cache_tests)
+    add_test(NAME draw_tests COMMAND draw_tests)
 endif()
 
 if(BUILD_BENCHMARKS)

@@ -1,3 +1,7 @@
+#include "base/assert.h"
+
+#include <algorithm>
+#include <array>
 #include <base/config.h>
 #include <base/memory.h>
 #include <base/virtual_memory.h>
@@ -6,38 +10,22 @@
 #include <limits>
 
 namespace {
-
     [[nodiscard]] auto is_power_of_two(size_t value) -> bool {
         return value != 0u && (value & (value - 1u)) == 0u;
     }
 
-    [[nodiscard]] auto align_forward_checked(size_t value, size_t alignment, size_t* out) -> bool {
-        if (!is_power_of_two(alignment)) {
-            return false;
-        }
-
+    [[nodiscard]] auto align_forward(size_t value, size_t alignment) -> size_t {
+        ASSERT(is_power_of_two(alignment));
         size_t const mask = alignment - 1u;
-        if (value > std::numeric_limits<size_t>::max() - mask) {
-            return false;
-        }
-
-        *out = (value + mask) & ~mask;
-        return true;
+        ASSERT(value <= std::numeric_limits<size_t>::max() - mask);
+        return (value + mask) & ~mask;
     }
 
-    [[nodiscard]] auto
-    align_address_forward_checked(uintptr_t value, size_t alignment, uintptr_t* out) -> bool {
-        if (!is_power_of_two(alignment)) {
-            return false;
-        }
-
+    [[nodiscard]] auto align_address_forward(uintptr_t value, size_t alignment) -> uintptr_t {
+        ASSERT(is_power_of_two(alignment));
         uintptr_t const mask = static_cast<uintptr_t>(alignment - 1u);
-        if (value > std::numeric_limits<uintptr_t>::max() - mask) {
-            return false;
-        }
-
-        *out = (value + mask) & ~mask;
-        return true;
+        ASSERT(value <= std::numeric_limits<size_t>::max() - mask);
+        return (value + mask) & ~mask;
     }
 
     [[nodiscard]] auto byte_add(void* data, size_t offset) -> void* {
@@ -45,53 +33,37 @@ namespace {
     }
 
     struct ThreadTempArenaState {
-        [[nodiscard]] auto init(ThreadTempArenaOptions const& options) -> bool {
-            if (initialized) {
-                return true;
-            }
-
-            ArenaOptions const arena_options = {options.reserve_size, options.commit_size};
-
-            for (uint32_t index = 0u; index < THREAD_TEMP_ARENA_COUNT; ++index) {
-                if (!arenas[index].init(arena_options)) {
-                    shutdown();
-                    return false;
+        auto init(ThreadTempArenaOptions const& options) -> void {
+            if (!initialized) {
+                ArenaOptions const arena_options = {options.reserve_size, options.commit_size};
+                for (auto& arena : arenas) {
+                    arena.init(arena_options);
                 }
+                initialized = true;
             }
-
-            initialized = true;
-            return true;
         }
 
         auto shutdown() -> void {
-            for (uint32_t index = 0u; index < THREAD_TEMP_ARENA_COUNT; ++index) {
-                arenas[index].destroy();
+            for (auto& arena : arenas) {
+                arena.destroy();
             }
-
             initialized = false;
         }
 
         auto reset() -> void {
-            if (!initialized) {
-                return;
-            }
-
-            for (uint32_t index = 0u; index < THREAD_TEMP_ARENA_COUNT; ++index) {
-                arenas[index].reset();
+            for (auto& arena : arenas) {
+                arena.reset();
             }
         }
 
-        Arena arenas[THREAD_TEMP_ARENA_COUNT];
+        std::array<Arena, THREAD_TEMP_ARENA_COUNT> arenas;
         bool initialized = false;
     };
 
     thread_local ThreadTempArenaState thread_temp_state = {};
 
     [[nodiscard]] auto require_thread_temp_state() -> ThreadTempArenaState& {
-        if (!thread_temp_state.initialized && !thread_temp_state.init({})) {
-            BASE_PANIC("failed to initialize thread temporary arenas");
-        }
-
+        thread_temp_state.init({});
         return thread_temp_state;
     }
 
@@ -101,39 +73,21 @@ Arena::~Arena() {
     destroy();
 }
 
-auto Arena::init(ArenaOptions const& options) -> bool {
-    if (m_memory != nullptr || options.reserve_size == 0u) {
-        return false;
-    }
+auto Arena::init(ArenaOptions const& options) -> void {
+    ASSERT(m_memory == nullptr && options.reserve_size > 0u &&
+           options.commit_size <= options.reserve_size);
 
     size_t const page_size = virtual_page_size();
-    size_t reserve_size = 0u;
-    size_t commit_size = options.commit_size != 0u ? options.commit_size : page_size;
+    m_reserved_size = align_forward(options.reserve_size, page_size);
+    m_committed_size = align_forward(std::max(options.commit_size, page_size), page_size);
 
-    if (!align_forward_checked(options.reserve_size, page_size, &reserve_size) ||
-        !align_forward_checked(commit_size, page_size, &commit_size)) {
-        return false;
-    }
+    m_memory = virtual_reserve(m_reserved_size);
+    ASSERT(m_memory != nullptr);
+    ASSERT(virtual_commit(m_memory, m_committed_size));
 
-    commit_size = std::min(commit_size, reserve_size);
-
-    void* const memory = virtual_reserve(reserve_size);
-    if (memory == nullptr) {
-        return false;
-    }
-
-    if (!virtual_commit(memory, commit_size)) {
-        BASE_UNUSED(virtual_release(memory, reserve_size));
-        return false;
-    }
-
-    m_memory = memory;
-    m_reserved_size = reserve_size;
-    m_committed_size = commit_size;
-    m_initial_commit_size = commit_size;
-    m_commit_size = commit_size;
+    m_initial_commit_size = m_committed_size;
+    m_commit_size = m_committed_size;
     m_used_size = 0u;
-    return true;
 }
 
 auto Arena::destroy() -> void {
@@ -150,42 +104,20 @@ auto Arena::destroy() -> void {
 }
 
 auto Arena::allocate_bytes(size_t size, size_t alignment) -> void* {
-    void* const result = try_allocate_bytes(size, alignment);
-    if (result == nullptr && size != 0u) {
-        BASE_PANIC("arena allocation failed");
-    }
+    ASSERT(m_memory != nullptr);
+    ASSERT(size > 0u);
+    ASSERT(is_power_of_two(alignment));
 
-    return result;
-}
-
-auto Arena::try_allocate_bytes(size_t size, size_t alignment) -> void* {
-    if (m_memory == nullptr || !is_power_of_two(alignment)) {
-        return nullptr;
-    }
-
-    if (size == 0u) {
-        return nullptr;
-    }
-
-    uintptr_t const base = reinterpret_cast<uintptr_t>(m_memory);
+    uintptr_t const base = std::bit_cast<uintptr_t>(m_memory);
     uintptr_t const current = base + m_used_size;
-    uintptr_t aligned = 0u;
-
-    if (!align_address_forward_checked(current, alignment, &aligned)) {
-        return nullptr;
-    }
+    uintptr_t const aligned = align_address_forward(current, alignment);
 
     size_t const offset = static_cast<size_t>(aligned - base);
-    if (offset > m_reserved_size || size > m_reserved_size - offset) {
-        return nullptr;
-    }
+    ASSERT(offset <= m_reserved_size && size <= m_reserved_size - offset);
 
     size_t const new_used_size = offset + size;
-
-    if (new_used_size > m_committed_size && !commit_to(new_used_size)) {
-        return nullptr;
-    }
-
+    ASSERT(new_used_size <= m_committed_size);
+    commit_to(new_used_size);
     m_used_size = new_used_size;
     return std::bit_cast<void*>(aligned);
 }
@@ -197,41 +129,23 @@ auto Arena::reset() -> void {
 auto Arena::reset_to(ArenaMarker marker) -> void {
     ASSERT(marker.used_size <= m_used_size);
     ASSERT(marker.used_size <= m_reserved_size);
-
-    if (marker.used_size > m_used_size || marker.used_size > m_reserved_size) {
-        return;
-    }
-
     m_used_size = marker.used_size;
 }
 
-auto Arena::trim_committed_pages() -> bool {
+auto Arena::trim_committed_pages() -> void {
     if (m_memory == nullptr || m_committed_size <= m_initial_commit_size) {
-        return true;
+        return;
     }
-
     size_t const page_size = virtual_page_size();
-    size_t keep_size = 0u;
-
-    if (!align_forward_checked(m_used_size, page_size, &keep_size)) {
-        return false;
-    }
-
-    keep_size = std::max(keep_size, m_initial_commit_size);
-
+    size_t const keep_size = std::max(align_forward(m_used_size, page_size), m_initial_commit_size);
     if (keep_size >= m_committed_size) {
-        return true;
+        return;
     }
 
     void* const decommit_begin = byte_add(m_memory, keep_size);
     size_t const decommit_size = m_committed_size - keep_size;
-
-    if (!virtual_decommit(decommit_begin, decommit_size)) {
-        return false;
-    }
-
+    ASSERT(virtual_decommit(decommit_begin, decommit_size));
     m_committed_size = keep_size;
-    return true;
 }
 
 auto Arena::marker() const -> ArenaMarker {
@@ -284,31 +198,16 @@ auto Arena::do_is_equal(std::pmr::memory_resource const& other) const noexcept -
     return this == &other;
 }
 
-auto Arena::commit_to(size_t needed_size) -> bool {
-    if (needed_size > m_reserved_size) {
-        return false;
-    }
-
-    size_t target_size = 0u;
-    if (!align_forward_checked(needed_size, m_commit_size, &target_size)) {
-        return false;
-    }
-
-    target_size = std::min(target_size, m_reserved_size);
-
+auto Arena::commit_to(size_t needed_size) -> void {
+    ASSERT(needed_size <= m_reserved_size);
+    size_t const target_size = std::min(align_forward(needed_size, m_commit_size), m_reserved_size);
     if (target_size <= m_committed_size) {
-        return true;
+        return;
     }
-
     void* const commit_begin = byte_add(m_memory, m_committed_size);
     size_t const commit_size = target_size - m_committed_size;
-
-    if (!virtual_commit(commit_begin, commit_size)) {
-        return false;
-    }
-
+    ASSERT(virtual_commit(commit_begin, commit_size));
     m_committed_size = target_size;
-    return true;
 }
 
 ArenaTemp::ArenaTemp(Arena& arena) : m_arena(&arena), m_marker(arena.marker()) {}
@@ -355,8 +254,8 @@ auto ArenaTemp::arena() const -> Arena const* {
     return m_arena;
 }
 
-auto init_thread_temp_arenas(ThreadTempArenaOptions const& options) -> bool {
-    return thread_temp_state.init(options);
+auto init_thread_temp_arenas(ThreadTempArenaOptions const& options) -> void {
+    thread_temp_state.init(options);
 }
 
 auto shutdown_thread_temp_arenas() -> void {
@@ -369,11 +268,7 @@ auto reset_thread_temp_arenas() -> void {
 
 auto thread_temp_arena(uint32_t index) -> Arena& {
     ThreadTempArenaState& state = require_thread_temp_state();
-    ASSERT(index < THREAD_TEMP_ARENA_COUNT);
-    if (index >= THREAD_TEMP_ARENA_COUNT) {
-        BASE_PANIC("thread temporary arena index is out of range");
-    }
-
+    ASSERT(index < state.arenas.size());
     return state.arenas[index];
 }
 

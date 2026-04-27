@@ -56,13 +56,29 @@ times.
 - Use constructors sparingly for invariant setup, not for hidden work.
 - Keep headers lean and avoid unnecessary includes.
 - Use `constexpr` and templates only when they pay for themselves.
+- Validate outside-world inputs once at the public API boundary. After a
+  wrapper has checked a handle, pointer, size, or enum, private helpers should
+  assume that invariant and use `ASSERT` only where documenting or debugging the
+  contract is worthwhile.
+- Avoid forwarding parameters through layers that each repeat the same
+  validity checks. Prefer one explicit boundary check and simple internal code.
 
 ## Memory
 
 - Framework code should make allocation sites explicit.
-- Custom allocators are a planned base subsystem.
-- APIs should accept allocator/context parameters where long-lived or repeated
-  allocation is expected.
+- Production code should not use C heap allocation or owning `new`/`delete`.
+  Placement construction belongs behind `arena_new`.
+- APIs that allocate framework-owned state should accept an explicit `Arena&`.
+  Functions may also allocate from an arena already owned by the context they
+  operate on, but that ownership should be clear from the API and implementation.
+- Arena allocation is not a recoverable branch. Use `arena_alloc` or
+  `arena_new`; allocation failure asserts/crashes instead of returning
+  `nullptr`.
+- Short-lived scratch data should use `ArenaTemp` from `begin_thread_temp_arena`
+  or a frame arena that is reset at a known frame boundary.
+- Long-lived handles, cache entries, and renderer/provider objects should live
+  in caller-owned or context-owned arenas. Destruction releases external
+  resources; memory is reclaimed when the owning arena is reset or destroyed.
 - Avoid global allocation and static initialization with runtime side effects.
 
 ## Dependencies

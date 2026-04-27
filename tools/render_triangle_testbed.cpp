@@ -9,6 +9,7 @@
 #include <base/config.h>
 #include <base/crash.h>
 #include <base/fmt.h>
+#include <base/memory.h>
 #include <base/str_ref.h>
 #include <cmath>
 #include <cstddef>
@@ -419,6 +420,9 @@ auto main() -> int {
         return 1;
     }
 
+    Arena app_arena = {};
+    app_arena.init();
+
     gui::render::Context render_context = {};
     gui::render::ContextDesc context_desc = {};
     context_desc.backend = gui::render::Backend::D3D11;
@@ -426,7 +430,8 @@ auto main() -> int {
     context_desc.enable_debug_layer = true;
 #endif
 
-    gui::render::Result result = gui::render::create_context(context_desc, &render_context);
+    gui::render::Result result =
+        gui::render::create_context(app_arena, context_desc, &render_context);
     if (gui::render::result_failed(result)) {
         log_result("render::create_context", result);
         DestroyWindow(app_state.hwnd);
@@ -440,7 +445,7 @@ auto main() -> int {
     window_desc.buffer_count = 2u;
     window_desc.present_mode = gui::render::PresentMode::VSYNC;
 
-    result = gui::render::create_window(render_context, window_desc, &render_window);
+    result = gui::render::create_window(app_arena, render_context, window_desc, &render_window);
     if (gui::render::result_failed(result)) {
         log_result("render::create_window", result);
         gui::render::destroy_context(&render_context);

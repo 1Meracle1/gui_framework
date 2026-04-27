@@ -30,9 +30,10 @@ namespace {
     TEST_CASE(render_lifecycle_rejects_invalid_empty_handles) {
         gui::render::Context const context_handle = {};
         gui::render::Window const window_handle = {};
+        Arena owner_arena = {};
 
         TEST_EXPECT(context,
-                    gui::render::create_context(gui::render::ContextDesc{}, nullptr) ==
+                    gui::render::create_context(owner_arena, gui::render::ContextDesc{}, nullptr) ==
                         gui::render::Result::INVALID_ARGUMENT);
         TEST_EXPECT(context,
                     gui::render::begin_frame(context_handle) ==

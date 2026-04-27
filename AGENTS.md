@@ -1,5 +1,20 @@
 #AGENTS.md
 
+## Top Priority Convention
+
+This section has priority over every other convention in this file.
+
+- Simplicity first: write the minimum code that solves the problem. Nothing
+  speculative.
+- Implement only what was asked. No features beyond the request.
+- Do not add abstractions for single-use code.
+- Do not add flexibility or configurability that was not requested.
+- Do not add error handling for impossible scenarios.
+- If you write 20 lines and it could be 5, rewrite it.
+- Minimize code size aggressively: no pessimization, no bloat, no excess.
+- Write compact, simple, clean, deeply thought-through code from first
+  principles that surgically executes the intention.
+
 ## Project
 
 `gui_framework` is a custom GPU-oriented, cross-platform GUI framework written
@@ -81,6 +96,17 @@ do not prefix everything with
   directly with `%s`, including slices and non-null-terminated text, so do not
   expand `StrRef` manually with `%.*s`, `.data()`, or `.size()`.
 - Avoid hidden allocation, hidden control flow, and implicit ownership transfer.
+- Validate external inputs at the public API boundary. Do not repeat the same
+  null, handle, or range checks through every internal call after a caller has
+  already established the invariant; use `ASSERT` for internal invariants when a
+  check is still useful.
+- Do not use C heap allocation or owning `new`/`delete` in production code.
+  Functions that allocate framework-owned data must take an explicit `Arena&`
+  or allocate from an arena already owned by the context they operate on. Use
+  `arena_alloc` and `arena_new`; arena allocation failure is not recoverable.
+- Use thread-local temporary arenas for short-lived scratch data. Long-lived
+  objects and cached data must live in caller-owned or context-owned arenas with
+  explicit lifetime.
 - Avoid iostreams, STL containers, RTTI, exceptions, and template-heavy
   abstractions in production code unless there is a clear codegen, usability,
   performance, or compile-time reason.

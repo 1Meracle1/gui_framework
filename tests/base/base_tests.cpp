@@ -140,7 +140,7 @@ namespace {
         options.reserve_size = 256u * 1024u;
         options.commit_size = 64u * 1024u;
 
-        TEST_EXPECT(context, arena.init(options));
+        arena.init(options);
 
         void* const first = arena.allocate_bytes(13u, 8u);
         void* const second = arena.allocate_bytes(32u, 32u);
@@ -160,7 +160,7 @@ namespace {
         options.reserve_size = 256u * 1024u;
         options.commit_size = 64u * 1024u;
 
-        TEST_EXPECT(context, arena.init(options));
+        arena.init(options);
 
         void* const first = arena.allocate_bytes(64u, 16u);
         ArenaMarker const marker = arena.marker();
@@ -182,7 +182,7 @@ namespace {
         options.reserve_size = 256u * 1024u;
         options.commit_size = 64u * 1024u;
 
-        TEST_EXPECT(context, arena.init(options));
+        arena.init(options);
 
         std::pmr::vector<int> values(arena.resource());
         values.push_back(10);
@@ -202,7 +202,7 @@ namespace {
         options.reserve_size = 256u * 1024u;
         options.commit_size = 64u * 1024u;
 
-        TEST_EXPECT(context, arena.init(options));
+        arena.init(options);
 
         void* const stable = arena.allocate_bytes(32u, 8u);
         size_t const used_before_temp = arena.used_size();
@@ -496,12 +496,7 @@ namespace {
         options.reserve_size = 256u * 1024u;
         options.commit_size = 64u * 1024u;
 
-        bool const initialized = init_thread_temp_arenas(options);
-        TEST_EXPECT(context, initialized);
-
-        if (!initialized) {
-            return;
-        }
+        init_thread_temp_arenas(options);
 
         Arena& arena = thread_temp_arena();
         void* const first = arena.allocate_bytes(64u, 16u);
@@ -1041,7 +1036,7 @@ namespace {
         TEST_EXPECT(context, fixed.data() == fixed_backing);
 
         Arena arena;
-        TEST_EXPECT(context, arena.init({64u * 1024u, 64u * 1024u}));
+        arena.init({64u * 1024u, 64u * 1024u});
 
         if (!arena.initialized()) {
             return;

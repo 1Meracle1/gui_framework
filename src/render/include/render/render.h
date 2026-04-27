@@ -1,5 +1,6 @@
 #pragma once
 
+#include <base/memory.h>
 #include <cstdint>
 
 namespace gui::render {
@@ -69,10 +70,12 @@ namespace gui::render {
     [[nodiscard]] auto context_valid(Context context) -> bool;
     [[nodiscard]] auto window_valid(Window window) -> bool;
 
-    [[nodiscard]] auto create_context(ContextDesc const& desc, Context* out_context) -> Result;
+    [[nodiscard]] auto create_context(Arena& arena, ContextDesc const& desc, Context* out_context)
+        -> Result;
     auto destroy_context(Context* context) -> void;
 
-    [[nodiscard]] auto create_window(Context context, WindowDesc const& desc, Window* out_window)
+    [[nodiscard]] auto
+    create_window(Arena& arena, Context context, WindowDesc const& desc, Window* out_window)
         -> Result;
     auto destroy_window(Window* window) -> void;
 

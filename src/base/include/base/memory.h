@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory_resource>
+#include <new>
 #include <utility>
 
 using MemoryResource = std::pmr::memory_resource;
@@ -32,15 +33,14 @@ class Arena final : public std::pmr::memory_resource {
     auto operator=(Arena&&) -> Arena& = delete;
     auto operator=(Arena const&) -> Arena& = delete;
 
-    [[nodiscard]] auto init(ArenaOptions const& options = {}) -> bool;
+    auto init(ArenaOptions const& options = {}) -> void;
     auto destroy() -> void;
 
     [[nodiscard]] auto allocate_bytes(size_t size, size_t alignment = alignof(void*)) -> void*;
-    [[nodiscard]] auto try_allocate_bytes(size_t size, size_t alignment = alignof(void*)) -> void*;
 
     auto reset() -> void;
     auto reset_to(ArenaMarker marker) -> void;
-    auto trim_committed_pages() -> bool;
+    auto trim_committed_pages() -> void;
 
     [[nodiscard]] auto marker() const -> ArenaMarker;
     [[nodiscard]] auto initialized() const -> bool;
@@ -55,8 +55,9 @@ class Arena final : public std::pmr::memory_resource {
   private:
     auto do_allocate(size_t bytes, size_t alignment) -> void* override;
     auto do_deallocate(void* p, size_t bytes, size_t alignment) -> void override;
-    [[nodiscard]] auto do_is_equal(std::pmr::memory_resource const& other) const noexcept -> bool override;
-    [[nodiscard]] auto commit_to(size_t needed_size) -> bool;
+    [[nodiscard]] auto do_is_equal(std::pmr::memory_resource const& other) const noexcept
+        -> bool override;
+    auto commit_to(size_t needed_size) -> void;
 
   private:
     void* m_memory = nullptr;
@@ -95,7 +96,7 @@ struct ThreadTempArenaOptions {
 
 // Call from a thread entry point to choose non-default temporary arena sizes.
 // First use on a thread initializes with defaults if this was not called.
-[[nodiscard]] auto init_thread_temp_arenas(ThreadTempArenaOptions const& options = {}) -> bool;
+auto init_thread_temp_arenas(ThreadTempArenaOptions const& options = {}) -> void;
 auto shutdown_thread_temp_arenas() -> void;
 
 // Call once per frame on each thread that uses thread-local temporary arenas.

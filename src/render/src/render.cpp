@@ -63,7 +63,7 @@ namespace gui::render {
         return window.handle != nullptr;
     }
 
-    auto create_context(ContextDesc const& desc, Context* out_context) -> Result {
+    auto create_context(Arena& arena, ContextDesc const& desc, Context* out_context) -> Result {
         if (out_context == nullptr || out_context->handle != nullptr) {
             return Result::INVALID_ARGUMENT;
         }
@@ -72,8 +72,9 @@ namespace gui::render {
         }
 
 #if BASE_PLATFORM_WINDOWS
-        return d3d11::create_context(desc, out_context);
+        return d3d11::create_context(arena, desc, out_context);
 #else
+        BASE_UNUSED(arena);
         BASE_UNUSED(desc);
         return Result::UNSUPPORTED_PLATFORM;
 #endif
@@ -91,7 +92,8 @@ namespace gui::render {
 #endif
     }
 
-    auto create_window(Context context, WindowDesc const& desc, Window* out_window) -> Result {
+    auto create_window(Arena& arena, Context context, WindowDesc const& desc, Window* out_window)
+        -> Result {
         if (!context_valid(context) || out_window == nullptr || out_window->handle != nullptr ||
             desc.native_window == nullptr || desc.size.width == 0u || desc.size.height == 0u ||
             desc.buffer_count == 0u) {
@@ -99,8 +101,9 @@ namespace gui::render {
         }
 
 #if BASE_PLATFORM_WINDOWS
-        return d3d11::create_window(context, desc, out_window);
+        return d3d11::create_window(arena, context, desc, out_window);
 #else
+        BASE_UNUSED(arena);
         BASE_UNUSED(context);
         BASE_UNUSED(desc);
         BASE_UNUSED(out_window);
