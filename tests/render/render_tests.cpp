@@ -180,6 +180,7 @@ namespace {
         TEST_EXPECT(context,
                     gui::render::BlendMode::PREMULTIPLIED_ALPHA != gui::render::BlendMode::ALPHA);
         TEST_EXPECT(context, gui::render::BlendMode::ADDITIVE != gui::render::BlendMode::OPAQUE);
+        TEST_EXPECT(context, gui::render::BlendMode::MULTIPLY != gui::render::BlendMode::SCREEN);
     }
 
     TEST_CASE(render_bind_group_defaults_describe_empty_group) {

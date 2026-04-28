@@ -751,6 +751,7 @@ namespace gui::draw {
             std::max(std::min(rect_width(desc.bounds), rect_height(desc.bounds)) * 0.5f, 0.0f);
         desc.clip_radius = std::clamp(desc.clip_radius, 0.0f, max_radius);
         desc.opacity = std::clamp(desc.opacity, 0.0f, 1.0f);
+        desc.isolated = true;
         desc.filter_radius = std::max(desc.filter_radius, 0.0f);
         desc.drop_shadow.blur_radius = std::max(desc.drop_shadow.blur_radius, 0.0f);
 

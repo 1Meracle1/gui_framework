@@ -60,6 +60,10 @@ namespace gui::draw {
 
     enum class LayerBlendMode : uint8_t {
         NORMAL,
+        PREMULTIPLIED_NORMAL,
+        ADDITIVE,
+        MULTIPLY,
+        SCREEN,
     };
 
     enum class FilterKind : uint8_t {
@@ -78,6 +82,7 @@ namespace gui::draw {
         float clip_radius = 0.0f;
         float opacity = 1.0f;
         LayerBlendMode blend_mode = LayerBlendMode::NORMAL;
+        bool isolated = true;
         FilterKind filter_kind = FilterKind::NONE;
         float filter_radius = 0.0f;
         DropShadow drop_shadow = {};

@@ -38,6 +38,9 @@ namespace gui::draw {
             gui::render::Pipeline pipeline = {};
             gui::render::Shader layer_pixel_shader = {};
             gui::render::Pipeline layer_pipeline = {};
+            gui::render::Pipeline layer_additive_pipeline = {};
+            gui::render::Pipeline layer_multiply_pipeline = {};
+            gui::render::Pipeline layer_screen_pipeline = {};
             gui::render::Shader blur_pixel_shader = {};
             gui::render::Pipeline blur_pipeline = {};
             gui::render::Shader shadow_pixel_shader = {};
@@ -91,6 +94,15 @@ namespace gui::draw {
             }
             if (gui::render::pipeline_valid(renderer->layer_pipeline)) {
                 gui::render::destroy_pipeline(context, renderer->layer_pipeline);
+            }
+            if (gui::render::pipeline_valid(renderer->layer_additive_pipeline)) {
+                gui::render::destroy_pipeline(context, renderer->layer_additive_pipeline);
+            }
+            if (gui::render::pipeline_valid(renderer->layer_multiply_pipeline)) {
+                gui::render::destroy_pipeline(context, renderer->layer_multiply_pipeline);
+            }
+            if (gui::render::pipeline_valid(renderer->layer_screen_pipeline)) {
+                gui::render::destroy_pipeline(context, renderer->layer_screen_pipeline);
             }
             if (gui::render::pipeline_valid(renderer->blur_pipeline)) {
                 gui::render::destroy_pipeline(context, renderer->blur_pipeline);
@@ -812,12 +824,28 @@ namespace gui::draw {
             gui::render::destroy_bind_group(render_context, bind_group);
         }
 
+        [[nodiscard]] auto layer_pipeline(RendererImpl const& renderer, LayerBlendMode mode)
+            -> gui::render::Pipeline {
+            switch (mode) {
+            case LayerBlendMode::NORMAL:
+            case LayerBlendMode::PREMULTIPLIED_NORMAL:
+                return renderer.layer_pipeline;
+            case LayerBlendMode::ADDITIVE:
+                return renderer.layer_additive_pipeline;
+            case LayerBlendMode::MULTIPLY:
+                return renderer.layer_multiply_pipeline;
+            case LayerBlendMode::SCREEN:
+                return renderer.layer_screen_pipeline;
+            }
+
+            return renderer.layer_pipeline;
+        }
+
         auto submit_layer(RendererImpl const& renderer,
                           gui::render::Context render_context,
                           RenderTarget target,
                           LayerCommand const& command,
                           LayerRender const& layer_render) -> void {
-            ASSERT(command.desc.blend_mode == LayerBlendMode::NORMAL);
             if (!gui::render::texture_valid(layer_render.texture)) {
                 return;
             }
@@ -838,7 +866,7 @@ namespace gui::draw {
             submit_textured_rect(renderer,
                                  render_context,
                                  target,
-                                 renderer.layer_pipeline,
+                                 layer_pipeline(renderer, command.desc.blend_mode),
                                  layer_render.texture,
                                  layer_render.target_rect,
                                  {1.0f, 1.0f, 1.0f, command.desc.opacity});
@@ -1504,6 +1532,30 @@ float4 ps_main(PSInput input) : SV_Target
 
         result = gui::render::create_pipeline(
             arena, render_context, pipeline_desc, renderer->layer_pipeline);
+        if (gui::render::result_failed(result)) {
+            destroy_renderer_resources(render_context, renderer);
+            return result;
+        }
+
+        pipeline_desc.blend_mode = gui::render::BlendMode::ADDITIVE;
+        result = gui::render::create_pipeline(
+            arena, render_context, pipeline_desc, renderer->layer_additive_pipeline);
+        if (gui::render::result_failed(result)) {
+            destroy_renderer_resources(render_context, renderer);
+            return result;
+        }
+
+        pipeline_desc.blend_mode = gui::render::BlendMode::MULTIPLY;
+        result = gui::render::create_pipeline(
+            arena, render_context, pipeline_desc, renderer->layer_multiply_pipeline);
+        if (gui::render::result_failed(result)) {
+            destroy_renderer_resources(render_context, renderer);
+            return result;
+        }
+
+        pipeline_desc.blend_mode = gui::render::BlendMode::SCREEN;
+        result = gui::render::create_pipeline(
+            arena, render_context, pipeline_desc, renderer->layer_screen_pipeline);
         if (gui::render::result_failed(result)) {
             destroy_renderer_resources(render_context, renderer);
             return result;

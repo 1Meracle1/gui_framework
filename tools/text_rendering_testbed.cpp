@@ -197,6 +197,36 @@ namespace {
         gui::draw::TextStyle clip_text = caption;
         clip_text.color = {0.94f, 0.97f, 1.0f, 1.0f};
 
+        auto draw_blend_sample = [](gui::draw::Context draw_context,
+                                    float x,
+                                    gui::draw::LayerBlendMode blend_mode) -> void {
+            gui::draw::Rect const bounds = {{x, 146.0f}, {x + 72.0f, 238.0f}};
+            gui::draw::draw_rect_filled(draw_context, bounds, {0.05f, 0.07f, 0.08f, 1.0f}, 8.0f);
+            gui::draw::draw_rect_filled(draw_context,
+                                        {{x + 8.0f, 154.0f}, {x + 52.0f, 214.0f}},
+                                        {0.20f, 0.56f, 0.96f, 1.0f},
+                                        6.0f);
+            gui::draw::draw_rect_filled(draw_context,
+                                        {{x + 28.0f, 172.0f}, {x + 64.0f, 230.0f}},
+                                        {0.98f, 0.70f, 0.20f, 1.0f},
+                                        6.0f);
+
+            gui::draw::LayerDesc layer = {};
+            layer.bounds = bounds;
+            layer.blend_mode = blend_mode;
+            gui::draw::push_layer(draw_context, layer);
+            gui::draw::draw_rect_filled(draw_context,
+                                        {{x + 18.0f, 162.0f}, {x + 62.0f, 222.0f}},
+                                        {0.95f, 0.16f, 0.48f, 0.78f},
+                                        6.0f);
+            gui::draw::pop_layer(draw_context);
+        };
+
+        draw_blend_sample(text_state->draw_context, 510.0f, gui::draw::LayerBlendMode::NORMAL);
+        draw_blend_sample(text_state->draw_context, 590.0f, gui::draw::LayerBlendMode::ADDITIVE);
+        draw_blend_sample(text_state->draw_context, 670.0f, gui::draw::LayerBlendMode::MULTIPLY);
+        draw_blend_sample(text_state->draw_context, 750.0f, gui::draw::LayerBlendMode::SCREEN);
+
         gui::draw::Rect const outer_clip = {{836.0f, 72.0f}, {1210.0f, 252.0f}};
         gui::draw::Rect const inner_clip = {{978.0f, 118.0f}, {1134.0f, 214.0f}};
         gui::draw::draw_rect_filled(text_state->draw_context,

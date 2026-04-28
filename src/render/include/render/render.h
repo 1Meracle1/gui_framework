@@ -75,6 +75,8 @@ namespace gui::render {
         ALPHA,
         PREMULTIPLIED_ALPHA,
         ADDITIVE,
+        MULTIPLY,
+        SCREEN,
     };
 
     enum class SamplerFilter : uint8_t {

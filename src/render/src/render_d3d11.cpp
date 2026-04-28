@@ -319,6 +319,18 @@ namespace gui::render::d3d11 {
                 desc.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ONE;
                 desc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_ONE;
                 break;
+            case BlendMode::MULTIPLY:
+                desc.RenderTarget[0].SrcBlend = D3D11_BLEND_DEST_COLOR;
+                desc.RenderTarget[0].DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
+                desc.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ONE;
+                desc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_INV_SRC_ALPHA;
+                break;
+            case BlendMode::SCREEN:
+                desc.RenderTarget[0].SrcBlend = D3D11_BLEND_ONE;
+                desc.RenderTarget[0].DestBlend = D3D11_BLEND_INV_SRC_COLOR;
+                desc.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ONE;
+                desc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_INV_SRC_ALPHA;
+                break;
             }
 
             return desc;
