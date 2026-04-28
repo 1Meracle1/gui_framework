@@ -301,6 +301,8 @@ namespace gui::render {
 
     [[nodiscard]] auto resize_window(Context context, Window window, SizeU32 size) -> Result;
     auto begin_frame(Context context) -> void;
+    // Callers own frame, pass, and present sequencing. Scissor and draw calls
+    // require an active begin_render_pass/end_render_pass scope.
     [[nodiscard]] auto begin_render_pass(Context context, WindowRenderPassDesc const& desc)
         -> Result;
     auto end_render_pass(Context context) -> void;

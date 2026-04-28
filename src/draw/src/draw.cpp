@@ -14,6 +14,7 @@ namespace gui::draw {
         constexpr int32_t MIN_SEGMENTS = 3;
         constexpr int32_t MAX_SEGMENTS = 128;
         constexpr int32_t DEFAULT_CURVE_SEGMENTS = 12;
+        constexpr float AA_FRINGE_SIZE = 1.0f;
 
         struct PathPoint {
             PathPoint* next = nullptr;
@@ -320,10 +321,44 @@ namespace gui::draw {
             write_triangle(impl, vertices + 3u, a, c, d, color);
         }
 
-        auto compact_stroke_points(ContextImpl* impl,
-                                   Slice<Vec2 const> points,
-                                   bool closed,
-                                   size_t& out_count) -> Vec2 const* {
+        auto write_fringe_segment(ContextImpl const* impl,
+                                  Vertex* vertices,
+                                  Vec2 p0,
+                                  Vec2 p1,
+                                  Vec2 offset0,
+                                  Vec2 offset1,
+                                  Color inner_color,
+                                  Color outer_color) -> void {
+            Vec2 const a = p0;
+            Vec2 const b = p1;
+            Vec2 const c = vec2_add(p1, offset1);
+            Vec2 const d = vec2_add(p0, offset0);
+
+            write_vertex(impl, vertices[0u], a, inner_color);
+            write_vertex(impl, vertices[1u], b, inner_color);
+            write_vertex(impl, vertices[2u], c, outer_color);
+            write_vertex(impl, vertices[3u], a, inner_color);
+            write_vertex(impl, vertices[4u], c, outer_color);
+            write_vertex(impl, vertices[5u], d, outer_color);
+        }
+
+        auto
+        compact_points(ContextImpl* impl, Slice<Vec2 const> points, bool closed, size_t& out_count)
+            -> Vec2 const* {
+            bool needs_compaction = closed && points.size() > 1u &&
+                                    points_equal(points[0u], points[points.size() - 1u]);
+            for (size_t index = 1u; index < points.size(); ++index) {
+                if (points_equal(points[index - 1u], points[index])) {
+                    needs_compaction = true;
+                    break;
+                }
+            }
+
+            if (!needs_compaction) {
+                out_count = points.size();
+                return points.data();
+            }
+
             Vec2* const stroke_points = arena_alloc<Vec2>(impl->frame_arena, points.size());
             size_t count = 0u;
             for (size_t index = 0u; index < points.size(); ++index) {
@@ -342,12 +377,34 @@ namespace gui::draw {
             return stroke_points;
         }
 
+        [[nodiscard]] auto polygon_area_twice(Slice<Vec2 const> points) -> float {
+            float result = 0.0f;
+            for (size_t index = 0u; index < points.size(); ++index) {
+                Vec2 const p0 = points[index];
+                Vec2 const p1 = points[(index + 1u) % points.size()];
+                result += (p0.x * p1.y) - (p0.y * p1.x);
+            }
+            return result;
+        }
+
         auto fill_convex_points(ContextImpl* impl, Slice<Vec2 const> points, Color color) -> void {
             if (points.size() < 3u || !color_visible(color)) {
                 return;
             }
 
-            size_t const vertex_count = (points.size() - 2u) * 3u;
+            size_t point_count = 0u;
+            points = {compact_points(impl, points, true, point_count), point_count};
+            if (points.size() < 3u) {
+                return;
+            }
+
+            float const area_twice = polygon_area_twice(points);
+            if (area_twice == 0.0f) {
+                return;
+            }
+
+            size_t const fill_vertex_count = (points.size() - 2u) * 3u;
+            size_t const vertex_count = fill_vertex_count + (points.size() * 6u);
             Vertex* const vertices = push_primitive_vertices(impl, vertex_count);
             for (size_t index = 1u; index + 1u < points.size(); ++index) {
                 write_triangle(impl,
@@ -356,6 +413,34 @@ namespace gui::draw {
                                points[index],
                                points[index + 1u],
                                color);
+            }
+
+            float const normal_scale = area_twice > 0.0f ? -1.0f : 1.0f;
+            Vec2* const fringe_offsets = arena_alloc<Vec2>(impl->frame_arena, points.size());
+            for (size_t index = 0u; index < points.size(); ++index) {
+                size_t const prev_index = (index + points.size() - 1u) % points.size();
+                size_t const next_index = (index + 1u) % points.size();
+                Vec2 const prev_normal =
+                    vec2_mul(segment_normal(points[prev_index], points[index]), normal_scale);
+                Vec2 const next_normal =
+                    vec2_mul(segment_normal(points[index], points[next_index]), normal_scale);
+                fringe_offsets[index] =
+                    stroke_join_offset(prev_normal, next_normal, AA_FRINGE_SIZE);
+            }
+
+            Color outer_color = color;
+            outer_color.a = 0.0f;
+            Vertex* const fringe_vertices = vertices + fill_vertex_count;
+            for (size_t index = 0u; index < points.size(); ++index) {
+                size_t const next_index = (index + 1u) % points.size();
+                write_fringe_segment(impl,
+                                     fringe_vertices + (index * 6u),
+                                     points[index],
+                                     points[next_index],
+                                     fringe_offsets[index],
+                                     fringe_offsets[next_index],
+                                     color,
+                                     outer_color);
             }
         }
 
@@ -601,7 +686,7 @@ namespace gui::draw {
         }
 
         size_t point_count = 0u;
-        Vec2 const* const stroke_points = compact_stroke_points(impl, points, closed, point_count);
+        Vec2 const* const stroke_points = compact_points(impl, points, closed, point_count);
         if (point_count < 2u || (closed && point_count < 3u)) {
             return;
         }
@@ -700,8 +785,9 @@ namespace gui::draw {
         }
 
         if (rounding < 0.5f) {
-            Vertex* const vertices = push_primitive_vertices(impl, 6u);
-            write_rect_vertices(impl, vertices, rect, {}, color);
+            Vec2 const points[] = {
+                rect.min, {rect.max.x, rect.min.y}, rect.max, {rect.min.x, rect.max.y}};
+            fill_convex_points(impl, points, color);
             return;
         }
 

@@ -130,7 +130,7 @@ namespace {
 
         gui::draw::PrimitiveCommand const* command = gui::draw::primitive_command(draw_context, 0u);
         TEST_EXPECT(context, command != nullptr);
-        TEST_EXPECT(context, command->vertex_count == 6u);
+        TEST_EXPECT(context, command->vertex_count == 30u);
         TEST_EXPECT(context, !gui::render::texture_valid(command->texture));
         TEST_EXPECT(context, command->vertices[0u].position.x == 1.0f);
         TEST_EXPECT(context, command->vertices[0u].position.y == 2.0f);
@@ -139,6 +139,10 @@ namespace {
         TEST_EXPECT(context, command->vertices[2u].position.x == 11.0f);
         TEST_EXPECT(context, command->vertices[2u].position.y == 7.0f);
         TEST_EXPECT(context, command->vertices[5u].color.b == 0.75f);
+        expect_position(context, command->vertices[8u].position, 12.0f, 1.0f);
+        expect_position(context, command->vertices[11u].position, 0.0f, 1.0f);
+        TEST_EXPECT(context, command->vertices[6u].color.a == 1.0f);
+        TEST_EXPECT(context, command->vertices[8u].color.a == 0.0f);
 
         gui::draw::begin_frame(draw_context);
         TEST_EXPECT(context, gui::draw::primitive_command_count(draw_context) == 0u);
@@ -181,7 +185,7 @@ namespace {
         TEST_EXPECT(context, solid_batch != nullptr);
         TEST_EXPECT(context, solid_batch->command_index == 0u);
         TEST_EXPECT(context, solid_batch->command_count == 2u);
-        TEST_EXPECT(context, solid_batch->vertex_count == 9u);
+        TEST_EXPECT(context, solid_batch->vertex_count == 33u);
         TEST_EXPECT(context, !gui::render::texture_valid(solid_batch->texture));
 
         gui::draw::PrimitiveBatch const* textured_batch =
@@ -197,7 +201,7 @@ namespace {
         TEST_EXPECT(context, final_solid_batch != nullptr);
         TEST_EXPECT(context, final_solid_batch->command_index == 4u);
         TEST_EXPECT(context, final_solid_batch->command_count == 1u);
-        TEST_EXPECT(context, final_solid_batch->vertex_count == 6u);
+        TEST_EXPECT(context, final_solid_batch->vertex_count == 30u);
 
         gui::draw::PrimitiveCommand const* command = gui::draw::primitive_command(draw_context, 2u);
         TEST_EXPECT(context, command != nullptr);
@@ -289,7 +293,7 @@ namespace {
         TEST_EXPECT(context, clip_batch != nullptr);
         TEST_EXPECT(context, clip_batch->command_index == 1u);
         TEST_EXPECT(context, clip_batch->command_count == 2u);
-        TEST_EXPECT(context, clip_batch->vertex_count == 12u);
+        TEST_EXPECT(context, clip_batch->vertex_count == 60u);
         expect_rect(context, clip_batch->clip_rect, clip);
 
         gui::draw::PrimitiveBatch const* transform_batch =
@@ -468,7 +472,9 @@ namespace {
         TEST_EXPECT(context, command->opacity == 0.25f);
         expect_position(context, command->vertices[0u].position, 7.0f, 13.0f);
         expect_position(context, command->vertices[2u].position, 13.0f, 25.0f);
+        expect_position(context, command->vertices[8u].position, 15.0f, 10.0f);
         TEST_EXPECT(context, command->vertices[0u].color.a == 0.2f);
+        TEST_EXPECT(context, command->vertices[8u].color.a == 0.0f);
 
         gui::draw::destroy_context(draw_context);
     }
@@ -562,6 +568,66 @@ namespace {
         gui::draw::destroy_context(draw_context);
     }
 
+    TEST_CASE(draw_fill_convex_compacts_degenerate_edges) {
+        Arena owner_arena = {};
+        owner_arena.init();
+
+        gui::draw::Context draw_context = {};
+        gui::draw::create_context(owner_arena, {}, draw_context);
+
+        gui::draw::begin_frame(draw_context);
+        gui::draw::path_line_to(draw_context, {0.0f, 0.0f});
+        gui::draw::path_line_to(draw_context, {0.0f, 0.0f});
+        gui::draw::path_line_to(draw_context, {4.0f, 0.0f});
+        gui::draw::path_line_to(draw_context, {0.0f, 4.0f});
+        gui::draw::path_line_to(draw_context, {0.0f, 0.0f});
+        gui::draw::path_fill_convex(draw_context, {1.0f, 1.0f, 1.0f, 1.0f});
+
+        gui::draw::PrimitiveCommand const* command = gui::draw::primitive_command(draw_context, 0u);
+        TEST_EXPECT(context, command != nullptr);
+        TEST_EXPECT(context, command->vertex_count == 21u);
+        expect_position(context, command->vertices[0u].position, 0.0f, 0.0f);
+        expect_position(context, command->vertices[1u].position, 4.0f, 0.0f);
+        expect_position(context, command->vertices[2u].position, 0.0f, 4.0f);
+        TEST_EXPECT(context, command->vertices[3u].color.a == 1.0f);
+        TEST_EXPECT(context, command->vertices[5u].color.a == 0.0f);
+
+        gui::draw::begin_frame(draw_context);
+        gui::draw::path_line_to(draw_context, {2.0f, 3.0f});
+        gui::draw::path_line_to(draw_context, {2.0f, 3.0f});
+        gui::draw::path_line_to(draw_context, {2.0f, 3.0f});
+        gui::draw::path_fill_convex(draw_context, {1.0f, 1.0f, 1.0f, 1.0f});
+        TEST_EXPECT(context, gui::draw::primitive_command_count(draw_context) == 0u);
+
+        gui::draw::destroy_context(draw_context);
+    }
+
+    TEST_CASE(draw_circle_and_ellipse_segment_counts_are_clamped) {
+        Arena owner_arena = {};
+        owner_arena.init();
+
+        gui::draw::Context draw_context = {};
+        gui::draw::create_context(owner_arena, {}, draw_context);
+
+        gui::draw::begin_frame(draw_context);
+        gui::draw::draw_circle_filled(
+            draw_context, {4.0f, 4.0f}, 8.0f, {1.0f, 1.0f, 1.0f, 1.0f}, 1);
+        gui::draw::draw_ellipse(
+            draw_context, {16.0f, 16.0f}, {8.0f, 4.0f}, {1.0f, 1.0f, 1.0f, 1.0f}, 2.0f, 200);
+
+        gui::draw::PrimitiveCommand const* circle_command =
+            gui::draw::primitive_command(draw_context, 0u);
+        TEST_EXPECT(context, circle_command != nullptr);
+        TEST_EXPECT(context, circle_command->vertex_count == 21u);
+
+        gui::draw::PrimitiveCommand const* ellipse_command =
+            gui::draw::primitive_command(draw_context, 1u);
+        TEST_EXPECT(context, ellipse_command != nullptr);
+        TEST_EXPECT(context, ellipse_command->vertex_count == 768u);
+
+        gui::draw::destroy_context(draw_context);
+    }
+
     TEST_CASE(draw_records_lines_gradients_circles_and_paths) {
         Arena owner_arena = {};
         owner_arena.init();
@@ -604,12 +670,12 @@ namespace {
         gui::draw::PrimitiveCommand const* circle_command =
             gui::draw::primitive_command(draw_context, 2u);
         TEST_EXPECT(context, circle_command != nullptr);
-        TEST_EXPECT(context, circle_command->vertex_count == 18u);
+        TEST_EXPECT(context, circle_command->vertex_count == 66u);
 
         gui::draw::PrimitiveCommand const* path_command =
             gui::draw::primitive_command(draw_context, 3u);
         TEST_EXPECT(context, path_command != nullptr);
-        TEST_EXPECT(context, path_command->vertex_count == 3u);
+        TEST_EXPECT(context, path_command->vertex_count == 21u);
 
         gui::draw::destroy_context(draw_context);
     }
