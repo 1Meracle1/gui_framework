@@ -23,6 +23,7 @@ namespace gui::render::d3d11 {
 
         constexpr size_t FRAME_VERTEX_BUFFER_DEFAULT_SIZE = 64u * 1024u;
         constexpr size_t MAX_D3D11_BUFFER_BYTE_SIZE = 0xffffffffu;
+        constexpr size_t D3D11_UNIFORM_BUFFER_ALIGNMENT = 16u;
 
         struct D3D11Context;
 
@@ -170,12 +171,21 @@ namespace gui::render::d3d11 {
             return static_cast<D3D11BindGroup*>(bind_group.handle);
         }
 
-        [[nodiscard]] auto buffer_byte_width(BufferDesc const& desc) -> UINT {
-            UINT byte_width = static_cast<UINT>(desc.byte_size);
+        [[nodiscard]] auto buffer_byte_width(BufferDesc const& desc, UINT& out_byte_width) -> bool {
+            size_t byte_width = desc.byte_size;
             if (desc.binding == BufferBinding::UNIFORM) {
-                byte_width = (byte_width + 15u) & ~15u;
+                if (byte_width >
+                    MAX_D3D11_BUFFER_BYTE_SIZE - (D3D11_UNIFORM_BUFFER_ALIGNMENT - 1u)) {
+                    return false;
+                }
+                byte_width = (byte_width + (D3D11_UNIFORM_BUFFER_ALIGNMENT - 1u)) &
+                             ~(D3D11_UNIFORM_BUFFER_ALIGNMENT - 1u);
             }
-            return byte_width;
+            if (byte_width > MAX_D3D11_BUFFER_BYTE_SIZE) {
+                return false;
+            }
+            out_byte_width = static_cast<UINT>(byte_width);
+            return true;
         }
 
         [[nodiscard]] auto align_up(size_t value, size_t alignment) -> size_t {
@@ -498,8 +508,13 @@ namespace gui::render::d3d11 {
         D3D11Context* context_impl = context_from_handle(context);
         ASSERT(context_impl != nullptr);
 
+        UINT byte_width = 0u;
+        if (!buffer_byte_width(desc, byte_width)) {
+            return Result::BUFFER_CREATION_FAILED;
+        }
+
         D3D11_BUFFER_DESC buffer_desc = {};
-        buffer_desc.ByteWidth = buffer_byte_width(desc);
+        buffer_desc.ByteWidth = byte_width;
         buffer_desc.Usage =
             desc.usage == BufferUsage::DYNAMIC ? D3D11_USAGE_DYNAMIC : D3D11_USAGE_IMMUTABLE;
         buffer_desc.BindFlags = desc.binding == BufferBinding::UNIFORM ? D3D11_BIND_CONSTANT_BUFFER
@@ -522,7 +537,7 @@ namespace gui::render::d3d11 {
         buffer->resource = resource;
         buffer->binding = desc.binding;
         buffer->usage = desc.usage;
-        buffer->byte_size = desc.byte_size;
+        buffer->byte_size = std::min(desc.byte_size, static_cast<size_t>(byte_width));
         out_buffer.handle = buffer;
         return Result::OK;
     }
