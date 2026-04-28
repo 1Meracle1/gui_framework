@@ -13,6 +13,7 @@ namespace gui::draw {
         constexpr uint32_t STYLED_RECT_SHADOW_VERTEX_OFFSET = 0u;
         constexpr uint32_t STYLED_RECT_BODY_VERTEX_OFFSET = 6u;
         constexpr uint32_t STYLED_RECT_VERTICES_PER_COMMAND = 12u;
+        constexpr uint32_t MASK_VERTEX_COUNT = 6u;
         constexpr float BLUR_KERNEL_EXTENT = 4.0f;
 
         struct RenderVertex {
@@ -41,6 +42,8 @@ namespace gui::draw {
             gui::render::Pipeline blur_pipeline = {};
             gui::render::Shader shadow_pixel_shader = {};
             gui::render::Pipeline shadow_pipeline = {};
+            gui::render::Shader mask_pixel_shader = {};
+            gui::render::Pipeline mask_pipeline = {};
             gui::render::Shader styled_rect_vertex_shader = {};
             gui::render::Shader styled_rect_pixel_shader = {};
             gui::render::Pipeline styled_rect_pipeline = {};
@@ -95,6 +98,9 @@ namespace gui::draw {
             if (gui::render::pipeline_valid(renderer->shadow_pipeline)) {
                 gui::render::destroy_pipeline(context, renderer->shadow_pipeline);
             }
+            if (gui::render::pipeline_valid(renderer->mask_pipeline)) {
+                gui::render::destroy_pipeline(context, renderer->mask_pipeline);
+            }
             if (gui::render::pipeline_valid(renderer->styled_rect_pipeline)) {
                 gui::render::destroy_pipeline(context, renderer->styled_rect_pipeline);
             }
@@ -109,6 +115,9 @@ namespace gui::draw {
             }
             if (gui::render::shader_valid(renderer->shadow_pixel_shader)) {
                 gui::render::destroy_shader(context, renderer->shadow_pixel_shader);
+            }
+            if (gui::render::shader_valid(renderer->mask_pixel_shader)) {
+                gui::render::destroy_shader(context, renderer->mask_pixel_shader);
             }
             if (gui::render::shader_valid(renderer->vertex_shader)) {
                 gui::render::destroy_shader(context, renderer->vertex_shader);
@@ -231,6 +240,10 @@ namespace gui::draw {
 
         [[nodiscard]] auto drop_shadow_visible(DropShadow const& shadow) -> bool {
             return color_visible(shadow.color);
+        }
+
+        [[nodiscard]] auto rounded_clip_visible(LayerDesc const& desc) -> bool {
+            return desc.clip_radius > 0.0f;
         }
 
         [[nodiscard]] auto blur_padding(float radius) -> float {
@@ -420,6 +433,47 @@ namespace gui::draw {
                                        rect_outset(sdf_rect, shadow.blur_radius),
                                        sdf_rect,
                                        shadow_style);
+        }
+
+        auto write_mask_vertex(RenderVertex& vertex,
+                               RenderTarget target,
+                               Vec2 position,
+                               Rect mask_rect,
+                               float radius) -> void {
+            Vec2 const target_pos = target_position(target, position);
+            vertex = {{pixel_to_ndc_x(target_pos.x, target_width(target)),
+                       pixel_to_ndc_y(target_pos.y, target_height(target))},
+                      {mask_rect.min.x, mask_rect.min.y},
+                      {mask_rect.max.x, mask_rect.max.y, radius, 1.0f}};
+        }
+
+        [[nodiscard]] auto upload_mask_vertices(gui::render::Context render_context,
+                                                RenderTarget target,
+                                                Rect rect,
+                                                Rect mask_rect,
+                                                float radius) -> gui::render::VertexBufferBinding {
+            gui::render::FrameBufferSlice const upload = gui::render::allocate_frame_vertex_buffer(
+                render_context, MASK_VERTEX_COUNT * sizeof(RenderVertex), alignof(RenderVertex));
+
+            Vec2 const p0 = rect.min;
+            Vec2 const p1 = {rect.max.x, rect.min.y};
+            Vec2 const p2 = rect.max;
+            Vec2 const p3 = {rect.min.x, rect.max.y};
+
+            RenderVertex* const vertices = static_cast<RenderVertex*>(upload.data);
+            write_mask_vertex(vertices[0u], target, p0, mask_rect, radius);
+            write_mask_vertex(vertices[1u], target, p1, mask_rect, radius);
+            write_mask_vertex(vertices[2u], target, p2, mask_rect, radius);
+            write_mask_vertex(vertices[3u], target, p0, mask_rect, radius);
+            write_mask_vertex(vertices[4u], target, p2, mask_rect, radius);
+            write_mask_vertex(vertices[5u], target, p3, mask_rect, radius);
+            gui::render::commit_frame_uploads(render_context);
+
+            gui::render::VertexBufferBinding result = {};
+            result.buffer = upload.buffer;
+            result.byte_stride = static_cast<uint32_t>(sizeof(RenderVertex));
+            result.byte_offset = static_cast<uint32_t>(upload.byte_offset);
+            return result;
         }
 
         [[nodiscard]] auto upload_draw_vertices(gui::render::Context render_context,
@@ -731,6 +785,33 @@ namespace gui::draw {
             gui::render::destroy_bind_group(render_context, bind_group);
         }
 
+        auto submit_masked_textured_rect(RendererImpl const& renderer,
+                                         gui::render::Context render_context,
+                                         RenderTarget target,
+                                         gui::render::Texture texture,
+                                         Rect rect,
+                                         Rect mask_rect,
+                                         float radius) -> void {
+            gui::render::VertexBufferBinding const vertex_buffer =
+                upload_mask_vertices(render_context, target, rect, mask_rect, radius);
+            ArenaTemp temp = begin_thread_temp_arena();
+            gui::render::BindGroup bind_group = {};
+            if (!bind_texture(*temp.arena(), render_context, renderer, texture, bind_group)) {
+                return;
+            }
+
+            gui::render::DrawDesc draw_desc = {};
+            draw_desc.vertex_buffers = &vertex_buffer;
+            draw_desc.vertex_buffer_count = 1u;
+            draw_desc.vertex_count = MASK_VERTEX_COUNT;
+
+            gui::render::bind_pipeline(render_context, renderer.mask_pipeline);
+            gui::render::set_scissor_rect(render_context,
+                                          target_clip_rect_to_scissor(rect, target));
+            gui::render::draw(render_context, draw_desc);
+            gui::render::destroy_bind_group(render_context, bind_group);
+        }
+
         auto submit_layer(RendererImpl const& renderer,
                           gui::render::Context render_context,
                           RenderTarget target,
@@ -808,6 +889,41 @@ namespace gui::draw {
 
             gui::render::destroy_texture(render_context, out_texture);
             return false;
+        }
+
+        [[nodiscard]] auto clip_texture(RendererImpl const& renderer,
+                                        gui::render::Context render_context,
+                                        gui::render::Texture source,
+                                        gui::render::SizeU32 size,
+                                        Rect mask_rect,
+                                        float radius,
+                                        gui::render::Texture& out_texture) -> bool {
+            gui::render::Result const result =
+                create_layer_texture(render_context, size, out_texture);
+            ASSERT(gui::render::result_succeeded(result));
+            if (gui::render::result_failed(result)) {
+                return false;
+            }
+
+            gui::render::TextureRenderPassDesc pass_desc = {};
+            pass_desc.target = out_texture;
+            pass_desc.clear_color = {0.0f, 0.0f, 0.0f, 0.0f};
+            if (gui::render::result_failed(
+                    gui::render::begin_texture_render_pass(render_context, pass_desc))) {
+                gui::render::destroy_texture(render_context, out_texture);
+                return false;
+            }
+
+            RenderTarget const target = {size, {}};
+            submit_masked_textured_rect(renderer,
+                                        render_context,
+                                        target,
+                                        source,
+                                        root_target_rect(size),
+                                        mask_rect,
+                                        radius);
+            gui::render::end_render_pass(render_context);
+            return true;
         }
 
         [[nodiscard]] auto blur_texture(RendererImpl const& renderer,
@@ -923,6 +1039,27 @@ namespace gui::draw {
             gui::render::end_render_pass(render_context);
 
             gui::render::SizeU32 const texture_size = rect_size(target_rect);
+            if (rounded_clip_visible(layer->desc)) {
+                gui::render::Texture clipped_texture = {};
+                Rect const mask_rect = {{layer->clip_rect.min.x - target_rect.min.x,
+                                         layer->clip_rect.min.y - target_rect.min.y},
+                                        {layer->clip_rect.max.x - target_rect.min.x,
+                                         layer->clip_rect.max.y - target_rect.min.y}};
+                if (!clip_texture(renderer,
+                                  render_context,
+                                  texture,
+                                  texture_size,
+                                  mask_rect,
+                                  layer->desc.clip_radius,
+                                  clipped_texture)) {
+                    gui::render::destroy_texture(render_context, texture);
+                    return false;
+                }
+
+                gui::render::destroy_texture(render_context, texture);
+                texture = clipped_texture;
+            }
+
             gui::render::Texture shadow_texture = {};
             if (drop_shadow_visible(layer->desc.drop_shadow) &&
                 !blur_texture(renderer,
@@ -1165,6 +1302,46 @@ float4 ps_main(PSInput input) : SV_Target
 }
 )hlsl";
 
+        constexpr StrRef MASK_SHADER_SOURCE = R"hlsl(
+Texture2D g_texture : register(t0);
+SamplerState g_sampler : register(s0);
+
+struct PSInput
+{
+    float4 position : SV_POSITION;
+    float2 uv : TEXCOORD0;
+    float4 color : COLOR0;
+};
+
+float rounded_rect_sdf(float2 local, float2 half_size, float radius)
+{
+    radius = min(radius, min(half_size.x, half_size.y));
+    float2 q = abs(local) - half_size + radius;
+    return length(max(q, float2(0.0f, 0.0f))) + min(max(q.x, q.y), 0.0f) - radius;
+}
+
+float sdf_coverage(float distance, float softness)
+{
+    return saturate(0.5f - (distance / max(softness, 0.5f)));
+}
+
+float4 ps_main(PSInput input) : SV_Target
+{
+    uint texture_width = 0u;
+    uint texture_height = 0u;
+    g_texture.GetDimensions(texture_width, texture_height);
+    float2 texture_size = float2(texture_width, texture_height);
+    float4 rect = float4(input.uv.xy, input.color.xy);
+    float2 half_size = (rect.zw - rect.xy) * 0.5f;
+    float2 center = (rect.xy + rect.zw) * 0.5f;
+    float coverage = sdf_coverage(
+        rounded_rect_sdf(input.position.xy - center, half_size, max(input.color.z, 0.0f)),
+        max(input.color.w, 0.0f));
+    float4 sample_value = g_texture.Sample(g_sampler, input.position.xy / texture_size);
+    return float4(sample_value.rgb * coverage, sample_value.a * coverage);
+}
+)hlsl";
+
         constexpr StrRef STYLED_RECT_SHADER_SOURCE = R"hlsl(
 Texture2D g_texture : register(t0);
 SamplerState g_sampler : register(s0);
@@ -1369,6 +1546,31 @@ float4 ps_main(PSInput input) : SV_Target
 
         result = gui::render::create_pipeline(
             arena, render_context, pipeline_desc, renderer->shadow_pipeline);
+        if (gui::render::result_failed(result)) {
+            destroy_renderer_resources(render_context, renderer);
+            return result;
+        }
+
+        shader_desc.source = MASK_SHADER_SOURCE;
+        shader_desc.stage = gui::render::ShaderStage::PIXEL;
+        shader_desc.entry_point = "ps_main";
+
+        result = gui::render::create_shader_from_source(
+            arena, render_context, shader_desc, renderer->mask_pixel_shader);
+        if (gui::render::result_failed(result)) {
+            destroy_renderer_resources(render_context, renderer);
+            return result;
+        }
+
+        pipeline_desc = {};
+        pipeline_desc.vertex_shader = renderer->vertex_shader;
+        pipeline_desc.pixel_shader = renderer->mask_pixel_shader;
+        pipeline_desc.vertex_attributes = input_elements;
+        pipeline_desc.vertex_attribute_count = sizeof(input_elements) / sizeof(input_elements[0u]);
+        pipeline_desc.blend_mode = gui::render::BlendMode::OPAQUE;
+
+        result = gui::render::create_pipeline(
+            arena, render_context, pipeline_desc, renderer->mask_pipeline);
         if (gui::render::result_failed(result)) {
             destroy_renderer_resources(render_context, renderer);
             return result;

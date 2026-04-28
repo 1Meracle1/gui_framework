@@ -75,6 +75,7 @@ namespace gui::draw {
 
     struct LayerDesc {
         Rect bounds = {};
+        float clip_radius = 0.0f;
         float opacity = 1.0f;
         LayerBlendMode blend_mode = LayerBlendMode::NORMAL;
         FilterKind filter_kind = FilterKind::NONE;

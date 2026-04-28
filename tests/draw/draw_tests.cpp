@@ -762,6 +762,7 @@ namespace {
         expect_rect(context, layer_command->desc.bounds, bounds);
         expect_rect(context, layer_command->clip_rect, clipped_bounds);
         TEST_EXPECT(context, layer_command->desc.opacity == 0.5f);
+        TEST_EXPECT(context, layer_command->desc.clip_radius == 0.0f);
         TEST_EXPECT(context, layer_command->desc.blend_mode == gui::draw::LayerBlendMode::NORMAL);
         TEST_EXPECT(context, layer_command->desc.filter_kind == gui::draw::FilterKind::NONE);
         TEST_EXPECT(context, layer_command->desc.filter_radius == 0.0f);
@@ -806,6 +807,7 @@ namespace {
 
     TEST_CASE(draw_records_layer_filter_and_drop_shadow) {
         gui::draw::LayerDesc const default_layer = {};
+        TEST_EXPECT(context, default_layer.clip_radius == 0.0f);
         TEST_EXPECT(context, default_layer.filter_kind == gui::draw::FilterKind::NONE);
         TEST_EXPECT(context, default_layer.filter_radius == 0.0f);
         TEST_EXPECT(context, default_layer.drop_shadow.blur_radius == 0.0f);
@@ -820,6 +822,7 @@ namespace {
         gui::draw::begin_frame(draw_context);
         gui::draw::LayerDesc layer = {};
         layer.bounds = {{0.0f, 0.0f}, {80.0f, 60.0f}};
+        layer.clip_radius = 12.0f;
         layer.filter_kind = gui::draw::FilterKind::BLUR;
         layer.filter_radius = 6.0f;
         layer.drop_shadow.offset = {3.0f, 4.0f};
@@ -830,6 +833,7 @@ namespace {
 
         gui::draw::LayerCommand const* command = gui::draw::layer_command(draw_context, 0u);
         TEST_EXPECT(context, command != nullptr);
+        TEST_EXPECT(context, command->desc.clip_radius == 12.0f);
         TEST_EXPECT(context, command->desc.filter_kind == gui::draw::FilterKind::BLUR);
         TEST_EXPECT(context, command->desc.filter_radius == 6.0f);
         TEST_EXPECT(context, command->desc.drop_shadow.offset.x == 3.0f);
@@ -838,12 +842,14 @@ namespace {
         TEST_EXPECT(context, command->desc.drop_shadow.color.g == 0.2f);
 
         gui::draw::begin_frame(draw_context);
+        layer.clip_radius = 100.0f;
         layer.filter_radius = -1.0f;
         layer.drop_shadow.blur_radius = -2.0f;
         gui::draw::push_layer(draw_context, layer);
         gui::draw::pop_layer(draw_context);
         command = gui::draw::layer_command(draw_context, 0u);
         TEST_EXPECT(context, command != nullptr);
+        TEST_EXPECT(context, command->desc.clip_radius == 30.0f);
         TEST_EXPECT(context, command->desc.filter_radius == 0.0f);
         TEST_EXPECT(context, command->desc.drop_shadow.blur_radius == 0.0f);
 
