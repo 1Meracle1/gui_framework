@@ -442,6 +442,10 @@ namespace gui::render::d3d12 {
         }
 
         auto release_completed_deferred(D3D12Context* context) -> void {
+            if (context->fence == nullptr) {
+                return;
+            }
+
             uint64_t const completed = context->fence->GetCompletedValue();
             size_t write_index = 0u;
             for (size_t index = 0u; index < context->deferred_release_count; ++index) {
@@ -514,6 +518,10 @@ namespace gui::render::d3d12 {
 
         auto wait_for_gpu(D3D12Context* context) -> void {
             wait_for_fence(context, context->submitted_fence_value);
+        }
+
+        [[nodiscard]] auto can_wait_for_gpu(D3D12Context const* context) -> bool {
+            return context->fence != nullptr && context->fence_event != nullptr;
         }
 
         auto wait_for_frame_resource(D3D12Context* context, D3D12FrameResource* frame) -> void {
@@ -712,14 +720,17 @@ namespace gui::render::d3d12 {
         }
 
         auto destroy_context_impl(D3D12Context* context) -> void {
-            if (context->fence != nullptr && context->fence_event != nullptr) {
+            bool const can_wait = can_wait_for_gpu(context);
+            if (can_wait) {
                 wait_for_gpu(context);
             }
 
             for (uint32_t index = 0u; index < FRAME_RESOURCE_COUNT; ++index) {
                 release_frame_buffer(context, &context->frame_resources[index].frame_vertex_buffer);
             }
-            wait_for_gpu(context);
+            if (can_wait) {
+                wait_for_gpu(context);
+            }
             release_all_deferred(context);
 
             if (context->fence_event != nullptr) {
