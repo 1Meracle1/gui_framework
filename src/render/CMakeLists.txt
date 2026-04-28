@@ -21,12 +21,17 @@ target_link_libraries(render INTERFACE gui_framework base::base)
 if(WIN32)
     target_sources(gui_framework PRIVATE
         src/render_d3d11.cpp
+        src/render_d3d12.cpp
     )
     set_source_files_properties(src/render_d3d11.cpp PROPERTIES
         COMPILE_DEFINITIONS "WIN32_LEAN_AND_MEAN;NOMINMAX"
     )
+    set_source_files_properties(src/render_d3d12.cpp PROPERTIES
+        COMPILE_DEFINITIONS "WIN32_LEAN_AND_MEAN;NOMINMAX"
+    )
     target_link_libraries(gui_framework PRIVATE
         d3d11
+        d3d12
         d3dcompiler
         dxgi
     )

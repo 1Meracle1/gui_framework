@@ -581,9 +581,9 @@ auto main() -> int {
 
         build_text_commands(&text_state);
 
-        gui::render::RenderPassDesc pass_desc = {};
-        pass_desc.color.window = render_window;
-        pass_desc.color.clear_color = {0.025f, 0.045f, 0.055f, 1.0f};
+        gui::render::WindowRenderPassDesc pass_desc = {};
+        pass_desc.window = render_window;
+        pass_desc.clear_color = {0.025f, 0.045f, 0.055f, 1.0f};
 
         render_result = gui::render::begin_render_pass(render_context, pass_desc);
         if (gui::render::result_failed(render_result)) {
@@ -594,7 +594,7 @@ auto main() -> int {
         render_text_commands(render_context, render_window, pipeline, text_state.draw_context);
         gui::render::end_render_pass(render_context);
 
-        render_result = gui::render::present_window(render_window);
+        render_result = gui::render::present_window(render_context, render_window);
         if (render_result == gui::render::Result::OCCLUDED) {
             Sleep(16u);
             continue;

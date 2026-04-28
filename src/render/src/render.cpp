@@ -2,7 +2,9 @@
 #include <render/render.h>
 
 #if BASE_PLATFORM_WINDOWS
+#include "render_backend.h"
 #include "render_d3d11.h"
+#include "render_d3d12.h"
 #endif
 
 namespace gui::render {
@@ -60,6 +62,8 @@ namespace gui::render {
         switch (backend) {
         case Backend::D3D11:
             return "d3d11";
+        case Backend::D3D12:
+            return "d3d12";
         }
 
         return "unknown";
@@ -99,15 +103,20 @@ namespace gui::render {
 
     auto create_context(Arena& arena, ContextDesc const& desc, Context& out_context) -> Result {
         ASSERT(out_context.handle == nullptr);
-        if (desc.backend != Backend::D3D11) {
-            return Result::UNSUPPORTED_BACKEND;
-        }
 
 #if BASE_PLATFORM_WINDOWS
-        return d3d11::create_context(arena, desc, out_context);
+        switch (desc.backend) {
+        case Backend::D3D11:
+            return d3d11::create_context(arena, desc, out_context);
+        case Backend::D3D12:
+            return d3d12::create_context(arena, desc, out_context);
+        }
+
+        return Result::UNSUPPORTED_BACKEND;
 #else
         BASE_UNUSED(arena);
         BASE_UNUSED(desc);
+        BASE_UNUSED(out_context);
         return Result::UNSUPPORTED_PLATFORM;
 #endif
     }
@@ -116,7 +125,14 @@ namespace gui::render {
         ASSERT(context.handle != nullptr);
 
 #if BASE_PLATFORM_WINDOWS
-        d3d11::destroy_context(context);
+        switch (context_backend(context)) {
+        case Backend::D3D11:
+            d3d11::destroy_context(context);
+            return;
+        case Backend::D3D12:
+            d3d12::destroy_context(context);
+            return;
+        }
 #else
         context.handle = nullptr;
 #endif
@@ -132,7 +148,14 @@ namespace gui::render {
         ASSERT(desc.buffer_count != 0u);
 
 #if BASE_PLATFORM_WINDOWS
-        return d3d11::create_window(arena, context, desc, out_window);
+        switch (context_backend(context)) {
+        case Backend::D3D11:
+            return d3d11::create_window(arena, context, desc, out_window);
+        case Backend::D3D12:
+            return d3d12::create_window(arena, context, desc, out_window);
+        }
+
+        return Result::UNSUPPORTED_BACKEND;
 #else
         BASE_UNUSED(arena);
         BASE_UNUSED(context);
@@ -146,7 +169,14 @@ namespace gui::render {
         ASSERT(window.handle != nullptr);
 
 #if BASE_PLATFORM_WINDOWS
-        d3d11::destroy_window(window);
+        switch (window_backend(window)) {
+        case Backend::D3D11:
+            d3d11::destroy_window(window);
+            return;
+        case Backend::D3D12:
+            d3d12::destroy_window(window);
+            return;
+        }
 #else
         window.handle = nullptr;
 #endif
@@ -159,7 +189,14 @@ namespace gui::render {
         ASSERT(desc.usage != BufferUsage::IMMUTABLE || desc.initial_data != nullptr);
 
 #if BASE_PLATFORM_WINDOWS
-        return d3d11::create_buffer(context, desc, out_buffer);
+        switch (context_backend(context)) {
+        case Backend::D3D11:
+            return d3d11::create_buffer(context, desc, out_buffer);
+        case Backend::D3D12:
+            return d3d12::create_buffer(context, desc, out_buffer);
+        }
+
+        return Result::UNSUPPORTED_BACKEND;
 #else
         BASE_UNUSED(context);
         BASE_UNUSED(desc);
@@ -173,7 +210,14 @@ namespace gui::render {
         ASSERT(buffer_valid(buffer));
 
 #if BASE_PLATFORM_WINDOWS
-        d3d11::destroy_buffer(context, buffer);
+        switch (context_backend(context)) {
+        case Backend::D3D11:
+            d3d11::destroy_buffer(context, buffer);
+            return;
+        case Backend::D3D12:
+            d3d12::destroy_buffer(context, buffer);
+            return;
+        }
 #else
         BASE_UNUSED(context);
         buffer.handle = nullptr;
@@ -187,7 +231,14 @@ namespace gui::render {
         ASSERT(byte_size != 0u);
 
 #if BASE_PLATFORM_WINDOWS
-        d3d11::update_buffer(context, buffer, data, byte_size);
+        switch (context_backend(context)) {
+        case Backend::D3D11:
+            d3d11::update_buffer(context, buffer, data, byte_size);
+            return;
+        case Backend::D3D12:
+            d3d12::update_buffer(context, buffer, data, byte_size);
+            return;
+        }
 #else
         BASE_UNUSED(context);
         BASE_UNUSED(buffer);
@@ -205,7 +256,14 @@ namespace gui::render {
         ASSERT(byte_alignment != 0u);
 
 #if BASE_PLATFORM_WINDOWS
-        return d3d11::allocate_frame_buffer(context, binding, byte_size, byte_alignment);
+        switch (context_backend(context)) {
+        case Backend::D3D11:
+            return d3d11::allocate_frame_buffer(context, binding, byte_size, byte_alignment);
+        case Backend::D3D12:
+            return d3d12::allocate_frame_buffer(context, binding, byte_size, byte_alignment);
+        }
+
+        return {};
 #else
         BASE_UNUSED(context);
         BASE_UNUSED(binding);
@@ -219,7 +277,14 @@ namespace gui::render {
         ASSERT(context_valid(context));
 
 #if BASE_PLATFORM_WINDOWS
-        d3d11::commit_frame_uploads(context);
+        switch (context_backend(context)) {
+        case Backend::D3D11:
+            d3d11::commit_frame_uploads(context);
+            return;
+        case Backend::D3D12:
+            d3d12::commit_frame_uploads(context);
+            return;
+        }
 #else
         BASE_UNUSED(context);
 #endif
@@ -234,7 +299,14 @@ namespace gui::render {
         ASSERT(desc.rgba_pixels != nullptr);
 
 #if BASE_PLATFORM_WINDOWS
-        return d3d11::create_texture(context, desc, out_texture);
+        switch (context_backend(context)) {
+        case Backend::D3D11:
+            return d3d11::create_texture(context, desc, out_texture);
+        case Backend::D3D12:
+            return d3d12::create_texture(context, desc, out_texture);
+        }
+
+        return Result::UNSUPPORTED_BACKEND;
 #else
         BASE_UNUSED(context);
         BASE_UNUSED(desc);
@@ -248,7 +320,14 @@ namespace gui::render {
         ASSERT(texture_valid(texture));
 
 #if BASE_PLATFORM_WINDOWS
-        d3d11::destroy_texture(context, texture);
+        switch (context_backend(context)) {
+        case Backend::D3D11:
+            d3d11::destroy_texture(context, texture);
+            return;
+        case Backend::D3D12:
+            d3d12::destroy_texture(context, texture);
+            return;
+        }
 #else
         BASE_UNUSED(context);
         texture.handle = nullptr;
@@ -260,7 +339,14 @@ namespace gui::render {
         ASSERT(out_sampler.handle == nullptr);
 
 #if BASE_PLATFORM_WINDOWS
-        return d3d11::create_sampler(context, out_sampler);
+        switch (context_backend(context)) {
+        case Backend::D3D11:
+            return d3d11::create_sampler(context, out_sampler);
+        case Backend::D3D12:
+            return d3d12::create_sampler(context, out_sampler);
+        }
+
+        return Result::UNSUPPORTED_BACKEND;
 #else
         BASE_UNUSED(context);
         BASE_UNUSED(out_sampler);
@@ -273,7 +359,14 @@ namespace gui::render {
         ASSERT(sampler_valid(sampler));
 
 #if BASE_PLATFORM_WINDOWS
-        d3d11::destroy_sampler(context, sampler);
+        switch (context_backend(context)) {
+        case Backend::D3D11:
+            d3d11::destroy_sampler(context, sampler);
+            return;
+        case Backend::D3D12:
+            d3d12::destroy_sampler(context, sampler);
+            return;
+        }
 #else
         BASE_UNUSED(context);
         sampler.handle = nullptr;
@@ -288,11 +381,19 @@ namespace gui::render {
         ASSERT(desc.byte_size != 0u);
 
 #if BASE_PLATFORM_WINDOWS
-        return d3d11::create_shader(arena, context, desc, out_shader);
+        switch (context_backend(context)) {
+        case Backend::D3D11:
+            return d3d11::create_shader(arena, context, desc, out_shader);
+        case Backend::D3D12:
+            return d3d12::create_shader(arena, context, desc, out_shader);
+        }
+
+        return Result::UNSUPPORTED_BACKEND;
 #else
         BASE_UNUSED(arena);
         BASE_UNUSED(context);
         BASE_UNUSED(desc);
+        BASE_UNUSED(out_shader);
         return Result::UNSUPPORTED_PLATFORM;
 #endif
     }
@@ -302,7 +403,14 @@ namespace gui::render {
         ASSERT(shader_valid(shader));
 
 #if BASE_PLATFORM_WINDOWS
-        d3d11::destroy_shader(context, shader);
+        switch (context_backend(context)) {
+        case Backend::D3D11:
+            d3d11::destroy_shader(context, shader);
+            return;
+        case Backend::D3D12:
+            d3d12::destroy_shader(context, shader);
+            return;
+        }
 #else
         BASE_UNUSED(context);
         shader.handle = nullptr;
@@ -319,11 +427,19 @@ namespace gui::render {
         ASSERT(desc.entry_point != nullptr);
 
 #if BASE_PLATFORM_WINDOWS
-        return d3d11::create_shader_from_source(arena, context, desc, out_shader);
+        switch (context_backend(context)) {
+        case Backend::D3D11:
+            return d3d11::create_shader_from_source(arena, context, desc, out_shader);
+        case Backend::D3D12:
+            return d3d12::create_shader_from_source(arena, context, desc, out_shader);
+        }
+
+        return Result::UNSUPPORTED_BACKEND;
 #else
         BASE_UNUSED(arena);
         BASE_UNUSED(context);
         BASE_UNUSED(desc);
+        BASE_UNUSED(out_shader);
         return Result::UNSUPPORTED_PLATFORM;
 #endif
     }
@@ -338,11 +454,19 @@ namespace gui::render {
         ASSERT(desc.vertex_attribute_count == 0u || desc.vertex_attributes != nullptr);
 
 #if BASE_PLATFORM_WINDOWS
-        return d3d11::create_pipeline(arena, context, desc, out_pipeline);
+        switch (context_backend(context)) {
+        case Backend::D3D11:
+            return d3d11::create_pipeline(arena, context, desc, out_pipeline);
+        case Backend::D3D12:
+            return d3d12::create_pipeline(arena, context, desc, out_pipeline);
+        }
+
+        return Result::UNSUPPORTED_BACKEND;
 #else
         BASE_UNUSED(arena);
         BASE_UNUSED(context);
         BASE_UNUSED(desc);
+        BASE_UNUSED(out_pipeline);
         return Result::UNSUPPORTED_PLATFORM;
 #endif
     }
@@ -352,7 +476,14 @@ namespace gui::render {
         ASSERT(pipeline_valid(pipeline));
 
 #if BASE_PLATFORM_WINDOWS
-        d3d11::destroy_pipeline(context, pipeline);
+        switch (context_backend(context)) {
+        case Backend::D3D11:
+            d3d11::destroy_pipeline(context, pipeline);
+            return;
+        case Backend::D3D12:
+            d3d12::destroy_pipeline(context, pipeline);
+            return;
+        }
 #else
         BASE_UNUSED(context);
         pipeline.handle = nullptr;
@@ -364,7 +495,14 @@ namespace gui::render {
         ASSERT(pipeline_valid(pipeline));
 
 #if BASE_PLATFORM_WINDOWS
-        d3d11::bind_pipeline(context, pipeline);
+        switch (context_backend(context)) {
+        case Backend::D3D11:
+            d3d11::bind_pipeline(context, pipeline);
+            return;
+        case Backend::D3D12:
+            d3d12::bind_pipeline(context, pipeline);
+            return;
+        }
 #else
         BASE_UNUSED(context);
         BASE_UNUSED(pipeline);
@@ -392,7 +530,14 @@ namespace gui::render {
         }
 
 #if BASE_PLATFORM_WINDOWS
-        return d3d11::create_bind_group(arena, context, desc, out_group);
+        switch (context_backend(context)) {
+        case Backend::D3D11:
+            return d3d11::create_bind_group(arena, context, desc, out_group);
+        case Backend::D3D12:
+            return d3d12::create_bind_group(arena, context, desc, out_group);
+        }
+
+        return Result::UNSUPPORTED_BACKEND;
 #else
         BASE_UNUSED(arena);
         BASE_UNUSED(context);
@@ -407,7 +552,14 @@ namespace gui::render {
         ASSERT(bind_group_valid(group));
 
 #if BASE_PLATFORM_WINDOWS
-        d3d11::destroy_bind_group(context, group);
+        switch (context_backend(context)) {
+        case Backend::D3D11:
+            d3d11::destroy_bind_group(context, group);
+            return;
+        case Backend::D3D12:
+            d3d12::destroy_bind_group(context, group);
+            return;
+        }
 #else
         BASE_UNUSED(context);
         group.handle = nullptr;
@@ -419,7 +571,14 @@ namespace gui::render {
         ASSERT(bind_group_valid(group));
 
 #if BASE_PLATFORM_WINDOWS
-        d3d11::bind_group(context, group);
+        switch (context_backend(context)) {
+        case Backend::D3D11:
+            d3d11::bind_group(context, group);
+            return;
+        case Backend::D3D12:
+            d3d12::bind_group(context, group);
+            return;
+        }
 #else
         BASE_UNUSED(context);
         BASE_UNUSED(group);
@@ -442,7 +601,14 @@ namespace gui::render {
         }
 
 #if BASE_PLATFORM_WINDOWS
-        d3d11::draw(context, desc);
+        switch (context_backend(context)) {
+        case Backend::D3D11:
+            d3d11::draw(context, desc);
+            return;
+        case Backend::D3D12:
+            d3d12::draw(context, desc);
+            return;
+        }
 #else
         BASE_UNUSED(context);
         BASE_UNUSED(desc);
@@ -456,7 +622,14 @@ namespace gui::render {
         ASSERT(size.height != 0u);
 
 #if BASE_PLATFORM_WINDOWS
-        return d3d11::resize_window(context, window, size);
+        switch (context_backend(context)) {
+        case Backend::D3D11:
+            return d3d11::resize_window(context, window, size);
+        case Backend::D3D12:
+            return d3d12::resize_window(context, window, size);
+        }
+
+        return Result::UNSUPPORTED_BACKEND;
 #else
         BASE_UNUSED(context);
         BASE_UNUSED(window);
@@ -469,18 +642,32 @@ namespace gui::render {
         ASSERT(context_valid(context));
 
 #if BASE_PLATFORM_WINDOWS
-        d3d11::begin_frame(context);
+        switch (context_backend(context)) {
+        case Backend::D3D11:
+            d3d11::begin_frame(context);
+            return;
+        case Backend::D3D12:
+            d3d12::begin_frame(context);
+            return;
+        }
 #else
         BASE_UNUSED(context);
 #endif
     }
 
-    auto begin_render_pass(Context context, RenderPassDesc const& desc) -> Result {
+    auto begin_render_pass(Context context, WindowRenderPassDesc const& desc) -> Result {
         ASSERT(context_valid(context));
-        ASSERT(window_valid(desc.color.window));
+        ASSERT(window_valid(desc.window));
 
 #if BASE_PLATFORM_WINDOWS
-        return d3d11::begin_render_pass(context, desc);
+        switch (context_backend(context)) {
+        case Backend::D3D11:
+            return d3d11::begin_render_pass(context, desc);
+        case Backend::D3D12:
+            return d3d12::begin_render_pass(context, desc);
+        }
+
+        return Result::UNSUPPORTED_BACKEND;
 #else
         BASE_UNUSED(context);
         BASE_UNUSED(desc);
@@ -492,36 +679,34 @@ namespace gui::render {
         ASSERT(context_valid(context));
 
 #if BASE_PLATFORM_WINDOWS
-        d3d11::end_render_pass(context);
+        switch (context_backend(context)) {
+        case Backend::D3D11:
+            d3d11::end_render_pass(context);
+            return;
+        case Backend::D3D12:
+            d3d12::end_render_pass(context);
+            return;
+        }
 #else
         BASE_UNUSED(context);
 #endif
     }
 
-    auto clear_window(Context context, Window window, Color color) -> Result {
+    auto present_window(Context context, Window window) -> Result {
         ASSERT(context_valid(context));
         ASSERT(window_valid(window));
 
-        RenderPassDesc desc = {};
-        desc.color.window = window;
-        desc.color.load_op = LoadOp::CLEAR;
-        desc.color.clear_color = color;
-
-        Result const result = begin_render_pass(context, desc);
-        if (result_failed(result)) {
-            return result;
+#if BASE_PLATFORM_WINDOWS
+        switch (context_backend(context)) {
+        case Backend::D3D11:
+            return d3d11::present_window(context, window);
+        case Backend::D3D12:
+            return d3d12::present_window(context, window);
         }
 
-        end_render_pass(context);
-        return Result::OK;
-    }
-
-    auto present_window(Window window) -> Result {
-        ASSERT(window_valid(window));
-
-#if BASE_PLATFORM_WINDOWS
-        return d3d11::present_window(window);
+        return Result::UNSUPPORTED_BACKEND;
 #else
+        BASE_UNUSED(context);
         BASE_UNUSED(window);
         return Result::UNSUPPORTED_PLATFORM;
 #endif
@@ -533,7 +718,14 @@ namespace gui::render {
         }
 
 #if BASE_PLATFORM_WINDOWS
-        return d3d11::window_size(window);
+        switch (window_backend(window)) {
+        case Backend::D3D11:
+            return d3d11::window_size(window);
+        case Backend::D3D12:
+            return d3d12::window_size(window);
+        }
+
+        return {};
 #else
         BASE_UNUSED(window);
         return {};
@@ -546,7 +738,14 @@ namespace gui::render {
         }
 
 #if BASE_PLATFORM_WINDOWS
-        return d3d11::native_device(context);
+        switch (context_backend(context)) {
+        case Backend::D3D11:
+            return d3d11::native_device(context);
+        case Backend::D3D12:
+            return d3d12::native_device(context);
+        }
+
+        return nullptr;
 #else
         BASE_UNUSED(context);
         return nullptr;
@@ -559,7 +758,14 @@ namespace gui::render {
         }
 
 #if BASE_PLATFORM_WINDOWS
-        return d3d11::native_device_context(context);
+        switch (context_backend(context)) {
+        case Backend::D3D11:
+            return d3d11::native_device_context(context);
+        case Backend::D3D12:
+            return d3d12::native_device_context(context);
+        }
+
+        return nullptr;
 #else
         BASE_UNUSED(context);
         return nullptr;
@@ -572,7 +778,14 @@ namespace gui::render {
         }
 
 #if BASE_PLATFORM_WINDOWS
-        return d3d11::native_swap_chain(window);
+        switch (window_backend(window)) {
+        case Backend::D3D11:
+            return d3d11::native_swap_chain(window);
+        case Backend::D3D12:
+            return d3d12::native_swap_chain(window);
+        }
+
+        return nullptr;
 #else
         BASE_UNUSED(window);
         return nullptr;
@@ -585,7 +798,14 @@ namespace gui::render {
         }
 
 #if BASE_PLATFORM_WINDOWS
-        return d3d11::native_render_target_view(window);
+        switch (window_backend(window)) {
+        case Backend::D3D11:
+            return d3d11::native_render_target_view(window);
+        case Backend::D3D12:
+            return d3d12::native_render_target_view(window);
+        }
+
+        return nullptr;
 #else
         BASE_UNUSED(window);
         return nullptr;

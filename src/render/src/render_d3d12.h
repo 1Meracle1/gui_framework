@@ -2,7 +2,7 @@
 
 #include <render/render.h>
 
-namespace gui::render::d3d11 {
+namespace gui::render::d3d12 {
 
     [[nodiscard]] auto create_context(Arena& arena, ContextDesc const& desc, Context& out_context)
         -> Result;
@@ -66,4 +66,4 @@ namespace gui::render::d3d11 {
     [[nodiscard]] auto native_swap_chain(Window window) -> void*;
     [[nodiscard]] auto native_render_target_view(Window window) -> void*;
 
-} // namespace gui::render::d3d11
+} // namespace gui::render::d3d12

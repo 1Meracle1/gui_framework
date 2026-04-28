@@ -63,6 +63,19 @@ if(WIN32)
         render::render
     )
     cpp_configure_target(text_rendering_testbed)
+
+    add_executable(render_dx12_clear_smoke
+        tools/render_dx12_clear_smoke.cpp
+    )
+    target_compile_definitions(render_dx12_clear_smoke PRIVATE
+        WIN32_LEAN_AND_MEAN
+        NOMINMAX
+    )
+    target_link_libraries(render_dx12_clear_smoke PRIVATE
+        base::base
+        render::render
+    )
+    cpp_configure_target(render_dx12_clear_smoke)
 endif()
 
 add_library(gui_test STATIC
@@ -131,6 +144,9 @@ if(BUILD_TESTS)
     add_test(NAME font_provider_tests COMMAND font_provider_tests)
     add_test(NAME font_cache_tests COMMAND font_cache_tests)
     add_test(NAME draw_tests COMMAND draw_tests)
+    if(WIN32)
+        add_test(NAME render_dx12_clear_smoke COMMAND render_dx12_clear_smoke)
+    endif()
 endif()
 
 if(BUILD_BENCHMARKS)

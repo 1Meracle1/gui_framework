@@ -445,9 +445,9 @@ auto main() -> int {
 
         gui::render::begin_frame(render_context);
 
-        gui::render::RenderPassDesc pass_desc = {};
-        pass_desc.color.window = render_window;
-        pass_desc.color.clear_color = {0.03f, 0.08f, 0.11f, 1.0f};
+        gui::render::WindowRenderPassDesc pass_desc = {};
+        pass_desc.window = render_window;
+        pass_desc.clear_color = {0.03f, 0.08f, 0.11f, 1.0f};
 
         result = gui::render::begin_render_pass(render_context, pass_desc);
         if (gui::render::result_failed(result)) {
@@ -460,7 +460,7 @@ auto main() -> int {
         render_triangle(render_context, pipeline, time_seconds);
         gui::render::end_render_pass(render_context);
 
-        result = gui::render::present_window(render_window);
+        result = gui::render::present_window(render_context, render_window);
         if (result == gui::render::Result::OCCLUDED) {
             Sleep(16u);
             continue;

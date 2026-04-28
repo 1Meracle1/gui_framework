@@ -9,6 +9,7 @@ namespace gui::render {
 
     enum class Backend : uint8_t {
         D3D11,
+        D3D12,
     };
 
     enum class Result : int8_t {
@@ -40,11 +41,7 @@ namespace gui::render {
     enum class LoadOp : uint8_t {
         LOAD,
         CLEAR,
-        DONT_CARE,
-    };
-
-    enum class StoreOp : uint8_t {
-        STORE,
+        // Initial contents are undefined. The backend may preserve, clear, or discard them.
         DONT_CARE,
     };
 
@@ -149,15 +146,10 @@ namespace gui::render {
         void* handle = nullptr;
     };
 
-    struct ColorAttachmentDesc {
+    struct WindowRenderPassDesc {
         Window window = {};
         LoadOp load_op = LoadOp::CLEAR;
-        StoreOp store_op = StoreOp::STORE;
         Color clear_color = {};
-    };
-
-    struct RenderPassDesc {
-        ColorAttachmentDesc color = {};
     };
 
     struct BufferDesc {
@@ -311,10 +303,10 @@ namespace gui::render {
 
     [[nodiscard]] auto resize_window(Context context, Window window, SizeU32 size) -> Result;
     auto begin_frame(Context context) -> void;
-    [[nodiscard]] auto begin_render_pass(Context context, RenderPassDesc const& desc) -> Result;
+    [[nodiscard]] auto begin_render_pass(Context context, WindowRenderPassDesc const& desc)
+        -> Result;
     auto end_render_pass(Context context) -> void;
-    [[nodiscard]] auto clear_window(Context context, Window window, Color color) -> Result;
-    [[nodiscard]] auto present_window(Window window) -> Result;
+    [[nodiscard]] auto present_window(Context context, Window window) -> Result;
 
     [[nodiscard]] auto window_size(Window window) -> SizeU32;
 

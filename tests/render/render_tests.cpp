@@ -25,6 +25,7 @@ namespace {
                     gui::render::result_name(gui::render::Result::SAMPLER_CREATION_FAILED)[0] !=
                         '\0');
         TEST_EXPECT(context, gui::render::backend_name(gui::render::Backend::D3D11)[0] != '\0');
+        TEST_EXPECT(context, gui::render::backend_name(gui::render::Backend::D3D12)[0] != '\0');
     }
 
     TEST_CASE(render_handles_start_empty_and_validate_by_handle_value) {
@@ -77,13 +78,12 @@ namespace {
         TEST_EXPECT(context, gui::render::bind_group_valid(bind_group_handle));
     }
 
-    TEST_CASE(render_pass_defaults_target_one_window_color_attachment) {
-        gui::render::RenderPassDesc const desc = {};
+    TEST_CASE(window_render_pass_defaults_target_invalid_window) {
+        gui::render::WindowRenderPassDesc const desc = {};
 
-        TEST_EXPECT(context, !gui::render::window_valid(desc.color.window));
-        TEST_EXPECT(context, desc.color.load_op == gui::render::LoadOp::CLEAR);
-        TEST_EXPECT(context, desc.color.store_op == gui::render::StoreOp::STORE);
-        TEST_EXPECT(context, desc.color.clear_color.a == 1.0f);
+        TEST_EXPECT(context, !gui::render::window_valid(desc.window));
+        TEST_EXPECT(context, desc.load_op == gui::render::LoadOp::CLEAR);
+        TEST_EXPECT(context, desc.clear_color.a == 1.0f);
     }
 
     TEST_CASE(render_buffer_defaults_describe_immutable_vertex_buffer) {

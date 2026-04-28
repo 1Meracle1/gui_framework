@@ -8,6 +8,8 @@
 
 #include "render_d3d11.h"
 
+#include "render_backend.h"
+
 #include <algorithm>
 #include <base/config.h>
 #include <cstring>
@@ -30,6 +32,7 @@ namespace gui::render::d3d11 {
         };
 
         struct D3D11Context {
+            ContextHeader header = {Backend::D3D11};
             ID3D11Device* device = nullptr;
             ID3D11DeviceContext* device_context = nullptr;
             IDXGIFactory* factory = nullptr;
@@ -39,6 +42,7 @@ namespace gui::render::d3d11 {
         };
 
         struct D3D11Window {
+            WindowHeader header = {Backend::D3D11};
             IDXGISwapChain* swap_chain = nullptr;
             ID3D11RenderTargetView* render_target_view = nullptr;
             SizeU32 size = {};
@@ -97,10 +101,12 @@ namespace gui::render::d3d11 {
         }
 
         [[nodiscard]] auto context_from_handle(Context context) -> D3D11Context* {
+            ASSERT(context_backend(context) == Backend::D3D11);
             return static_cast<D3D11Context*>(context.handle);
         }
 
         [[nodiscard]] auto window_from_handle(Window window) -> D3D11Window* {
+            ASSERT(window_backend(window) == Backend::D3D11);
             return static_cast<D3D11Window*>(window.handle);
         }
 
@@ -963,9 +969,9 @@ namespace gui::render::d3d11 {
         context_impl->frame_vertex_buffer.used_size = 0u;
     }
 
-    auto begin_render_pass(Context context, RenderPassDesc const& desc) -> Result {
+    auto begin_render_pass(Context context, WindowRenderPassDesc const& desc) -> Result {
         D3D11Context* context_impl = context_from_handle(context);
-        D3D11Window* window_impl = window_from_handle(desc.color.window);
+        D3D11Window* window_impl = window_from_handle(desc.window);
         ASSERT(context_impl != nullptr);
         ASSERT(window_impl != nullptr);
         ASSERT(window_impl->render_target_view != nullptr);
@@ -983,14 +989,19 @@ namespace gui::render::d3d11 {
             1u, &window_impl->render_target_view, nullptr);
         context_impl->device_context->RSSetViewports(1u, &viewport);
 
-        if (desc.color.load_op == LoadOp::CLEAR) {
-            Color const color = desc.color.clear_color;
+        switch (desc.load_op) {
+        case LoadOp::LOAD:
+        case LoadOp::DONT_CARE:
+            break;
+        case LoadOp::CLEAR: {
+            Color const color = desc.clear_color;
             float const clear_color[] = {color.r, color.g, color.b, color.a};
             context_impl->device_context->ClearRenderTargetView(window_impl->render_target_view,
                                                                 clear_color);
+            break;
+        }
         }
 
-        BASE_UNUSED(desc.color.store_op);
         context_impl->render_pass_active = true;
         return Result::OK;
     }
@@ -999,13 +1010,17 @@ namespace gui::render::d3d11 {
         D3D11Context* context_impl = context_from_handle(context);
         ASSERT(context_impl != nullptr);
         ASSERT(context_impl->render_pass_active);
+        context_impl->device_context->OMSetRenderTargets(0u, nullptr, nullptr);
         context_impl->render_pass_active = false;
     }
 
-    auto present_window(Window window) -> Result {
+    auto present_window(Context context, Window window) -> Result {
+        D3D11Context* context_impl = context_from_handle(context);
         D3D11Window* window_impl = window_from_handle(window);
+        ASSERT(context_impl != nullptr);
         ASSERT(window_impl != nullptr);
         ASSERT(window_impl->swap_chain != nullptr);
+        ASSERT(!context_impl->render_pass_active);
 
         UINT const sync_interval = window_impl->present_mode == PresentMode::VSYNC ? 1u : 0u;
         HRESULT const hr = window_impl->swap_chain->Present(sync_interval, 0u);
