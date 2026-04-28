@@ -803,6 +803,51 @@ namespace {
         caption.size = 18.0f;
         caption.color = {0.58f, 0.98f, 0.64f, 1.0f};
 
+        gui::draw::TextStyle clip_text = caption;
+        clip_text.color = {0.94f, 0.97f, 1.0f, 1.0f};
+
+        gui::draw::Rect const outer_clip = {{836.0f, 72.0f}, {1210.0f, 252.0f}};
+        gui::draw::Rect const inner_clip = {{978.0f, 118.0f}, {1134.0f, 214.0f}};
+        gui::draw::draw_rect_filled(text_state->draw_context,
+                                    {{820.0f, 58.0f}, {1224.0f, 266.0f}},
+                                    {0.02f, 0.06f, 0.07f, 0.86f},
+                                    0.0f);
+        gui::draw::push_clip_rect(text_state->draw_context, outer_clip);
+        gui::draw::draw_rect_filled(text_state->draw_context,
+                                    {{784.0f, 86.0f}, {1260.0f, 158.0f}},
+                                    {0.25f, 0.78f, 1.0f, 0.34f},
+                                    0.0f);
+        gui::draw::draw_text(text_state->draw_context,
+                             {850.0f, 88.0f},
+                             clip_text,
+                             "outer clipped text runs past the right edge",
+                             nullptr);
+        gui::draw::push_clip_rect(text_state->draw_context, inner_clip);
+        gui::draw::draw_rect_filled_multicolor(text_state->draw_context,
+                                               {{926.0f, 100.0f}, {1186.0f, 232.0f}},
+                                               {0.98f, 0.78f, 0.24f, 0.88f},
+                                               {0.25f, 0.78f, 1.0f, 0.88f},
+                                               {0.88f, 0.36f, 1.0f, 0.88f},
+                                               {0.28f, 0.95f, 0.54f, 0.88f});
+        gui::draw::draw_text(
+            text_state->draw_context, {986.0f, 132.0f}, clip_text, "UNDER stripe clipped", nullptr);
+        gui::draw::draw_rect_filled(text_state->draw_context,
+                                    {{948.0f, 140.0f}, {1164.0f, 168.0f}},
+                                    {0.02f, 0.04f, 0.05f, 0.78f},
+                                    0.0f);
+        gui::draw::draw_text(
+            text_state->draw_context, {986.0f, 178.0f}, caption, "OVER stripe clipped", nullptr);
+        gui::draw::pop_clip_rect(text_state->draw_context);
+        gui::draw::draw_rect_filled(text_state->draw_context,
+                                    {{864.0f, 200.0f}, {1188.0f, 244.0f}},
+                                    {0.97f, 0.68f, 0.22f, 0.36f},
+                                    0.0f);
+        gui::draw::pop_clip_rect(text_state->draw_context);
+        gui::draw::draw_rect(
+            text_state->draw_context, outer_clip, {0.94f, 0.97f, 1.0f, 0.84f}, 2.0f, 0.0f);
+        gui::draw::draw_rect(
+            text_state->draw_context, inner_clip, {0.97f, 0.68f, 0.22f, 0.96f}, 2.0f, 0.0f);
+
         float title_advance = 0.0f;
         gui::draw::draw_text(
             text_state->draw_context, {72.0f, 72.0f}, title, "Text rendering ", &title_advance);
