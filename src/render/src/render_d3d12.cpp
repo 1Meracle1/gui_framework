@@ -23,10 +23,15 @@ namespace gui::render::d3d12 {
     namespace {
 
         constexpr uint32_t DESCRIPTOR_SLOT_COUNT = 16u;
-        constexpr uint32_t SHADER_DESCRIPTOR_COUNT = 4096u;
+        constexpr uint32_t FRAME_RESOURCE_COUNT = 2u;
         constexpr uint32_t FRAME_SHADER_DESCRIPTOR_BASE = 2048u;
-        constexpr uint32_t SAMPLER_DESCRIPTOR_COUNT = 512u;
+        constexpr uint32_t FRAME_SHADER_DESCRIPTOR_COUNT = 2048u;
+        constexpr uint32_t SHADER_DESCRIPTOR_COUNT =
+            FRAME_SHADER_DESCRIPTOR_BASE + (FRAME_RESOURCE_COUNT * FRAME_SHADER_DESCRIPTOR_COUNT);
         constexpr uint32_t FRAME_SAMPLER_DESCRIPTOR_BASE = 256u;
+        constexpr uint32_t FRAME_SAMPLER_DESCRIPTOR_COUNT = 256u;
+        constexpr uint32_t SAMPLER_DESCRIPTOR_COUNT =
+            FRAME_SAMPLER_DESCRIPTOR_BASE + (FRAME_RESOURCE_COUNT * FRAME_SAMPLER_DESCRIPTOR_COUNT);
         constexpr size_t FRAME_VERTEX_BUFFER_DEFAULT_SIZE = 64u * 1024u;
         constexpr size_t DEFERRED_RELEASE_CAPACITY = 4096u;
         constexpr GUID BUFFER_BINDING_GUID = {
@@ -74,6 +79,14 @@ namespace gui::render::d3d12 {
             size_t used_size = 0u;
         };
 
+        struct D3D12FrameResource {
+            ID3D12CommandAllocator* command_allocator = nullptr;
+            D3D12FrameBuffer frame_vertex_buffer = {};
+            uint32_t frame_shader_descriptor_count = 0u;
+            uint32_t frame_sampler_descriptor_count = 0u;
+            uint64_t fence_value = 0u;
+        };
+
         struct D3D12DeferredRelease {
             IUnknown* object = nullptr;
             uint64_t fence_value = 0u;
@@ -98,7 +111,7 @@ namespace gui::render::d3d12 {
             IDXGIAdapter1* adapter = nullptr;
             ID3D12Device* device = nullptr;
             ID3D12CommandQueue* command_queue = nullptr;
-            ID3D12CommandAllocator* command_allocator = nullptr;
+            ID3D12CommandAllocator* upload_command_allocator = nullptr;
             ID3D12GraphicsCommandList* command_list = nullptr;
             ID3D12Fence* fence = nullptr;
             HANDLE fence_event = nullptr;
@@ -108,13 +121,13 @@ namespace gui::render::d3d12 {
             uint32_t shader_descriptor_size = 0u;
             uint32_t sampler_descriptor_size = 0u;
             uint32_t permanent_shader_descriptor_count = 0u;
-            uint32_t frame_shader_descriptor_count = 0u;
             uint32_t permanent_sampler_descriptor_count = 0u;
-            uint32_t frame_sampler_descriptor_count = 0u;
             uint64_t next_fence_value = 1u;
             uint64_t submitted_fence_value = 0u;
+            uint32_t next_frame_resource_index = 0u;
+            uint32_t active_frame_resource_index = 0u;
             D3D12Window* active_window = nullptr;
-            D3D12FrameBuffer frame_vertex_buffer = {};
+            D3D12FrameResource frame_resources[FRAME_RESOURCE_COUNT] = {};
             D3D12DescriptorTable bound_tables[ROOT_COUNT] = {};
             D3D12DeferredRelease* deferred_releases = nullptr;
             size_t deferred_release_count = 0u;
@@ -279,10 +292,14 @@ namespace gui::render::d3d12 {
         [[nodiscard]] auto allocate_frame_shader_descriptors(D3D12Context* context, uint32_t count)
             -> uint32_t {
             ASSERT(context->frame_active);
+            D3D12FrameResource& frame =
+                context->frame_resources[context->active_frame_resource_index];
+            ASSERT(frame.frame_shader_descriptor_count + count <= FRAME_SHADER_DESCRIPTOR_COUNT);
             uint32_t const index =
-                FRAME_SHADER_DESCRIPTOR_BASE + context->frame_shader_descriptor_count;
-            ASSERT(index + count <= SHADER_DESCRIPTOR_COUNT);
-            context->frame_shader_descriptor_count += count;
+                FRAME_SHADER_DESCRIPTOR_BASE +
+                (context->active_frame_resource_index * FRAME_SHADER_DESCRIPTOR_COUNT) +
+                frame.frame_shader_descriptor_count;
+            frame.frame_shader_descriptor_count += count;
             return index;
         }
 
@@ -297,10 +314,14 @@ namespace gui::render::d3d12 {
         [[nodiscard]] auto allocate_frame_sampler_descriptors(D3D12Context* context, uint32_t count)
             -> uint32_t {
             ASSERT(context->frame_active);
+            D3D12FrameResource& frame =
+                context->frame_resources[context->active_frame_resource_index];
+            ASSERT(frame.frame_sampler_descriptor_count + count <= FRAME_SAMPLER_DESCRIPTOR_COUNT);
             uint32_t const index =
-                FRAME_SAMPLER_DESCRIPTOR_BASE + context->frame_sampler_descriptor_count;
-            ASSERT(index + count <= SAMPLER_DESCRIPTOR_COUNT);
-            context->frame_sampler_descriptor_count += count;
+                FRAME_SAMPLER_DESCRIPTOR_BASE +
+                (context->active_frame_resource_index * FRAME_SAMPLER_DESCRIPTOR_COUNT) +
+                frame.frame_sampler_descriptor_count;
+            frame.frame_sampler_descriptor_count += count;
             return index;
         }
 
@@ -479,11 +500,10 @@ namespace gui::render::d3d12 {
             }
         }
 
-        auto wait_for_gpu(D3D12Context* context) -> void {
-            if (context->submitted_fence_value != 0u &&
-                context->fence->GetCompletedValue() < context->submitted_fence_value) {
-                HRESULT const hr = context->fence->SetEventOnCompletion(
-                    context->submitted_fence_value, context->fence_event);
+        auto wait_for_fence(D3D12Context* context, uint64_t fence_value) -> void {
+            if (fence_value != 0u && context->fence->GetCompletedValue() < fence_value) {
+                HRESULT const hr =
+                    context->fence->SetEventOnCompletion(fence_value, context->fence_event);
                 ASSERT(SUCCEEDED(hr));
                 BASE_UNUSED(hr);
                 WaitForSingleObject(context->fence_event, INFINITE);
@@ -492,7 +512,16 @@ namespace gui::render::d3d12 {
             release_completed_deferred(context);
         }
 
-        auto signal_gpu(D3D12Context* context) -> void {
+        auto wait_for_gpu(D3D12Context* context) -> void {
+            wait_for_fence(context, context->submitted_fence_value);
+        }
+
+        auto wait_for_frame_resource(D3D12Context* context, D3D12FrameResource* frame) -> void {
+            wait_for_fence(context, frame->fence_value);
+            frame->fence_value = 0u;
+        }
+
+        auto signal_gpu(D3D12Context* context) -> uint64_t {
             uint64_t const value = context->next_fence_value;
             ++context->next_fence_value;
             HRESULT const hr = context->command_queue->Signal(context->fence, value);
@@ -500,6 +529,7 @@ namespace gui::render::d3d12 {
             BASE_UNUSED(hr);
             context->submitted_fence_value = value;
             mark_frame_deferred_releases(context, value);
+            return value;
         }
 
         [[nodiscard]] auto create_buffer_resource(D3D12Context* context,
@@ -581,12 +611,12 @@ namespace gui::render::d3d12 {
             }
 
             wait_for_gpu(context);
-            HRESULT hr = context->command_allocator->Reset();
+            HRESULT hr = context->upload_command_allocator->Reset();
             if (FAILED(hr)) {
                 return Result::BUFFER_CREATION_FAILED;
             }
 
-            hr = context->command_list->Reset(context->command_allocator, nullptr);
+            hr = context->command_list->Reset(context->upload_command_allocator, nullptr);
             if (FAILED(hr)) {
                 return Result::BUFFER_CREATION_FAILED;
             }
@@ -616,23 +646,24 @@ namespace gui::render::d3d12 {
             frame_buffer->used_size = 0u;
         }
 
-        auto ensure_frame_buffer(D3D12Context* context, size_t byte_size) -> void {
-            D3D12FrameBuffer& frame_buffer = context->frame_vertex_buffer;
-            if (byte_size <= frame_buffer.capacity) {
+        auto ensure_frame_buffer(D3D12Context* context,
+                                 D3D12FrameBuffer* frame_buffer,
+                                 size_t byte_size) -> void {
+            if (byte_size <= frame_buffer->capacity) {
                 return;
             }
 
-            release_frame_buffer(context, &frame_buffer);
+            release_frame_buffer(context, frame_buffer);
 
             ID3D12Resource* resource = nullptr;
             uint8_t* mapped_data = nullptr;
             Result const result = create_upload_buffer(context, byte_size, resource, mapped_data);
             ASSERT(result_succeeded(result));
 
-            frame_buffer.resource = resource;
-            frame_buffer.mapped_data = mapped_data;
-            frame_buffer.capacity = byte_size;
-            set_buffer_binding(frame_buffer.resource, BufferBinding::VERTEX);
+            frame_buffer->resource = resource;
+            frame_buffer->mapped_data = mapped_data;
+            frame_buffer->capacity = byte_size;
+            set_buffer_binding(frame_buffer->resource, BufferBinding::VERTEX);
         }
 
         [[nodiscard]] auto create_render_targets(D3D12Context* context, D3D12Window* window)
@@ -685,7 +716,9 @@ namespace gui::render::d3d12 {
                 wait_for_gpu(context);
             }
 
-            release_frame_buffer(context, &context->frame_vertex_buffer);
+            for (uint32_t index = 0u; index < FRAME_RESOURCE_COUNT; ++index) {
+                release_frame_buffer(context, &context->frame_resources[index].frame_vertex_buffer);
+            }
             wait_for_gpu(context);
             release_all_deferred(context);
 
@@ -699,7 +732,10 @@ namespace gui::render::d3d12 {
             release_com(context->root_signature);
             release_com(context->fence);
             release_com(context->command_list);
-            release_com(context->command_allocator);
+            for (uint32_t index = 0u; index < FRAME_RESOURCE_COUNT; ++index) {
+                release_com(context->frame_resources[index].command_allocator);
+            }
+            release_com(context->upload_command_allocator);
             release_com(context->command_queue);
             release_com(context->device);
             release_com(context->adapter);
@@ -782,15 +818,24 @@ namespace gui::render::d3d12 {
                 return Result::DEVICE_CREATION_FAILED;
             }
 
-            hr = context->device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT,
-                                                         IID_PPV_ARGS(&context->command_allocator));
-            if (FAILED(hr) || context->command_allocator == nullptr) {
+            hr = context->device->CreateCommandAllocator(
+                D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&context->upload_command_allocator));
+            if (FAILED(hr) || context->upload_command_allocator == nullptr) {
                 return Result::DEVICE_CREATION_FAILED;
+            }
+
+            for (uint32_t index = 0u; index < FRAME_RESOURCE_COUNT; ++index) {
+                hr = context->device->CreateCommandAllocator(
+                    D3D12_COMMAND_LIST_TYPE_DIRECT,
+                    IID_PPV_ARGS(&context->frame_resources[index].command_allocator));
+                if (FAILED(hr) || context->frame_resources[index].command_allocator == nullptr) {
+                    return Result::DEVICE_CREATION_FAILED;
+                }
             }
 
             hr = context->device->CreateCommandList(0u,
                                                     D3D12_COMMAND_LIST_TYPE_DIRECT,
-                                                    context->command_allocator,
+                                                    context->upload_command_allocator,
                                                     nullptr,
                                                     IID_PPV_ARGS(&context->command_list));
             if (FAILED(hr) || context->command_list == nullptr) {
@@ -935,12 +980,12 @@ namespace gui::render::d3d12 {
             }
 
             wait_for_gpu(context);
-            HRESULT hr = context->command_allocator->Reset();
+            HRESULT hr = context->upload_command_allocator->Reset();
             if (FAILED(hr)) {
                 return Result::TEXTURE_CREATION_FAILED;
             }
 
-            hr = context->command_list->Reset(context->command_allocator, nullptr);
+            hr = context->command_list->Reset(context->upload_command_allocator, nullptr);
             if (FAILED(hr)) {
                 return Result::TEXTURE_CREATION_FAILED;
             }
@@ -1185,8 +1230,11 @@ namespace gui::render::d3d12 {
         -> FrameBufferSlice {
         D3D12Context* context_impl = context_from_handle(context);
         ASSERT(context_impl != nullptr);
+        ASSERT(context_impl->frame_active);
 
-        D3D12FrameBuffer& frame_buffer = context_impl->frame_vertex_buffer;
+        D3D12FrameResource& frame =
+            context_impl->frame_resources[context_impl->active_frame_resource_index];
+        D3D12FrameBuffer& frame_buffer = frame.frame_vertex_buffer;
         size_t const offset = align_up(frame_buffer.used_size, byte_alignment);
         size_t const needed_size = offset + byte_size;
         if (needed_size > frame_buffer.capacity) {
@@ -1196,7 +1244,7 @@ namespace gui::render::d3d12 {
             while (new_capacity < needed_size) {
                 new_capacity *= 2u;
             }
-            ensure_frame_buffer(context_impl, new_capacity);
+            ensure_frame_buffer(context_impl, &frame_buffer, new_capacity);
         }
 
         frame_buffer.used_size = needed_size;
@@ -1634,15 +1682,20 @@ namespace gui::render::d3d12 {
         ASSERT(!context_impl->frame_active);
         ASSERT(!context_impl->render_pass_active);
 
-        wait_for_gpu(context_impl);
-        context_impl->frame_shader_descriptor_count = 0u;
-        context_impl->frame_sampler_descriptor_count = 0u;
-        context_impl->frame_vertex_buffer.used_size = 0u;
+        uint32_t const frame_index = context_impl->next_frame_resource_index;
+        D3D12FrameResource& frame = context_impl->frame_resources[frame_index];
+        wait_for_frame_resource(context_impl, &frame);
+
+        context_impl->active_frame_resource_index = frame_index;
+        context_impl->next_frame_resource_index = (frame_index + 1u) % FRAME_RESOURCE_COUNT;
+        frame.frame_shader_descriptor_count = 0u;
+        frame.frame_sampler_descriptor_count = 0u;
+        frame.frame_vertex_buffer.used_size = 0u;
         reset_bound_descriptor_tables(context_impl);
 
-        HRESULT hr = context_impl->command_allocator->Reset();
+        HRESULT hr = frame.command_allocator->Reset();
         ASSERT(SUCCEEDED(hr));
-        hr = context_impl->command_list->Reset(context_impl->command_allocator, nullptr);
+        hr = context_impl->command_list->Reset(frame.command_allocator, nullptr);
         ASSERT(SUCCEEDED(hr));
         BASE_UNUSED(hr);
         context_impl->frame_active = true;
@@ -1738,7 +1791,9 @@ namespace gui::render::d3d12 {
 
         UINT const sync_interval = window_impl->present_mode == PresentMode::VSYNC ? 1u : 0u;
         hr = window_impl->swap_chain->Present(sync_interval, 0u);
-        signal_gpu(context_impl);
+        D3D12FrameResource& frame =
+            context_impl->frame_resources[context_impl->active_frame_resource_index];
+        frame.fence_value = signal_gpu(context_impl);
         window_impl->frame_index = window_impl->swap_chain->GetCurrentBackBufferIndex();
         context_impl->frame_active = false;
 
