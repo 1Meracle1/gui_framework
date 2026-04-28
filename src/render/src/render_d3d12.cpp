@@ -1502,10 +1502,11 @@ namespace gui::render::d3d12 {
         D3D12Pipeline* pipeline = arena_new<D3D12Pipeline>(arena);
         pipeline->context = context_impl;
 
+        ArenaTemp input_temp = begin_thread_temp_arena();
         D3D12_INPUT_ELEMENT_DESC* input_elements = nullptr;
         if (desc.vertex_attribute_count != 0u) {
-            input_elements =
-                arena_alloc<D3D12_INPUT_ELEMENT_DESC>(arena, desc.vertex_attribute_count);
+            input_elements = arena_alloc<D3D12_INPUT_ELEMENT_DESC>(*input_temp.arena(),
+                                                                   desc.vertex_attribute_count);
             for (size_t index = 0u; index < desc.vertex_attribute_count; ++index) {
                 VertexAttributeDesc const& attribute = desc.vertex_attributes[index];
                 ASSERT(attribute.semantic_name != nullptr);
