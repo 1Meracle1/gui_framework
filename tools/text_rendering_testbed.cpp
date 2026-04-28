@@ -6,16 +6,13 @@
 #define NOMINMAX
 #endif
 
-#include <algorithm>
 #include <base/config.h>
 #include <base/crash.h>
 #include <base/fmt.h>
 #include <base/memory.h>
-#include <base/str_ref.h>
-#include <cmath>
-#include <cstddef>
 #include <cstdint>
 #include <draw/draw.h>
+#include <draw/draw_renderer.h>
 #include <font_cache/font_cache.h>
 #include <font_provider/font_provider.h>
 #include <render/render.h>
@@ -26,51 +23,9 @@ namespace {
     constexpr wchar_t WINDOW_CLASS_NAME[] = L"gui_framework_text_rendering_testbed";
     constexpr uint32_t INITIAL_WINDOW_WIDTH = 1280u;
     constexpr uint32_t INITIAL_WINDOW_HEIGHT = 720u;
-    constexpr gui::render::SizeU32 WHITE_TEXTURE_SIZE = {1u, 1u};
-    constexpr uint8_t WHITE_TEXTURE_RGBA[] = {255u, 255u, 255u, 255u};
     constexpr gui::render::SizeU32 SAMPLE_TEXTURE_SIZE = {2u, 2u};
     constexpr uint8_t SAMPLE_TEXTURE_RGBA[] = {
         245u, 70u, 52u, 255u, 34u, 114u, 245u, 255u, 43u, 194u, 105u, 255u, 172u, 82u, 229u, 255u};
-
-    struct PrimitiveVertex {
-        float position[2];
-        float uv[2];
-        float color[4];
-    };
-
-    struct TextVertex {
-        float position[2];
-        float uv[2];
-        float color[4];
-    };
-
-    struct PrimitivePipeline {
-        gui::render::Shader vertex_shader = {};
-        gui::render::Shader pixel_shader = {};
-        gui::render::Pipeline pipeline = {};
-        gui::render::Texture white_texture = {};
-        gui::render::Sampler sampler = {};
-    };
-
-    struct TextPipeline {
-        gui::render::Shader vertex_shader = {};
-        gui::render::Shader pixel_shader = {};
-        gui::render::Pipeline pipeline = {};
-        gui::render::Sampler sampler = {};
-    };
-
-    struct PrimitiveUpload {
-        gui::render::VertexBufferBinding vertex_buffer = {};
-    };
-
-    struct TextUpload {
-        gui::render::VertexBufferBinding vertex_buffer = {};
-    };
-
-    struct DrawUpload {
-        PrimitiveUpload primitive = {};
-        TextUpload text = {};
-    };
 
     struct TextState {
         gui::font_provider::Context provider = {};
@@ -105,47 +60,6 @@ namespace {
         fmt::eprintf("%s failed: %s\n", operation, gui::font_provider::result_name(result));
     }
 
-    auto destroy_pipeline(gui::render::Context context, PrimitivePipeline* pipeline) -> void {
-        if (pipeline == nullptr) {
-            return;
-        }
-
-        if (gui::render::sampler_valid(pipeline->sampler)) {
-            gui::render::destroy_sampler(context, pipeline->sampler);
-        }
-        if (gui::render::texture_valid(pipeline->white_texture)) {
-            gui::render::destroy_texture(context, pipeline->white_texture);
-        }
-        if (gui::render::pipeline_valid(pipeline->pipeline)) {
-            gui::render::destroy_pipeline(context, pipeline->pipeline);
-        }
-        if (gui::render::shader_valid(pipeline->pixel_shader)) {
-            gui::render::destroy_shader(context, pipeline->pixel_shader);
-        }
-        if (gui::render::shader_valid(pipeline->vertex_shader)) {
-            gui::render::destroy_shader(context, pipeline->vertex_shader);
-        }
-    }
-
-    auto destroy_pipeline(gui::render::Context context, TextPipeline* pipeline) -> void {
-        if (pipeline == nullptr) {
-            return;
-        }
-
-        if (gui::render::sampler_valid(pipeline->sampler)) {
-            gui::render::destroy_sampler(context, pipeline->sampler);
-        }
-        if (gui::render::pipeline_valid(pipeline->pipeline)) {
-            gui::render::destroy_pipeline(context, pipeline->pipeline);
-        }
-        if (gui::render::shader_valid(pipeline->pixel_shader)) {
-            gui::render::destroy_shader(context, pipeline->pixel_shader);
-        }
-        if (gui::render::shader_valid(pipeline->vertex_shader)) {
-            gui::render::destroy_shader(context, pipeline->vertex_shader);
-        }
-    }
-
     [[nodiscard]] auto create_rgba_texture(gui::render::Context context,
                                            gui::render::SizeU32 size,
                                            uint8_t const* pixels,
@@ -158,543 +72,6 @@ namespace {
         gui::render::Result const result =
             gui::render::create_texture(context, texture_desc, out_texture);
         return gui::render::result_succeeded(result);
-    }
-
-    [[nodiscard]] auto create_primitive_pipeline(Arena& arena,
-                                                 gui::render::Context render_context,
-                                                 PrimitivePipeline* pipeline) -> bool {
-        constexpr StrRef SHADER_SOURCE = R"hlsl(
-Texture2D g_primitive_texture : register(t0);
-SamplerState g_primitive_sampler : register(s0);
-
-struct VSInput
-{
-    float2 position : POSITION;
-    float2 uv : TEXCOORD0;
-    float4 color : COLOR0;
-};
-
-struct PSInput
-{
-    float4 position : SV_POSITION;
-    float2 uv : TEXCOORD0;
-    float4 color : COLOR0;
-};
-
-PSInput vs_main(VSInput input)
-{
-    PSInput output;
-    output.position = float4(input.position, 0.0f, 1.0f);
-    output.uv = input.uv;
-    output.color = input.color;
-    return output;
-}
-
-float4 ps_main(PSInput input) : SV_Target
-{
-    float4 sample_value = g_primitive_texture.Sample(g_primitive_sampler, input.uv);
-    return float4(input.color.rgb * sample_value.rgb, input.color.a * sample_value.a);
-}
-)hlsl";
-
-        gui::render::ShaderSourceDesc shader_desc = {};
-        shader_desc.source = SHADER_SOURCE;
-        shader_desc.stage = gui::render::ShaderStage::VERTEX;
-        shader_desc.entry_point = "vs_main";
-
-        gui::render::Result result = gui::render::create_shader_from_source(
-            arena, render_context, shader_desc, pipeline->vertex_shader);
-        if (gui::render::result_failed(result)) {
-            return false;
-        }
-
-        shader_desc.stage = gui::render::ShaderStage::PIXEL;
-        shader_desc.entry_point = "ps_main";
-
-        result = gui::render::create_shader_from_source(
-            arena, render_context, shader_desc, pipeline->pixel_shader);
-        if (gui::render::result_failed(result)) {
-            return false;
-        }
-
-        gui::render::VertexAttributeDesc input_elements[] = {
-            {
-                "POSITION",
-                0u,
-                gui::render::VertexFormat::FLOAT32_2,
-                0u,
-                static_cast<uint32_t>(offsetof(PrimitiveVertex, position)),
-            },
-            {
-                "TEXCOORD",
-                0u,
-                gui::render::VertexFormat::FLOAT32_2,
-                0u,
-                static_cast<uint32_t>(offsetof(PrimitiveVertex, uv)),
-            },
-            {
-                "COLOR",
-                0u,
-                gui::render::VertexFormat::FLOAT32_4,
-                0u,
-                static_cast<uint32_t>(offsetof(PrimitiveVertex, color)),
-            },
-        };
-
-        gui::render::PipelineDesc pipeline_desc = {};
-        pipeline_desc.vertex_shader = pipeline->vertex_shader;
-        pipeline_desc.pixel_shader = pipeline->pixel_shader;
-        pipeline_desc.vertex_attributes = input_elements;
-        pipeline_desc.vertex_attribute_count = sizeof(input_elements) / sizeof(input_elements[0u]);
-        pipeline_desc.blend_mode = gui::render::BlendMode::ALPHA;
-
-        result =
-            gui::render::create_pipeline(arena, render_context, pipeline_desc, pipeline->pipeline);
-        if (gui::render::result_failed(result)) {
-            return false;
-        }
-
-        result = gui::render::create_sampler(render_context, pipeline->sampler);
-        if (gui::render::result_failed(result)) {
-            return false;
-        }
-
-        return create_rgba_texture(
-            render_context, WHITE_TEXTURE_SIZE, WHITE_TEXTURE_RGBA, pipeline->white_texture);
-    }
-
-    [[nodiscard]] auto create_pipeline(Arena& arena,
-                                       gui::render::Context render_context,
-                                       TextPipeline* pipeline) -> bool {
-        constexpr StrRef SHADER_SOURCE = R"hlsl(
-Texture2D g_text_texture : register(t0);
-SamplerState g_text_sampler : register(s0);
-
-struct VSInput
-{
-    float2 position : POSITION;
-    float2 uv : TEXCOORD0;
-    float4 color : COLOR0;
-};
-
-struct PSInput
-{
-    float4 position : SV_POSITION;
-    float2 uv : TEXCOORD0;
-    float4 color : COLOR0;
-};
-
-PSInput vs_main(VSInput input)
-{
-    PSInput output;
-    output.position = float4(input.position, 0.0f, 1.0f);
-    output.uv = input.uv;
-    output.color = input.color;
-    return output;
-}
-
-float4 ps_main(PSInput input) : SV_Target
-{
-    float4 sample_value = g_text_texture.Sample(g_text_sampler, input.uv);
-    return float4(input.color.rgb * sample_value.rgb, input.color.a * sample_value.a);
-}
-)hlsl";
-
-        gui::render::ShaderSourceDesc shader_desc = {};
-        shader_desc.source = SHADER_SOURCE;
-        shader_desc.stage = gui::render::ShaderStage::VERTEX;
-        shader_desc.entry_point = "vs_main";
-
-        gui::render::Result result = gui::render::create_shader_from_source(
-            arena, render_context, shader_desc, pipeline->vertex_shader);
-        if (gui::render::result_failed(result)) {
-            return false;
-        }
-
-        shader_desc.stage = gui::render::ShaderStage::PIXEL;
-        shader_desc.entry_point = "ps_main";
-
-        result = gui::render::create_shader_from_source(
-            arena, render_context, shader_desc, pipeline->pixel_shader);
-        if (gui::render::result_failed(result)) {
-            return false;
-        }
-
-        gui::render::VertexAttributeDesc input_elements[] = {
-            {
-                "POSITION",
-                0u,
-                gui::render::VertexFormat::FLOAT32_2,
-                0u,
-                static_cast<uint32_t>(offsetof(TextVertex, position)),
-            },
-            {
-                "TEXCOORD",
-                0u,
-                gui::render::VertexFormat::FLOAT32_2,
-                0u,
-                static_cast<uint32_t>(offsetof(TextVertex, uv)),
-            },
-            {
-                "COLOR",
-                0u,
-                gui::render::VertexFormat::FLOAT32_4,
-                0u,
-                static_cast<uint32_t>(offsetof(TextVertex, color)),
-            },
-        };
-
-        gui::render::PipelineDesc pipeline_desc = {};
-        pipeline_desc.vertex_shader = pipeline->vertex_shader;
-        pipeline_desc.pixel_shader = pipeline->pixel_shader;
-        pipeline_desc.vertex_attributes = input_elements;
-        pipeline_desc.vertex_attribute_count = sizeof(input_elements) / sizeof(input_elements[0u]);
-        pipeline_desc.blend_mode = gui::render::BlendMode::ALPHA;
-
-        result =
-            gui::render::create_pipeline(arena, render_context, pipeline_desc, pipeline->pipeline);
-        if (gui::render::result_failed(result)) {
-            return false;
-        }
-
-        result = gui::render::create_sampler(render_context, pipeline->sampler);
-        return gui::render::result_succeeded(result);
-    }
-
-    [[nodiscard]] auto create_text_texture(gui::render::Context context,
-                                           gui::font_cache::TextRun const& run,
-                                           gui::render::Texture& out_texture) -> bool {
-        ASSERT(run.rgba_pixels != nullptr);
-        ASSERT(run.size.width != 0u);
-        ASSERT(run.size.height != 0u);
-
-        gui::render::TextureDesc texture_desc = {};
-        texture_desc.size = {run.size.width, run.size.height};
-        texture_desc.bytes_per_row = run.stride;
-        texture_desc.rgba_pixels = run.rgba_pixels;
-
-        gui::render::Result const result =
-            gui::render::create_texture(context, texture_desc, out_texture);
-        return gui::render::result_succeeded(result);
-    }
-
-    [[nodiscard]] auto pixel_to_ndc_x(float value, float width) -> float {
-        return ((value / width) * 2.0f) - 1.0f;
-    }
-
-    [[nodiscard]] auto pixel_to_ndc_y(float value, float height) -> float {
-        return 1.0f - ((value / height) * 2.0f);
-    }
-
-    [[nodiscard]] auto transform_point(gui::draw::Transform2D const& transform,
-                                       gui::draw::Vec2 point) -> gui::draw::Vec2 {
-        return {(point.x * transform.x_axis.x) + (point.y * transform.y_axis.x) +
-                    transform.translation.x,
-                (point.x * transform.x_axis.y) + (point.y * transform.y_axis.y) +
-                    transform.translation.y};
-    }
-
-    [[nodiscard]] auto text_command_visible(gui::draw::TextCommand const& command) -> bool {
-        gui::font_cache::TextRun const& run = command.run;
-        return run.rgba_pixels != nullptr && run.size.width != 0u && run.size.height != 0u;
-    }
-
-    [[nodiscard]] auto clip_rect_to_scissor(gui::draw::Rect rect, gui::render::SizeU32 window_size)
-        -> gui::render::ScissorRect {
-        float const width = static_cast<float>(window_size.width);
-        float const height = static_cast<float>(window_size.height);
-        if (rect.min.x <= 0.0f && rect.min.y <= 0.0f && rect.max.x >= width &&
-            rect.max.y >= height) {
-            return {0u, 0u, window_size.width, window_size.height};
-        }
-
-        float const left = std::clamp(std::floor(rect.min.x), 0.0f, width);
-        float const top = std::clamp(std::floor(rect.min.y), 0.0f, height);
-        float const right = std::clamp(std::ceil(rect.max.x), 0.0f, width);
-        float const bottom = std::clamp(std::ceil(rect.max.y), 0.0f, height);
-        if (right <= left || bottom <= top) {
-            return {};
-        }
-
-        return {static_cast<uint32_t>(left),
-                static_cast<uint32_t>(top),
-                static_cast<uint32_t>(right - left),
-                static_cast<uint32_t>(bottom - top)};
-    }
-
-    auto write_primitive_vertex(PrimitiveVertex& vertex,
-                                gui::render::SizeU32 window_size,
-                                gui::draw::Vertex const& source) -> void {
-        float const window_width = static_cast<float>(window_size.width);
-        float const window_height = static_cast<float>(window_size.height);
-        gui::draw::Color const color = source.color;
-        vertex = {{pixel_to_ndc_x(source.position.x, window_width),
-                   pixel_to_ndc_y(source.position.y, window_height)},
-                  {source.uv.x, source.uv.y},
-                  {color.r, color.g, color.b, color.a}};
-    }
-
-    auto write_text_vertices(TextVertex* vertices,
-                             gui::render::SizeU32 window_size,
-                             gui::draw::TextCommand const& command) -> void {
-        gui::font_cache::TextRun const& run = command.run;
-        float const window_width = static_cast<float>(window_size.width);
-        float const window_height = static_cast<float>(window_size.height);
-        float const x0 = command.position.x;
-        float const y0 = command.position.y;
-        float const x1 = x0 + static_cast<float>(run.size.width);
-        float const y1 = y0 + static_cast<float>(run.size.height);
-        gui::draw::Vec2 const p0 = transform_point(command.transform, {x0, y0});
-        gui::draw::Vec2 const p1 = transform_point(command.transform, {x1, y0});
-        gui::draw::Vec2 const p2 = transform_point(command.transform, {x1, y1});
-        gui::draw::Vec2 const p3 = transform_point(command.transform, {x0, y1});
-        gui::draw::Color color = command.style.color;
-        color.a *= command.opacity;
-
-        vertices[0u] = {{pixel_to_ndc_x(p0.x, window_width), pixel_to_ndc_y(p0.y, window_height)},
-                        {0.0f, 0.0f},
-                        {color.r, color.g, color.b, color.a}};
-        vertices[1u] = {{pixel_to_ndc_x(p1.x, window_width), pixel_to_ndc_y(p1.y, window_height)},
-                        {1.0f, 0.0f},
-                        {color.r, color.g, color.b, color.a}};
-        vertices[2u] = {{pixel_to_ndc_x(p2.x, window_width), pixel_to_ndc_y(p2.y, window_height)},
-                        {1.0f, 1.0f},
-                        {color.r, color.g, color.b, color.a}};
-        vertices[3u] = vertices[0u];
-        vertices[4u] = vertices[2u];
-        vertices[5u] = {{pixel_to_ndc_x(p3.x, window_width), pixel_to_ndc_y(p3.y, window_height)},
-                        {0.0f, 1.0f},
-                        {color.r, color.g, color.b, color.a}};
-    }
-
-    [[nodiscard]] auto upload_draw_vertices(gui::render::Context render_context,
-                                            gui::render::SizeU32 window_size,
-                                            gui::draw::Context draw_context) -> DrawUpload {
-        size_t const primitive_command_count = gui::draw::primitive_command_count(draw_context);
-        size_t vertex_count = 0u;
-        for (size_t index = 0u; index < primitive_command_count; ++index) {
-            gui::draw::PrimitiveCommand const* const command =
-                gui::draw::primitive_command(draw_context, index);
-            ASSERT(command != nullptr);
-            vertex_count += command->vertex_count;
-        }
-
-        size_t const text_command_count = gui::draw::text_command_count(draw_context);
-        size_t const primitive_bytes = vertex_count * sizeof(PrimitiveVertex);
-        size_t text_offset = primitive_bytes;
-        size_t const text_alignment_remainder = text_offset % alignof(TextVertex);
-        if (text_alignment_remainder != 0u) {
-            text_offset += alignof(TextVertex) - text_alignment_remainder;
-        }
-
-        size_t const text_bytes = text_command_count * 6u * sizeof(TextVertex);
-        size_t const total_bytes = text_offset + text_bytes;
-        if (total_bytes == 0u) {
-            return {};
-        }
-
-        gui::render::FrameBufferSlice const upload = gui::render::allocate_frame_vertex_buffer(
-            render_context, total_bytes, std::max(alignof(PrimitiveVertex), alignof(TextVertex)));
-
-        DrawUpload result = {};
-
-        PrimitiveVertex* const vertices = static_cast<PrimitiveVertex*>(upload.data);
-        size_t vertex_offset = 0u;
-        for (size_t index = 0u; index < primitive_command_count; ++index) {
-            gui::draw::PrimitiveCommand const* const command =
-                gui::draw::primitive_command(draw_context, index);
-            ASSERT(command != nullptr);
-            ASSERT(command->vertices != nullptr);
-            for (size_t vertex_index = 0u; vertex_index < command->vertex_count; ++vertex_index) {
-                write_primitive_vertex(vertices[vertex_offset + vertex_index],
-                                       window_size,
-                                       command->vertices[vertex_index]);
-            }
-            vertex_offset += command->vertex_count;
-        }
-
-        if (vertex_count != 0u) {
-            result.primitive.vertex_buffer.buffer = upload.buffer;
-            result.primitive.vertex_buffer.byte_stride =
-                static_cast<uint32_t>(sizeof(PrimitiveVertex));
-            result.primitive.vertex_buffer.byte_offset = static_cast<uint32_t>(upload.byte_offset);
-        }
-
-        uint8_t* const text_data = static_cast<uint8_t*>(upload.data) + text_offset;
-        TextVertex* const text_vertices = reinterpret_cast<TextVertex*>(text_data);
-        for (size_t index = 0u; index < text_command_count; ++index) {
-            gui::draw::TextCommand const* const command =
-                gui::draw::text_command(draw_context, index);
-            ASSERT(command != nullptr);
-            if (text_command_visible(*command)) {
-                write_text_vertices(text_vertices + (index * 6u), window_size, *command);
-            }
-        }
-
-        if (text_command_count != 0u) {
-            result.text.vertex_buffer.buffer = upload.buffer;
-            result.text.vertex_buffer.byte_stride = static_cast<uint32_t>(sizeof(TextVertex));
-            result.text.vertex_buffer.byte_offset =
-                static_cast<uint32_t>(upload.byte_offset + text_offset);
-        }
-
-        return result;
-    }
-
-    auto submit_primitive_batch(gui::render::Context render_context,
-                                gui::render::SizeU32 window_size,
-                                PrimitivePipeline const& pipeline,
-                                PrimitiveUpload const& upload,
-                                gui::draw::PrimitiveBatch const& batch,
-                                uint32_t first_vertex) -> void {
-        gui::render::bind_pipeline(render_context, pipeline.pipeline);
-
-        gui::render::Texture texture = batch.texture;
-        if (!gui::render::texture_valid(texture)) {
-            texture = pipeline.white_texture;
-        }
-
-        gui::render::BindGroupTextureBinding texture_binding = {};
-        texture_binding.stage = gui::render::ShaderStage::PIXEL;
-        texture_binding.slot = 0u;
-        texture_binding.texture = texture;
-
-        gui::render::BindGroupSamplerBinding sampler_binding = {};
-        sampler_binding.stage = gui::render::ShaderStage::PIXEL;
-        sampler_binding.slot = 0u;
-        sampler_binding.sampler = pipeline.sampler;
-
-        ArenaTemp temp = begin_thread_temp_arena();
-        gui::render::BindGroup bind_group = {};
-        gui::render::BindGroupDesc bind_group_desc = {};
-        bind_group_desc.textures = &texture_binding;
-        bind_group_desc.texture_count = 1u;
-        bind_group_desc.samplers = &sampler_binding;
-        bind_group_desc.sampler_count = 1u;
-
-        gui::render::Result const bind_result = gui::render::create_bind_group(
-            *temp.arena(), render_context, bind_group_desc, bind_group);
-        ASSERT(gui::render::result_succeeded(bind_result));
-        if (gui::render::result_succeeded(bind_result)) {
-            gui::render::bind_group(render_context, bind_group);
-
-            gui::render::DrawDesc draw_desc = {};
-            draw_desc.vertex_buffers = &upload.vertex_buffer;
-            draw_desc.vertex_buffer_count = 1u;
-            draw_desc.vertex_count = static_cast<uint32_t>(batch.vertex_count);
-            draw_desc.first_vertex = first_vertex;
-
-            gui::render::set_scissor_rect(render_context,
-                                          clip_rect_to_scissor(batch.clip_rect, window_size));
-            gui::render::draw(render_context, draw_desc);
-            gui::render::destroy_bind_group(render_context, bind_group);
-        }
-    }
-
-    auto submit_text_command(gui::render::Context render_context,
-                             gui::render::SizeU32 window_size,
-                             TextPipeline const& pipeline,
-                             TextUpload const& upload,
-                             gui::draw::TextCommand const& command,
-                             size_t text_index) -> void {
-        if (!text_command_visible(command)) {
-            return;
-        }
-
-        gui::render::Texture texture = {};
-        bool const texture_created = create_text_texture(render_context, command.run, texture);
-        ASSERT(texture_created);
-        if (!texture_created) {
-            return;
-        }
-
-        gui::render::bind_pipeline(render_context, pipeline.pipeline);
-
-        gui::render::BindGroupTextureBinding texture_binding = {};
-        texture_binding.stage = gui::render::ShaderStage::PIXEL;
-        texture_binding.slot = 0u;
-        texture_binding.texture = texture;
-
-        gui::render::BindGroupSamplerBinding sampler_binding = {};
-        sampler_binding.stage = gui::render::ShaderStage::PIXEL;
-        sampler_binding.slot = 0u;
-        sampler_binding.sampler = pipeline.sampler;
-
-        ArenaTemp temp = begin_thread_temp_arena();
-        gui::render::BindGroup bind_group = {};
-        gui::render::BindGroupDesc bind_group_desc = {};
-        bind_group_desc.textures = &texture_binding;
-        bind_group_desc.texture_count = 1u;
-        bind_group_desc.samplers = &sampler_binding;
-        bind_group_desc.sampler_count = 1u;
-
-        gui::render::Result const bind_result = gui::render::create_bind_group(
-            *temp.arena(), render_context, bind_group_desc, bind_group);
-        ASSERT(gui::render::result_succeeded(bind_result));
-        if (gui::render::result_succeeded(bind_result)) {
-            gui::render::bind_group(render_context, bind_group);
-
-            gui::render::DrawDesc draw_desc = {};
-            draw_desc.vertex_buffers = &upload.vertex_buffer;
-            draw_desc.vertex_buffer_count = 1u;
-            draw_desc.vertex_count = 6u;
-            draw_desc.first_vertex = static_cast<uint32_t>(text_index * 6u);
-
-            gui::render::set_scissor_rect(render_context,
-                                          clip_rect_to_scissor(command.clip_rect, window_size));
-            gui::render::draw(render_context, draw_desc);
-            gui::render::destroy_bind_group(render_context, bind_group);
-        }
-
-        gui::render::destroy_texture(render_context, texture);
-    }
-
-    auto render_draw_commands(gui::render::Context render_context,
-                              gui::render::Window render_window,
-                              PrimitivePipeline const& primitive_pipeline,
-                              TextPipeline const& text_pipeline,
-                              gui::draw::Context draw_context) -> void {
-        gui::render::SizeU32 const window_size = gui::render::window_size(render_window);
-
-        ASSERT(window_size.width != 0u);
-        ASSERT(window_size.height != 0u);
-
-        size_t const command_count = gui::draw::command_count(draw_context);
-        if (command_count == 0u) {
-            return;
-        }
-
-        DrawUpload const upload = upload_draw_vertices(render_context, window_size, draw_context);
-        gui::render::commit_frame_uploads(render_context);
-
-        uint32_t primitive_first_vertex = 0u;
-        for (size_t index = 0u; index < command_count; ++index) {
-            gui::draw::Command const* const command = gui::draw::command(draw_context, index);
-            ASSERT(command != nullptr);
-
-            if (command->kind == gui::draw::CommandKind::PRIMITIVE_BATCH) {
-                gui::draw::PrimitiveBatch const* const batch =
-                    gui::draw::primitive_batch(draw_context, command->index);
-                ASSERT(batch != nullptr);
-                submit_primitive_batch(render_context,
-                                       window_size,
-                                       primitive_pipeline,
-                                       upload.primitive,
-                                       *batch,
-                                       primitive_first_vertex);
-                primitive_first_vertex += static_cast<uint32_t>(batch->vertex_count);
-            } else {
-                gui::draw::TextCommand const* const text_command =
-                    gui::draw::text_command(draw_context, command->index);
-                ASSERT(text_command != nullptr);
-                submit_text_command(render_context,
-                                    window_size,
-                                    text_pipeline,
-                                    upload.text,
-                                    *text_command,
-                                    command->index);
-            }
-        }
     }
 
     auto destroy_text_state(gui::render::Context render_context, TextState* text_state) -> void {
@@ -1018,17 +395,24 @@ auto main() -> int {
         return 1;
     }
 
-    PrimitivePipeline primitive_pipeline = {};
-    TextPipeline pipeline = {};
+    gui::draw::Renderer draw_renderer = {};
     TextState text_state = {};
 
-    if (!create_primitive_pipeline(app_arena, render_context, &primitive_pipeline) ||
-        !create_pipeline(app_arena, render_context, &pipeline) ||
-        !create_text_state(app_arena, render_context, &text_state)) {
+    gui::draw::RendererDesc const renderer_desc = {};
+    render_result =
+        gui::draw::create_renderer(app_arena, render_context, renderer_desc, draw_renderer);
+    if (gui::render::result_failed(render_result)) {
+        log_render_result("draw::create_renderer", render_result);
+        gui::render::destroy_window(render_window);
+        gui::render::destroy_context(render_context);
+        DestroyWindow(app_state.hwnd);
+        return 1;
+    }
+
+    if (!create_text_state(app_arena, render_context, &text_state)) {
         fmt::eprintf("failed to initialize text rendering testbed\n");
         destroy_text_state(render_context, &text_state);
-        destroy_pipeline(render_context, &pipeline);
-        destroy_pipeline(render_context, &primitive_pipeline);
+        gui::draw::destroy_renderer(render_context, draw_renderer);
         gui::render::destroy_window(render_window);
         gui::render::destroy_context(render_context);
         DestroyWindow(app_state.hwnd);
@@ -1075,8 +459,10 @@ auto main() -> int {
             break;
         }
 
-        render_draw_commands(
-            render_context, render_window, primitive_pipeline, pipeline, text_state.draw_context);
+        gui::draw::render_commands(draw_renderer,
+                                   render_context,
+                                   gui::render::window_size(render_window),
+                                   text_state.draw_context);
         gui::render::end_render_pass(render_context);
 
         render_result = gui::render::present_window(render_context, render_window);
@@ -1091,8 +477,7 @@ auto main() -> int {
     }
 
     destroy_text_state(render_context, &text_state);
-    destroy_pipeline(render_context, &pipeline);
-    destroy_pipeline(render_context, &primitive_pipeline);
+    gui::draw::destroy_renderer(render_context, draw_renderer);
     gui::render::destroy_window(render_window);
     gui::render::destroy_context(render_context);
 

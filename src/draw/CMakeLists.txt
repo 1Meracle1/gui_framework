@@ -1,5 +1,6 @@
 target_sources(gui_framework PRIVATE
     src/draw.cpp
+    src/draw_renderer.cpp
 )
 
 target_include_directories(gui_framework

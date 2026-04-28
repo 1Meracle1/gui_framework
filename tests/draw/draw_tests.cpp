@@ -1,5 +1,6 @@
 #include <base/config.h>
 #include <draw/draw.h>
+#include <draw/draw_renderer.h>
 #include <test/test.h>
 
 namespace {
@@ -40,6 +41,14 @@ namespace {
         TEST_EXPECT(context, gui::draw::top_clip_rect(draw_context).min.x < -1000000.0f);
         expect_transform(context, gui::draw::top_transform(draw_context), {});
         TEST_EXPECT(context, gui::draw::top_opacity(draw_context) == 1.0f);
+    }
+
+    TEST_CASE(draw_renderer_handle_starts_empty) {
+        gui::draw::RendererDesc const desc = {};
+        gui::draw::Renderer const renderer = {};
+
+        BASE_UNUSED(desc);
+        TEST_EXPECT(context, !gui::draw::renderer_valid(renderer));
     }
 
     TEST_CASE(draw_state_stacks_push_pop_top) {
