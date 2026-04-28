@@ -140,6 +140,17 @@ namespace {
         TEST_EXPECT(context, desc.sampler_count == 0u);
     }
 
+    TEST_CASE(render_bind_group_slot_limit_matches_cross_backend_binding) {
+        gui::render::BindGroupBufferBinding const buffer = {};
+        gui::render::BindGroupTextureBinding const texture = {};
+        gui::render::BindGroupSamplerBinding const sampler = {};
+
+        TEST_EXPECT(context, gui::render::BIND_GROUP_SLOT_COUNT == 14u);
+        TEST_EXPECT(context, buffer.slot < gui::render::BIND_GROUP_SLOT_COUNT);
+        TEST_EXPECT(context, texture.slot < gui::render::BIND_GROUP_SLOT_COUNT);
+        TEST_EXPECT(context, sampler.slot < gui::render::BIND_GROUP_SLOT_COUNT);
+    }
+
     TEST_CASE(render_vertex_buffer_binding_defaults_describe_slot_zero) {
         gui::render::VertexBufferBinding const binding = {};
 

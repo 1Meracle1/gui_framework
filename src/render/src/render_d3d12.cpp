@@ -1596,7 +1596,7 @@ namespace gui::render::d3d12 {
             group->buffer_count = desc.buffer_count;
             for (size_t index = 0u; index < desc.buffer_count; ++index) {
                 BindGroupBufferBinding const& source = desc.buffers[index];
-                ASSERT(source.slot < DESCRIPTOR_SLOT_COUNT);
+                ASSERT(source.slot < BIND_GROUP_SLOT_COUNT);
 
                 D3D12Buffer* buffer = buffer_from_handle(source.buffer);
                 ASSERT(buffer != nullptr);
@@ -1616,7 +1616,7 @@ namespace gui::render::d3d12 {
             group->texture_count = desc.texture_count;
             for (size_t index = 0u; index < desc.texture_count; ++index) {
                 BindGroupTextureBinding const& source = desc.textures[index];
-                ASSERT(source.slot < DESCRIPTOR_SLOT_COUNT);
+                ASSERT(source.slot < BIND_GROUP_SLOT_COUNT);
 
                 D3D12Texture* texture = texture_from_handle(source.texture);
                 ASSERT(texture != nullptr);
@@ -1635,7 +1635,7 @@ namespace gui::render::d3d12 {
             group->sampler_count = desc.sampler_count;
             for (size_t index = 0u; index < desc.sampler_count; ++index) {
                 BindGroupSamplerBinding const& source = desc.samplers[index];
-                ASSERT(source.slot < DESCRIPTOR_SLOT_COUNT);
+                ASSERT(source.slot < BIND_GROUP_SLOT_COUNT);
 
                 D3D12Sampler* sampler = sampler_from_handle(source.sampler);
                 ASSERT(sampler != nullptr);

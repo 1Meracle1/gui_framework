@@ -75,6 +75,8 @@ namespace gui::render {
         ALPHA,
     };
 
+    inline constexpr uint32_t BIND_GROUP_SLOT_COUNT = 14u;
+
     struct SizeU32 {
         uint32_t width = 0u;
         uint32_t height = 0u;

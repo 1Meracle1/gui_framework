@@ -517,12 +517,15 @@ namespace gui::render {
         ASSERT(desc.sampler_count == 0u || desc.samplers != nullptr);
 
         for (size_t index = 0u; index < desc.buffer_count; ++index) {
+            ASSERT(desc.buffers[index].slot < BIND_GROUP_SLOT_COUNT);
             ASSERT(buffer_valid(desc.buffers[index].buffer));
         }
         for (size_t index = 0u; index < desc.texture_count; ++index) {
+            ASSERT(desc.textures[index].slot < BIND_GROUP_SLOT_COUNT);
             ASSERT(texture_valid(desc.textures[index].texture));
         }
         for (size_t index = 0u; index < desc.sampler_count; ++index) {
+            ASSERT(desc.samplers[index].slot < BIND_GROUP_SLOT_COUNT);
             ASSERT(sampler_valid(desc.samplers[index].sampler));
         }
 
