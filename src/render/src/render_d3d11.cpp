@@ -18,6 +18,10 @@
 #include <dxgi.h>
 #include <windows.h>
 
+#ifdef OPAQUE
+#undef OPAQUE
+#endif
+
 namespace gui::render::d3d11 {
     namespace {
 

@@ -62,10 +62,24 @@ namespace gui::draw {
         NORMAL,
     };
 
+    enum class FilterKind : uint8_t {
+        NONE,
+        BLUR,
+    };
+
+    struct DropShadow {
+        Vec2 offset = {};
+        float blur_radius = 0.0f;
+        Color color = {0.0f, 0.0f, 0.0f, 0.0f};
+    };
+
     struct LayerDesc {
         Rect bounds = {};
         float opacity = 1.0f;
         LayerBlendMode blend_mode = LayerBlendMode::NORMAL;
+        FilterKind filter_kind = FilterKind::NONE;
+        float filter_radius = 0.0f;
+        DropShadow drop_shadow = {};
     };
 
     struct LayerCommand {

@@ -748,6 +748,8 @@ namespace gui::draw {
 
         desc.bounds = rect_normalized(desc.bounds);
         desc.opacity = std::clamp(desc.opacity, 0.0f, 1.0f);
+        desc.filter_radius = std::max(desc.filter_radius, 0.0f);
+        desc.drop_shadow.blur_radius = std::max(desc.drop_shadow.blur_radius, 0.0f);
 
         Rect const previous_clip_rect = impl->current_clip_rect;
         Rect const layer_clip_rect = rect_intersect(previous_clip_rect, desc.bounds);

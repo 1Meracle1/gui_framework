@@ -17,6 +17,10 @@
 #include <dxgi1_6.h>
 #include <windows.h>
 
+#ifdef OPAQUE
+#undef OPAQUE
+#endif
+
 #if BASE_PLATFORM_WINDOWS
 
 namespace gui::render::d3d12 {
