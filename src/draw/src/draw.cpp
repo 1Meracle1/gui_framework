@@ -826,12 +826,8 @@ namespace gui::draw {
         ContextImpl* const impl = context_from_handle(context);
         ASSERT(impl != nullptr);
 
-        if (!color_visible(color)) {
-            return;
-        }
-
-        Vertex* const vertices = push_primitive_vertices(impl, 3u);
-        write_triangle(impl, vertices, p0, p1, p2, color);
+        Vec2 const points[] = {p0, p1, p2};
+        fill_convex_points(impl, points, color);
     }
 
     auto
@@ -846,13 +842,8 @@ namespace gui::draw {
         ContextImpl* const impl = context_from_handle(context);
         ASSERT(impl != nullptr);
 
-        if (!color_visible(color)) {
-            return;
-        }
-
-        Vertex* const vertices = push_primitive_vertices(impl, 6u);
-        write_triangle(impl, vertices, p0, p1, p2, color);
-        write_triangle(impl, vertices + 3u, p0, p2, p3, color);
+        Vec2 const points[] = {p0, p1, p2, p3};
+        fill_convex_points(impl, points, color);
     }
 
     auto draw_rect(Context context, Rect rect, Color color, float thickness, float rounding)

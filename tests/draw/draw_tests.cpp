@@ -150,6 +150,54 @@ namespace {
         gui::draw::destroy_context(draw_context);
     }
 
+    TEST_CASE(draw_records_direct_filled_triangle_and_quad_aa) {
+        Arena owner_arena = {};
+        owner_arena.init();
+
+        gui::draw::Context draw_context = {};
+        gui::draw::create_context(owner_arena, {}, draw_context);
+
+        gui::draw::begin_frame(draw_context);
+        gui::draw::draw_triangle_filled(
+            draw_context, {0.0f, 0.0f}, {4.0f, 0.0f}, {0.0f, 4.0f}, {1.0f, 0.5f, 0.25f, 1.0f});
+        gui::draw::draw_quad_filled(draw_context,
+                                    {6.0f, 0.0f},
+                                    {10.0f, 0.0f},
+                                    {10.0f, 4.0f},
+                                    {6.0f, 4.0f},
+                                    {0.25f, 0.5f, 1.0f, 1.0f});
+
+        TEST_EXPECT(context, gui::draw::primitive_command_count(draw_context) == 2u);
+        TEST_EXPECT(context, gui::draw::primitive_batch_count(draw_context) == 1u);
+
+        gui::draw::PrimitiveBatch const* batch = gui::draw::primitive_batch(draw_context, 0u);
+        TEST_EXPECT(context, batch != nullptr);
+        TEST_EXPECT(context, batch->command_count == 2u);
+        TEST_EXPECT(context, batch->vertex_count == 51u);
+
+        gui::draw::PrimitiveCommand const* triangle_command =
+            gui::draw::primitive_command(draw_context, 0u);
+        TEST_EXPECT(context, triangle_command != nullptr);
+        TEST_EXPECT(context, triangle_command->vertex_count == 21u);
+        expect_position(context, triangle_command->vertices[0u].position, 0.0f, 0.0f);
+        expect_position(context, triangle_command->vertices[1u].position, 4.0f, 0.0f);
+        expect_position(context, triangle_command->vertices[2u].position, 0.0f, 4.0f);
+        TEST_EXPECT(context, triangle_command->vertices[3u].color.a == 1.0f);
+        TEST_EXPECT(context, triangle_command->vertices[5u].color.a == 0.0f);
+
+        gui::draw::PrimitiveCommand const* quad_command =
+            gui::draw::primitive_command(draw_context, 1u);
+        TEST_EXPECT(context, quad_command != nullptr);
+        TEST_EXPECT(context, quad_command->vertex_count == 30u);
+        expect_position(context, quad_command->vertices[0u].position, 6.0f, 0.0f);
+        expect_position(context, quad_command->vertices[2u].position, 10.0f, 4.0f);
+        expect_position(context, quad_command->vertices[5u].position, 6.0f, 4.0f);
+        TEST_EXPECT(context, quad_command->vertices[6u].color.a == 1.0f);
+        TEST_EXPECT(context, quad_command->vertices[8u].color.a == 0.0f);
+
+        gui::draw::destroy_context(draw_context);
+    }
+
     TEST_CASE(draw_batches_adjacent_compatible_primitive_commands) {
         Arena owner_arena = {};
         owner_arena.init();
@@ -185,7 +233,7 @@ namespace {
         TEST_EXPECT(context, solid_batch != nullptr);
         TEST_EXPECT(context, solid_batch->command_index == 0u);
         TEST_EXPECT(context, solid_batch->command_count == 2u);
-        TEST_EXPECT(context, solid_batch->vertex_count == 33u);
+        TEST_EXPECT(context, solid_batch->vertex_count == 51u);
         TEST_EXPECT(context, !gui::render::texture_valid(solid_batch->texture));
 
         gui::draw::PrimitiveBatch const* textured_batch =
