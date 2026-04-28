@@ -60,6 +60,7 @@ namespace gui::draw {
 
     enum class CommandKind : uint8_t {
         PRIMITIVE_BATCH,
+        STYLED_RECT,
         TEXT,
     };
 
@@ -83,6 +84,24 @@ namespace gui::draw {
         font_cache::Font font = {};
         float size = 16.0f;
         Color color = {};
+    };
+
+    struct BoxStyle {
+        Color fill_color = {};
+        gui::render::Texture texture = {};
+        Rect uv_rect = {{0.0f, 0.0f}, {1.0f, 1.0f}};
+        Color border_color = {};
+        float border_thickness = 0.0f;
+        float radius = 0.0f;
+        float softness = 1.0f;
+    };
+
+    struct StyledRectCommand {
+        Rect rect = {};
+        BoxStyle style = {};
+        Rect clip_rect = {};
+        Transform2D transform = {};
+        float opacity = 1.0f;
     };
 
     struct TextCommand {
@@ -132,6 +151,7 @@ namespace gui::draw {
     auto draw_rect(Context context, Rect rect, Color color, float thickness, float rounding)
         -> void;
     auto draw_rect_filled(Context context, Rect rect, Color color, float rounding) -> void;
+    auto draw_rect_styled(Context context, Rect rect, BoxStyle style) -> void;
     auto
     draw_image(Context context, gui::render::Texture texture, Rect rect, Rect uv_rect, Color color)
         -> void;
@@ -186,6 +206,9 @@ namespace gui::draw {
     [[nodiscard]] auto primitive_batch(Context context, size_t index) -> PrimitiveBatch const*;
     [[nodiscard]] auto command_count(Context context) -> size_t;
     [[nodiscard]] auto command(Context context, size_t index) -> Command const*;
+    [[nodiscard]] auto styled_rect_command_count(Context context) -> size_t;
+    [[nodiscard]] auto styled_rect_command(Context context, size_t index)
+        -> StyledRectCommand const*;
     [[nodiscard]] auto text_command_count(Context context) -> size_t;
     [[nodiscard]] auto text_command(Context context, size_t index) -> TextCommand const*;
 

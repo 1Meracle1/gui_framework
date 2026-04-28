@@ -42,6 +42,7 @@ namespace gui::draw {
             PrimitiveCommand* primitive_commands = nullptr;
             PrimitiveBatch* primitive_batches = nullptr;
             Command* commands = nullptr;
+            StyledRectCommand* styled_rect_commands = nullptr;
             TextCommand* text_commands = nullptr;
             PathPoint* path_first = nullptr;
             PathPoint* path_last = nullptr;
@@ -54,6 +55,7 @@ namespace gui::draw {
             size_t primitive_command_count = 0u;
             size_t primitive_batch_count = 0u;
             size_t command_count = 0u;
+            size_t styled_rect_command_count = 0u;
             size_t text_command_count = 0u;
             size_t path_count = 0u;
             size_t command_capacity = 0u;
@@ -80,6 +82,11 @@ namespace gui::draw {
 
         [[nodiscard]] auto color_visible(Color color) -> bool {
             return color.a > 0.0f;
+        }
+
+        [[nodiscard]] auto box_style_visible(BoxStyle const& style) -> bool {
+            return color_visible(style.fill_color) ||
+                   (style.border_thickness > 0.0f && color_visible(style.border_color));
         }
 
         [[nodiscard]] auto transform_point(Transform2D const& transform, Vec2 point) -> Vec2 {
@@ -235,6 +242,27 @@ namespace gui::draw {
             impl->primitive_command_count += 1u;
             append_primitive_batch(impl, command_index);
             return vertices;
+        }
+
+        auto push_styled_rect(ContextImpl* impl, Rect rect, BoxStyle style) -> void {
+            ASSERT(impl != nullptr);
+            ASSERT(impl->styled_rect_command_count < impl->command_capacity);
+
+            float const max_size = std::min(rect_width(rect), rect_height(rect)) * 0.5f;
+            style.border_thickness = std::clamp(style.border_thickness, 0.0f, max_size);
+            style.radius = std::clamp(style.radius, 0.0f, max_size);
+            style.softness = std::max(style.softness, 0.0f);
+
+            size_t const command_index = impl->styled_rect_command_count;
+            StyledRectCommand* const command = impl->styled_rect_commands + command_index;
+            *command = {};
+            command->rect = rect;
+            command->style = style;
+            command->clip_rect = impl->current_clip_rect;
+            command->transform = impl->current_transform;
+            command->opacity = impl->current_opacity;
+            impl->styled_rect_command_count += 1u;
+            append_command(impl, CommandKind::STYLED_RECT, command_index);
         }
 
         auto
@@ -554,10 +582,12 @@ namespace gui::draw {
         impl->primitive_commands =
             arena_alloc<PrimitiveCommand>(arena, desc.initial_command_capacity);
         impl->primitive_batches = arena_alloc<PrimitiveBatch>(arena, desc.initial_command_capacity);
-        impl->commands = arena_alloc<Command>(arena, desc.initial_command_capacity * 2u);
+        impl->commands = arena_alloc<Command>(arena, desc.initial_command_capacity * 3u);
+        impl->styled_rect_commands =
+            arena_alloc<StyledRectCommand>(arena, desc.initial_command_capacity);
         impl->text_commands = arena_alloc<TextCommand>(arena, desc.initial_command_capacity);
         impl->command_capacity = desc.initial_command_capacity;
-        impl->order_capacity = desc.initial_command_capacity * 2u;
+        impl->order_capacity = desc.initial_command_capacity * 3u;
         impl->font_cache = desc.font_cache;
         reset_state(impl);
         out_context.handle = impl;
@@ -570,10 +600,12 @@ namespace gui::draw {
         impl->primitive_commands = nullptr;
         impl->primitive_batches = nullptr;
         impl->commands = nullptr;
+        impl->styled_rect_commands = nullptr;
         impl->text_commands = nullptr;
         impl->primitive_command_count = 0u;
         impl->primitive_batch_count = 0u;
         impl->command_count = 0u;
+        impl->styled_rect_command_count = 0u;
         impl->text_command_count = 0u;
         clear_path(impl);
         reset_state(impl);
@@ -591,6 +623,7 @@ namespace gui::draw {
         impl->primitive_command_count = 0u;
         impl->primitive_batch_count = 0u;
         impl->command_count = 0u;
+        impl->styled_rect_command_count = 0u;
         impl->text_command_count = 0u;
         clear_path(impl);
         reset_state(impl);
@@ -872,6 +905,18 @@ namespace gui::draw {
         path_clear(context);
         path_rect(context, rect, rounding);
         path_fill_convex(context, color);
+    }
+
+    auto draw_rect_styled(Context context, Rect rect, BoxStyle style) -> void {
+        ContextImpl* const impl = context_from_handle(context);
+        ASSERT(impl != nullptr);
+
+        rect = rect_normalized(rect);
+        if (!rect_visible(rect) || !box_style_visible(style)) {
+            return;
+        }
+
+        push_styled_rect(impl, rect, style);
     }
 
     auto
@@ -1158,6 +1203,20 @@ namespace gui::draw {
         }
 
         return impl->commands + index;
+    }
+
+    auto styled_rect_command_count(Context context) -> size_t {
+        ContextImpl const* const impl = context_from_handle(context);
+        return impl != nullptr ? impl->styled_rect_command_count : 0u;
+    }
+
+    auto styled_rect_command(Context context, size_t index) -> StyledRectCommand const* {
+        ContextImpl const* const impl = context_from_handle(context);
+        if (impl == nullptr || index >= impl->styled_rect_command_count) {
+            return nullptr;
+        }
+
+        return impl->styled_rect_commands + index;
     }
 
     auto text_command_count(Context context) -> size_t {
