@@ -75,13 +75,6 @@ namespace gui::render {
         ALPHA,
     };
 
-    enum class BindGroupSlot : uint8_t {
-        FRAME,
-        PASS,
-        MATERIAL,
-        DRAW,
-    };
-
     struct SizeU32 {
         uint32_t width = 0u;
         uint32_t height = 0u;
@@ -221,7 +214,6 @@ namespace gui::render {
 
     // Resource handles are referenced, not owned.
     struct BindGroupDesc {
-        BindGroupSlot slot = BindGroupSlot::DRAW;
         BindGroupBufferBinding const* buffers = nullptr;
         size_t buffer_count = 0u;
         BindGroupTextureBinding const* textures = nullptr;

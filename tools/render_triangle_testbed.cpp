@@ -221,7 +221,6 @@ namespace {
         transform_binding.buffer = pipeline->transform_constants;
 
         gui::render::BindGroupDesc bind_group_desc = {};
-        bind_group_desc.slot = gui::render::BindGroupSlot::DRAW;
         bind_group_desc.buffers = &transform_binding;
         bind_group_desc.buffer_count = 1u;
 
@@ -236,7 +235,6 @@ namespace {
         tint_binding.slot = 0u;
         tint_binding.buffer = pipeline->tint_constants;
 
-        bind_group_desc.slot = gui::render::BindGroupSlot::MATERIAL;
         bind_group_desc.buffers = &tint_binding;
 
         result = gui::render::create_bind_group(

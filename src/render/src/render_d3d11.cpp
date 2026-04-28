@@ -91,7 +91,6 @@ namespace gui::render::d3d11 {
             size_t texture_count = 0u;
             D3D11SamplerBinding* samplers = nullptr;
             size_t sampler_count = 0u;
-            BindGroupSlot slot = BindGroupSlot::DRAW;
         };
 
         template <typename T> auto release_com(T*& value) -> void {
@@ -808,7 +807,6 @@ namespace gui::render::d3d11 {
         BASE_UNUSED(context);
 
         D3D11BindGroup* group = arena_new<D3D11BindGroup>(arena);
-        group->slot = desc.slot;
 
         if (desc.buffer_count != 0u) {
             group->buffers = arena_alloc<D3D11BufferBinding>(arena, desc.buffer_count);
@@ -863,7 +861,6 @@ namespace gui::render::d3d11 {
         impl->texture_count = 0u;
         impl->samplers = nullptr;
         impl->sampler_count = 0u;
-        impl->slot = BindGroupSlot::DRAW;
         group.handle = nullptr;
     }
 

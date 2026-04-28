@@ -131,10 +131,9 @@ namespace {
         TEST_EXPECT(context, desc.blend_mode == gui::render::BlendMode::OPAQUE);
     }
 
-    TEST_CASE(render_bind_group_defaults_describe_draw_frequency_group) {
+    TEST_CASE(render_bind_group_defaults_describe_empty_group) {
         gui::render::BindGroupDesc const desc = {};
 
-        TEST_EXPECT(context, desc.slot == gui::render::BindGroupSlot::DRAW);
         TEST_EXPECT(context, desc.buffers == nullptr);
         TEST_EXPECT(context, desc.buffer_count == 0u);
         TEST_EXPECT(context, desc.textures == nullptr);

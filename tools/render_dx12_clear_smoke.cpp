@@ -11,13 +11,22 @@
 #include <base/fmt.h>
 #include <base/memory.h>
 #include <cstddef>
+#include <cstdint>
 #include <cstring>
+
+// clang-format off
 #include <render/render.h>
+#include <d3d12.h>
+#include <dxgi1_6.h>
 #include <windows.h>
+// clang-format on
 
 namespace {
 
     constexpr wchar_t WINDOW_CLASS_NAME[] = L"gui_framework_render_dx12_clear_smoke";
+    constexpr UINT READBACK_ROW_PITCH = D3D12_TEXTURE_DATA_PITCH_ALIGNMENT;
+    constexpr UINT SMOKE_SAMPLE_X = 79u;
+    constexpr UINT SMOKE_SAMPLE_Y = 32u;
 
     struct Vertex {
         float position[2];
@@ -32,14 +41,28 @@ namespace {
         gui::render::Shader vertex_shader = {};
         gui::render::Shader pixel_shader = {};
         gui::render::Pipeline pipeline = {};
-        gui::render::Buffer vertex_constants = {};
+        gui::render::Buffer vertex_offset_constants = {};
+        gui::render::Buffer vertex_scale_constants = {};
         gui::render::Buffer pixel_constants = {};
-        gui::render::BindGroup vertex_bind_group = {};
+        gui::render::BindGroup vertex_offset_bind_group = {};
+        gui::render::BindGroup vertex_scale_bind_group = {};
         gui::render::BindGroup pixel_bind_group = {};
+        ID3D12Resource* readback = nullptr;
     };
 
     auto log_result(char const* operation, gui::render::Result result) -> void {
         fmt::eprintf("%s failed: %s\n", operation, gui::render::result_name(result));
+    }
+
+    auto log_hresult(char const* operation, HRESULT hr) -> void {
+        fmt::eprintf("%s failed: 0x%08x\n", operation, static_cast<uint32_t>(hr));
+    }
+
+    template <typename T> auto release_com(T*& value) -> void {
+        if (value != nullptr) {
+            value->Release();
+            value = nullptr;
+        }
     }
 
     auto CALLBACK window_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) -> LRESULT {
@@ -105,17 +128,24 @@ namespace {
     }
 
     auto destroy_draw_smoke(gui::render::Context context, DrawSmoke* smoke) -> void {
+        release_com(smoke->readback);
         if (gui::render::bind_group_valid(smoke->pixel_bind_group)) {
             gui::render::destroy_bind_group(context, smoke->pixel_bind_group);
         }
-        if (gui::render::bind_group_valid(smoke->vertex_bind_group)) {
-            gui::render::destroy_bind_group(context, smoke->vertex_bind_group);
+        if (gui::render::bind_group_valid(smoke->vertex_scale_bind_group)) {
+            gui::render::destroy_bind_group(context, smoke->vertex_scale_bind_group);
+        }
+        if (gui::render::bind_group_valid(smoke->vertex_offset_bind_group)) {
+            gui::render::destroy_bind_group(context, smoke->vertex_offset_bind_group);
         }
         if (gui::render::buffer_valid(smoke->pixel_constants)) {
             gui::render::destroy_buffer(context, smoke->pixel_constants);
         }
-        if (gui::render::buffer_valid(smoke->vertex_constants)) {
-            gui::render::destroy_buffer(context, smoke->vertex_constants);
+        if (gui::render::buffer_valid(smoke->vertex_scale_constants)) {
+            gui::render::destroy_buffer(context, smoke->vertex_scale_constants);
+        }
+        if (gui::render::buffer_valid(smoke->vertex_offset_constants)) {
+            gui::render::destroy_buffer(context, smoke->vertex_offset_constants);
         }
         if (gui::render::pipeline_valid(smoke->pipeline)) {
             gui::render::destroy_pipeline(context, smoke->pipeline);
@@ -128,12 +158,49 @@ namespace {
         }
     }
 
+    [[nodiscard]] auto create_readback(gui::render::Context context, DrawSmoke* smoke) -> bool {
+        ID3D12Device* const device =
+            static_cast<ID3D12Device*>(gui::render::native_device(context));
+        if (device == nullptr) {
+            return false;
+        }
+
+        D3D12_HEAP_PROPERTIES heap_properties = {};
+        heap_properties.Type = D3D12_HEAP_TYPE_READBACK;
+
+        D3D12_RESOURCE_DESC resource_desc = {};
+        resource_desc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+        resource_desc.Width = READBACK_ROW_PITCH;
+        resource_desc.Height = 1u;
+        resource_desc.DepthOrArraySize = 1u;
+        resource_desc.MipLevels = 1u;
+        resource_desc.SampleDesc.Count = 1u;
+        resource_desc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+
+        HRESULT const hr = device->CreateCommittedResource(&heap_properties,
+                                                           D3D12_HEAP_FLAG_NONE,
+                                                           &resource_desc,
+                                                           D3D12_RESOURCE_STATE_COPY_DEST,
+                                                           nullptr,
+                                                           IID_PPV_ARGS(&smoke->readback));
+        if (FAILED(hr) || smoke->readback == nullptr) {
+            log_hresult("ID3D12Device::CreateCommittedResource(readback)", hr);
+            return false;
+        }
+
+        return true;
+    }
+
     [[nodiscard]] auto
     create_draw_smoke(Arena& arena, gui::render::Context context, DrawSmoke* smoke) -> bool {
         constexpr StrRef SHADER_SOURCE =
-            "cbuffer VertexConstants : register(b0)\n"
+            "cbuffer VertexOffsetConstants : register(b0)\n"
             "{\n"
             "    float4 g_offset;\n"
+            "};\n"
+            "cbuffer VertexScaleConstants : register(b1)\n"
+            "{\n"
+            "    float4 g_scale;\n"
             "};\n"
             "cbuffer PixelConstants : register(b0)\n"
             "{\n"
@@ -152,13 +219,14 @@ namespace {
             "PSInput vs_main(VSInput input)\n"
             "{\n"
             "    PSInput output;\n"
-            "    output.position = float4(input.position + g_offset.xy, 0.0f, 1.0f);\n"
+            "    output.position = float4((input.position * g_scale.xy) + g_offset.xy, 0.0f, "
+            "1.0f);\n"
             "    output.color = input.color;\n"
             "    return output;\n"
             "}\n"
             "float4 ps_main(PSInput input) : SV_Target\n"
             "{\n"
-            "    return float4(input.color * g_tint.rgb, g_tint.a);\n"
+            "    return float4(g_tint.rgb + (input.color * 0.0f), g_tint.a);\n"
             "}\n";
 
         gui::render::ShaderSourceDesc shader_desc = {};
@@ -212,9 +280,16 @@ namespace {
         constants_desc.usage = gui::render::BufferUsage::DYNAMIC;
         constants_desc.byte_size = sizeof(Constants);
 
-        result = gui::render::create_buffer(context, constants_desc, smoke->vertex_constants);
+        result =
+            gui::render::create_buffer(context, constants_desc, smoke->vertex_offset_constants);
         if (gui::render::result_failed(result)) {
-            log_result("render::create_buffer(vertex constants)", result);
+            log_result("render::create_buffer(vertex offset constants)", result);
+            return false;
+        }
+
+        result = gui::render::create_buffer(context, constants_desc, smoke->vertex_scale_constants);
+        if (gui::render::result_failed(result)) {
+            log_result("render::create_buffer(vertex scale constants)", result);
             return false;
         }
 
@@ -224,18 +299,32 @@ namespace {
             return false;
         }
 
-        gui::render::BindGroupBufferBinding vertex_binding = {};
-        vertex_binding.stage = gui::render::ShaderStage::VERTEX;
-        vertex_binding.buffer = smoke->vertex_constants;
+        gui::render::BindGroupBufferBinding vertex_offset_binding = {};
+        vertex_offset_binding.stage = gui::render::ShaderStage::VERTEX;
+        vertex_offset_binding.slot = 0u;
+        vertex_offset_binding.buffer = smoke->vertex_offset_constants;
 
         gui::render::BindGroupDesc bind_group_desc = {};
-        bind_group_desc.buffers = &vertex_binding;
+        bind_group_desc.buffers = &vertex_offset_binding;
         bind_group_desc.buffer_count = 1u;
 
         result = gui::render::create_bind_group(
-            arena, context, bind_group_desc, smoke->vertex_bind_group);
+            arena, context, bind_group_desc, smoke->vertex_offset_bind_group);
         if (gui::render::result_failed(result)) {
-            log_result("render::create_bind_group(vertex)", result);
+            log_result("render::create_bind_group(vertex offset)", result);
+            return false;
+        }
+
+        gui::render::BindGroupBufferBinding vertex_scale_binding = {};
+        vertex_scale_binding.stage = gui::render::ShaderStage::VERTEX;
+        vertex_scale_binding.slot = 1u;
+        vertex_scale_binding.buffer = smoke->vertex_scale_constants;
+        bind_group_desc.buffers = &vertex_scale_binding;
+
+        result = gui::render::create_bind_group(
+            arena, context, bind_group_desc, smoke->vertex_scale_bind_group);
+        if (gui::render::result_failed(result)) {
+            log_result("render::create_bind_group(vertex scale)", result);
             return false;
         }
 
@@ -251,7 +340,7 @@ namespace {
             return false;
         }
 
-        return true;
+        return create_readback(context, smoke);
     }
 
     auto draw_smoke_triangle(gui::render::Context context, DrawSmoke const& smoke) -> void {
@@ -267,16 +356,24 @@ namespace {
         gui::render::commit_frame_uploads(context);
 
         Constants vertex_constants = {};
+        vertex_constants.value[0] = 0.65f;
         vertex_constants.value[3] = 1.0f;
 
+        Constants vertex_scale = {};
+        vertex_scale.value[0] = 0.5f;
+        vertex_scale.value[1] = 0.5f;
+        vertex_scale.value[3] = 1.0f;
+
         Constants pixel_constants = {};
-        pixel_constants.value[0] = 0.95f;
-        pixel_constants.value[1] = 0.85f;
-        pixel_constants.value[2] = 1.0f;
+        pixel_constants.value[0] = 0.9f;
+        pixel_constants.value[1] = 0.2f;
+        pixel_constants.value[2] = 0.1f;
         pixel_constants.value[3] = 1.0f;
 
         gui::render::update_buffer(
-            context, smoke.vertex_constants, &vertex_constants, sizeof(vertex_constants));
+            context, smoke.vertex_offset_constants, &vertex_constants, sizeof(vertex_constants));
+        gui::render::update_buffer(
+            context, smoke.vertex_scale_constants, &vertex_scale, sizeof(vertex_scale));
         gui::render::update_buffer(
             context, smoke.pixel_constants, &pixel_constants, sizeof(pixel_constants));
 
@@ -286,7 +383,8 @@ namespace {
         vertex_buffer.byte_offset = static_cast<uint32_t>(upload.byte_offset);
 
         gui::render::BindGroup bind_groups[] = {
-            smoke.vertex_bind_group,
+            smoke.vertex_offset_bind_group,
+            smoke.vertex_scale_bind_group,
             smoke.pixel_bind_group,
         };
 
@@ -301,10 +399,97 @@ namespace {
         gui::render::draw(context, draw_desc);
     }
 
+    [[nodiscard]] auto capture_smoke_pixel(gui::render::Context context,
+                                           gui::render::Window window,
+                                           ID3D12Resource* readback) -> bool {
+        IDXGISwapChain3* const swap_chain =
+            static_cast<IDXGISwapChain3*>(gui::render::native_swap_chain(window));
+        ID3D12GraphicsCommandList* const command_list =
+            static_cast<ID3D12GraphicsCommandList*>(gui::render::native_device_context(context));
+        if (swap_chain == nullptr || command_list == nullptr || readback == nullptr) {
+            return false;
+        }
+
+        ID3D12Resource* back_buffer = nullptr;
+        HRESULT const hr = swap_chain->GetBuffer(swap_chain->GetCurrentBackBufferIndex(),
+                                                 IID_PPV_ARGS(&back_buffer));
+        if (FAILED(hr) || back_buffer == nullptr) {
+            log_hresult("IDXGISwapChain3::GetBuffer", hr);
+            return false;
+        }
+
+        D3D12_RESOURCE_BARRIER barrier = {};
+        barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+        barrier.Transition.pResource = back_buffer;
+        barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
+        barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_SOURCE;
+        barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+        command_list->ResourceBarrier(1u, &barrier);
+
+        D3D12_TEXTURE_COPY_LOCATION source = {};
+        source.pResource = back_buffer;
+        source.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+        source.SubresourceIndex = 0u;
+
+        D3D12_TEXTURE_COPY_LOCATION target = {};
+        target.pResource = readback;
+        target.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+        target.PlacedFootprint.Footprint.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        target.PlacedFootprint.Footprint.Width = 1u;
+        target.PlacedFootprint.Footprint.Height = 1u;
+        target.PlacedFootprint.Footprint.Depth = 1u;
+        target.PlacedFootprint.Footprint.RowPitch = READBACK_ROW_PITCH;
+
+        D3D12_BOX source_box = {};
+        source_box.left = SMOKE_SAMPLE_X;
+        source_box.top = SMOKE_SAMPLE_Y;
+        source_box.front = 0u;
+        source_box.right = SMOKE_SAMPLE_X + 1u;
+        source_box.bottom = SMOKE_SAMPLE_Y + 1u;
+        source_box.back = 1u;
+        command_list->CopyTextureRegion(&target, 0u, 0u, 0u, &source, &source_box);
+
+        barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_SOURCE;
+        barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
+        command_list->ResourceBarrier(1u, &barrier);
+
+        release_com(back_buffer);
+        return true;
+    }
+
+    [[nodiscard]] auto verify_smoke_pixel(DrawSmoke* smoke) -> bool {
+        void* mapped = nullptr;
+        D3D12_RANGE read_range = {0u, 4u};
+        HRESULT const hr = smoke->readback->Map(0u, &read_range, &mapped);
+        if (FAILED(hr) || mapped == nullptr) {
+            log_hresult("ID3D12Resource::Map(readback)", hr);
+            return false;
+        }
+
+        uint8_t const* const data = static_cast<uint8_t const*>(mapped);
+        uint8_t const r = data[0u];
+        uint8_t const g = data[1u];
+        uint8_t const b = data[2u];
+        uint8_t const a = data[3u];
+        D3D12_RANGE write_range = {0u, 0u};
+        smoke->readback->Unmap(0u, &write_range);
+
+        bool const ok = r > 180u && g > 30u && g < 90u && b < 60u && a > 200u;
+        if (!ok) {
+            fmt::eprintf("DX12 bind group slot smoke failed: pixel=(%u,%u,%u,%u)\n",
+                         static_cast<uint32_t>(r),
+                         static_cast<uint32_t>(g),
+                         static_cast<uint32_t>(b),
+                         static_cast<uint32_t>(a));
+        }
+        return ok;
+    }
+
     [[nodiscard]] auto clear_present(gui::render::Context context,
                                      gui::render::Window window,
                                      gui::render::Color color,
-                                     DrawSmoke const* smoke) -> bool {
+                                     DrawSmoke const* smoke,
+                                     bool capture_pixel) -> bool {
         gui::render::begin_frame(context);
 
         gui::render::WindowRenderPassDesc pass_desc = {};
@@ -321,6 +506,11 @@ namespace {
             draw_smoke_triangle(context, *smoke);
         }
 
+        bool captured = true;
+        if (capture_pixel && smoke != nullptr) {
+            captured = capture_smoke_pixel(context, window, smoke->readback);
+        }
+
         gui::render::end_render_pass(context);
 
         result = gui::render::present_window(context, window);
@@ -329,7 +519,7 @@ namespace {
             return false;
         }
 
-        return true;
+        return captured;
     }
 
 } // namespace
@@ -377,7 +567,7 @@ auto main() -> int {
     DrawSmoke draw_smoke = {};
     bool ok = create_draw_smoke(arena, context, &draw_smoke);
     if (ok) {
-        ok = clear_present(context, window, {0.1f, 0.2f, 0.35f, 1.0f}, &draw_smoke);
+        ok = clear_present(context, window, {0.1f, 0.2f, 0.35f, 1.0f}, &draw_smoke, true);
     }
     pump_messages();
 
@@ -390,11 +580,15 @@ auto main() -> int {
     }
 
     if (ok) {
-        ok = clear_present(context, window, {0.35f, 0.1f, 0.2f, 1.0f}, &draw_smoke);
+        ok = verify_smoke_pixel(&draw_smoke);
     }
 
-    destroy_draw_smoke(context, &draw_smoke);
+    if (ok) {
+        ok = clear_present(context, window, {0.35f, 0.1f, 0.2f, 1.0f}, &draw_smoke, false);
+    }
+
     gui::render::destroy_window(window);
+    destroy_draw_smoke(context, &draw_smoke);
     gui::render::destroy_context(context);
     DestroyWindow(hwnd);
     UnregisterClassW(WINDOW_CLASS_NAME, instance);

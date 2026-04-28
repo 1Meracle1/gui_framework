@@ -59,14 +59,13 @@ namespace gui::render::d3d12 {
             PrimitiveTopology topology = PrimitiveTopology::TRIANGLE_LIST;
         };
 
+        struct D3D12DescriptorTable {
+            D3D12_GPU_DESCRIPTOR_HANDLE gpu = {};
+            uint32_t mask = 0u;
+        };
+
         struct D3D12BindGroup {
-            D3D12_GPU_DESCRIPTOR_HANDLE vs_cbv_table = {};
-            D3D12_GPU_DESCRIPTOR_HANDLE ps_cbv_table = {};
-            D3D12_GPU_DESCRIPTOR_HANDLE vs_srv_table = {};
-            D3D12_GPU_DESCRIPTOR_HANDLE ps_srv_table = {};
-            D3D12_GPU_DESCRIPTOR_HANDLE vs_sampler_table = {};
-            D3D12_GPU_DESCRIPTOR_HANDLE ps_sampler_table = {};
-            BindGroupSlot slot = BindGroupSlot::DRAW;
+            D3D12DescriptorTable tables[ROOT_COUNT] = {};
         };
 
         struct D3D12FrameBuffer {
@@ -117,6 +116,7 @@ namespace gui::render::d3d12 {
             uint64_t submitted_fence_value = 0u;
             D3D12Window* active_window = nullptr;
             D3D12FrameBuffer frame_vertex_buffer = {};
+            D3D12DescriptorTable bound_tables[ROOT_COUNT] = {};
             D3D12DeferredRelease* deferred_releases = nullptr;
             size_t deferred_release_count = 0u;
             bool frame_active = false;
@@ -260,36 +260,156 @@ namespace gui::render::d3d12 {
             return handle;
         }
 
-        [[nodiscard]] auto allocate_shader_descriptors(D3D12Context* context, uint32_t count)
-            -> uint32_t {
-            if (context->frame_active) {
-                uint32_t const index =
-                    FRAME_SHADER_DESCRIPTOR_BASE + context->frame_shader_descriptor_count;
-                ASSERT(index + count <= SHADER_DESCRIPTOR_COUNT);
-                context->frame_shader_descriptor_count += count;
-                return index;
-            }
-
+        [[nodiscard]] auto allocate_permanent_shader_descriptors(D3D12Context* context,
+                                                                 uint32_t count) -> uint32_t {
             uint32_t const index = context->permanent_shader_descriptor_count;
             ASSERT(index + count <= FRAME_SHADER_DESCRIPTOR_BASE);
             context->permanent_shader_descriptor_count += count;
             return index;
         }
 
-        [[nodiscard]] auto allocate_sampler_descriptors(D3D12Context* context, uint32_t count)
+        [[nodiscard]] auto allocate_frame_shader_descriptors(D3D12Context* context, uint32_t count)
             -> uint32_t {
-            if (context->frame_active) {
-                uint32_t const index =
-                    FRAME_SAMPLER_DESCRIPTOR_BASE + context->frame_sampler_descriptor_count;
-                ASSERT(index + count <= SAMPLER_DESCRIPTOR_COUNT);
-                context->frame_sampler_descriptor_count += count;
-                return index;
-            }
+            ASSERT(context->frame_active);
+            uint32_t const index =
+                FRAME_SHADER_DESCRIPTOR_BASE + context->frame_shader_descriptor_count;
+            ASSERT(index + count <= SHADER_DESCRIPTOR_COUNT);
+            context->frame_shader_descriptor_count += count;
+            return index;
+        }
 
+        [[nodiscard]] auto allocate_permanent_sampler_descriptors(D3D12Context* context,
+                                                                  uint32_t count) -> uint32_t {
             uint32_t const index = context->permanent_sampler_descriptor_count;
             ASSERT(index + count <= FRAME_SAMPLER_DESCRIPTOR_BASE);
             context->permanent_sampler_descriptor_count += count;
             return index;
+        }
+
+        [[nodiscard]] auto allocate_frame_sampler_descriptors(D3D12Context* context, uint32_t count)
+            -> uint32_t {
+            ASSERT(context->frame_active);
+            uint32_t const index =
+                FRAME_SAMPLER_DESCRIPTOR_BASE + context->frame_sampler_descriptor_count;
+            ASSERT(index + count <= SAMPLER_DESCRIPTOR_COUNT);
+            context->frame_sampler_descriptor_count += count;
+            return index;
+        }
+
+        [[nodiscard]] auto root_uses_sampler(uint32_t root_parameter) -> bool {
+            return root_parameter == ROOT_VS_SAMPLER || root_parameter == ROOT_PS_SAMPLER;
+        }
+
+        [[nodiscard]] auto descriptor_mask(uint32_t slot) -> uint32_t {
+            return 1u << slot;
+        }
+
+        [[nodiscard]] auto descriptor_cpu_handle(D3D12Context const* context,
+                                                 uint32_t root_parameter,
+                                                 uint32_t index) -> D3D12_CPU_DESCRIPTOR_HANDLE {
+            return root_uses_sampler(root_parameter) ? sampler_cpu_handle(context, index)
+                                                     : shader_cpu_handle(context, index);
+        }
+
+        [[nodiscard]] auto descriptor_heap_type(uint32_t root_parameter)
+            -> D3D12_DESCRIPTOR_HEAP_TYPE {
+            return root_uses_sampler(root_parameter) ? D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER
+                                                     : D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+        }
+
+        [[nodiscard]] auto descriptor_index(D3D12Context const* context,
+                                            uint32_t root_parameter,
+                                            D3D12_GPU_DESCRIPTOR_HANDLE handle) -> uint32_t {
+            D3D12_GPU_DESCRIPTOR_HANDLE const base =
+                root_uses_sampler(root_parameter)
+                    ? context->sampler_heap->GetGPUDescriptorHandleForHeapStart()
+                    : context->shader_heap->GetGPUDescriptorHandleForHeapStart();
+            uint32_t const size = root_uses_sampler(root_parameter)
+                                      ? context->sampler_descriptor_size
+                                      : context->shader_descriptor_size;
+            return static_cast<uint32_t>((handle.ptr - base.ptr) / size);
+        }
+
+        [[nodiscard]] auto allocate_permanent_descriptor_table(D3D12Context* context,
+                                                               uint32_t root_parameter)
+            -> D3D12_GPU_DESCRIPTOR_HANDLE {
+            uint32_t const index =
+                root_uses_sampler(root_parameter)
+                    ? allocate_permanent_sampler_descriptors(context, DESCRIPTOR_SLOT_COUNT)
+                    : allocate_permanent_shader_descriptors(context, DESCRIPTOR_SLOT_COUNT);
+            return root_uses_sampler(root_parameter) ? sampler_gpu_handle(context, index)
+                                                     : shader_gpu_handle(context, index);
+        }
+
+        [[nodiscard]] auto allocate_frame_descriptor_table(D3D12Context* context,
+                                                           uint32_t root_parameter)
+            -> D3D12_GPU_DESCRIPTOR_HANDLE {
+            uint32_t const index =
+                root_uses_sampler(root_parameter)
+                    ? allocate_frame_sampler_descriptors(context, DESCRIPTOR_SLOT_COUNT)
+                    : allocate_frame_shader_descriptors(context, DESCRIPTOR_SLOT_COUNT);
+            return root_uses_sampler(root_parameter) ? sampler_gpu_handle(context, index)
+                                                     : shader_gpu_handle(context, index);
+        }
+
+        auto copy_descriptor(D3D12Context* context,
+                             uint32_t root_parameter,
+                             D3D12_GPU_DESCRIPTOR_HANDLE target_table,
+                             D3D12_GPU_DESCRIPTOR_HANDLE source_table,
+                             uint32_t slot) -> void {
+            uint32_t const target_index =
+                descriptor_index(context, root_parameter, target_table) + slot;
+            uint32_t const source_index =
+                descriptor_index(context, root_parameter, source_table) + slot;
+            context->device->CopyDescriptorsSimple(
+                1u,
+                descriptor_cpu_handle(context, root_parameter, target_index),
+                descriptor_cpu_handle(context, root_parameter, source_index),
+                descriptor_heap_type(root_parameter));
+        }
+
+        auto copy_table(D3D12Context* context,
+                        uint32_t root_parameter,
+                        D3D12_GPU_DESCRIPTOR_HANDLE target,
+                        D3D12DescriptorTable source) -> void {
+            for (uint32_t slot = 0u; slot < DESCRIPTOR_SLOT_COUNT; ++slot) {
+                if ((source.mask & descriptor_mask(slot)) != 0u) {
+                    copy_descriptor(context, root_parameter, target, source.gpu, slot);
+                }
+            }
+        }
+
+        auto bind_descriptor_table(D3D12Context* context,
+                                   uint32_t root_parameter,
+                                   D3D12DescriptorTable source) -> void {
+            if (source.mask == 0u) {
+                return;
+            }
+
+            D3D12DescriptorTable target = {};
+            target.gpu = allocate_frame_descriptor_table(context, root_parameter);
+            target.mask = context->bound_tables[root_parameter].mask | source.mask;
+            copy_table(context, root_parameter, target.gpu, context->bound_tables[root_parameter]);
+            copy_table(context, root_parameter, target.gpu, source);
+
+            context->bound_tables[root_parameter] = target;
+            context->command_list->SetGraphicsRootDescriptorTable(root_parameter, target.gpu);
+        }
+
+        auto bind_current_descriptor_tables(D3D12Context* context) -> void {
+            for (uint32_t root_parameter = 0u; root_parameter < ROOT_COUNT; ++root_parameter) {
+                D3D12DescriptorTable const table = context->bound_tables[root_parameter];
+                if (table.mask != 0u) {
+                    context->command_list->SetGraphicsRootDescriptorTable(root_parameter,
+                                                                          table.gpu);
+                }
+            }
+        }
+
+        auto reset_bound_descriptor_tables(D3D12Context* context) -> void {
+            for (uint32_t root_parameter = 0u; root_parameter < ROOT_COUNT; ++root_parameter) {
+                context->bound_tables[root_parameter] = {};
+            }
         }
 
         auto release_completed_deferred(D3D12Context* context) -> void {
@@ -1225,6 +1345,7 @@ namespace gui::render::d3d12 {
         context_impl->command_list->SetGraphicsRootSignature(context_impl->root_signature);
         context_impl->command_list->SetPipelineState(pipeline_impl->pipeline_state);
         context_impl->command_list->IASetPrimitiveTopology(d3d_topology(pipeline_impl->topology));
+        bind_current_descriptor_tables(context_impl);
     }
 
     auto create_bind_group(Arena& arena,
@@ -1235,7 +1356,6 @@ namespace gui::render::d3d12 {
         ASSERT(context_impl != nullptr);
 
         D3D12BindGroup* group = arena_new<D3D12BindGroup>(arena);
-        group->slot = desc.slot;
 
         for (size_t index = 0u; index < desc.buffer_count; ++index) {
             BindGroupBufferBinding const& binding = desc.buffers[index];
@@ -1245,24 +1365,26 @@ namespace gui::render::d3d12 {
             ASSERT(buffer != nullptr);
             ASSERT(buffer_binding(buffer) == BufferBinding::UNIFORM);
 
-            D3D12_GPU_DESCRIPTOR_HANDLE* table =
-                binding.stage == ShaderStage::VERTEX ? &group->vs_cbv_table : &group->ps_cbv_table;
-            if (table->ptr == 0u) {
-                uint32_t const descriptor =
-                    allocate_shader_descriptors(context_impl, DESCRIPTOR_SLOT_COUNT);
-                *table = shader_gpu_handle(context_impl, descriptor);
+            uint32_t const root_parameter =
+                binding.stage == ShaderStage::VERTEX ? ROOT_VS_CBV : ROOT_PS_CBV;
+            D3D12DescriptorTable& table = group->tables[root_parameter];
+            if (table.gpu.ptr == 0u) {
+                table.gpu = allocate_permanent_descriptor_table(context_impl, root_parameter);
             }
 
-            uint32_t const descriptor_offset = static_cast<uint32_t>(
-                (table->ptr - context_impl->shader_heap->GetGPUDescriptorHandleForHeapStart().ptr) /
-                context_impl->shader_descriptor_size);
+            table.mask |= descriptor_mask(binding.slot);
+
+            uint32_t const descriptor_offset =
+                descriptor_index(context_impl, root_parameter, table.gpu);
             D3D12_CONSTANT_BUFFER_VIEW_DESC view_desc = {};
             view_desc.BufferLocation = buffer->GetGPUVirtualAddress();
             view_desc.SizeInBytes =
                 static_cast<UINT>(align_up(static_cast<size_t>(buffer->GetDesc().Width),
                                            D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT));
             context_impl->device->CreateConstantBufferView(
-                &view_desc, shader_cpu_handle(context_impl, descriptor_offset + binding.slot));
+                &view_desc,
+                descriptor_cpu_handle(
+                    context_impl, root_parameter, descriptor_offset + binding.slot));
         }
 
         for (size_t index = 0u; index < desc.texture_count; ++index) {
@@ -1272,17 +1394,17 @@ namespace gui::render::d3d12 {
             ID3D12Resource* texture = texture_from_handle(binding.texture);
             ASSERT(texture != nullptr);
 
-            D3D12_GPU_DESCRIPTOR_HANDLE* table =
-                binding.stage == ShaderStage::VERTEX ? &group->vs_srv_table : &group->ps_srv_table;
-            if (table->ptr == 0u) {
-                uint32_t const descriptor =
-                    allocate_shader_descriptors(context_impl, DESCRIPTOR_SLOT_COUNT);
-                *table = shader_gpu_handle(context_impl, descriptor);
+            uint32_t const root_parameter =
+                binding.stage == ShaderStage::VERTEX ? ROOT_VS_SRV : ROOT_PS_SRV;
+            D3D12DescriptorTable& table = group->tables[root_parameter];
+            if (table.gpu.ptr == 0u) {
+                table.gpu = allocate_permanent_descriptor_table(context_impl, root_parameter);
             }
 
-            uint32_t const descriptor_offset = static_cast<uint32_t>(
-                (table->ptr - context_impl->shader_heap->GetGPUDescriptorHandleForHeapStart().ptr) /
-                context_impl->shader_descriptor_size);
+            table.mask |= descriptor_mask(binding.slot);
+
+            uint32_t const descriptor_offset =
+                descriptor_index(context_impl, root_parameter, table.gpu);
             D3D12_SHADER_RESOURCE_VIEW_DESC view_desc = {};
             view_desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
             view_desc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
@@ -1291,7 +1413,8 @@ namespace gui::render::d3d12 {
             context_impl->device->CreateShaderResourceView(
                 texture,
                 &view_desc,
-                shader_cpu_handle(context_impl, descriptor_offset + binding.slot));
+                descriptor_cpu_handle(
+                    context_impl, root_parameter, descriptor_offset + binding.slot));
         }
 
         for (size_t index = 0u; index < desc.sampler_count; ++index) {
@@ -1300,19 +1423,17 @@ namespace gui::render::d3d12 {
 
             ASSERT(sampler_valid(binding.sampler));
 
-            D3D12_GPU_DESCRIPTOR_HANDLE* table = binding.stage == ShaderStage::VERTEX
-                                                     ? &group->vs_sampler_table
-                                                     : &group->ps_sampler_table;
-            if (table->ptr == 0u) {
-                uint32_t const descriptor =
-                    allocate_sampler_descriptors(context_impl, DESCRIPTOR_SLOT_COUNT);
-                *table = sampler_gpu_handle(context_impl, descriptor);
+            uint32_t const root_parameter =
+                binding.stage == ShaderStage::VERTEX ? ROOT_VS_SAMPLER : ROOT_PS_SAMPLER;
+            D3D12DescriptorTable& table = group->tables[root_parameter];
+            if (table.gpu.ptr == 0u) {
+                table.gpu = allocate_permanent_descriptor_table(context_impl, root_parameter);
             }
 
-            uint32_t const descriptor_offset = static_cast<uint32_t>(
-                (table->ptr -
-                 context_impl->sampler_heap->GetGPUDescriptorHandleForHeapStart().ptr) /
-                context_impl->sampler_descriptor_size);
+            table.mask |= descriptor_mask(binding.slot);
+
+            uint32_t const descriptor_offset =
+                descriptor_index(context_impl, root_parameter, table.gpu);
             D3D12_SAMPLER_DESC sampler_desc = {};
             sampler_desc.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
             sampler_desc.AddressU = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
@@ -1320,7 +1441,9 @@ namespace gui::render::d3d12 {
             sampler_desc.AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
             sampler_desc.MaxLOD = D3D12_FLOAT32_MAX;
             context_impl->device->CreateSampler(
-                &sampler_desc, sampler_cpu_handle(context_impl, descriptor_offset + binding.slot));
+                &sampler_desc,
+                descriptor_cpu_handle(
+                    context_impl, root_parameter, descriptor_offset + binding.slot));
         }
 
         out_group.handle = group;
@@ -1340,30 +1463,10 @@ namespace gui::render::d3d12 {
         D3D12BindGroup* group = bind_group_from_handle(bind_group);
         ASSERT(context_impl != nullptr);
         ASSERT(group != nullptr);
+        ASSERT(context_impl->frame_active);
 
-        if (group->vs_cbv_table.ptr != 0u) {
-            context_impl->command_list->SetGraphicsRootDescriptorTable(ROOT_VS_CBV,
-                                                                       group->vs_cbv_table);
-        }
-        if (group->ps_cbv_table.ptr != 0u) {
-            context_impl->command_list->SetGraphicsRootDescriptorTable(ROOT_PS_CBV,
-                                                                       group->ps_cbv_table);
-        }
-        if (group->vs_srv_table.ptr != 0u) {
-            context_impl->command_list->SetGraphicsRootDescriptorTable(ROOT_VS_SRV,
-                                                                       group->vs_srv_table);
-        }
-        if (group->ps_srv_table.ptr != 0u) {
-            context_impl->command_list->SetGraphicsRootDescriptorTable(ROOT_PS_SRV,
-                                                                       group->ps_srv_table);
-        }
-        if (group->vs_sampler_table.ptr != 0u) {
-            context_impl->command_list->SetGraphicsRootDescriptorTable(ROOT_VS_SAMPLER,
-                                                                       group->vs_sampler_table);
-        }
-        if (group->ps_sampler_table.ptr != 0u) {
-            context_impl->command_list->SetGraphicsRootDescriptorTable(ROOT_PS_SAMPLER,
-                                                                       group->ps_sampler_table);
+        for (uint32_t root_parameter = 0u; root_parameter < ROOT_COUNT; ++root_parameter) {
+            bind_descriptor_table(context_impl, root_parameter, group->tables[root_parameter]);
         }
     }
 
@@ -1431,6 +1534,7 @@ namespace gui::render::d3d12 {
         context_impl->frame_shader_descriptor_count = 0u;
         context_impl->frame_sampler_descriptor_count = 0u;
         context_impl->frame_vertex_buffer.used_size = 0u;
+        reset_bound_descriptor_tables(context_impl);
 
         HRESULT hr = context_impl->command_allocator->Reset();
         ASSERT(SUCCEEDED(hr));
