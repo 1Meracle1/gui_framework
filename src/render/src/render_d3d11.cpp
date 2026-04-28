@@ -25,7 +25,7 @@
 namespace gui::render::d3d11 {
     namespace {
 
-        constexpr size_t FRAME_VERTEX_BUFFER_DEFAULT_SIZE = 64u * 1024u;
+        constexpr size_t FRAME_VERTEX_BUFFER_DEFAULT_SIZE = 4u * 1024u * 1024u;
         constexpr size_t MAX_D3D11_BUFFER_BYTE_SIZE = 0xffffffffu;
         constexpr size_t D3D11_UNIFORM_BUFFER_ALIGNMENT = 16u;
 
@@ -137,6 +137,15 @@ namespace gui::render::d3d11 {
                 value->Release();
                 value = nullptr;
             }
+        }
+
+        auto unbind_shader_resources(D3D11Context* context) -> void {
+            ID3D11ShaderResourceView* views[BIND_GROUP_SLOT_COUNT] = {};
+            ID3D11SamplerState* samplers[BIND_GROUP_SLOT_COUNT] = {};
+            context->device_context->VSSetShaderResources(0u, BIND_GROUP_SLOT_COUNT, views);
+            context->device_context->PSSetShaderResources(0u, BIND_GROUP_SLOT_COUNT, views);
+            context->device_context->VSSetSamplers(0u, BIND_GROUP_SLOT_COUNT, samplers);
+            context->device_context->PSSetSamplers(0u, BIND_GROUP_SLOT_COUNT, samplers);
         }
 
         [[nodiscard]] auto context_from_handle(Context context) -> D3D11Context* {
@@ -797,6 +806,7 @@ namespace gui::render::d3d11 {
         ASSERT(context_impl != nullptr);
         ASSERT(impl != nullptr);
         ASSERT(impl->context == context_impl);
+        unbind_shader_resources(context_impl);
         release_com(impl->render_target_view);
         release_com(impl->view);
         impl->size = {};
@@ -1266,6 +1276,7 @@ namespace gui::render::d3d11 {
             0u, 0u, window_impl->size.width, window_impl->size.height};
         D3D11_RECT const scissor = d3d_scissor_rect(scissor_rect);
 
+        unbind_shader_resources(context_impl);
         context_impl->device_context->OMSetRenderTargets(
             1u, &window_impl->render_target_view, nullptr);
         context_impl->device_context->RSSetState(context_impl->rasterizer_state);
@@ -1311,6 +1322,7 @@ namespace gui::render::d3d11 {
             0u, 0u, texture_impl->size.width, texture_impl->size.height};
         D3D11_RECT const scissor = d3d_scissor_rect(scissor_rect);
 
+        unbind_shader_resources(context_impl);
         context_impl->device_context->OMSetRenderTargets(
             1u, &texture_impl->render_target_view, nullptr);
         context_impl->device_context->RSSetState(context_impl->rasterizer_state);
@@ -1339,6 +1351,7 @@ namespace gui::render::d3d11 {
         ASSERT(context_impl != nullptr);
         ASSERT(context_impl->render_pass_active);
         context_impl->device_context->OMSetRenderTargets(0u, nullptr, nullptr);
+        unbind_shader_resources(context_impl);
         context_impl->render_pass_active = false;
     }
 
