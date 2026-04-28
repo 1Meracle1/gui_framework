@@ -1180,16 +1180,4 @@ namespace gui::render::d3d11 {
         return window_impl->size;
     }
 
-    auto native_device(Context context) -> void* {
-        D3D11Context const* const context_impl = context_from_handle(context);
-        ASSERT(context_impl != nullptr);
-        return context_impl->device;
-    }
-
-    auto native_swap_chain(Window window) -> void* {
-        D3D11Window const* const window_impl = window_from_handle(window);
-        ASSERT(window_impl != nullptr);
-        return window_impl->swap_chain;
-    }
-
 } // namespace gui::render::d3d11

@@ -2001,7 +2001,7 @@ namespace gui::render::d3d12 {
         return window_impl->size;
     }
 
-    auto native_device(Context context) -> void* {
+    auto native_device(Context context) -> ID3D12Device* {
         D3D12Context const* const context_impl = context_from_handle(context);
         ASSERT(context_impl != nullptr);
         return context_impl->device;
@@ -2014,7 +2014,7 @@ namespace gui::render::d3d12 {
         return context_impl->command_list;
     }
 
-    auto native_swap_chain(Window window) -> void* {
+    auto native_swap_chain(Window window) -> IDXGISwapChain3* {
         D3D12Window const* const window_impl = window_from_handle(window);
         ASSERT(window_impl != nullptr);
         return window_impl->swap_chain;

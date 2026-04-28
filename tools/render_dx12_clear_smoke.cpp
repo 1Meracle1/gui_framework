@@ -193,8 +193,7 @@ namespace {
     }
 
     [[nodiscard]] auto create_readback(gui::render::Context context, DrawSmoke* smoke) -> bool {
-        ID3D12Device* const device =
-            static_cast<ID3D12Device*>(gui::render::native_device(context));
+        ID3D12Device* const device = gui::render::d3d12::native_device(context);
         if (device == nullptr) {
             return false;
         }
@@ -515,8 +514,7 @@ namespace {
     [[nodiscard]] auto capture_smoke_pixel(gui::render::Context context,
                                            gui::render::Window window,
                                            ID3D12Resource* readback) -> bool {
-        IDXGISwapChain3* const swap_chain =
-            static_cast<IDXGISwapChain3*>(gui::render::native_swap_chain(window));
+        IDXGISwapChain3* const swap_chain = gui::render::d3d12::native_swap_chain(window);
         ID3D12GraphicsCommandList* const command_list =
             gui::render::d3d12::active_render_pass_command_list(context);
         if (swap_chain == nullptr || command_list == nullptr || readback == nullptr) {

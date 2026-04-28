@@ -2,7 +2,9 @@
 
 #include <render/render.h>
 
+struct ID3D12Device;
 struct ID3D12GraphicsCommandList;
+struct IDXGISwapChain3;
 
 namespace gui::render::d3d12 {
 
@@ -62,9 +64,9 @@ namespace gui::render::d3d12 {
 
     [[nodiscard]] auto window_size(Window window) -> SizeU32;
 
-    [[nodiscard]] auto native_device(Context context) -> void*;
+    [[nodiscard]] auto native_device(Context context) -> ID3D12Device*;
     [[nodiscard]] auto active_render_pass_command_list(Context context)
         -> ID3D12GraphicsCommandList*;
-    [[nodiscard]] auto native_swap_chain(Window window) -> void*;
+    [[nodiscard]] auto native_swap_chain(Window window) -> IDXGISwapChain3*;
 
 } // namespace gui::render::d3d12

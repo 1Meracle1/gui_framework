@@ -727,44 +727,4 @@ namespace gui::render {
 #endif
     }
 
-    auto native_device(Context context) -> void* {
-        if (!context_valid(context)) {
-            return nullptr;
-        }
-
-#if BASE_PLATFORM_WINDOWS
-        switch (context_backend(context)) {
-        case Backend::D3D11:
-            return d3d11::native_device(context);
-        case Backend::D3D12:
-            return d3d12::native_device(context);
-        }
-
-        return nullptr;
-#else
-        BASE_UNUSED(context);
-        return nullptr;
-#endif
-    }
-
-    auto native_swap_chain(Window window) -> void* {
-        if (!window_valid(window)) {
-            return nullptr;
-        }
-
-#if BASE_PLATFORM_WINDOWS
-        switch (window_backend(window)) {
-        case Backend::D3D11:
-            return d3d11::native_swap_chain(window);
-        case Backend::D3D12:
-            return d3d12::native_swap_chain(window);
-        }
-
-        return nullptr;
-#else
-        BASE_UNUSED(window);
-        return nullptr;
-#endif
-    }
-
 } // namespace gui::render
