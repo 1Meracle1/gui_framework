@@ -35,7 +35,6 @@ namespace gui::render::d3d12 {
             0x4e4a,
             {0x9b, 0x5b, 0x92, 0x64, 0x0a, 0x65, 0x57, 0xf1},
         };
-
         enum RootParameter : uint32_t {
             ROOT_VS_CBV,
             ROOT_PS_CBV,
@@ -185,6 +184,15 @@ namespace gui::render::d3d12 {
             ASSERT(SUCCEEDED(hr));
             BASE_UNUSED(hr);
             return static_cast<BufferBinding>(value);
+        }
+
+        [[nodiscard]] auto buffer_heap_type(ID3D12Resource* resource) -> D3D12_HEAP_TYPE {
+            D3D12_HEAP_PROPERTIES heap_properties = {};
+            D3D12_HEAP_FLAGS heap_flags = {};
+            HRESULT const hr = resource->GetHeapProperties(&heap_properties, &heap_flags);
+            ASSERT(SUCCEEDED(hr));
+            BASE_UNUSED(hr);
+            return heap_properties.Type;
         }
 
         [[nodiscard]] auto d3d_format(VertexFormat format) -> DXGI_FORMAT {
@@ -494,12 +502,13 @@ namespace gui::render::d3d12 {
             mark_frame_deferred_releases(context, value);
         }
 
-        [[nodiscard]] auto create_upload_buffer(D3D12Context* context,
-                                                size_t byte_size,
-                                                ID3D12Resource*& out_resource,
-                                                uint8_t*& out_mapped_data) -> Result {
+        [[nodiscard]] auto create_buffer_resource(D3D12Context* context,
+                                                  size_t byte_size,
+                                                  D3D12_HEAP_TYPE heap_type,
+                                                  D3D12_RESOURCE_STATES initial_state,
+                                                  ID3D12Resource*& out_resource) -> Result {
             D3D12_HEAP_PROPERTIES heap_properties = {};
-            heap_properties.Type = D3D12_HEAP_TYPE_UPLOAD;
+            heap_properties.Type = heap_type;
 
             D3D12_RESOURCE_DESC resource_desc = {};
             resource_desc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
@@ -510,22 +519,89 @@ namespace gui::render::d3d12 {
             resource_desc.SampleDesc.Count = 1u;
             resource_desc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
 
-            HRESULT hr = context->device->CreateCommittedResource(&heap_properties,
-                                                                  D3D12_HEAP_FLAG_NONE,
-                                                                  &resource_desc,
-                                                                  D3D12_RESOURCE_STATE_GENERIC_READ,
-                                                                  nullptr,
-                                                                  IID_PPV_ARGS(&out_resource));
+            HRESULT const hr =
+                context->device->CreateCommittedResource(&heap_properties,
+                                                         D3D12_HEAP_FLAG_NONE,
+                                                         &resource_desc,
+                                                         initial_state,
+                                                         nullptr,
+                                                         IID_PPV_ARGS(&out_resource));
             if (FAILED(hr) || out_resource == nullptr) {
                 return Result::BUFFER_CREATION_FAILED;
             }
 
-            hr = out_resource->Map(0u, nullptr, reinterpret_cast<void**>(&out_mapped_data));
+            return Result::OK;
+        }
+
+        [[nodiscard]] auto create_upload_buffer(D3D12Context* context,
+                                                size_t byte_size,
+                                                ID3D12Resource*& out_resource,
+                                                uint8_t*& out_mapped_data) -> Result {
+            Result const result = create_buffer_resource(context,
+                                                         byte_size,
+                                                         D3D12_HEAP_TYPE_UPLOAD,
+                                                         D3D12_RESOURCE_STATE_GENERIC_READ,
+                                                         out_resource);
+            if (result_failed(result)) {
+                return result;
+            }
+
+            HRESULT const hr =
+                out_resource->Map(0u, nullptr, reinterpret_cast<void**>(&out_mapped_data));
             if (FAILED(hr) || out_mapped_data == nullptr) {
                 release_com(out_resource);
                 return Result::BUFFER_CREATION_FAILED;
             }
 
+            return Result::OK;
+        }
+
+        auto record_buffer_upload(D3D12Context* context,
+                                  ID3D12Resource* buffer,
+                                  ID3D12Resource* upload,
+                                  size_t byte_size) -> void {
+            context->command_list->CopyBufferRegion(buffer, 0u, upload, 0u, byte_size);
+
+            D3D12_RESOURCE_BARRIER barrier = {};
+            barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+            barrier.Transition.pResource = buffer;
+            barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
+            barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER;
+            barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+            context->command_list->ResourceBarrier(1u, &barrier);
+        }
+
+        [[nodiscard]] auto upload_buffer(D3D12Context* context,
+                                         ID3D12Resource* buffer,
+                                         ID3D12Resource* upload,
+                                         size_t byte_size) -> Result {
+            if (context->frame_active) {
+                record_buffer_upload(context, buffer, upload, byte_size);
+                return Result::OK;
+            }
+
+            wait_for_gpu(context);
+            HRESULT hr = context->command_allocator->Reset();
+            if (FAILED(hr)) {
+                return Result::BUFFER_CREATION_FAILED;
+            }
+
+            hr = context->command_list->Reset(context->command_allocator, nullptr);
+            if (FAILED(hr)) {
+                return Result::BUFFER_CREATION_FAILED;
+            }
+
+            record_buffer_upload(context, buffer, upload, byte_size);
+
+            hr = context->command_list->Close();
+            if (FAILED(hr)) {
+                return Result::BUFFER_CREATION_FAILED;
+            }
+
+            ID3D12CommandList* command_lists[] = {context->command_list};
+            context->command_queue->ExecuteCommandLists(1u, command_lists);
+            signal_gpu(context);
+            wait_for_gpu(context);
             return Result::OK;
         }
 
@@ -1031,19 +1107,49 @@ namespace gui::render::d3d12 {
         D3D12Context* context_impl = context_from_handle(context);
         ASSERT(context_impl != nullptr);
 
-        ID3D12Resource* resource = nullptr;
-        uint8_t* mapped_data = nullptr;
         size_t const resource_size = buffer_resource_size(desc.binding, desc.byte_size);
-        Result const result =
-            create_upload_buffer(context_impl, resource_size, resource, mapped_data);
-        if (result_failed(result)) {
-            return result;
+        ID3D12Resource* resource = nullptr;
+        if (desc.usage == BufferUsage::DYNAMIC) {
+            uint8_t* mapped_data = nullptr;
+            Result const result =
+                create_upload_buffer(context_impl, resource_size, resource, mapped_data);
+            if (result_failed(result)) {
+                return result;
+            }
+            if (desc.initial_data != nullptr) {
+                std::memcpy(mapped_data, desc.initial_data, desc.byte_size);
+            }
+            resource->Unmap(0u, nullptr);
+        } else {
+            Result result = create_buffer_resource(context_impl,
+                                                   resource_size,
+                                                   D3D12_HEAP_TYPE_DEFAULT,
+                                                   D3D12_RESOURCE_STATE_COPY_DEST,
+                                                   resource);
+            if (result_failed(result)) {
+                return result;
+            }
+
+            ID3D12Resource* upload = nullptr;
+            uint8_t* mapped_data = nullptr;
+            result = create_upload_buffer(context_impl, resource_size, upload, mapped_data);
+            if (result_failed(result)) {
+                release_com(resource);
+                return result;
+            }
+
+            std::memcpy(mapped_data, desc.initial_data, desc.byte_size);
+            upload->Unmap(0u, nullptr);
+
+            result = upload_buffer(context_impl, resource, upload, desc.byte_size);
+            if (result_failed(result)) {
+                defer_release(context_impl, upload);
+                defer_release(context_impl, resource);
+                return result;
+            }
+            defer_release(context_impl, upload);
         }
 
-        if (desc.initial_data != nullptr) {
-            std::memcpy(mapped_data, desc.initial_data, desc.byte_size);
-        }
-        resource->Unmap(0u, nullptr);
         set_buffer_binding(resource, desc.binding);
 
         out_buffer.handle = resource;
@@ -1063,6 +1169,7 @@ namespace gui::render::d3d12 {
         BASE_UNUSED(context);
         ID3D12Resource* buffer_impl = buffer_from_handle(buffer);
         ASSERT(buffer_impl != nullptr);
+        ASSERT(buffer_heap_type(buffer_impl) == D3D12_HEAP_TYPE_UPLOAD);
         ASSERT(byte_size <= static_cast<size_t>(buffer_impl->GetDesc().Width));
 
         uint8_t* mapped_data = nullptr;

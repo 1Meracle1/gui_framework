@@ -12,7 +12,6 @@
 #include <base/memory.h>
 #include <cstddef>
 #include <cstdint>
-#include <cstring>
 
 // clang-format off
 #include <render/render.h>
@@ -37,10 +36,17 @@ namespace {
         float value[4];
     };
 
+    constexpr Vertex DRAW_VERTICES[] = {
+        {{0.0f, 0.55f}, {1.0f, 0.15f, 0.05f}},
+        {{0.5f, -0.35f}, {0.1f, 0.85f, 0.25f}},
+        {{-0.5f, -0.35f}, {0.1f, 0.25f, 1.0f}},
+    };
+
     struct DrawSmoke {
         gui::render::Shader vertex_shader = {};
         gui::render::Shader pixel_shader = {};
         gui::render::Pipeline pipeline = {};
+        gui::render::Buffer vertex_buffer = {};
         gui::render::Buffer vertex_offset_constants = {};
         gui::render::Buffer vertex_scale_constants = {};
         gui::render::Buffer pixel_constants = {};
@@ -141,6 +147,9 @@ namespace {
         if (gui::render::buffer_valid(smoke->pixel_constants)) {
             gui::render::destroy_buffer(context, smoke->pixel_constants);
         }
+        if (gui::render::buffer_valid(smoke->vertex_buffer)) {
+            gui::render::destroy_buffer(context, smoke->vertex_buffer);
+        }
         if (gui::render::buffer_valid(smoke->vertex_scale_constants)) {
             gui::render::destroy_buffer(context, smoke->vertex_scale_constants);
         }
@@ -188,6 +197,32 @@ namespace {
             return false;
         }
 
+        return true;
+    }
+
+    [[nodiscard]] auto verify_buffer_heap(gui::render::Buffer buffer,
+                                          D3D12_HEAP_TYPE expected_type,
+                                          char const* name) -> bool {
+        ID3D12Resource* const resource = static_cast<ID3D12Resource*>(buffer.handle);
+        if (resource == nullptr) {
+            return false;
+        }
+
+        D3D12_HEAP_PROPERTIES heap_properties = {};
+        D3D12_HEAP_FLAGS heap_flags = {};
+        HRESULT const hr = resource->GetHeapProperties(&heap_properties, &heap_flags);
+        if (FAILED(hr)) {
+            log_hresult("ID3D12Resource::GetHeapProperties", hr);
+            return false;
+        }
+
+        if (heap_properties.Type != expected_type) {
+            fmt::eprintf("DX12 buffer heap smoke failed: %s heap=%u expected=%u\n",
+                         name,
+                         static_cast<uint32_t>(heap_properties.Type),
+                         static_cast<uint32_t>(expected_type));
+            return false;
+        }
         return true;
     }
 
@@ -275,6 +310,18 @@ namespace {
             return false;
         }
 
+        gui::render::BufferDesc vertex_desc = {};
+        vertex_desc.binding = gui::render::BufferBinding::VERTEX;
+        vertex_desc.usage = gui::render::BufferUsage::IMMUTABLE;
+        vertex_desc.byte_size = sizeof(DRAW_VERTICES);
+        vertex_desc.initial_data = DRAW_VERTICES;
+
+        result = gui::render::create_buffer(context, vertex_desc, smoke->vertex_buffer);
+        if (gui::render::result_failed(result)) {
+            log_result("render::create_buffer(vertex buffer)", result);
+            return false;
+        }
+
         gui::render::BufferDesc constants_desc = {};
         constants_desc.binding = gui::render::BufferBinding::UNIFORM;
         constants_desc.usage = gui::render::BufferUsage::DYNAMIC;
@@ -296,6 +343,14 @@ namespace {
         result = gui::render::create_buffer(context, constants_desc, smoke->pixel_constants);
         if (gui::render::result_failed(result)) {
             log_result("render::create_buffer(pixel constants)", result);
+            return false;
+        }
+
+        if (!verify_buffer_heap(
+                smoke->vertex_buffer, D3D12_HEAP_TYPE_DEFAULT, "immutable vertex buffer") ||
+            !verify_buffer_heap(smoke->vertex_offset_constants,
+                                D3D12_HEAP_TYPE_UPLOAD,
+                                "dynamic constant buffer")) {
             return false;
         }
 
@@ -344,17 +399,6 @@ namespace {
     }
 
     auto draw_smoke_triangle(gui::render::Context context, DrawSmoke const& smoke) -> void {
-        Vertex const vertices[] = {
-            {{0.0f, 0.55f}, {1.0f, 0.15f, 0.05f}},
-            {{0.5f, -0.35f}, {0.1f, 0.85f, 0.25f}},
-            {{-0.5f, -0.35f}, {0.1f, 0.25f, 1.0f}},
-        };
-
-        gui::render::FrameBufferSlice const upload = gui::render::allocate_frame_buffer(
-            context, gui::render::BufferBinding::VERTEX, sizeof(vertices), alignof(Vertex));
-        std::memcpy(upload.data, vertices, sizeof(vertices));
-        gui::render::commit_frame_uploads(context);
-
         Constants vertex_constants = {};
         vertex_constants.value[0] = 0.65f;
         vertex_constants.value[3] = 1.0f;
@@ -378,9 +422,8 @@ namespace {
             context, smoke.pixel_constants, &pixel_constants, sizeof(pixel_constants));
 
         gui::render::VertexBufferBinding vertex_buffer = {};
-        vertex_buffer.buffer = upload.buffer;
+        vertex_buffer.buffer = smoke.vertex_buffer;
         vertex_buffer.byte_stride = static_cast<uint32_t>(sizeof(Vertex));
-        vertex_buffer.byte_offset = static_cast<uint32_t>(upload.byte_offset);
 
         gui::render::BindGroup bind_groups[] = {
             smoke.vertex_offset_bind_group,
