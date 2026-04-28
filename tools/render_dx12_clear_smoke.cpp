@@ -250,6 +250,42 @@ namespace {
         return true;
     }
 
+    [[nodiscard]] auto verify_transient_bind_groups(Arena& arena,
+                                                    gui::render::Context context,
+                                                    gui::render::Texture texture,
+                                                    gui::render::Sampler sampler) -> bool {
+        constexpr size_t TRANSIENT_BIND_GROUP_COUNT = 20u;
+
+        gui::render::BindGroupTextureBinding texture_binding = {};
+        texture_binding.stage = gui::render::ShaderStage::PIXEL;
+        texture_binding.texture = texture;
+
+        gui::render::BindGroupSamplerBinding sampler_binding = {};
+        sampler_binding.stage = gui::render::ShaderStage::PIXEL;
+        sampler_binding.sampler = sampler;
+
+        gui::render::BindGroupDesc desc = {};
+        desc.textures = &texture_binding;
+        desc.texture_count = 1u;
+        desc.samplers = &sampler_binding;
+        desc.sampler_count = 1u;
+
+        ArenaMarker const marker = arena.marker();
+        for (size_t index = 0u; index < TRANSIENT_BIND_GROUP_COUNT; ++index) {
+            gui::render::BindGroup bind_group = {};
+            gui::render::Result const result =
+                gui::render::create_bind_group(arena, context, desc, bind_group);
+            if (gui::render::result_failed(result)) {
+                log_result("render::create_bind_group(transient texture)", result);
+                arena.reset_to(marker);
+                return false;
+            }
+            gui::render::destroy_bind_group(context, bind_group);
+        }
+        arena.reset_to(marker);
+        return true;
+    }
+
     [[nodiscard]] auto
     create_draw_smoke(Arena& arena, gui::render::Context context, DrawSmoke* smoke) -> bool {
         constexpr StrRef SHADER_SOURCE =
@@ -389,6 +425,10 @@ namespace {
         result = gui::render::create_sampler(context, smoke->sampler);
         if (gui::render::result_failed(result)) {
             log_result("render::create_sampler", result);
+            return false;
+        }
+
+        if (!verify_transient_bind_groups(arena, context, smoke->texture, smoke->sampler)) {
             return false;
         }
 
