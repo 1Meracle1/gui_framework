@@ -31,6 +31,7 @@ namespace gui::render::d3d12 {
         constexpr uint32_t SAMPLER_DESCRIPTOR_COUNT =
             FRAME_RESOURCE_COUNT * FRAME_SAMPLER_DESCRIPTOR_COUNT;
         constexpr size_t FRAME_VERTEX_BUFFER_DEFAULT_SIZE = 64u * 1024u;
+        constexpr size_t MAX_D3D12_BUFFER_VIEW_BYTE_SIZE = 0xffffffffu;
         constexpr size_t DEFERRED_RELEASE_CAPACITY = 4096u;
 
         enum RootParameter : uint32_t {
@@ -228,11 +229,26 @@ namespace gui::render::d3d12 {
             return ((value + alignment - 1u) / alignment) * alignment;
         }
 
-        [[nodiscard]] auto buffer_resource_size(BufferBinding binding, size_t byte_size) -> size_t {
-            if (binding == BufferBinding::UNIFORM) {
-                return align_up(byte_size, D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT);
+        [[nodiscard]] auto buffer_view_size(size_t byte_size, UINT& out_byte_size) -> bool {
+            if (byte_size > MAX_D3D12_BUFFER_VIEW_BYTE_SIZE) {
+                return false;
             }
-            return byte_size;
+            out_byte_size = static_cast<UINT>(byte_size);
+            return true;
+        }
+
+        [[nodiscard]] auto
+        buffer_resource_size(BufferBinding binding, size_t byte_size, UINT& out_byte_size) -> bool {
+            size_t resource_size = byte_size;
+            if (binding == BufferBinding::UNIFORM) {
+                size_t const alignment = D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT;
+                if (resource_size > MAX_D3D12_BUFFER_VIEW_BYTE_SIZE - (alignment - 1u)) {
+                    return false;
+                }
+                resource_size = align_up(resource_size, alignment);
+            }
+
+            return buffer_view_size(resource_size, out_byte_size);
         }
 
         [[nodiscard]] auto d3d_format(VertexFormat format) -> DXGI_FORMAT {
@@ -564,6 +580,10 @@ namespace gui::render::d3d12 {
                                                   D3D12_HEAP_TYPE heap_type,
                                                   D3D12_RESOURCE_STATES initial_state,
                                                   ID3D12Resource*& out_resource) -> Result {
+            if (byte_size > MAX_D3D12_BUFFER_VIEW_BYTE_SIZE) {
+                return Result::BUFFER_CREATION_FAILED;
+            }
+
             D3D12_HEAP_PROPERTIES heap_properties = {};
             heap_properties.Type = heap_type;
 
@@ -1191,7 +1211,11 @@ namespace gui::render::d3d12 {
         D3D12Context* context_impl = context_from_handle(context);
         ASSERT(context_impl != nullptr);
 
-        size_t const resource_size = buffer_resource_size(desc.binding, desc.byte_size);
+        UINT resource_size = 0u;
+        if (!buffer_resource_size(desc.binding, desc.byte_size, resource_size)) {
+            return Result::BUFFER_CREATION_FAILED;
+        }
+
         ID3D12Resource* resource = nullptr;
         if (desc.usage == BufferUsage::DYNAMIC) {
             uint8_t* mapped_data = nullptr;
@@ -1285,13 +1309,20 @@ namespace gui::render::d3d12 {
         D3D12FrameResource& frame =
             context_impl->frame_resources[context_impl->active_frame_resource_index];
         D3D12FrameBuffer& frame_buffer = frame.frame_vertex_buffer;
+        ASSERT(frame_buffer.used_size <= MAX_D3D12_BUFFER_VIEW_BYTE_SIZE);
         size_t const offset = align_up(frame_buffer.used_size, byte_alignment);
+        ASSERT(offset <= MAX_D3D12_BUFFER_VIEW_BYTE_SIZE &&
+               byte_size <= MAX_D3D12_BUFFER_VIEW_BYTE_SIZE - offset);
         size_t const needed_size = offset + byte_size;
         if (needed_size > frame_buffer.capacity) {
             ASSERT(frame_buffer.used_size == 0u);
             size_t new_capacity = frame_buffer.capacity == 0u ? FRAME_VERTEX_BUFFER_DEFAULT_SIZE
-                                                              : frame_buffer.capacity * 2u;
+                                                              : frame_buffer.capacity;
             while (new_capacity < needed_size) {
+                if (new_capacity > MAX_D3D12_BUFFER_VIEW_BYTE_SIZE / 2u) {
+                    new_capacity = needed_size;
+                    break;
+                }
                 new_capacity *= 2u;
             }
             ensure_frame_buffer(context_impl, &frame_buffer, new_capacity);
@@ -1715,10 +1746,13 @@ namespace gui::render::d3d12 {
 
             uint32_t const descriptor_offset =
                 descriptor_index(context_impl, root_parameter, table.gpu);
+            UINT resource_size = 0u;
+            bool const valid_size =
+                buffer_resource_size(buffer->binding, buffer->byte_size, resource_size);
+            ASSERT(valid_size);
             D3D12_CONSTANT_BUFFER_VIEW_DESC view_desc = {};
             view_desc.BufferLocation = buffer->resource->GetGPUVirtualAddress();
-            view_desc.SizeInBytes =
-                static_cast<UINT>(buffer_resource_size(buffer->binding, buffer->byte_size));
+            view_desc.SizeInBytes = resource_size;
             context_impl->device->CreateConstantBufferView(
                 &view_desc,
                 descriptor_cpu_handle(
@@ -1794,9 +1828,13 @@ namespace gui::render::d3d12 {
             ASSERT(buffer->binding == BufferBinding::VERTEX);
             ASSERT(binding.byte_offset <= buffer->byte_size);
 
+            UINT view_size = 0u;
+            bool const valid_size =
+                buffer_view_size(buffer->byte_size - binding.byte_offset, view_size);
+            ASSERT(valid_size);
             D3D12_VERTEX_BUFFER_VIEW view = {};
             view.BufferLocation = buffer->resource->GetGPUVirtualAddress() + binding.byte_offset;
-            view.SizeInBytes = static_cast<UINT>(buffer->byte_size - binding.byte_offset);
+            view.SizeInBytes = view_size;
             view.StrideInBytes = binding.byte_stride;
             context_impl->command_list->IASetVertexBuffers(binding.slot, 1u, &view);
         }
