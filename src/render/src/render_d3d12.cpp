@@ -32,12 +32,7 @@ namespace gui::render::d3d12 {
             FRAME_RESOURCE_COUNT * FRAME_SAMPLER_DESCRIPTOR_COUNT;
         constexpr size_t FRAME_VERTEX_BUFFER_DEFAULT_SIZE = 64u * 1024u;
         constexpr size_t DEFERRED_RELEASE_CAPACITY = 4096u;
-        constexpr GUID BUFFER_BINDING_GUID = {
-            0x4a6f1370,
-            0x4c23,
-            0x4e4a,
-            {0x9b, 0x5b, 0x92, 0x64, 0x0a, 0x65, 0x57, 0xf1},
-        };
+
         enum RootParameter : uint32_t {
             ROOT_VS_CBV,
             ROOT_PS_CBV,
@@ -49,6 +44,15 @@ namespace gui::render::d3d12 {
         };
 
         struct D3D12Context;
+
+        struct D3D12Buffer {
+            BufferHeader header = {Backend::D3D12};
+            D3D12Context* context = nullptr;
+            ID3D12Resource* resource = nullptr;
+            BufferBinding binding = BufferBinding::VERTEX;
+            BufferUsage usage = BufferUsage::IMMUTABLE;
+            size_t byte_size = 0u;
+        };
 
         struct D3D12Shader {
             uint8_t* bytecode = nullptr;
@@ -76,7 +80,7 @@ namespace gui::render::d3d12 {
         };
 
         struct D3D12FrameBuffer {
-            ID3D12Resource* resource = nullptr;
+            D3D12Buffer buffer = {};
             uint8_t* mapped_data = nullptr;
             size_t capacity = 0u;
             size_t used_size = 0u;
@@ -110,6 +114,7 @@ namespace gui::render::d3d12 {
 
         struct D3D12Context {
             ContextHeader header = {Backend::D3D12};
+            Arena* arena = nullptr;
             IDXGIFactory4* factory = nullptr;
             IDXGIAdapter1* adapter = nullptr;
             ID3D12Device* device = nullptr;
@@ -153,8 +158,9 @@ namespace gui::render::d3d12 {
             return static_cast<D3D12Window*>(window.handle);
         }
 
-        [[nodiscard]] auto buffer_from_handle(Buffer buffer) -> ID3D12Resource* {
-            return static_cast<ID3D12Resource*>(buffer.handle);
+        [[nodiscard]] auto buffer_from_handle(Buffer buffer) -> D3D12Buffer* {
+            ASSERT(buffer_backend(buffer) == Backend::D3D12);
+            return static_cast<D3D12Buffer*>(buffer.handle);
         }
 
         [[nodiscard]] auto texture_from_handle(Texture texture) -> ID3D12Resource* {
@@ -174,7 +180,7 @@ namespace gui::render::d3d12 {
         }
 
         [[nodiscard]] auto align_up(size_t value, size_t alignment) -> size_t {
-            return (value + alignment - 1u) & ~(alignment - 1u);
+            return ((value + alignment - 1u) / alignment) * alignment;
         }
 
         [[nodiscard]] auto buffer_resource_size(BufferBinding binding, size_t byte_size) -> size_t {
@@ -182,31 +188,6 @@ namespace gui::render::d3d12 {
                 return align_up(byte_size, D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT);
             }
             return byte_size;
-        }
-
-        auto set_buffer_binding(ID3D12Resource* resource, BufferBinding binding) -> void {
-            uint8_t const value = static_cast<uint8_t>(binding);
-            HRESULT const hr = resource->SetPrivateData(BUFFER_BINDING_GUID, sizeof(value), &value);
-            ASSERT(SUCCEEDED(hr));
-            BASE_UNUSED(hr);
-        }
-
-        [[nodiscard]] auto buffer_binding(ID3D12Resource* resource) -> BufferBinding {
-            uint8_t value = 0u;
-            UINT value_size = sizeof(value);
-            HRESULT const hr = resource->GetPrivateData(BUFFER_BINDING_GUID, &value_size, &value);
-            ASSERT(SUCCEEDED(hr));
-            BASE_UNUSED(hr);
-            return static_cast<BufferBinding>(value);
-        }
-
-        [[nodiscard]] auto buffer_heap_type(ID3D12Resource* resource) -> D3D12_HEAP_TYPE {
-            D3D12_HEAP_PROPERTIES heap_properties = {};
-            D3D12_HEAP_FLAGS heap_flags = {};
-            HRESULT const hr = resource->GetHeapProperties(&heap_properties, &heap_flags);
-            ASSERT(SUCCEEDED(hr));
-            BASE_UNUSED(hr);
-            return heap_properties.Type;
         }
 
         [[nodiscard]] auto d3d_format(VertexFormat format) -> DXGI_FORMAT {
@@ -620,12 +601,14 @@ namespace gui::render::d3d12 {
         }
 
         auto release_frame_buffer(D3D12Context* context, D3D12FrameBuffer* frame_buffer) -> void {
-            if (frame_buffer->resource != nullptr && frame_buffer->mapped_data != nullptr) {
-                frame_buffer->resource->Unmap(0u, nullptr);
+            if (frame_buffer->buffer.resource != nullptr && frame_buffer->mapped_data != nullptr) {
+                frame_buffer->buffer.resource->Unmap(0u, nullptr);
                 frame_buffer->mapped_data = nullptr;
             }
 
-            defer_release_com(context, frame_buffer->resource);
+            defer_release_com(context, frame_buffer->buffer.resource);
+            frame_buffer->buffer.context = nullptr;
+            frame_buffer->buffer.byte_size = 0u;
             frame_buffer->capacity = 0u;
             frame_buffer->used_size = 0u;
         }
@@ -644,10 +627,13 @@ namespace gui::render::d3d12 {
             Result const result = create_upload_buffer(context, byte_size, resource, mapped_data);
             ASSERT(result_succeeded(result));
 
-            frame_buffer->resource = resource;
+            frame_buffer->buffer.context = context;
+            frame_buffer->buffer.resource = resource;
+            frame_buffer->buffer.binding = BufferBinding::VERTEX;
+            frame_buffer->buffer.usage = BufferUsage::DYNAMIC;
+            frame_buffer->buffer.byte_size = byte_size;
             frame_buffer->mapped_data = mapped_data;
             frame_buffer->capacity = byte_size;
-            set_buffer_binding(frame_buffer->resource, BufferBinding::VERTEX);
         }
 
         [[nodiscard]] auto create_render_targets(D3D12Context* context, D3D12Window* window)
@@ -1013,6 +999,7 @@ namespace gui::render::d3d12 {
     auto create_context(Arena& arena, ContextDesc const& desc, Context& out_context) -> Result {
         ArenaMarker const marker = arena.marker();
         D3D12Context* context = arena_new<D3D12Context>(arena);
+        context->arena = &arena;
         context->deferred_releases =
             arena_alloc<D3D12DeferredRelease>(arena, DEFERRED_RELEASE_CAPACITY);
 
@@ -1182,34 +1169,45 @@ namespace gui::render::d3d12 {
             defer_release(context_impl, upload);
         }
 
-        set_buffer_binding(resource, desc.binding);
-
-        out_buffer.handle = resource;
+        D3D12Buffer* buffer = arena_new<D3D12Buffer>(*context_impl->arena);
+        buffer->context = context_impl;
+        buffer->resource = resource;
+        buffer->binding = desc.binding;
+        buffer->usage = desc.usage;
+        buffer->byte_size = desc.byte_size;
+        out_buffer.handle = buffer;
         return Result::OK;
     }
 
     auto destroy_buffer(Context context, Buffer& buffer) -> void {
         D3D12Context* context_impl = context_from_handle(context);
-        ID3D12Resource* buffer_impl = buffer_from_handle(buffer);
+        D3D12Buffer* buffer_impl = buffer_from_handle(buffer);
         ASSERT(context_impl != nullptr);
         ASSERT(buffer_impl != nullptr);
-        defer_release_com(context_impl, buffer_impl);
+        ASSERT(buffer_impl->context == context_impl);
+        defer_release_com(context_impl, buffer_impl->resource);
+        buffer_impl->context = nullptr;
+        buffer_impl->byte_size = 0u;
         buffer.handle = nullptr;
     }
 
     auto update_buffer(Context context, Buffer buffer, void const* data, size_t byte_size) -> void {
-        BASE_UNUSED(context);
-        ID3D12Resource* buffer_impl = buffer_from_handle(buffer);
+        D3D12Context* context_impl = context_from_handle(context);
+        D3D12Buffer* buffer_impl = buffer_from_handle(buffer);
+        ASSERT(context_impl != nullptr);
         ASSERT(buffer_impl != nullptr);
-        ASSERT(buffer_heap_type(buffer_impl) == D3D12_HEAP_TYPE_UPLOAD);
-        ASSERT(byte_size <= static_cast<size_t>(buffer_impl->GetDesc().Width));
+        ASSERT(buffer_impl->context == context_impl);
+        ASSERT(buffer_impl->resource != nullptr);
+        ASSERT(buffer_impl->usage == BufferUsage::DYNAMIC);
+        ASSERT(byte_size <= buffer_impl->byte_size);
 
         uint8_t* mapped_data = nullptr;
-        HRESULT const hr = buffer_impl->Map(0u, nullptr, reinterpret_cast<void**>(&mapped_data));
+        HRESULT const hr =
+            buffer_impl->resource->Map(0u, nullptr, reinterpret_cast<void**>(&mapped_data));
         ASSERT(SUCCEEDED(hr));
         ASSERT(mapped_data != nullptr);
         std::memcpy(mapped_data, data, byte_size);
-        buffer_impl->Unmap(0u, nullptr);
+        buffer_impl->resource->Unmap(0u, nullptr);
         BASE_UNUSED(hr);
     }
 
@@ -1235,7 +1233,7 @@ namespace gui::render::d3d12 {
         }
 
         frame_buffer.used_size = needed_size;
-        return {{frame_buffer.resource}, frame_buffer.mapped_data + offset, offset, byte_size};
+        return {{&frame_buffer.buffer}, frame_buffer.mapped_data + offset, offset, byte_size};
     }
 
     auto commit_frame_uploads(Context context) -> void {
@@ -1493,7 +1491,6 @@ namespace gui::render::d3d12 {
                            BindGroup& out_group) -> Result {
         D3D12Context* context_impl = context_from_handle(context);
         ASSERT(context_impl != nullptr);
-        BASE_UNUSED(context_impl);
 
         D3D12BindGroup* group = arena_new<D3D12BindGroup>(arena);
 
@@ -1504,9 +1501,11 @@ namespace gui::render::d3d12 {
                 BindGroupBufferBinding const& source = desc.buffers[index];
                 ASSERT(source.slot < DESCRIPTOR_SLOT_COUNT);
 
-                ID3D12Resource* buffer = buffer_from_handle(source.buffer);
+                D3D12Buffer* buffer = buffer_from_handle(source.buffer);
                 ASSERT(buffer != nullptr);
-                ASSERT(buffer_binding(buffer) == BufferBinding::UNIFORM);
+                ASSERT(buffer->context == context_impl);
+                ASSERT(buffer->resource != nullptr);
+                ASSERT(buffer->binding == BufferBinding::UNIFORM);
 
                 group->buffers[index] = source;
             }
@@ -1566,7 +1565,12 @@ namespace gui::render::d3d12 {
 
         for (size_t index = 0u; index < group->buffer_count; ++index) {
             BindGroupBufferBinding const& binding = group->buffers[index];
-            ID3D12Resource* buffer = buffer_from_handle(binding.buffer);
+            D3D12Buffer* buffer = buffer_from_handle(binding.buffer);
+            ASSERT(buffer != nullptr);
+            ASSERT(buffer->context == context_impl);
+            ASSERT(buffer->resource != nullptr);
+            ASSERT(buffer->binding == BufferBinding::UNIFORM);
+
             uint32_t const root_parameter =
                 binding.stage == ShaderStage::VERTEX ? ROOT_VS_CBV : ROOT_PS_CBV;
             D3D12DescriptorTable& table =
@@ -1576,10 +1580,9 @@ namespace gui::render::d3d12 {
             uint32_t const descriptor_offset =
                 descriptor_index(context_impl, root_parameter, table.gpu);
             D3D12_CONSTANT_BUFFER_VIEW_DESC view_desc = {};
-            view_desc.BufferLocation = buffer->GetGPUVirtualAddress();
+            view_desc.BufferLocation = buffer->resource->GetGPUVirtualAddress();
             view_desc.SizeInBytes =
-                static_cast<UINT>(align_up(static_cast<size_t>(buffer->GetDesc().Width),
-                                           D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT));
+                static_cast<UINT>(buffer_resource_size(buffer->binding, buffer->byte_size));
             context_impl->device->CreateConstantBufferView(
                 &view_desc,
                 descriptor_cpu_handle(
@@ -1650,14 +1653,16 @@ namespace gui::render::d3d12 {
 
         for (size_t index = 0u; index < desc.vertex_buffer_count; ++index) {
             VertexBufferBinding const& binding = desc.vertex_buffers[index];
-            ID3D12Resource* buffer = buffer_from_handle(binding.buffer);
+            D3D12Buffer* buffer = buffer_from_handle(binding.buffer);
             ASSERT(buffer != nullptr);
-            ASSERT(buffer_binding(buffer) == BufferBinding::VERTEX);
+            ASSERT(buffer->context == context_impl);
+            ASSERT(buffer->resource != nullptr);
+            ASSERT(buffer->binding == BufferBinding::VERTEX);
+            ASSERT(binding.byte_offset <= buffer->byte_size);
 
             D3D12_VERTEX_BUFFER_VIEW view = {};
-            view.BufferLocation = buffer->GetGPUVirtualAddress() + binding.byte_offset;
-            view.SizeInBytes = static_cast<UINT>(static_cast<size_t>(buffer->GetDesc().Width) -
-                                                 binding.byte_offset);
+            view.BufferLocation = buffer->resource->GetGPUVirtualAddress() + binding.byte_offset;
+            view.SizeInBytes = static_cast<UINT>(buffer->byte_size - binding.byte_offset);
             view.StrideInBytes = binding.byte_stride;
             context_impl->command_list->IASetVertexBuffers(binding.slot, 1u, &view);
         }

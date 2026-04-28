@@ -224,32 +224,6 @@ namespace {
         return true;
     }
 
-    [[nodiscard]] auto verify_buffer_heap(gui::render::Buffer buffer,
-                                          D3D12_HEAP_TYPE expected_type,
-                                          char const* name) -> bool {
-        ID3D12Resource* const resource = static_cast<ID3D12Resource*>(buffer.handle);
-        if (resource == nullptr) {
-            return false;
-        }
-
-        D3D12_HEAP_PROPERTIES heap_properties = {};
-        D3D12_HEAP_FLAGS heap_flags = {};
-        HRESULT const hr = resource->GetHeapProperties(&heap_properties, &heap_flags);
-        if (FAILED(hr)) {
-            log_hresult("ID3D12Resource::GetHeapProperties", hr);
-            return false;
-        }
-
-        if (heap_properties.Type != expected_type) {
-            fmt::eprintf("DX12 buffer heap smoke failed: %s heap=%u expected=%u\n",
-                         name,
-                         static_cast<uint32_t>(heap_properties.Type),
-                         static_cast<uint32_t>(expected_type));
-            return false;
-        }
-        return true;
-    }
-
     [[nodiscard]] auto verify_transient_bind_groups(Arena& arena,
                                                     gui::render::Context context,
                                                     gui::render::Texture texture,
@@ -429,14 +403,6 @@ namespace {
         }
 
         if (!verify_transient_bind_groups(arena, context, smoke->texture, smoke->sampler)) {
-            return false;
-        }
-
-        if (!verify_buffer_heap(
-                smoke->vertex_buffer, D3D12_HEAP_TYPE_DEFAULT, "immutable vertex buffer") ||
-            !verify_buffer_heap(smoke->vertex_offset_constants,
-                                D3D12_HEAP_TYPE_UPLOAD,
-                                "dynamic constant buffer")) {
             return false;
         }
 
@@ -639,12 +605,28 @@ namespace {
         return ok;
     }
 
+    [[nodiscard]] auto verify_frame_upload_alignment(gui::render::Context context) -> bool {
+        gui::render::FrameBufferSlice const first =
+            gui::render::allocate_frame_vertex_buffer(context, 1u, 1u);
+        gui::render::FrameBufferSlice const second =
+            gui::render::allocate_frame_vertex_buffer(context, 1u, 3u);
+        if (first.data == nullptr || second.data == nullptr || first.byte_offset != 0u ||
+            second.byte_offset != 3u) {
+            fmt::eprintf("DX12 frame upload alignment smoke failed: offsets=%zu,%zu\n",
+                         first.byte_offset,
+                         second.byte_offset);
+            return false;
+        }
+        return true;
+    }
+
     [[nodiscard]] auto clear_present(gui::render::Context context,
                                      gui::render::Window window,
                                      gui::render::Color color,
                                      DrawSmoke const* smoke,
                                      bool capture_pixel) -> bool {
         gui::render::begin_frame(context);
+        bool const aligned = verify_frame_upload_alignment(context);
 
         gui::render::WindowRenderPassDesc pass_desc = {};
         pass_desc.window = window;
@@ -673,7 +655,7 @@ namespace {
             return false;
         }
 
-        return captured;
+        return captured && aligned;
     }
 
     [[nodiscard]] auto expect_present_asserts_with_active_pass(gui::render::Context context,

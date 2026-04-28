@@ -24,8 +24,19 @@ namespace gui::render::d3d11 {
         constexpr size_t FRAME_VERTEX_BUFFER_DEFAULT_SIZE = 64u * 1024u;
         constexpr size_t MAX_D3D11_BUFFER_BYTE_SIZE = 0xffffffffu;
 
+        struct D3D11Context;
+
+        struct D3D11Buffer {
+            BufferHeader header = {Backend::D3D11};
+            D3D11Context* context = nullptr;
+            ID3D11Buffer* resource = nullptr;
+            BufferBinding binding = BufferBinding::VERTEX;
+            BufferUsage usage = BufferUsage::IMMUTABLE;
+            size_t byte_size = 0u;
+        };
+
         struct D3D11FrameBuffer {
-            ID3D11Buffer* buffer = nullptr;
+            D3D11Buffer buffer = {};
             uint8_t* mapped_data = nullptr;
             size_t capacity = 0u;
             size_t used_size = 0u;
@@ -33,6 +44,7 @@ namespace gui::render::d3d11 {
 
         struct D3D11Context {
             ContextHeader header = {Backend::D3D11};
+            Arena* arena = nullptr;
             ID3D11Device* device = nullptr;
             ID3D11DeviceContext* device_context = nullptr;
             IDXGIFactory* factory = nullptr;
@@ -67,7 +79,7 @@ namespace gui::render::d3d11 {
         };
 
         struct D3D11BufferBinding {
-            ID3D11Buffer* buffer = nullptr;
+            D3D11Buffer* buffer = nullptr;
             ShaderStage stage = ShaderStage::VERTEX;
             uint32_t slot = 0u;
         };
@@ -110,8 +122,9 @@ namespace gui::render::d3d11 {
             return static_cast<D3D11Window*>(window.handle);
         }
 
-        [[nodiscard]] auto buffer_from_handle(Buffer buffer) -> ID3D11Buffer* {
-            return static_cast<ID3D11Buffer*>(buffer.handle);
+        [[nodiscard]] auto buffer_from_handle(Buffer buffer) -> D3D11Buffer* {
+            ASSERT(buffer_backend(buffer) == Backend::D3D11);
+            return static_cast<D3D11Buffer*>(buffer.handle);
         }
 
         [[nodiscard]] auto texture_from_handle(Texture texture) -> ID3D11ShaderResourceView* {
@@ -146,18 +159,20 @@ namespace gui::render::d3d11 {
             return ((value + alignment - 1u) / alignment) * alignment;
         }
 
-        auto commit_frame_buffer(D3D11Context* context, D3D11FrameBuffer* buffer) -> void {
-            if (buffer->mapped_data != nullptr) {
-                context->device_context->Unmap(buffer->buffer, 0u);
-                buffer->mapped_data = nullptr;
+        auto commit_frame_buffer(D3D11Context* context, D3D11FrameBuffer* frame_buffer) -> void {
+            if (frame_buffer->mapped_data != nullptr) {
+                context->device_context->Unmap(frame_buffer->buffer.resource, 0u);
+                frame_buffer->mapped_data = nullptr;
             }
         }
 
-        auto release_frame_buffer(D3D11Context* context, D3D11FrameBuffer* buffer) -> void {
-            commit_frame_buffer(context, buffer);
-            release_com(buffer->buffer);
-            buffer->capacity = 0u;
-            buffer->used_size = 0u;
+        auto release_frame_buffer(D3D11Context* context, D3D11FrameBuffer* frame_buffer) -> void {
+            commit_frame_buffer(context, frame_buffer);
+            release_com(frame_buffer->buffer.resource);
+            frame_buffer->buffer.context = nullptr;
+            frame_buffer->buffer.byte_size = 0u;
+            frame_buffer->capacity = 0u;
+            frame_buffer->used_size = 0u;
         }
 
         auto create_frame_vertex_buffer(D3D11Context* context, size_t byte_size) -> void {
@@ -172,11 +187,16 @@ namespace gui::render::d3d11 {
             buffer_desc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
             buffer_desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
 
-            HRESULT const hr =
-                context->device->CreateBuffer(&buffer_desc, nullptr, &frame_buffer.buffer);
+            ID3D11Buffer* resource = nullptr;
+            HRESULT const hr = context->device->CreateBuffer(&buffer_desc, nullptr, &resource);
             ASSERT(SUCCEEDED(hr));
-            ASSERT(frame_buffer.buffer != nullptr);
+            ASSERT(resource != nullptr);
 
+            frame_buffer.buffer.context = context;
+            frame_buffer.buffer.resource = resource;
+            frame_buffer.buffer.binding = BufferBinding::VERTEX;
+            frame_buffer.buffer.usage = BufferUsage::DYNAMIC;
+            frame_buffer.buffer.byte_size = byte_size;
             frame_buffer.capacity = byte_size;
         }
 
@@ -352,6 +372,7 @@ namespace gui::render::d3d11 {
     auto create_context(Arena& arena, ContextDesc const& desc, Context& out_context) -> Result {
         ArenaMarker const marker = arena.marker();
         D3D11Context* context = arena_new<D3D11Context>(arena);
+        context->arena = &arena;
 
         UINT creation_flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
         if (desc.enable_debug_layer) {
@@ -464,38 +485,52 @@ namespace gui::render::d3d11 {
         D3D11_SUBRESOURCE_DATA initial_data = {};
         initial_data.pSysMem = desc.initial_data;
 
-        ID3D11Buffer* buffer = nullptr;
+        ID3D11Buffer* resource = nullptr;
         HRESULT const hr = context_impl->device->CreateBuffer(
-            &buffer_desc, desc.initial_data != nullptr ? &initial_data : nullptr, &buffer);
-        if (FAILED(hr) || buffer == nullptr) {
+            &buffer_desc, desc.initial_data != nullptr ? &initial_data : nullptr, &resource);
+        if (FAILED(hr) || resource == nullptr) {
             return Result::BUFFER_CREATION_FAILED;
         }
 
+        D3D11Buffer* buffer = arena_new<D3D11Buffer>(*context_impl->arena);
+        buffer->context = context_impl;
+        buffer->resource = resource;
+        buffer->binding = desc.binding;
+        buffer->usage = desc.usage;
+        buffer->byte_size = desc.byte_size;
         out_buffer.handle = buffer;
         return Result::OK;
     }
 
     auto destroy_buffer(Context context, Buffer& buffer) -> void {
-        BASE_UNUSED(context);
-        ID3D11Buffer* impl = buffer_from_handle(buffer);
+        D3D11Context* context_impl = context_from_handle(context);
+        D3D11Buffer* impl = buffer_from_handle(buffer);
+        ASSERT(context_impl != nullptr);
         ASSERT(impl != nullptr);
-        release_com(impl);
+        ASSERT(impl->context == context_impl);
+        release_com(impl->resource);
+        impl->context = nullptr;
+        impl->byte_size = 0u;
         buffer.handle = nullptr;
     }
 
     auto update_buffer(Context context, Buffer buffer, void const* data, size_t byte_size) -> void {
         D3D11Context* context_impl = context_from_handle(context);
-        ID3D11Buffer* buffer_impl = buffer_from_handle(buffer);
+        D3D11Buffer* buffer_impl = buffer_from_handle(buffer);
         ASSERT(context_impl != nullptr);
         ASSERT(buffer_impl != nullptr);
+        ASSERT(buffer_impl->context == context_impl);
+        ASSERT(buffer_impl->resource != nullptr);
+        ASSERT(buffer_impl->usage == BufferUsage::DYNAMIC);
+        ASSERT(byte_size <= buffer_impl->byte_size);
 
         D3D11_MAPPED_SUBRESOURCE mapped = {};
         HRESULT const hr = context_impl->device_context->Map(
-            buffer_impl, 0u, D3D11_MAP_WRITE_DISCARD, 0u, &mapped);
+            buffer_impl->resource, 0u, D3D11_MAP_WRITE_DISCARD, 0u, &mapped);
         ASSERT(SUCCEEDED(hr));
 
         std::memcpy(mapped.pData, data, byte_size);
-        context_impl->device_context->Unmap(buffer_impl, 0u);
+        context_impl->device_context->Unmap(buffer_impl->resource, 0u);
     }
 
     auto allocate_frame_vertex_buffer(Context context, size_t byte_size, size_t byte_alignment)
@@ -517,14 +552,14 @@ namespace gui::render::d3d11 {
             D3D11_MAPPED_SUBRESOURCE mapped = {};
             D3D11_MAP const map_type = frame_buffer.used_size == 0u ? D3D11_MAP_WRITE_DISCARD
                                                                     : D3D11_MAP_WRITE_NO_OVERWRITE;
-            HRESULT const hr =
-                context_impl->device_context->Map(frame_buffer.buffer, 0u, map_type, 0u, &mapped);
+            HRESULT const hr = context_impl->device_context->Map(
+                frame_buffer.buffer.resource, 0u, map_type, 0u, &mapped);
             ASSERT(SUCCEEDED(hr));
             frame_buffer.mapped_data = static_cast<uint8_t*>(mapped.pData);
         }
 
         frame_buffer.used_size = needed_size;
-        return {{frame_buffer.buffer}, frame_buffer.mapped_data + offset, offset, byte_size};
+        return {{&frame_buffer.buffer}, frame_buffer.mapped_data + offset, offset, byte_size};
     }
 
     auto commit_frame_uploads(Context context) -> void {
@@ -801,7 +836,8 @@ namespace gui::render::d3d11 {
                            Context context,
                            BindGroupDesc const& desc,
                            BindGroup& out_group) -> Result {
-        BASE_UNUSED(context);
+        D3D11Context* context_impl = context_from_handle(context);
+        ASSERT(context_impl != nullptr);
 
         D3D11BindGroup* group = arena_new<D3D11BindGroup>(arena);
 
@@ -811,8 +847,14 @@ namespace gui::render::d3d11 {
             for (size_t index = 0u; index < desc.buffer_count; ++index) {
                 BindGroupBufferBinding const& source = desc.buffers[index];
                 ASSERT(source.slot < D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT);
+                D3D11Buffer* buffer = buffer_from_handle(source.buffer);
+                ASSERT(buffer != nullptr);
+                ASSERT(buffer->context == context_impl);
+                ASSERT(buffer->resource != nullptr);
+                ASSERT(buffer->binding == BufferBinding::UNIFORM);
+
                 D3D11BufferBinding& target = group->buffers[index];
-                target.buffer = buffer_from_handle(source.buffer);
+                target.buffer = buffer;
                 target.stage = source.stage;
                 target.slot = source.slot;
             }
@@ -870,7 +912,11 @@ namespace gui::render::d3d11 {
         ID3D11DeviceContext* const device_context = context_impl->device_context;
         for (size_t index = 0u; index < group_impl->buffer_count; ++index) {
             D3D11BufferBinding const& binding = group_impl->buffers[index];
-            ID3D11Buffer* buffer = binding.buffer;
+            ASSERT(binding.buffer != nullptr);
+            ASSERT(binding.buffer->context == context_impl);
+            ASSERT(binding.buffer->resource != nullptr);
+            ASSERT(binding.buffer->binding == BufferBinding::UNIFORM);
+            ID3D11Buffer* buffer = binding.buffer->resource;
             switch (binding.stage) {
             case ShaderStage::VERTEX:
                 device_context->VSSetConstantBuffers(binding.slot, 1u, &buffer);
@@ -923,7 +969,13 @@ namespace gui::render::d3d11 {
             VertexBufferBinding const& binding = desc.vertex_buffers[index];
             ASSERT(binding.slot < D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT);
 
-            ID3D11Buffer* const buffer = buffer_from_handle(binding.buffer);
+            D3D11Buffer* buffer_impl = buffer_from_handle(binding.buffer);
+            ASSERT(buffer_impl != nullptr);
+            ASSERT(buffer_impl->context == context_impl);
+            ASSERT(buffer_impl->resource != nullptr);
+            ASSERT(buffer_impl->binding == BufferBinding::VERTEX);
+            ASSERT(binding.byte_offset <= buffer_impl->byte_size);
+            ID3D11Buffer* const buffer = buffer_impl->resource;
             UINT const stride = binding.byte_stride;
             UINT const offset = binding.byte_offset;
             device_context->IASetVertexBuffers(binding.slot, 1u, &buffer, &stride, &offset);
