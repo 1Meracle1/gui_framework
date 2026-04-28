@@ -2,6 +2,8 @@
 
 #include <render/render.h>
 
+struct ID3D12GraphicsCommandList;
+
 namespace gui::render::d3d12 {
 
     [[nodiscard]] auto create_context(Arena& arena, ContextDesc const& desc, Context& out_context)
@@ -61,7 +63,8 @@ namespace gui::render::d3d12 {
     [[nodiscard]] auto window_size(Window window) -> SizeU32;
 
     [[nodiscard]] auto native_device(Context context) -> void*;
-    [[nodiscard]] auto native_device_context(Context context) -> void*;
+    [[nodiscard]] auto active_render_pass_command_list(Context context)
+        -> ID3D12GraphicsCommandList*;
     [[nodiscard]] auto native_swap_chain(Window window) -> void*;
 
 } // namespace gui::render::d3d12

@@ -55,7 +55,6 @@ namespace {
         TEST_EXPECT(context, size.width == 0u);
         TEST_EXPECT(context, size.height == 0u);
         TEST_EXPECT(context, gui::render::native_device(context_handle) == nullptr);
-        TEST_EXPECT(context, gui::render::native_device_context(context_handle) == nullptr);
         TEST_EXPECT(context, gui::render::native_swap_chain(window_handle) == nullptr);
     }
 

@@ -302,7 +302,6 @@ namespace gui::render {
     [[nodiscard]] auto window_size(Window window) -> SizeU32;
 
     [[nodiscard]] auto native_device(Context context) -> void*;
-    [[nodiscard]] auto native_device_context(Context context) -> void*;
     [[nodiscard]] auto native_swap_chain(Window window) -> void*;
 
 } // namespace gui::render

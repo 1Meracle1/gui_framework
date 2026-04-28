@@ -71,6 +71,9 @@ if(WIN32)
         WIN32_LEAN_AND_MEAN
         NOMINMAX
     )
+    target_include_directories(render_dx12_clear_smoke PRIVATE
+        "${PROJECT_SOURCE_DIR}/src/render/src"
+    )
     target_link_libraries(render_dx12_clear_smoke PRIVATE
         base::base
         render::render

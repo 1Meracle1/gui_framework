@@ -1935,9 +1935,10 @@ namespace gui::render::d3d12 {
         return context_impl->device;
     }
 
-    auto native_device_context(Context context) -> void* {
+    auto active_render_pass_command_list(Context context) -> ID3D12GraphicsCommandList* {
         D3D12Context const* const context_impl = context_from_handle(context);
         ASSERT(context_impl != nullptr);
+        ASSERT(context_impl->render_pass_active);
         return context_impl->command_list;
     }
 

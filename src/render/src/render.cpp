@@ -749,26 +749,6 @@ namespace gui::render {
 #endif
     }
 
-    auto native_device_context(Context context) -> void* {
-        if (!context_valid(context)) {
-            return nullptr;
-        }
-
-#if BASE_PLATFORM_WINDOWS
-        switch (context_backend(context)) {
-        case Backend::D3D11:
-            return d3d11::native_device_context(context);
-        case Backend::D3D12:
-            return d3d12::native_device_context(context);
-        }
-
-        return nullptr;
-#else
-        BASE_UNUSED(context);
-        return nullptr;
-#endif
-    }
-
     auto native_swap_chain(Window window) -> void* {
         if (!window_valid(window)) {
             return nullptr;

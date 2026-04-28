@@ -14,6 +14,7 @@
 #include <csetjmp>
 #include <cstddef>
 #include <cstdint>
+#include <render_d3d12.h>
 
 // clang-format off
 #include <render/render.h>
@@ -524,7 +525,7 @@ namespace {
         IDXGISwapChain3* const swap_chain =
             static_cast<IDXGISwapChain3*>(gui::render::native_swap_chain(window));
         ID3D12GraphicsCommandList* const command_list =
-            static_cast<ID3D12GraphicsCommandList*>(gui::render::native_device_context(context));
+            gui::render::d3d12::active_render_pass_command_list(context);
         if (swap_chain == nullptr || command_list == nullptr || readback == nullptr) {
             return false;
         }
