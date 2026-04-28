@@ -31,6 +31,8 @@ namespace gui::draw {
             gui::render::Shader vertex_shader = {};
             gui::render::Shader pixel_shader = {};
             gui::render::Pipeline pipeline = {};
+            gui::render::Shader layer_pixel_shader = {};
+            gui::render::Pipeline layer_pipeline = {};
             gui::render::Shader styled_rect_vertex_shader = {};
             gui::render::Shader styled_rect_pixel_shader = {};
             gui::render::Pipeline styled_rect_pipeline = {};
@@ -42,6 +44,16 @@ namespace gui::draw {
             gui::render::VertexBufferBinding vertex_buffer = {};
             gui::render::VertexBufferBinding styled_rect_vertex_buffer = {};
             uint32_t text_first_vertex = 0u;
+        };
+
+        struct RenderTarget {
+            gui::render::SizeU32 size = {};
+            Vec2 origin = {};
+        };
+
+        struct LayerRender {
+            gui::render::Texture texture = {};
+            Rect target_rect = {};
         };
 
         [[nodiscard]] auto renderer_from_handle(Renderer renderer) -> RendererImpl* {
@@ -63,11 +75,17 @@ namespace gui::draw {
             if (gui::render::pipeline_valid(renderer->pipeline)) {
                 gui::render::destroy_pipeline(context, renderer->pipeline);
             }
+            if (gui::render::pipeline_valid(renderer->layer_pipeline)) {
+                gui::render::destroy_pipeline(context, renderer->layer_pipeline);
+            }
             if (gui::render::pipeline_valid(renderer->styled_rect_pipeline)) {
                 gui::render::destroy_pipeline(context, renderer->styled_rect_pipeline);
             }
             if (gui::render::shader_valid(renderer->pixel_shader)) {
                 gui::render::destroy_shader(context, renderer->pixel_shader);
+            }
+            if (gui::render::shader_valid(renderer->layer_pixel_shader)) {
+                gui::render::destroy_shader(context, renderer->layer_pixel_shader);
             }
             if (gui::render::shader_valid(renderer->vertex_shader)) {
                 gui::render::destroy_shader(context, renderer->vertex_shader);
@@ -93,6 +111,16 @@ namespace gui::draw {
             return gui::render::create_texture(context, texture_desc, out_texture);
         }
 
+        [[nodiscard]] auto create_layer_texture(gui::render::Context context,
+                                                gui::render::SizeU32 size,
+                                                gui::render::Texture& out_texture)
+            -> gui::render::Result {
+            gui::render::TextureDesc texture_desc = {};
+            texture_desc.size = size;
+            texture_desc.render_target = true;
+            return gui::render::create_texture(context, texture_desc, out_texture);
+        }
+
         [[nodiscard]] auto create_text_texture(gui::render::Context context,
                                                font_cache::TextRun const& run,
                                                gui::render::Texture& out_texture)
@@ -115,6 +143,45 @@ namespace gui::draw {
 
         [[nodiscard]] auto pixel_to_ndc_y(float value, float height) -> float {
             return 1.0f - ((value / height) * 2.0f);
+        }
+
+        [[nodiscard]] auto target_width(RenderTarget target) -> float {
+            return static_cast<float>(target.size.width);
+        }
+
+        [[nodiscard]] auto target_height(RenderTarget target) -> float {
+            return static_cast<float>(target.size.height);
+        }
+
+        [[nodiscard]] auto target_position(RenderTarget target, Vec2 position) -> Vec2 {
+            return {position.x - target.origin.x, position.y - target.origin.y};
+        }
+
+        [[nodiscard]] auto rect_intersect(Rect lhs, Rect rhs) -> Rect {
+            return {{std::max(lhs.min.x, rhs.min.x), std::max(lhs.min.y, rhs.min.y)},
+                    {std::min(lhs.max.x, rhs.max.x), std::min(lhs.max.y, rhs.max.y)}};
+        }
+
+        [[nodiscard]] auto rect_visible(Rect rect) -> bool {
+            return rect.max.x > rect.min.x && rect.max.y > rect.min.y;
+        }
+
+        [[nodiscard]] auto root_target_rect(gui::render::SizeU32 target_size) -> Rect {
+            return {
+                {0.0f, 0.0f},
+                {static_cast<float>(target_size.width), static_cast<float>(target_size.height)}};
+        }
+
+        [[nodiscard]] auto layer_target_rect(LayerCommand const& layer,
+                                             gui::render::SizeU32 root_size) -> Rect {
+            Rect const clipped = rect_intersect(layer.clip_rect, root_target_rect(root_size));
+            return {{std::floor(clipped.min.x), std::floor(clipped.min.y)},
+                    {std::ceil(clipped.max.x), std::ceil(clipped.max.y)}};
+        }
+
+        [[nodiscard]] auto rect_size(Rect rect) -> gui::render::SizeU32 {
+            return {static_cast<uint32_t>(rect.max.x - rect.min.x),
+                    static_cast<uint32_t>(rect.max.y - rect.min.y)};
         }
 
         [[nodiscard]] auto transform_point(Transform2D const& transform, Vec2 point) -> Vec2 {
@@ -152,59 +219,77 @@ namespace gui::draw {
                     static_cast<uint32_t>(bottom - top)};
         }
 
-        auto write_primitive_vertex(RenderVertex& vertex,
-                                    gui::render::SizeU32 target_size,
-                                    Vertex const& source) -> void {
-            float const width = static_cast<float>(target_size.width);
-            float const height = static_cast<float>(target_size.height);
+        [[nodiscard]] auto target_clip_rect_to_scissor(Rect rect, RenderTarget target)
+            -> gui::render::ScissorRect {
+            Rect const local_rect = {{rect.min.x - target.origin.x, rect.min.y - target.origin.y},
+                                     {rect.max.x - target.origin.x, rect.max.y - target.origin.y}};
+            return clip_rect_to_scissor(local_rect, target.size);
+        }
+
+        auto write_primitive_vertex(RenderVertex& vertex, RenderTarget target, Vertex const& source)
+            -> void {
+            Vec2 const position = target_position(target, source.position);
             Color const color = source.color;
-            vertex = {{pixel_to_ndc_x(source.position.x, width),
-                       pixel_to_ndc_y(source.position.y, height)},
+            vertex = {{pixel_to_ndc_x(position.x, target_width(target)),
+                       pixel_to_ndc_y(position.y, target_height(target))},
                       {source.uv.x, source.uv.y},
                       {color.r, color.g, color.b, color.a}};
         }
 
+        auto write_layer_vertex(RenderVertex& vertex,
+                                RenderTarget target,
+                                Vec2 position,
+                                Vec2 uv,
+                                float opacity) -> void {
+            position = target_position(target, position);
+            vertex = {{pixel_to_ndc_x(position.x, target_width(target)),
+                       pixel_to_ndc_y(position.y, target_height(target))},
+                      {uv.x, uv.y},
+                      {1.0f, 1.0f, 1.0f, opacity}};
+        }
+
         auto write_text_vertices(RenderVertex* vertices,
-                                 gui::render::SizeU32 target_size,
+                                 RenderTarget target,
                                  TextCommand const& command) -> void {
             font_cache::TextRun const& run = command.run;
-            float const width = static_cast<float>(target_size.width);
-            float const height = static_cast<float>(target_size.height);
             float const x0 = command.position.x;
             float const y0 = command.position.y;
             float const x1 = x0 + static_cast<float>(run.size.width);
             float const y1 = y0 + static_cast<float>(run.size.height);
-            Vec2 const p0 = transform_point(command.transform, {x0, y0});
-            Vec2 const p1 = transform_point(command.transform, {x1, y0});
-            Vec2 const p2 = transform_point(command.transform, {x1, y1});
-            Vec2 const p3 = transform_point(command.transform, {x0, y1});
+            Vec2 const p0 = target_position(target, transform_point(command.transform, {x0, y0}));
+            Vec2 const p1 = target_position(target, transform_point(command.transform, {x1, y0}));
+            Vec2 const p2 = target_position(target, transform_point(command.transform, {x1, y1}));
+            Vec2 const p3 = target_position(target, transform_point(command.transform, {x0, y1}));
             Color color = command.style.color;
             color.a *= command.opacity;
 
-            vertices[0u] = {{pixel_to_ndc_x(p0.x, width), pixel_to_ndc_y(p0.y, height)},
+            vertices[0u] = {{pixel_to_ndc_x(p0.x, target_width(target)),
+                             pixel_to_ndc_y(p0.y, target_height(target))},
                             {0.0f, 0.0f},
                             {color.r, color.g, color.b, color.a}};
-            vertices[1u] = {{pixel_to_ndc_x(p1.x, width), pixel_to_ndc_y(p1.y, height)},
+            vertices[1u] = {{pixel_to_ndc_x(p1.x, target_width(target)),
+                             pixel_to_ndc_y(p1.y, target_height(target))},
                             {1.0f, 0.0f},
                             {color.r, color.g, color.b, color.a}};
-            vertices[2u] = {{pixel_to_ndc_x(p2.x, width), pixel_to_ndc_y(p2.y, height)},
+            vertices[2u] = {{pixel_to_ndc_x(p2.x, target_width(target)),
+                             pixel_to_ndc_y(p2.y, target_height(target))},
                             {1.0f, 1.0f},
                             {color.r, color.g, color.b, color.a}};
             vertices[3u] = vertices[0u];
             vertices[4u] = vertices[2u];
-            vertices[5u] = {{pixel_to_ndc_x(p3.x, width), pixel_to_ndc_y(p3.y, height)},
+            vertices[5u] = {{pixel_to_ndc_x(p3.x, target_width(target)),
+                             pixel_to_ndc_y(p3.y, target_height(target))},
                             {0.0f, 1.0f},
                             {color.r, color.g, color.b, color.a}};
         }
 
         auto write_styled_rect_vertex(StyledRectVertex& vertex,
-                                      gui::render::SizeU32 target_size,
+                                      RenderTarget target,
                                       StyledRectCommand const& command,
                                       Vec2 local,
                                       Vec2 uv) -> void {
-            float const width = static_cast<float>(target_size.width);
-            float const height = static_cast<float>(target_size.height);
-            Vec2 const position = transform_point(command.transform, local);
+            Vec2 const position =
+                target_position(target, transform_point(command.transform, local));
             BoxStyle const& style = command.style;
             Color fill_color = style.fill_color;
             Color border_color = style.border_color;
@@ -212,7 +297,8 @@ namespace gui::draw {
             border_color.a *= command.opacity;
 
             vertex = {
-                {pixel_to_ndc_x(position.x, width), pixel_to_ndc_y(position.y, height)},
+                {pixel_to_ndc_x(position.x, target_width(target)),
+                 pixel_to_ndc_y(position.y, target_height(target))},
                 {local.x, local.y},
                 {uv.x, uv.y},
                 {command.rect.min.x, command.rect.min.y, command.rect.max.x, command.rect.max.y},
@@ -222,7 +308,7 @@ namespace gui::draw {
         }
 
         auto write_styled_rect_vertices(StyledRectVertex* vertices,
-                                        gui::render::SizeU32 target_size,
+                                        RenderTarget target,
                                         StyledRectCommand const& command) -> void {
             Rect const rect = command.rect;
             Rect const uv_rect = command.style.uv_rect;
@@ -234,16 +320,16 @@ namespace gui::draw {
             Vec2 const uv1 = {uv_rect.max.x, uv_rect.min.y};
             Vec2 const uv2 = uv_rect.max;
             Vec2 const uv3 = {uv_rect.min.x, uv_rect.max.y};
-            write_styled_rect_vertex(vertices[0u], target_size, command, p0, uv0);
-            write_styled_rect_vertex(vertices[1u], target_size, command, p1, uv1);
-            write_styled_rect_vertex(vertices[2u], target_size, command, p2, uv2);
-            write_styled_rect_vertex(vertices[3u], target_size, command, p0, uv0);
-            write_styled_rect_vertex(vertices[4u], target_size, command, p2, uv2);
-            write_styled_rect_vertex(vertices[5u], target_size, command, p3, uv3);
+            write_styled_rect_vertex(vertices[0u], target, command, p0, uv0);
+            write_styled_rect_vertex(vertices[1u], target, command, p1, uv1);
+            write_styled_rect_vertex(vertices[2u], target, command, p2, uv2);
+            write_styled_rect_vertex(vertices[3u], target, command, p0, uv0);
+            write_styled_rect_vertex(vertices[4u], target, command, p2, uv2);
+            write_styled_rect_vertex(vertices[5u], target, command, p3, uv3);
         }
 
         [[nodiscard]] auto upload_draw_vertices(gui::render::Context render_context,
-                                                gui::render::SizeU32 target_size,
+                                                RenderTarget target,
                                                 Context draw_context) -> DrawUpload {
             DrawUpload result = {};
             size_t const primitive_count = primitive_command_count(draw_context);
@@ -272,7 +358,7 @@ namespace gui::draw {
                     for (size_t vertex_index = 0u; vertex_index < command->vertex_count;
                          ++vertex_index) {
                         write_primitive_vertex(vertices[vertex_offset + vertex_index],
-                                               target_size,
+                                               target,
                                                command->vertices[vertex_index]);
                     }
                     vertex_offset += command->vertex_count;
@@ -284,7 +370,7 @@ namespace gui::draw {
                     TextCommand const* const command = text_command(draw_context, index);
                     ASSERT(command != nullptr);
                     if (text_command_visible(*command)) {
-                        write_text_vertices(text_vertices + (index * 6u), target_size, *command);
+                        write_text_vertices(text_vertices + (index * 6u), target, *command);
                     }
                 }
 
@@ -307,7 +393,7 @@ namespace gui::draw {
                     StyledRectCommand const* const command =
                         styled_rect_command(draw_context, index);
                     ASSERT(command != nullptr);
-                    write_styled_rect_vertices(vertices + (index * 6u), target_size, *command);
+                    write_styled_rect_vertices(vertices + (index * 6u), target, *command);
                 }
 
                 result.styled_rect_vertex_buffer.buffer = upload.buffer;
@@ -353,7 +439,7 @@ namespace gui::draw {
         }
 
         auto submit_primitive_batch(gui::render::Context render_context,
-                                    gui::render::SizeU32 target_size,
+                                    RenderTarget target,
                                     RendererImpl const& renderer,
                                     DrawUpload const& upload,
                                     PrimitiveBatch const& batch,
@@ -376,13 +462,13 @@ namespace gui::draw {
             draw_desc.first_vertex = first_vertex;
 
             gui::render::set_scissor_rect(render_context,
-                                          clip_rect_to_scissor(batch.clip_rect, target_size));
+                                          target_clip_rect_to_scissor(batch.clip_rect, target));
             gui::render::draw(render_context, draw_desc);
             gui::render::destroy_bind_group(render_context, bind_group);
         }
 
         auto submit_styled_rect(gui::render::Context render_context,
-                                gui::render::SizeU32 target_size,
+                                RenderTarget target,
                                 RendererImpl const& renderer,
                                 DrawUpload const& upload,
                                 StyledRectCommand const& command,
@@ -405,13 +491,13 @@ namespace gui::draw {
             draw_desc.first_vertex = static_cast<uint32_t>(command_index * 6u);
 
             gui::render::set_scissor_rect(render_context,
-                                          clip_rect_to_scissor(command.clip_rect, target_size));
+                                          target_clip_rect_to_scissor(command.clip_rect, target));
             gui::render::draw(render_context, draw_desc);
             gui::render::destroy_bind_group(render_context, bind_group);
         }
 
         auto submit_text_command(gui::render::Context render_context,
-                                 gui::render::SizeU32 target_size,
+                                 RenderTarget target,
                                  RendererImpl const& renderer,
                                  DrawUpload const& upload,
                                  TextCommand const& command,
@@ -438,13 +524,256 @@ namespace gui::draw {
                 draw_desc.first_vertex =
                     upload.text_first_vertex + static_cast<uint32_t>(text_index * 6u);
 
-                gui::render::set_scissor_rect(render_context,
-                                              clip_rect_to_scissor(command.clip_rect, target_size));
+                gui::render::set_scissor_rect(
+                    render_context, target_clip_rect_to_scissor(command.clip_rect, target));
                 gui::render::draw(render_context, draw_desc);
                 gui::render::destroy_bind_group(render_context, bind_group);
             }
 
             gui::render::destroy_texture(render_context, texture);
+        }
+
+        [[nodiscard]] auto primitive_batch_first_vertex(Context draw_context,
+                                                        PrimitiveBatch const& batch) -> uint32_t {
+            size_t result = 0u;
+            for (size_t index = 0u; index < batch.command_index; ++index) {
+                PrimitiveCommand const* const command = primitive_command(draw_context, index);
+                ASSERT(command != nullptr);
+                result += command->vertex_count;
+            }
+            return static_cast<uint32_t>(result);
+        }
+
+        [[nodiscard]] auto upload_layer_vertices(gui::render::Context render_context,
+                                                 RenderTarget target,
+                                                 Rect rect,
+                                                 float opacity)
+            -> gui::render::VertexBufferBinding {
+            gui::render::FrameBufferSlice const upload = gui::render::allocate_frame_vertex_buffer(
+                render_context, 6u * sizeof(RenderVertex), alignof(RenderVertex));
+
+            Vec2 const p0 = rect.min;
+            Vec2 const p1 = {rect.max.x, rect.min.y};
+            Vec2 const p2 = rect.max;
+            Vec2 const p3 = {rect.min.x, rect.max.y};
+            RenderVertex* const vertices = static_cast<RenderVertex*>(upload.data);
+            write_layer_vertex(vertices[0u], target, p0, {0.0f, 0.0f}, opacity);
+            write_layer_vertex(vertices[1u], target, p1, {1.0f, 0.0f}, opacity);
+            write_layer_vertex(vertices[2u], target, p2, {1.0f, 1.0f}, opacity);
+            write_layer_vertex(vertices[3u], target, p0, {0.0f, 0.0f}, opacity);
+            write_layer_vertex(vertices[4u], target, p2, {1.0f, 1.0f}, opacity);
+            write_layer_vertex(vertices[5u], target, p3, {0.0f, 1.0f}, opacity);
+
+            gui::render::commit_frame_uploads(render_context);
+
+            gui::render::VertexBufferBinding result = {};
+            result.buffer = upload.buffer;
+            result.byte_stride = static_cast<uint32_t>(sizeof(RenderVertex));
+            result.byte_offset = static_cast<uint32_t>(upload.byte_offset);
+            return result;
+        }
+
+        auto submit_layer(RendererImpl const& renderer,
+                          gui::render::Context render_context,
+                          RenderTarget target,
+                          LayerCommand const& command,
+                          LayerRender const& layer_render) -> void {
+            ASSERT(command.desc.blend_mode == LayerBlendMode::NORMAL);
+            if (!gui::render::texture_valid(layer_render.texture)) {
+                return;
+            }
+
+            gui::render::VertexBufferBinding const vertex_buffer = upload_layer_vertices(
+                render_context, target, layer_render.target_rect, command.desc.opacity);
+
+            ArenaTemp temp = begin_thread_temp_arena();
+            gui::render::BindGroup bind_group = {};
+            if (!bind_texture(
+                    *temp.arena(), render_context, renderer, layer_render.texture, bind_group)) {
+                return;
+            }
+
+            gui::render::DrawDesc draw_desc = {};
+            draw_desc.vertex_buffers = &vertex_buffer;
+            draw_desc.vertex_buffer_count = 1u;
+            draw_desc.vertex_count = 6u;
+
+            gui::render::bind_pipeline(render_context, renderer.layer_pipeline);
+            gui::render::set_scissor_rect(
+                render_context, target_clip_rect_to_scissor(layer_render.target_rect, target));
+            gui::render::draw(render_context, draw_desc);
+            gui::render::destroy_bind_group(render_context, bind_group);
+        }
+
+        auto render_command_range(RendererImpl const& renderer,
+                                  gui::render::Context render_context,
+                                  RenderTarget target,
+                                  Context draw_context,
+                                  LayerRender const* layer_renders,
+                                  size_t first_command,
+                                  size_t end_command) -> void;
+
+        [[nodiscard]] auto render_layer(RendererImpl const& renderer,
+                                        gui::render::Context render_context,
+                                        gui::render::SizeU32 root_size,
+                                        Context draw_context,
+                                        LayerRender* layer_renders,
+                                        size_t layer_index) -> bool {
+            LayerCommand const* const layer = layer_command(draw_context, layer_index);
+            ASSERT(layer != nullptr);
+            if (layer == nullptr || layer->desc.opacity <= 0.0f) {
+                return true;
+            }
+
+            Rect const target_rect = layer_target_rect(*layer, root_size);
+            if (!rect_visible(target_rect)) {
+                return true;
+            }
+
+            for (size_t index = layer->begin_command_index + 1u; index < layer->end_command_index;
+                 ++index) {
+                Command const* const draw_command = command(draw_context, index);
+                ASSERT(draw_command != nullptr);
+                if (draw_command->kind == CommandKind::LAYER_BEGIN) {
+                    if (!render_layer(renderer,
+                                      render_context,
+                                      root_size,
+                                      draw_context,
+                                      layer_renders,
+                                      draw_command->index)) {
+                        return false;
+                    }
+                    LayerCommand const* const child_layer =
+                        layer_command(draw_context, draw_command->index);
+                    ASSERT(child_layer != nullptr);
+                    index = child_layer->end_command_index;
+                }
+            }
+
+            gui::render::Texture texture = {};
+            gui::render::Result result =
+                create_layer_texture(render_context, rect_size(target_rect), texture);
+            ASSERT(gui::render::result_succeeded(result));
+            if (gui::render::result_failed(result)) {
+                return false;
+            }
+
+            gui::render::TextureRenderPassDesc pass_desc = {};
+            pass_desc.target = texture;
+            pass_desc.clear_color = {0.0f, 0.0f, 0.0f, 0.0f};
+            result = gui::render::begin_texture_render_pass(render_context, pass_desc);
+            ASSERT(gui::render::result_succeeded(result));
+            if (gui::render::result_failed(result)) {
+                gui::render::destroy_texture(render_context, texture);
+                return false;
+            }
+
+            RenderTarget const target = {rect_size(target_rect), target_rect.min};
+            render_command_range(renderer,
+                                 render_context,
+                                 target,
+                                 draw_context,
+                                 layer_renders,
+                                 layer->begin_command_index + 1u,
+                                 layer->end_command_index);
+            gui::render::end_render_pass(render_context);
+
+            layer_renders[layer_index].texture = texture;
+            layer_renders[layer_index].target_rect = target_rect;
+            return true;
+        }
+
+        auto render_command_range(RendererImpl const& renderer,
+                                  gui::render::Context render_context,
+                                  RenderTarget target,
+                                  Context draw_context,
+                                  LayerRender const* layer_renders,
+                                  size_t first_command,
+                                  size_t end_command) -> void {
+            DrawUpload const upload = upload_draw_vertices(render_context, target, draw_context);
+            gui::render::commit_frame_uploads(render_context);
+
+            for (size_t index = first_command; index < end_command; ++index) {
+                Command const* const draw_command = command(draw_context, index);
+                ASSERT(draw_command != nullptr);
+
+                if (draw_command->kind == CommandKind::PRIMITIVE_BATCH) {
+                    PrimitiveBatch const* const batch =
+                        primitive_batch(draw_context, draw_command->index);
+                    ASSERT(batch != nullptr);
+                    gui::render::bind_pipeline(render_context, renderer.pipeline);
+                    submit_primitive_batch(render_context,
+                                           target,
+                                           renderer,
+                                           upload,
+                                           *batch,
+                                           primitive_batch_first_vertex(draw_context, *batch));
+                } else if (draw_command->kind == CommandKind::STYLED_RECT) {
+                    StyledRectCommand const* const styled_rect =
+                        styled_rect_command(draw_context, draw_command->index);
+                    ASSERT(styled_rect != nullptr);
+                    gui::render::bind_pipeline(render_context, renderer.styled_rect_pipeline);
+                    submit_styled_rect(render_context,
+                                       target,
+                                       renderer,
+                                       upload,
+                                       *styled_rect,
+                                       draw_command->index);
+                } else if (draw_command->kind == CommandKind::TEXT) {
+                    TextCommand const* const text = text_command(draw_context, draw_command->index);
+                    ASSERT(text != nullptr);
+                    gui::render::bind_pipeline(render_context, renderer.pipeline);
+                    submit_text_command(
+                        render_context, target, renderer, upload, *text, draw_command->index);
+                } else if (draw_command->kind == CommandKind::LAYER_BEGIN) {
+                    LayerCommand const* const layer =
+                        layer_command(draw_context, draw_command->index);
+                    ASSERT(layer != nullptr);
+                    submit_layer(renderer,
+                                 render_context,
+                                 target,
+                                 *layer,
+                                 layer_renders[draw_command->index]);
+                    index = layer->end_command_index;
+                }
+            }
+        }
+
+        [[nodiscard]] auto prepare_layers(RendererImpl const& renderer,
+                                          gui::render::Context render_context,
+                                          gui::render::SizeU32 target_size,
+                                          Context draw_context,
+                                          LayerRender* layer_renders) -> bool {
+            size_t const command_total = command_count(draw_context);
+            for (size_t index = 0u; index < command_total; ++index) {
+                Command const* const draw_command = command(draw_context, index);
+                ASSERT(draw_command != nullptr);
+                if (draw_command->kind == CommandKind::LAYER_BEGIN) {
+                    if (!render_layer(renderer,
+                                      render_context,
+                                      target_size,
+                                      draw_context,
+                                      layer_renders,
+                                      draw_command->index)) {
+                        return false;
+                    }
+                    LayerCommand const* const layer =
+                        layer_command(draw_context, draw_command->index);
+                    ASSERT(layer != nullptr);
+                    index = layer->end_command_index;
+                }
+            }
+            return true;
+        }
+
+        auto destroy_layer_renders(gui::render::Context render_context,
+                                   LayerRender* layer_renders,
+                                   size_t layer_count) -> void {
+            for (size_t index = 0u; index < layer_count; ++index) {
+                if (gui::render::texture_valid(layer_renders[index].texture)) {
+                    gui::render::destroy_texture(render_context, layer_renders[index].texture);
+                }
+            }
         }
 
     } // namespace
@@ -491,6 +820,24 @@ float4 ps_main(PSInput input) : SV_Target
 {
     float4 sample_value = g_texture.Sample(g_sampler, input.uv);
     return float4(input.color.rgb * sample_value.rgb, input.color.a * sample_value.a);
+}
+)hlsl";
+
+        constexpr StrRef LAYER_SHADER_SOURCE = R"hlsl(
+Texture2D g_texture : register(t0);
+SamplerState g_sampler : register(s0);
+
+struct PSInput
+{
+    float4 position : SV_POSITION;
+    float2 uv : TEXCOORD0;
+    float4 color : COLOR0;
+};
+
+float4 ps_main(PSInput input) : SV_Target
+{
+    float4 sample_value = g_texture.Sample(g_sampler, input.uv);
+    return float4(sample_value.rgb * input.color.a, sample_value.a * input.color.a);
 }
 )hlsl";
 
@@ -636,6 +983,31 @@ float4 ps_main(PSInput input) : SV_Target
             return result;
         }
 
+        shader_desc.source = LAYER_SHADER_SOURCE;
+        shader_desc.stage = gui::render::ShaderStage::PIXEL;
+        shader_desc.entry_point = "ps_main";
+
+        result = gui::render::create_shader_from_source(
+            arena, render_context, shader_desc, renderer->layer_pixel_shader);
+        if (gui::render::result_failed(result)) {
+            destroy_renderer_resources(render_context, renderer);
+            return result;
+        }
+
+        pipeline_desc = {};
+        pipeline_desc.vertex_shader = renderer->vertex_shader;
+        pipeline_desc.pixel_shader = renderer->layer_pixel_shader;
+        pipeline_desc.vertex_attributes = input_elements;
+        pipeline_desc.vertex_attribute_count = sizeof(input_elements) / sizeof(input_elements[0u]);
+        pipeline_desc.blend_mode = gui::render::BlendMode::PREMULTIPLIED_ALPHA;
+
+        result = gui::render::create_pipeline(
+            arena, render_context, pipeline_desc, renderer->layer_pipeline);
+        if (gui::render::result_failed(result)) {
+            destroy_renderer_resources(render_context, renderer);
+            return result;
+        }
+
         shader_desc.source = STYLED_RECT_SHADER_SOURCE;
         shader_desc.stage = gui::render::ShaderStage::VERTEX;
         shader_desc.entry_point = "vs_main";
@@ -764,37 +1136,62 @@ float4 ps_main(PSInput input) : SV_Target
             return;
         }
 
-        DrawUpload const upload = upload_draw_vertices(render_context, target_size, draw_context);
-        gui::render::commit_frame_uploads(render_context);
+        ASSERT(layer_command_count(draw_context) == 0u);
+        if (layer_command_count(draw_context) != 0u) {
+            return;
+        }
 
-        uint32_t primitive_first_vertex = 0u;
-        for (size_t index = 0u; index < command_total; ++index) {
-            Command const* const draw_command = command(draw_context, index);
-            ASSERT(draw_command != nullptr);
+        RenderTarget const target = {target_size, {}};
+        render_command_range(
+            *impl, render_context, target, draw_context, nullptr, 0u, command_total);
+    }
 
-            if (draw_command->kind == CommandKind::PRIMITIVE_BATCH) {
-                PrimitiveBatch const* const batch =
-                    primitive_batch(draw_context, draw_command->index);
-                ASSERT(batch != nullptr);
-                gui::render::bind_pipeline(render_context, impl->pipeline);
-                submit_primitive_batch(
-                    render_context, target_size, *impl, upload, *batch, primitive_first_vertex);
-                primitive_first_vertex += static_cast<uint32_t>(batch->vertex_count);
-            } else if (draw_command->kind == CommandKind::STYLED_RECT) {
-                StyledRectCommand const* const styled_rect =
-                    styled_rect_command(draw_context, draw_command->index);
-                ASSERT(styled_rect != nullptr);
-                gui::render::bind_pipeline(render_context, impl->styled_rect_pipeline);
-                submit_styled_rect(
-                    render_context, target_size, *impl, upload, *styled_rect, draw_command->index);
-            } else {
-                TextCommand const* const text = text_command(draw_context, draw_command->index);
-                ASSERT(text != nullptr);
-                gui::render::bind_pipeline(render_context, impl->pipeline);
-                submit_text_command(
-                    render_context, target_size, *impl, upload, *text, draw_command->index);
+    auto render_commands_to_window(Renderer renderer,
+                                   gui::render::Context render_context,
+                                   gui::render::WindowRenderPassDesc const& desc,
+                                   Context draw_context) -> gui::render::Result {
+        RendererImpl const* const impl = renderer_from_handle(renderer);
+        ASSERT(impl != nullptr);
+        ASSERT(gui::render::context_valid(render_context));
+        ASSERT(gui::render::window_valid(desc.window));
+        ASSERT(context_valid(draw_context));
+
+        gui::render::SizeU32 const target_size = gui::render::window_size(desc.window);
+        ASSERT(target_size.width != 0u);
+        ASSERT(target_size.height != 0u);
+
+        ArenaTemp temp = begin_thread_temp_arena();
+        size_t const layer_count = layer_command_count(draw_context);
+        LayerRender* layer_renders = nullptr;
+        if (layer_count != 0u) {
+            layer_renders = arena_alloc<LayerRender>(*temp.arena(), layer_count);
+            for (size_t index = 0u; index < layer_count; ++index) {
+                layer_renders[index] = {};
+            }
+            if (!prepare_layers(*impl, render_context, target_size, draw_context, layer_renders)) {
+                destroy_layer_renders(render_context, layer_renders, layer_count);
+                return gui::render::Result::TEXTURE_CREATION_FAILED;
             }
         }
+
+        gui::render::Result const pass_result =
+            gui::render::begin_render_pass(render_context, desc);
+        if (gui::render::result_failed(pass_result)) {
+            destroy_layer_renders(render_context, layer_renders, layer_count);
+            return pass_result;
+        }
+
+        RenderTarget const target = {target_size, {}};
+        render_command_range(*impl,
+                             render_context,
+                             target,
+                             draw_context,
+                             layer_renders,
+                             0u,
+                             command_count(draw_context));
+        gui::render::end_render_pass(render_context);
+        destroy_layer_renders(render_context, layer_renders, layer_count);
+        return gui::render::Result::OK;
     }
 
 } // namespace gui::draw

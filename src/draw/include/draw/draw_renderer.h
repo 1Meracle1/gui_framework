@@ -25,4 +25,9 @@ namespace gui::draw {
                          gui::render::SizeU32 target_size,
                          Context draw_context) -> void;
 
+    [[nodiscard]] auto render_commands_to_window(Renderer renderer,
+                                                 gui::render::Context render_context,
+                                                 gui::render::WindowRenderPassDesc const& desc,
+                                                 Context draw_context) -> gui::render::Result;
+
 } // namespace gui::draw

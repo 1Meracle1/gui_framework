@@ -36,6 +36,8 @@ namespace {
         TEST_EXPECT(context, gui::draw::primitive_batch(draw_context, 0u) == nullptr);
         TEST_EXPECT(context, gui::draw::command_count(draw_context) == 0u);
         TEST_EXPECT(context, gui::draw::command(draw_context, 0u) == nullptr);
+        TEST_EXPECT(context, gui::draw::layer_command_count(draw_context) == 0u);
+        TEST_EXPECT(context, gui::draw::layer_command(draw_context, 0u) == nullptr);
         TEST_EXPECT(context, gui::draw::styled_rect_command_count(draw_context) == 0u);
         TEST_EXPECT(context, gui::draw::styled_rect_command(draw_context, 0u) == nullptr);
         TEST_EXPECT(context, gui::draw::text_command_count(draw_context) == 0u);
@@ -657,6 +659,86 @@ namespace {
 
         gui::draw::begin_frame(draw_context);
         TEST_EXPECT(context, gui::draw::styled_rect_command_count(draw_context) == 0u);
+
+        gui::draw::destroy_context(draw_context);
+    }
+
+    TEST_CASE(draw_records_layer_boundaries_and_group_opacity) {
+        Arena owner_arena = {};
+        owner_arena.init();
+
+        gui::draw::Context draw_context = {};
+        gui::draw::create_context(owner_arena, {}, draw_context);
+
+        gui::draw::begin_frame(draw_context);
+        gui::draw::draw_rect_filled(
+            draw_context, {{0.0f, 0.0f}, {4.0f, 4.0f}}, {1.0f, 1.0f, 1.0f, 1.0f}, 0.0f);
+
+        gui::draw::Rect const clip = {{0.0f, 0.0f}, {50.0f, 50.0f}};
+        gui::draw::Rect const bounds = {{10.0f, 10.0f}, {70.0f, 70.0f}};
+        gui::draw::Rect const clipped_bounds = {{10.0f, 10.0f}, {50.0f, 50.0f}};
+        gui::draw::LayerDesc layer = {};
+        layer.bounds = bounds;
+        layer.opacity = 0.5f;
+        gui::draw::push_clip_rect(draw_context, clip);
+        gui::draw::push_layer(draw_context, layer);
+        expect_rect(context, gui::draw::top_clip_rect(draw_context), clipped_bounds);
+        gui::draw::draw_rect_filled(
+            draw_context, {{12.0f, 12.0f}, {36.0f, 36.0f}}, {1.0f, 0.0f, 0.0f, 0.5f}, 0.0f);
+        gui::draw::draw_rect_filled(
+            draw_context, {{24.0f, 24.0f}, {48.0f, 48.0f}}, {0.0f, 0.0f, 1.0f, 0.5f}, 0.0f);
+        gui::draw::pop_layer(draw_context);
+        expect_rect(context, gui::draw::top_clip_rect(draw_context), clip);
+        gui::draw::pop_clip_rect(draw_context);
+
+        gui::draw::draw_rect_filled(
+            draw_context, {{80.0f, 0.0f}, {84.0f, 4.0f}}, {1.0f, 1.0f, 1.0f, 1.0f}, 0.0f);
+
+        TEST_EXPECT(context, gui::draw::layer_command_count(draw_context) == 1u);
+        TEST_EXPECT(context, gui::draw::primitive_command_count(draw_context) == 4u);
+        TEST_EXPECT(context, gui::draw::primitive_batch_count(draw_context) == 3u);
+        TEST_EXPECT(context, gui::draw::command_count(draw_context) == 5u);
+
+        gui::draw::LayerCommand const* layer_command = gui::draw::layer_command(draw_context, 0u);
+        TEST_EXPECT(context, layer_command != nullptr);
+        expect_rect(context, layer_command->desc.bounds, bounds);
+        expect_rect(context, layer_command->clip_rect, clipped_bounds);
+        TEST_EXPECT(context, layer_command->desc.opacity == 0.5f);
+        TEST_EXPECT(context, layer_command->desc.blend_mode == gui::draw::LayerBlendMode::NORMAL);
+        TEST_EXPECT(context, layer_command->begin_command_index == 1u);
+        TEST_EXPECT(context, layer_command->end_command_index == 3u);
+
+        gui::draw::PrimitiveCommand const* first_child =
+            gui::draw::primitive_command(draw_context, 1u);
+        gui::draw::PrimitiveCommand const* second_child =
+            gui::draw::primitive_command(draw_context, 2u);
+        TEST_EXPECT(context, first_child != nullptr);
+        TEST_EXPECT(context, second_child != nullptr);
+        expect_rect(context, first_child->clip_rect, clipped_bounds);
+        expect_rect(context, second_child->clip_rect, clipped_bounds);
+        TEST_EXPECT(context, first_child->vertices[0u].color.a == 0.5f);
+        TEST_EXPECT(context, second_child->vertices[0u].color.a == 0.5f);
+
+        gui::draw::Command const* command0 = gui::draw::command(draw_context, 0u);
+        gui::draw::Command const* command1 = gui::draw::command(draw_context, 1u);
+        gui::draw::Command const* command2 = gui::draw::command(draw_context, 2u);
+        gui::draw::Command const* command3 = gui::draw::command(draw_context, 3u);
+        gui::draw::Command const* command4 = gui::draw::command(draw_context, 4u);
+        TEST_EXPECT(context, command0 != nullptr);
+        TEST_EXPECT(context, command0->kind == gui::draw::CommandKind::PRIMITIVE_BATCH);
+        TEST_EXPECT(context, command1 != nullptr);
+        TEST_EXPECT(context, command1->kind == gui::draw::CommandKind::LAYER_BEGIN);
+        TEST_EXPECT(context, command1->index == 0u);
+        TEST_EXPECT(context, command2 != nullptr);
+        TEST_EXPECT(context, command2->kind == gui::draw::CommandKind::PRIMITIVE_BATCH);
+        TEST_EXPECT(context, command3 != nullptr);
+        TEST_EXPECT(context, command3->kind == gui::draw::CommandKind::LAYER_END);
+        TEST_EXPECT(context, command3->index == 0u);
+        TEST_EXPECT(context, command4 != nullptr);
+        TEST_EXPECT(context, command4->kind == gui::draw::CommandKind::PRIMITIVE_BATCH);
+
+        gui::draw::begin_frame(draw_context);
+        TEST_EXPECT(context, gui::draw::layer_command_count(draw_context) == 0u);
 
         gui::draw::destroy_context(draw_context);
     }

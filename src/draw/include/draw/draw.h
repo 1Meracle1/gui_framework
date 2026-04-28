@@ -58,10 +58,29 @@ namespace gui::draw {
         float opacity = 1.0f;
     };
 
+    enum class LayerBlendMode : uint8_t {
+        NORMAL,
+    };
+
+    struct LayerDesc {
+        Rect bounds = {};
+        float opacity = 1.0f;
+        LayerBlendMode blend_mode = LayerBlendMode::NORMAL;
+    };
+
+    struct LayerCommand {
+        LayerDesc desc = {};
+        Rect clip_rect = {};
+        size_t begin_command_index = 0u;
+        size_t end_command_index = 0u;
+    };
+
     enum class CommandKind : uint8_t {
         PRIMITIVE_BATCH,
         STYLED_RECT,
         TEXT,
+        LAYER_BEGIN,
+        LAYER_END,
     };
 
     struct Command {
@@ -135,6 +154,9 @@ namespace gui::draw {
     auto pop_opacity(Context context) -> float;
     [[nodiscard]] auto top_opacity(Context context) -> float;
 
+    auto push_layer(Context context, LayerDesc desc) -> void;
+    auto pop_layer(Context context) -> void;
+
     auto draw_line(Context context, Vec2 p0, Vec2 p1, Color color, float thickness) -> void;
     auto draw_polyline(Context context,
                        Slice<Vec2 const> points,
@@ -206,6 +228,8 @@ namespace gui::draw {
     [[nodiscard]] auto primitive_batch(Context context, size_t index) -> PrimitiveBatch const*;
     [[nodiscard]] auto command_count(Context context) -> size_t;
     [[nodiscard]] auto command(Context context, size_t index) -> Command const*;
+    [[nodiscard]] auto layer_command_count(Context context) -> size_t;
+    [[nodiscard]] auto layer_command(Context context, size_t index) -> LayerCommand const*;
     [[nodiscard]] auto styled_rect_command_count(Context context) -> size_t;
     [[nodiscard]] auto styled_rect_command(Context context, size_t index)
         -> StyledRectCommand const*;

@@ -36,12 +36,19 @@ namespace gui::draw {
             float value = 1.0f;
         };
 
+        struct LayerStackNode {
+            LayerStackNode* next = nullptr;
+            size_t index = 0u;
+            Rect previous_clip_rect = {};
+        };
+
         struct ContextImpl {
             Arena frame_arena = {};
             font_cache::Cache font_cache = {};
             PrimitiveCommand* primitive_commands = nullptr;
             PrimitiveBatch* primitive_batches = nullptr;
             Command* commands = nullptr;
+            LayerCommand* layer_commands = nullptr;
             StyledRectCommand* styled_rect_commands = nullptr;
             TextCommand* text_commands = nullptr;
             PathPoint* path_first = nullptr;
@@ -49,12 +56,14 @@ namespace gui::draw {
             ClipStackNode* clip_stack_top = nullptr;
             TransformStackNode* transform_stack_top = nullptr;
             OpacityStackNode* opacity_stack_top = nullptr;
+            LayerStackNode* layer_stack_top = nullptr;
             Rect current_clip_rect = {};
             Transform2D current_transform = {};
             float current_opacity = 1.0f;
             size_t primitive_command_count = 0u;
             size_t primitive_batch_count = 0u;
             size_t command_count = 0u;
+            size_t layer_command_count = 0u;
             size_t styled_rect_command_count = 0u;
             size_t text_command_count = 0u;
             size_t path_count = 0u;
@@ -75,6 +84,7 @@ namespace gui::draw {
             impl->clip_stack_top = nullptr;
             impl->transform_stack_top = nullptr;
             impl->opacity_stack_top = nullptr;
+            impl->layer_stack_top = nullptr;
             impl->current_clip_rect = default_clip_rect();
             impl->current_transform = {};
             impl->current_opacity = 1.0f;
@@ -582,12 +592,13 @@ namespace gui::draw {
         impl->primitive_commands =
             arena_alloc<PrimitiveCommand>(arena, desc.initial_command_capacity);
         impl->primitive_batches = arena_alloc<PrimitiveBatch>(arena, desc.initial_command_capacity);
-        impl->commands = arena_alloc<Command>(arena, desc.initial_command_capacity * 3u);
+        impl->commands = arena_alloc<Command>(arena, desc.initial_command_capacity * 5u);
+        impl->layer_commands = arena_alloc<LayerCommand>(arena, desc.initial_command_capacity);
         impl->styled_rect_commands =
             arena_alloc<StyledRectCommand>(arena, desc.initial_command_capacity);
         impl->text_commands = arena_alloc<TextCommand>(arena, desc.initial_command_capacity);
         impl->command_capacity = desc.initial_command_capacity;
-        impl->order_capacity = desc.initial_command_capacity * 3u;
+        impl->order_capacity = desc.initial_command_capacity * 5u;
         impl->font_cache = desc.font_cache;
         reset_state(impl);
         out_context.handle = impl;
@@ -600,11 +611,13 @@ namespace gui::draw {
         impl->primitive_commands = nullptr;
         impl->primitive_batches = nullptr;
         impl->commands = nullptr;
+        impl->layer_commands = nullptr;
         impl->styled_rect_commands = nullptr;
         impl->text_commands = nullptr;
         impl->primitive_command_count = 0u;
         impl->primitive_batch_count = 0u;
         impl->command_count = 0u;
+        impl->layer_command_count = 0u;
         impl->styled_rect_command_count = 0u;
         impl->text_command_count = 0u;
         clear_path(impl);
@@ -623,6 +636,7 @@ namespace gui::draw {
         impl->primitive_command_count = 0u;
         impl->primitive_batch_count = 0u;
         impl->command_count = 0u;
+        impl->layer_command_count = 0u;
         impl->styled_rect_command_count = 0u;
         impl->text_command_count = 0u;
         clear_path(impl);
@@ -719,6 +733,50 @@ namespace gui::draw {
     auto top_opacity(Context context) -> float {
         ContextImpl const* const impl = context_from_handle(context);
         return impl != nullptr ? impl->current_opacity : 1.0f;
+    }
+
+    auto push_layer(Context context, LayerDesc desc) -> void {
+        ContextImpl* const impl = context_from_handle(context);
+        ASSERT(impl != nullptr);
+        ASSERT(impl->layer_command_count < impl->command_capacity);
+
+        desc.bounds = rect_normalized(desc.bounds);
+        desc.opacity = std::clamp(desc.opacity, 0.0f, 1.0f);
+
+        Rect const previous_clip_rect = impl->current_clip_rect;
+        Rect const layer_clip_rect = rect_intersect(previous_clip_rect, desc.bounds);
+        size_t const layer_index = impl->layer_command_count;
+        LayerCommand* const command = impl->layer_commands + layer_index;
+        *command = {};
+        command->desc = desc;
+        command->clip_rect = layer_clip_rect;
+        command->begin_command_index = impl->command_count;
+        command->end_command_index = impl->command_count;
+        impl->layer_command_count += 1u;
+        append_command(impl, CommandKind::LAYER_BEGIN, layer_index);
+
+        LayerStackNode* const node = arena_new<LayerStackNode>(impl->frame_arena);
+        node->next = impl->layer_stack_top;
+        node->index = layer_index;
+        node->previous_clip_rect = previous_clip_rect;
+        impl->layer_stack_top = node;
+        impl->current_clip_rect = layer_clip_rect;
+    }
+
+    auto pop_layer(Context context) -> void {
+        ContextImpl* const impl = context_from_handle(context);
+        ASSERT(impl != nullptr);
+        ASSERT(impl->layer_stack_top != nullptr);
+        if (impl->layer_stack_top == nullptr) {
+            return;
+        }
+
+        LayerStackNode* const node = impl->layer_stack_top;
+        LayerCommand* const command = impl->layer_commands + node->index;
+        command->end_command_index = impl->command_count;
+        append_command(impl, CommandKind::LAYER_END, node->index);
+        impl->current_clip_rect = node->previous_clip_rect;
+        impl->layer_stack_top = node->next;
     }
 
     auto draw_line(Context context, Vec2 p0, Vec2 p1, Color color, float thickness) -> void {
@@ -1203,6 +1261,20 @@ namespace gui::draw {
         }
 
         return impl->commands + index;
+    }
+
+    auto layer_command_count(Context context) -> size_t {
+        ContextImpl const* const impl = context_from_handle(context);
+        return impl != nullptr ? impl->layer_command_count : 0u;
+    }
+
+    auto layer_command(Context context, size_t index) -> LayerCommand const* {
+        ContextImpl const* const impl = context_from_handle(context);
+        if (impl == nullptr || index >= impl->layer_command_count) {
+            return nullptr;
+        }
+
+        return impl->layer_commands + index;
     }
 
     auto styled_rect_command_count(Context context) -> size_t {

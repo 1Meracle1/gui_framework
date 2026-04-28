@@ -453,17 +453,12 @@ auto main() -> int {
         pass_desc.window = render_window;
         pass_desc.clear_color = {0.025f, 0.045f, 0.055f, 1.0f};
 
-        render_result = gui::render::begin_render_pass(render_context, pass_desc);
+        render_result = gui::draw::render_commands_to_window(
+            draw_renderer, render_context, pass_desc, text_state.draw_context);
         if (gui::render::result_failed(render_result)) {
-            log_render_result("render::begin_render_pass", render_result);
+            log_render_result("draw::render_commands_to_window", render_result);
             break;
         }
-
-        gui::draw::render_commands(draw_renderer,
-                                   render_context,
-                                   gui::render::window_size(render_window),
-                                   text_state.draw_context);
-        gui::render::end_render_pass(render_context);
 
         render_result = gui::render::present_window(render_context, render_window);
         if (render_result == gui::render::Result::OCCLUDED) {
