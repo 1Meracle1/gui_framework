@@ -10,6 +10,9 @@ namespace gui::draw {
 
         constexpr gui::render::SizeU32 WHITE_TEXTURE_SIZE = {1u, 1u};
         constexpr uint8_t WHITE_TEXTURE_RGBA[] = {255u, 255u, 255u, 255u};
+        constexpr uint32_t STYLED_RECT_SHADOW_VERTEX_OFFSET = 0u;
+        constexpr uint32_t STYLED_RECT_BODY_VERTEX_OFFSET = 6u;
+        constexpr uint32_t STYLED_RECT_VERTICES_PER_COMMAND = 12u;
 
         struct RenderVertex {
             float position[2];
@@ -166,6 +169,36 @@ namespace gui::draw {
             return rect.max.x > rect.min.x && rect.max.y > rect.min.y;
         }
 
+        [[nodiscard]] auto color_visible(Color color) -> bool {
+            return color.a > 0.0f;
+        }
+
+        [[nodiscard]] auto box_body_visible(BoxStyle const& style) -> bool {
+            return color_visible(style.fill_color) ||
+                   (style.border_thickness > 0.0f && color_visible(style.border_color));
+        }
+
+        [[nodiscard]] auto rect_offset(Rect rect, Vec2 offset) -> Rect {
+            return {{rect.min.x + offset.x, rect.min.y + offset.y},
+                    {rect.max.x + offset.x, rect.max.y + offset.y}};
+        }
+
+        [[nodiscard]] auto rect_outset(Rect rect, float amount) -> Rect {
+            return {{rect.min.x - amount, rect.min.y - amount},
+                    {rect.max.x + amount, rect.max.y + amount}};
+        }
+
+        [[nodiscard]] auto box_shadow_rect(StyledRectCommand const& command) -> Rect {
+            BoxShadow const& shadow = command.style.shadow;
+            return rect_offset(rect_outset(command.rect, shadow.spread), shadow.offset);
+        }
+
+        [[nodiscard]] auto box_shadow_visible(StyledRectCommand const& command) -> bool {
+            BoxShadow const& shadow = command.style.shadow;
+            return !shadow.inset && color_visible(shadow.color) &&
+                   rect_visible(box_shadow_rect(command));
+        }
+
         [[nodiscard]] auto root_target_rect(gui::render::SizeU32 target_size) -> Rect {
             return {
                 {0.0f, 0.0f},
@@ -286,32 +319,35 @@ namespace gui::draw {
         auto write_styled_rect_vertex(StyledRectVertex& vertex,
                                       RenderTarget target,
                                       StyledRectCommand const& command,
+                                      Rect sdf_rect,
+                                      BoxStyle const& style,
                                       Vec2 local,
                                       Vec2 uv) -> void {
             Vec2 const position =
                 target_position(target, transform_point(command.transform, local));
-            BoxStyle const& style = command.style;
             Color fill_color = style.fill_color;
             Color border_color = style.border_color;
             fill_color.a *= command.opacity;
             border_color.a *= command.opacity;
 
-            vertex = {
-                {pixel_to_ndc_x(position.x, target_width(target)),
-                 pixel_to_ndc_y(position.y, target_height(target))},
-                {local.x, local.y},
-                {uv.x, uv.y},
-                {command.rect.min.x, command.rect.min.y, command.rect.max.x, command.rect.max.y},
-                {fill_color.r, fill_color.g, fill_color.b, fill_color.a},
-                {border_color.r, border_color.g, border_color.b, border_color.a},
-                {style.border_thickness, style.radius, style.softness, 0.0f}};
+            vertex = {{pixel_to_ndc_x(position.x, target_width(target)),
+                       pixel_to_ndc_y(position.y, target_height(target))},
+                      {local.x, local.y},
+                      {uv.x, uv.y},
+                      {sdf_rect.min.x, sdf_rect.min.y, sdf_rect.max.x, sdf_rect.max.y},
+                      {fill_color.r, fill_color.g, fill_color.b, fill_color.a},
+                      {border_color.r, border_color.g, border_color.b, border_color.a},
+                      {style.border_thickness, style.radius, style.softness, 0.0f}};
         }
 
         auto write_styled_rect_vertices(StyledRectVertex* vertices,
                                         RenderTarget target,
-                                        StyledRectCommand const& command) -> void {
-            Rect const rect = command.rect;
-            Rect const uv_rect = command.style.uv_rect;
+                                        StyledRectCommand const& command,
+                                        Rect quad_rect,
+                                        Rect sdf_rect,
+                                        BoxStyle const& style) -> void {
+            Rect const rect = quad_rect;
+            Rect const uv_rect = style.uv_rect;
             Vec2 const p0 = rect.min;
             Vec2 const p1 = {rect.max.x, rect.min.y};
             Vec2 const p2 = rect.max;
@@ -320,12 +356,29 @@ namespace gui::draw {
             Vec2 const uv1 = {uv_rect.max.x, uv_rect.min.y};
             Vec2 const uv2 = uv_rect.max;
             Vec2 const uv3 = {uv_rect.min.x, uv_rect.max.y};
-            write_styled_rect_vertex(vertices[0u], target, command, p0, uv0);
-            write_styled_rect_vertex(vertices[1u], target, command, p1, uv1);
-            write_styled_rect_vertex(vertices[2u], target, command, p2, uv2);
-            write_styled_rect_vertex(vertices[3u], target, command, p0, uv0);
-            write_styled_rect_vertex(vertices[4u], target, command, p2, uv2);
-            write_styled_rect_vertex(vertices[5u], target, command, p3, uv3);
+            write_styled_rect_vertex(vertices[0u], target, command, sdf_rect, style, p0, uv0);
+            write_styled_rect_vertex(vertices[1u], target, command, sdf_rect, style, p1, uv1);
+            write_styled_rect_vertex(vertices[2u], target, command, sdf_rect, style, p2, uv2);
+            write_styled_rect_vertex(vertices[3u], target, command, sdf_rect, style, p0, uv0);
+            write_styled_rect_vertex(vertices[4u], target, command, sdf_rect, style, p2, uv2);
+            write_styled_rect_vertex(vertices[5u], target, command, sdf_rect, style, p3, uv3);
+        }
+
+        auto write_styled_rect_shadow_vertices(StyledRectVertex* vertices,
+                                               RenderTarget target,
+                                               StyledRectCommand const& command) -> void {
+            BoxShadow const& shadow = command.style.shadow;
+            Rect const sdf_rect = box_shadow_rect(command);
+            BoxStyle shadow_style = {};
+            shadow_style.fill_color = shadow.color;
+            shadow_style.radius = std::max(command.style.radius + shadow.spread, 0.0f);
+            shadow_style.softness = shadow.blur_radius;
+            write_styled_rect_vertices(vertices,
+                                       target,
+                                       command,
+                                       rect_outset(sdf_rect, shadow.blur_radius),
+                                       sdf_rect,
+                                       shadow_style);
         }
 
         [[nodiscard]] auto upload_draw_vertices(gui::render::Context render_context,
@@ -384,7 +437,8 @@ namespace gui::draw {
             if (styled_rect_count != 0u) {
                 gui::render::FrameBufferSlice const upload =
                     gui::render::allocate_frame_vertex_buffer(render_context,
-                                                              styled_rect_count * 6u *
+                                                              styled_rect_count *
+                                                                  STYLED_RECT_VERTICES_PER_COMMAND *
                                                                   sizeof(StyledRectVertex),
                                                               alignof(StyledRectVertex));
 
@@ -393,7 +447,16 @@ namespace gui::draw {
                     StyledRectCommand const* const command =
                         styled_rect_command(draw_context, index);
                     ASSERT(command != nullptr);
-                    write_styled_rect_vertices(vertices + (index * 6u), target, *command);
+                    StyledRectVertex* const command_vertices =
+                        vertices + (index * STYLED_RECT_VERTICES_PER_COMMAND);
+                    write_styled_rect_shadow_vertices(
+                        command_vertices + STYLED_RECT_SHADOW_VERTEX_OFFSET, target, *command);
+                    write_styled_rect_vertices(command_vertices + STYLED_RECT_BODY_VERTEX_OFFSET,
+                                               target,
+                                               *command,
+                                               command->rect,
+                                               command->rect,
+                                               command->style);
                 }
 
                 result.styled_rect_vertex_buffer.buffer = upload.buffer;
@@ -467,13 +530,13 @@ namespace gui::draw {
             gui::render::destroy_bind_group(render_context, bind_group);
         }
 
-        auto submit_styled_rect(gui::render::Context render_context,
-                                RenderTarget target,
-                                RendererImpl const& renderer,
-                                DrawUpload const& upload,
-                                StyledRectCommand const& command,
-                                size_t command_index) -> void {
-            gui::render::Texture texture = command.style.texture;
+        auto submit_styled_rect_vertices(gui::render::Context render_context,
+                                         RenderTarget target,
+                                         RendererImpl const& renderer,
+                                         DrawUpload const& upload,
+                                         gui::render::Texture texture,
+                                         Rect clip_rect,
+                                         uint32_t first_vertex) -> void {
             if (!gui::render::texture_valid(texture)) {
                 texture = renderer.white_texture;
             }
@@ -488,12 +551,40 @@ namespace gui::draw {
             draw_desc.vertex_buffers = &upload.styled_rect_vertex_buffer;
             draw_desc.vertex_buffer_count = 1u;
             draw_desc.vertex_count = 6u;
-            draw_desc.first_vertex = static_cast<uint32_t>(command_index * 6u);
+            draw_desc.first_vertex = first_vertex;
 
             gui::render::set_scissor_rect(render_context,
-                                          target_clip_rect_to_scissor(command.clip_rect, target));
+                                          target_clip_rect_to_scissor(clip_rect, target));
             gui::render::draw(render_context, draw_desc);
             gui::render::destroy_bind_group(render_context, bind_group);
+        }
+
+        auto submit_styled_rect(gui::render::Context render_context,
+                                RenderTarget target,
+                                RendererImpl const& renderer,
+                                DrawUpload const& upload,
+                                StyledRectCommand const& command,
+                                size_t command_index) -> void {
+            uint32_t const first_vertex =
+                static_cast<uint32_t>(command_index * STYLED_RECT_VERTICES_PER_COMMAND);
+            if (box_shadow_visible(command)) {
+                submit_styled_rect_vertices(render_context,
+                                            target,
+                                            renderer,
+                                            upload,
+                                            renderer.white_texture,
+                                            command.clip_rect,
+                                            first_vertex + STYLED_RECT_SHADOW_VERTEX_OFFSET);
+            }
+            if (box_body_visible(command.style)) {
+                submit_styled_rect_vertices(render_context,
+                                            target,
+                                            renderer,
+                                            upload,
+                                            command.style.texture,
+                                            command.clip_rect,
+                                            first_vertex + STYLED_RECT_BODY_VERTEX_OFFSET);
+            }
         }
 
         auto submit_text_command(gui::render::Context render_context,

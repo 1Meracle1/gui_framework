@@ -94,9 +94,14 @@ namespace gui::draw {
             return color.a > 0.0f;
         }
 
+        [[nodiscard]] auto box_shadow_visible(BoxShadow const& shadow) -> bool {
+            return !shadow.inset && color_visible(shadow.color);
+        }
+
         [[nodiscard]] auto box_style_visible(BoxStyle const& style) -> bool {
             return color_visible(style.fill_color) ||
-                   (style.border_thickness > 0.0f && color_visible(style.border_color));
+                   (style.border_thickness > 0.0f && color_visible(style.border_color)) ||
+                   box_shadow_visible(style.shadow);
         }
 
         [[nodiscard]] auto transform_point(Transform2D const& transform, Vec2 point) -> Vec2 {
@@ -262,6 +267,7 @@ namespace gui::draw {
             style.border_thickness = std::clamp(style.border_thickness, 0.0f, max_size);
             style.radius = std::clamp(style.radius, 0.0f, max_size);
             style.softness = std::max(style.softness, 0.0f);
+            style.shadow.blur_radius = std::max(style.shadow.blur_radius, 0.0f);
 
             size_t const command_index = impl->styled_rect_command_count;
             StyledRectCommand* const command = impl->styled_rect_commands + command_index;

@@ -613,6 +613,10 @@ namespace {
         style.border_thickness = 2.0f;
         style.radius = 4.0f;
         style.softness = 1.5f;
+        style.shadow.offset = {3.0f, 4.0f};
+        style.shadow.blur_radius = 8.0f;
+        style.shadow.spread = 2.0f;
+        style.shadow.color = {0.1f, 0.2f, 0.3f, 0.4f};
         gui::draw::push_clip_rect(draw_context, clip);
         gui::draw::push_transform(draw_context, transform);
         gui::draw::push_opacity(draw_context, 0.25f);
@@ -643,6 +647,12 @@ namespace {
         TEST_EXPECT(context, styled->style.border_thickness == 2.0f);
         TEST_EXPECT(context, styled->style.radius == 3.0f);
         TEST_EXPECT(context, styled->style.softness == 1.5f);
+        TEST_EXPECT(context, styled->style.shadow.offset.x == 3.0f);
+        TEST_EXPECT(context, styled->style.shadow.offset.y == 4.0f);
+        TEST_EXPECT(context, styled->style.shadow.blur_radius == 8.0f);
+        TEST_EXPECT(context, styled->style.shadow.spread == 2.0f);
+        TEST_EXPECT(context, styled->style.shadow.color.g == 0.2f);
+        TEST_EXPECT(context, !styled->style.shadow.inset);
 
         gui::draw::Command const* command0 = gui::draw::command(draw_context, 0u);
         gui::draw::Command const* command1 = gui::draw::command(draw_context, 1u);
@@ -659,6 +669,54 @@ namespace {
 
         gui::draw::begin_frame(draw_context);
         TEST_EXPECT(context, gui::draw::styled_rect_command_count(draw_context) == 0u);
+
+        gui::draw::destroy_context(draw_context);
+    }
+
+    TEST_CASE(draw_records_shadow_only_styled_rect_and_defaults) {
+        gui::draw::BoxShadow const default_shadow = {};
+        TEST_EXPECT(context, default_shadow.color.a == 0.0f);
+        TEST_EXPECT(context, default_shadow.blur_radius == 0.0f);
+        TEST_EXPECT(context, default_shadow.spread == 0.0f);
+        TEST_EXPECT(context, !default_shadow.inset);
+
+        Arena owner_arena = {};
+        owner_arena.init();
+
+        gui::draw::Context draw_context = {};
+        gui::draw::create_context(owner_arena, {}, draw_context);
+
+        gui::draw::BoxStyle style = {};
+        style.fill_color = {0.0f, 0.0f, 0.0f, 0.0f};
+        style.border_color = {0.0f, 0.0f, 0.0f, 0.0f};
+
+        gui::draw::begin_frame(draw_context);
+        gui::draw::draw_rect_styled(draw_context, {{0.0f, 0.0f}, {20.0f, 10.0f}}, style);
+        TEST_EXPECT(context, gui::draw::styled_rect_command_count(draw_context) == 0u);
+
+        style.radius = 3.0f;
+        style.shadow.offset = {2.0f, 3.0f};
+        style.shadow.blur_radius = -4.0f;
+        style.shadow.spread = 1.0f;
+        style.shadow.color = {0.0f, 0.0f, 0.0f, 0.5f};
+        gui::draw::draw_rect_styled(draw_context, {{0.0f, 0.0f}, {20.0f, 10.0f}}, style);
+
+        TEST_EXPECT(context, gui::draw::styled_rect_command_count(draw_context) == 1u);
+        TEST_EXPECT(context, gui::draw::command_count(draw_context) == 1u);
+
+        gui::draw::StyledRectCommand const* styled =
+            gui::draw::styled_rect_command(draw_context, 0u);
+        TEST_EXPECT(context, styled != nullptr);
+        TEST_EXPECT(context, styled->style.shadow.offset.x == 2.0f);
+        TEST_EXPECT(context, styled->style.shadow.offset.y == 3.0f);
+        TEST_EXPECT(context, styled->style.shadow.blur_radius == 0.0f);
+        TEST_EXPECT(context, styled->style.shadow.spread == 1.0f);
+        TEST_EXPECT(context, styled->style.shadow.color.a == 0.5f);
+
+        gui::draw::Command const* command = gui::draw::command(draw_context, 0u);
+        TEST_EXPECT(context, command != nullptr);
+        TEST_EXPECT(context, command->kind == gui::draw::CommandKind::STYLED_RECT);
+        TEST_EXPECT(context, command->index == 0u);
 
         gui::draw::destroy_context(draw_context);
     }

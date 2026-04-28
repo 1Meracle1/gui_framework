@@ -105,6 +105,14 @@ namespace gui::draw {
         Color color = {};
     };
 
+    struct BoxShadow {
+        Vec2 offset = {};
+        float blur_radius = 0.0f;
+        float spread = 0.0f;
+        Color color = {0.0f, 0.0f, 0.0f, 0.0f};
+        bool inset = false;
+    };
+
     struct BoxStyle {
         Color fill_color = {};
         gui::render::Texture texture = {};
@@ -113,6 +121,7 @@ namespace gui::draw {
         float border_thickness = 0.0f;
         float radius = 0.0f;
         float softness = 1.0f;
+        BoxShadow shadow = {};
     };
 
     struct StyledRectCommand {
