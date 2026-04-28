@@ -47,8 +47,6 @@ if(WIN32)
     target_link_libraries(render_triangle_testbed PRIVATE
         base::base
         render::render
-        d3d11
-        d3dcompiler
     )
     cpp_configure_target(render_triangle_testbed)
 

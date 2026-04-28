@@ -12,6 +12,7 @@
 #include <base/config.h>
 #include <cstring>
 #include <d3d11.h>
+#include <d3dcompiler.h>
 #include <dxgi.h>
 #include <windows.h>
 
@@ -192,6 +193,17 @@ namespace gui::render::d3d11 {
             }
 
             return D3D11_PRIMITIVE_TOPOLOGY_UNDEFINED;
+        }
+
+        [[nodiscard]] auto shader_target(ShaderStage stage) -> char const* {
+            switch (stage) {
+            case ShaderStage::VERTEX:
+                return "vs_4_0";
+            case ShaderStage::PIXEL:
+                return "ps_4_0";
+            }
+
+            return nullptr;
         }
 
         [[nodiscard]] auto try_create_device(D3D_DRIVER_TYPE driver_type,
@@ -548,6 +560,45 @@ namespace gui::render::d3d11 {
 
         out_shader.handle = shader;
         return Result::OK;
+    }
+
+    auto create_shader_from_source(Arena& arena,
+                                   Context context,
+                                   ShaderSourceDesc const& desc,
+                                   Shader& out_shader) -> Result {
+        ID3DBlob* shader_blob = nullptr;
+        UINT compile_flags = D3DCOMPILE_ENABLE_STRICTNESS;
+#if BASE_DEBUG
+        compile_flags |= D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION;
+#endif
+
+        char const* const target = shader_target(desc.stage);
+        ASSERT(target != nullptr);
+
+        HRESULT const hr = D3DCompile(desc.source.data(),
+                                      desc.source.size(),
+                                      nullptr,
+                                      nullptr,
+                                      nullptr,
+                                      desc.entry_point,
+                                      target,
+                                      compile_flags,
+                                      0u,
+                                      &shader_blob,
+                                      nullptr);
+        if (FAILED(hr) || shader_blob == nullptr) {
+            release_com(shader_blob);
+            return Result::SHADER_COMPILATION_FAILED;
+        }
+
+        ShaderDesc shader_desc = {};
+        shader_desc.stage = desc.stage;
+        shader_desc.bytecode = shader_blob->GetBufferPointer();
+        shader_desc.byte_size = shader_blob->GetBufferSize();
+
+        Result const result = create_shader(arena, context, shader_desc, out_shader);
+        release_com(shader_blob);
+        return result;
     }
 
     auto destroy_shader(Context context, Shader& shader) -> void {

@@ -27,6 +27,7 @@ if(WIN32)
     )
     target_link_libraries(gui_framework PRIVATE
         d3d11
+        d3dcompiler
         dxgi
     )
 endif()

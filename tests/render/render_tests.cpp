@@ -15,6 +15,9 @@ namespace {
         TEST_EXPECT(context,
                     gui::render::result_name(gui::render::Result::PIPELINE_CREATION_FAILED)[0] !=
                         '\0');
+        TEST_EXPECT(context,
+                    gui::render::result_name(
+                        gui::render::Result::SHADER_COMPILATION_FAILED)[0] != '\0');
         TEST_EXPECT(context, gui::render::backend_name(gui::render::Backend::D3D11)[0] != '\0');
     }
 
@@ -92,6 +95,14 @@ namespace {
         TEST_EXPECT(context, desc.stage == gui::render::ShaderStage::VERTEX);
         TEST_EXPECT(context, desc.bytecode == nullptr);
         TEST_EXPECT(context, desc.byte_size == 0u);
+    }
+
+    TEST_CASE(render_shader_source_defaults_describe_vertex_shader_without_source) {
+        gui::render::ShaderSourceDesc const desc = {};
+
+        TEST_EXPECT(context, desc.stage == gui::render::ShaderStage::VERTEX);
+        TEST_EXPECT(context, desc.source.empty());
+        TEST_EXPECT(context, desc.entry_point == nullptr);
     }
 
     TEST_CASE(render_pipeline_defaults_describe_empty_triangle_pipeline) {

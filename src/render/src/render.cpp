@@ -45,6 +45,8 @@ namespace gui::render {
             return "shader creation failed";
         case Result::PIPELINE_CREATION_FAILED:
             return "pipeline creation failed";
+        case Result::SHADER_COMPILATION_FAILED:
+            return "shader compilation failed";
         }
 
         return "unknown";
@@ -244,6 +246,25 @@ namespace gui::render {
 #else
         BASE_UNUSED(context);
         shader.handle = nullptr;
+#endif
+    }
+
+    auto create_shader_from_source(Arena& arena,
+                                   Context context,
+                                   ShaderSourceDesc const& desc,
+                                   Shader& out_shader) -> Result {
+        ASSERT(context_valid(context));
+        ASSERT(out_shader.handle == nullptr);
+        ASSERT(!desc.source.empty());
+        ASSERT(desc.entry_point != nullptr);
+
+#if BASE_PLATFORM_WINDOWS
+        return d3d11::create_shader_from_source(arena, context, desc, out_shader);
+#else
+        BASE_UNUSED(arena);
+        BASE_UNUSED(context);
+        BASE_UNUSED(desc);
+        return Result::UNSUPPORTED_PLATFORM;
 #endif
     }
 

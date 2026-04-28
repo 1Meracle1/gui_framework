@@ -14,7 +14,6 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
-#include <d3dcompiler.h>
 #include <render/render.h>
 #include <windows.h>
 
@@ -57,13 +56,6 @@ namespace {
 
     AppState* global_app_state = nullptr;
 
-    template <typename T> auto release_com(T*& value) -> void {
-        if (value != nullptr) {
-            value->Release();
-            value = nullptr;
-        }
-    }
-
     [[nodiscard]] auto loword_u32(LPARAM value) -> uint32_t {
         return static_cast<uint32_t>(static_cast<uint16_t>(value & 0xffff));
     }
@@ -74,46 +66,6 @@ namespace {
 
     auto log_result(char const* operation, gui::render::Result result) -> void {
         fmt::eprintf("%s failed: %s\n", operation, gui::render::result_name(result));
-    }
-
-    [[nodiscard]] auto
-    compile_shader(StrRef source, char const* entry_point, char const* target, ID3DBlob** out_blob)
-        -> bool {
-        ID3DBlob* error_blob = nullptr;
-        UINT compile_flags = D3DCOMPILE_ENABLE_STRICTNESS;
-#if BASE_DEBUG
-        compile_flags |= D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION;
-#endif
-
-        HRESULT const hr = D3DCompile(source.data(),
-                                      source.size(),
-                                      nullptr,
-                                      nullptr,
-                                      nullptr,
-                                      entry_point,
-                                      target,
-                                      compile_flags,
-                                      0u,
-                                      out_blob,
-                                      &error_blob);
-
-        if (FAILED(hr)) {
-            if (error_blob != nullptr) {
-                StrRef const errors(static_cast<char const*>(error_blob->GetBufferPointer()),
-                                    error_blob->GetBufferSize());
-                fmt::eprintf("shader compile failed (%s/%s):\n%s\n", entry_point, target, errors);
-            } else {
-                fmt::eprintf("shader compile failed (%s/%s): HRESULT 0x%08x\n",
-                             entry_point,
-                             target,
-                             static_cast<uint32_t>(hr));
-            }
-            release_com(error_blob);
-            return false;
-        }
-
-        release_com(error_blob);
-        return true;
     }
 
     auto destroy_pipeline(gui::render::Context context, TrianglePipeline* pipeline) -> void {
@@ -181,38 +133,23 @@ namespace {
             "    return float4(input.color * g_color_scale.rgb, g_color_scale.a);\n"
             "}\n";
 
-        ID3DBlob* vertex_blob = nullptr;
-        ID3DBlob* pixel_blob = nullptr;
-
-        if (!compile_shader(SHADER_SOURCE, "vs_main", "vs_4_0", &vertex_blob) ||
-            !compile_shader(SHADER_SOURCE, "ps_main", "ps_4_0", &pixel_blob)) {
-            release_com(pixel_blob);
-            release_com(vertex_blob);
-            return false;
-        }
-
-        gui::render::ShaderDesc shader_desc = {};
+        gui::render::ShaderSourceDesc shader_desc = {};
+        shader_desc.source = SHADER_SOURCE;
         shader_desc.stage = gui::render::ShaderStage::VERTEX;
-        shader_desc.bytecode = vertex_blob->GetBufferPointer();
-        shader_desc.byte_size = vertex_blob->GetBufferSize();
+        shader_desc.entry_point = "vs_main";
 
-        gui::render::Result result =
-            gui::render::create_shader(arena, render_context, shader_desc, pipeline->vertex_shader);
+        gui::render::Result result = gui::render::create_shader_from_source(
+            arena, render_context, shader_desc, pipeline->vertex_shader);
         if (gui::render::result_failed(result)) {
-            release_com(pixel_blob);
-            release_com(vertex_blob);
             return false;
         }
 
         shader_desc.stage = gui::render::ShaderStage::PIXEL;
-        shader_desc.bytecode = pixel_blob->GetBufferPointer();
-        shader_desc.byte_size = pixel_blob->GetBufferSize();
+        shader_desc.entry_point = "ps_main";
 
-        result =
-            gui::render::create_shader(arena, render_context, shader_desc, pipeline->pixel_shader);
+        result = gui::render::create_shader_from_source(
+            arena, render_context, shader_desc, pipeline->pixel_shader);
         if (gui::render::result_failed(result)) {
-            release_com(pixel_blob);
-            release_com(vertex_blob);
             return false;
         }
 
@@ -242,8 +179,6 @@ namespace {
 
         result =
             gui::render::create_pipeline(arena, render_context, pipeline_desc, pipeline->pipeline);
-        release_com(pixel_blob);
-        release_com(vertex_blob);
         if (gui::render::result_failed(result)) {
             return false;
         }
@@ -472,7 +407,7 @@ auto main() -> int {
     TrianglePipeline pipeline = {};
 
     if (!create_pipeline(app_arena, render_context, &pipeline)) {
-        fmt::eprintf("failed to create D3D11 triangle pipeline\n");
+        fmt::eprintf("failed to create render triangle pipeline\n");
         destroy_pipeline(render_context, &pipeline);
         gui::render::destroy_window(render_window);
         gui::render::destroy_context(render_context);

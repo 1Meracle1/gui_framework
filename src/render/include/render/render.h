@@ -1,6 +1,7 @@
 #pragma once
 
 #include <base/memory.h>
+#include <base/str_ref.h>
 #include <cstddef>
 #include <cstdint>
 
@@ -26,6 +27,7 @@ namespace gui::render {
         BUFFER_CREATION_FAILED = -10,
         SHADER_CREATION_FAILED = -11,
         PIPELINE_CREATION_FAILED = -12,
+        SHADER_COMPILATION_FAILED = -13,
     };
 
     enum class PresentMode : uint8_t {
@@ -164,6 +166,12 @@ namespace gui::render {
         size_t byte_size = 0u;
     };
 
+    struct ShaderSourceDesc {
+        ShaderStage stage = ShaderStage::VERTEX;
+        StrRef source = {};
+        char const* entry_point = nullptr;
+    };
+
     struct VertexAttributeDesc {
         char const* semantic_name = nullptr;
         uint32_t semantic_index = 0u;
@@ -261,6 +269,10 @@ namespace gui::render {
     [[nodiscard]] auto
     create_shader(Arena& arena, Context context, ShaderDesc const& desc, Shader& out_shader)
         -> Result;
+    [[nodiscard]] auto create_shader_from_source(Arena& arena,
+                                                 Context context,
+                                                 ShaderSourceDesc const& desc,
+                                                 Shader& out_shader) -> Result;
     auto destroy_shader(Context context, Shader& shader) -> void;
 
     [[nodiscard]] auto

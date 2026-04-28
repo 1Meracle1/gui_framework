@@ -26,6 +26,10 @@ namespace gui::render::d3d11 {
     [[nodiscard]] auto
     create_shader(Arena& arena, Context context, ShaderDesc const& desc, Shader& out_shader)
         -> Result;
+    [[nodiscard]] auto create_shader_from_source(Arena& arena,
+                                                 Context context,
+                                                 ShaderSourceDesc const& desc,
+                                                 Shader& out_shader) -> Result;
     auto destroy_shader(Context context, Shader& shader) -> void;
 
     [[nodiscard]] auto
