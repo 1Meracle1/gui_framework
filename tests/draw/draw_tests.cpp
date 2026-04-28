@@ -253,6 +253,59 @@ namespace {
         gui::draw::destroy_context(draw_context);
     }
 
+    TEST_CASE(draw_clip_rects_are_screen_space_across_transforms) {
+        Arena owner_arena = {};
+        owner_arena.init();
+
+        gui::draw::Context draw_context = {};
+        gui::draw::create_context(owner_arena, {}, draw_context);
+
+        gui::draw::Transform2D const transform = {{2.0f, 0.0f}, {0.0f, 3.0f}, {10.0f, 20.0f}};
+
+        gui::draw::begin_frame(draw_context);
+        gui::draw::Rect const clip_after_transform = {{1.0f, 2.0f}, {5.0f, 6.0f}};
+        gui::draw::push_transform(draw_context, transform);
+        gui::draw::push_clip_rect(draw_context, clip_after_transform);
+        gui::draw::draw_triangle_filled(
+            draw_context, {1.0f, 2.0f}, {3.0f, 2.0f}, {1.0f, 4.0f}, {1.0f, 1.0f, 1.0f, 1.0f});
+
+        gui::draw::PrimitiveCommand const* command = gui::draw::primitive_command(draw_context, 0u);
+        TEST_EXPECT(context, command != nullptr);
+        expect_rect(context, command->clip_rect, clip_after_transform);
+        expect_transform(context, command->transform, transform);
+        expect_position(context, command->vertices[0u].position, 12.0f, 26.0f);
+        expect_position(context, command->vertices[2u].position, 12.0f, 32.0f);
+
+        gui::draw::begin_frame(draw_context);
+        gui::draw::Rect const clip_before_transform = {{20.0f, 30.0f}, {60.0f, 70.0f}};
+        gui::draw::push_clip_rect(draw_context, clip_before_transform);
+        gui::draw::push_transform(draw_context, transform);
+        gui::draw::draw_triangle_filled(
+            draw_context, {2.0f, 1.0f}, {4.0f, 1.0f}, {2.0f, 3.0f}, {1.0f, 1.0f, 1.0f, 1.0f});
+
+        command = gui::draw::primitive_command(draw_context, 0u);
+        TEST_EXPECT(context, command != nullptr);
+        expect_rect(context, command->clip_rect, clip_before_transform);
+        expect_transform(context, command->transform, transform);
+
+        gui::draw::begin_frame(draw_context);
+        gui::draw::Rect const outer = {{10.0f, 10.0f}, {80.0f, 80.0f}};
+        gui::draw::Rect const inner = {{30.0f, 0.0f}, {100.0f, 40.0f}};
+        gui::draw::Rect const clipped = {{30.0f, 10.0f}, {80.0f, 40.0f}};
+        gui::draw::push_transform(draw_context, transform);
+        gui::draw::push_clip_rect(draw_context, outer);
+        gui::draw::push_clip_rect(draw_context, inner);
+        gui::draw::draw_triangle_filled(
+            draw_context, {0.0f, 0.0f}, {1.0f, 0.0f}, {0.0f, 1.0f}, {1.0f, 1.0f, 1.0f, 1.0f});
+
+        command = gui::draw::primitive_command(draw_context, 0u);
+        TEST_EXPECT(context, command != nullptr);
+        expect_rect(context, command->clip_rect, clipped);
+        expect_rect(context, gui::draw::top_clip_rect(draw_context), clipped);
+
+        gui::draw::destroy_context(draw_context);
+    }
+
     TEST_CASE(draw_batches_break_on_state_changes) {
         Arena owner_arena = {};
         owner_arena.init();

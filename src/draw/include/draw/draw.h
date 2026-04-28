@@ -103,6 +103,7 @@ namespace gui::draw {
     auto begin_frame(Context context) -> void;
     auto end_frame(Context context) -> void;
 
+    // Clip rects are axis-aligned screen-space scissor metadata. Transforms do not affect them.
     auto push_clip_rect(Context context, Rect rect) -> Rect;
     auto pop_clip_rect(Context context) -> Rect;
     [[nodiscard]] auto top_clip_rect(Context context) -> Rect;
