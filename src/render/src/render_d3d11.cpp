@@ -51,6 +51,7 @@ namespace gui::render::d3d11 {
             IDXGIFactory* factory = nullptr;
             D3D_FEATURE_LEVEL feature_level = D3D_FEATURE_LEVEL_10_0;
             D3D11FrameBuffer frame_vertex_buffer = {};
+            bool frame_active = false;
             bool render_pass_active = false;
         };
 
@@ -448,6 +449,8 @@ namespace gui::render::d3d11 {
     auto destroy_context(Context& context) -> void {
         D3D11Context* impl = context_from_handle(context);
         ASSERT(impl != nullptr);
+        ASSERT(!impl->frame_active);
+        ASSERT(!impl->render_pass_active);
         destroy_context_impl(impl);
         context.handle = nullptr;
     }
@@ -577,6 +580,7 @@ namespace gui::render::d3d11 {
         -> FrameBufferSlice {
         D3D11Context* context_impl = context_from_handle(context);
         ASSERT(context_impl != nullptr);
+        ASSERT(context_impl->frame_active);
 
         D3D11FrameBuffer& frame_buffer = context_impl->frame_vertex_buffer;
         size_t const offset = align_up(frame_buffer.used_size, byte_alignment);
@@ -605,6 +609,7 @@ namespace gui::render::d3d11 {
     auto commit_frame_uploads(Context context) -> void {
         D3D11Context* context_impl = context_from_handle(context);
         ASSERT(context_impl != nullptr);
+        ASSERT(context_impl->frame_active);
         commit_frame_buffer(context_impl, &context_impl->frame_vertex_buffer);
     }
 
@@ -1072,6 +1077,7 @@ namespace gui::render::d3d11 {
         ASSERT(context_impl != nullptr);
         ASSERT(window_impl != nullptr);
         ASSERT(window_impl->context == context_impl);
+        ASSERT(!context_impl->frame_active);
         ASSERT(!context_impl->render_pass_active);
 
         context_impl->device_context->OMSetRenderTargets(0u, nullptr, nullptr);
@@ -1096,9 +1102,11 @@ namespace gui::render::d3d11 {
     auto begin_frame(Context context) -> void {
         D3D11Context* context_impl = context_from_handle(context);
         ASSERT(context_impl != nullptr);
+        ASSERT(!context_impl->frame_active);
         ASSERT(!context_impl->render_pass_active);
         commit_frame_buffer(context_impl, &context_impl->frame_vertex_buffer);
         context_impl->frame_vertex_buffer.used_size = 0u;
+        context_impl->frame_active = true;
     }
 
     auto begin_render_pass(Context context, WindowRenderPassDesc const& desc) -> Result {
@@ -1108,6 +1116,7 @@ namespace gui::render::d3d11 {
         ASSERT(window_impl != nullptr);
         ASSERT(window_impl->context == context_impl);
         ASSERT(window_impl->render_target_view != nullptr);
+        ASSERT(context_impl->frame_active);
         ASSERT(!context_impl->render_pass_active);
 
         D3D11_VIEWPORT viewport = {};
@@ -1154,10 +1163,12 @@ namespace gui::render::d3d11 {
         ASSERT(window_impl != nullptr);
         ASSERT(window_impl->context == context_impl);
         ASSERT(window_impl->swap_chain != nullptr);
+        ASSERT(context_impl->frame_active);
         ASSERT(!context_impl->render_pass_active);
 
         UINT const sync_interval = window_impl->present_mode == PresentMode::VSYNC ? 1u : 0u;
         HRESULT const hr = window_impl->swap_chain->Present(sync_interval, 0u);
+        context_impl->frame_active = false;
         if (hr == DXGI_STATUS_OCCLUDED) {
             return Result::OCCLUDED;
         }
