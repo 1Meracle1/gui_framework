@@ -6,10 +6,12 @@
 #define NOMINMAX
 #endif
 
+#include <base/assert.h>
 #include <base/config.h>
 #include <base/crash.h>
 #include <base/fmt.h>
 #include <base/memory.h>
+#include <csetjmp>
 #include <cstddef>
 #include <cstdint>
 
@@ -26,6 +28,7 @@ namespace {
     constexpr UINT READBACK_ROW_PITCH = D3D12_TEXTURE_DATA_PITCH_ALIGNMENT;
     constexpr UINT SMOKE_SAMPLE_X = 79u;
     constexpr UINT SMOKE_SAMPLE_Y = 32u;
+    constexpr uint8_t SMOKE_TEXTURE_RGBA[] = {230u, 50u, 25u, 255u};
 
     struct Vertex {
         float position[2];
@@ -50,11 +53,16 @@ namespace {
         gui::render::Buffer vertex_offset_constants = {};
         gui::render::Buffer vertex_scale_constants = {};
         gui::render::Buffer pixel_constants = {};
+        gui::render::Texture texture = {};
+        gui::render::Sampler sampler = {};
         gui::render::BindGroup vertex_offset_bind_group = {};
         gui::render::BindGroup vertex_scale_bind_group = {};
         gui::render::BindGroup pixel_bind_group = {};
+        gui::render::BindGroup texture_bind_group = {};
         ID3D12Resource* readback = nullptr;
     };
+
+    std::jmp_buf active_assert_jump_buffer;
 
     auto log_result(char const* operation, gui::render::Result result) -> void {
         fmt::eprintf("%s failed: %s\n", operation, gui::render::result_name(result));
@@ -69,6 +77,13 @@ namespace {
             value->Release();
             value = nullptr;
         }
+    }
+
+    auto smoke_assert_handler(char const* expression, char const* file, uint32_t line) -> void {
+        BASE_UNUSED(expression);
+        BASE_UNUSED(file);
+        BASE_UNUSED(line);
+        std::longjmp(active_assert_jump_buffer, 1);
     }
 
     auto CALLBACK window_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) -> LRESULT {
@@ -138,11 +153,20 @@ namespace {
         if (gui::render::bind_group_valid(smoke->pixel_bind_group)) {
             gui::render::destroy_bind_group(context, smoke->pixel_bind_group);
         }
+        if (gui::render::bind_group_valid(smoke->texture_bind_group)) {
+            gui::render::destroy_bind_group(context, smoke->texture_bind_group);
+        }
         if (gui::render::bind_group_valid(smoke->vertex_scale_bind_group)) {
             gui::render::destroy_bind_group(context, smoke->vertex_scale_bind_group);
         }
         if (gui::render::bind_group_valid(smoke->vertex_offset_bind_group)) {
             gui::render::destroy_bind_group(context, smoke->vertex_offset_bind_group);
+        }
+        if (gui::render::sampler_valid(smoke->sampler)) {
+            gui::render::destroy_sampler(context, smoke->sampler);
+        }
+        if (gui::render::texture_valid(smoke->texture)) {
+            gui::render::destroy_texture(context, smoke->texture);
         }
         if (gui::render::buffer_valid(smoke->pixel_constants)) {
             gui::render::destroy_buffer(context, smoke->pixel_constants);
@@ -229,6 +253,8 @@ namespace {
     [[nodiscard]] auto
     create_draw_smoke(Arena& arena, gui::render::Context context, DrawSmoke* smoke) -> bool {
         constexpr StrRef SHADER_SOURCE =
+            "Texture2D g_smoke_texture : register(t0);\n"
+            "SamplerState g_smoke_sampler : register(s0);\n"
             "cbuffer VertexOffsetConstants : register(b0)\n"
             "{\n"
             "    float4 g_offset;\n"
@@ -261,7 +287,10 @@ namespace {
             "}\n"
             "float4 ps_main(PSInput input) : SV_Target\n"
             "{\n"
-            "    return float4(g_tint.rgb + (input.color * 0.0f), g_tint.a);\n"
+            "    float4 sample_value = g_smoke_texture.Sample(g_smoke_sampler, float2(0.5f, "
+            "0.5f));\n"
+            "    return float4(g_tint.rgb * sample_value.rgb + (input.color * 0.0f), g_tint.a * "
+            "sample_value.a);\n"
             "}\n";
 
         gui::render::ShaderSourceDesc shader_desc = {};
@@ -346,6 +375,23 @@ namespace {
             return false;
         }
 
+        gui::render::TextureDesc texture_desc = {};
+        texture_desc.size = {1u, 1u};
+        texture_desc.bytes_per_row = sizeof(SMOKE_TEXTURE_RGBA);
+        texture_desc.rgba_pixels = SMOKE_TEXTURE_RGBA;
+
+        result = gui::render::create_texture(context, texture_desc, smoke->texture);
+        if (gui::render::result_failed(result)) {
+            log_result("render::create_texture", result);
+            return false;
+        }
+
+        result = gui::render::create_sampler(context, smoke->sampler);
+        if (gui::render::result_failed(result)) {
+            log_result("render::create_sampler", result);
+            return false;
+        }
+
         if (!verify_buffer_heap(
                 smoke->vertex_buffer, D3D12_HEAP_TYPE_DEFAULT, "immutable vertex buffer") ||
             !verify_buffer_heap(smoke->vertex_offset_constants,
@@ -395,6 +441,29 @@ namespace {
             return false;
         }
 
+        gui::render::BindGroupSamplerBinding sampler_binding = {};
+        sampler_binding.stage = gui::render::ShaderStage::PIXEL;
+        sampler_binding.slot = 0u;
+        sampler_binding.sampler = smoke->sampler;
+
+        gui::render::BindGroupTextureBinding texture_binding = {};
+        texture_binding.stage = gui::render::ShaderStage::PIXEL;
+        texture_binding.slot = 0u;
+        texture_binding.texture = smoke->texture;
+        bind_group_desc.buffers = nullptr;
+        bind_group_desc.buffer_count = 0u;
+        bind_group_desc.textures = &texture_binding;
+        bind_group_desc.texture_count = 1u;
+        bind_group_desc.samplers = &sampler_binding;
+        bind_group_desc.sampler_count = 1u;
+
+        result = gui::render::create_bind_group(
+            arena, context, bind_group_desc, smoke->texture_bind_group);
+        if (gui::render::result_failed(result)) {
+            log_result("render::create_bind_group(texture)", result);
+            return false;
+        }
+
         return create_readback(context, smoke);
     }
 
@@ -409,9 +478,9 @@ namespace {
         vertex_scale.value[3] = 1.0f;
 
         Constants pixel_constants = {};
-        pixel_constants.value[0] = 0.9f;
-        pixel_constants.value[1] = 0.2f;
-        pixel_constants.value[2] = 0.1f;
+        pixel_constants.value[0] = 1.0f;
+        pixel_constants.value[1] = 1.0f;
+        pixel_constants.value[2] = 1.0f;
         pixel_constants.value[3] = 1.0f;
 
         gui::render::update_buffer(
@@ -429,6 +498,7 @@ namespace {
             smoke.vertex_offset_bind_group,
             smoke.vertex_scale_bind_group,
             smoke.pixel_bind_group,
+            smoke.texture_bind_group,
         };
 
         gui::render::DrawDesc draw_desc = {};
@@ -517,9 +587,10 @@ namespace {
         D3D12_RANGE write_range = {0u, 0u};
         smoke->readback->Unmap(0u, &write_range);
 
-        bool const ok = r > 180u && g > 30u && g < 90u && b < 60u && a > 200u;
+        bool const ok =
+            r > 200u && r < 245u && g > 35u && g < 70u && b > 10u && b < 45u && a > 200u;
         if (!ok) {
-            fmt::eprintf("DX12 bind group slot smoke failed: pixel=(%u,%u,%u,%u)\n",
+            fmt::eprintf("DX12 draw binding smoke failed: pixel=(%u,%u,%u,%u)\n",
                          static_cast<uint32_t>(r),
                          static_cast<uint32_t>(g),
                          static_cast<uint32_t>(b),
@@ -563,6 +634,53 @@ namespace {
         }
 
         return captured;
+    }
+
+    [[nodiscard]] auto expect_present_asserts_with_active_pass(gui::render::Context context,
+                                                               gui::render::Window window) -> bool {
+        gui::render::begin_frame(context);
+
+        gui::render::WindowRenderPassDesc pass_desc = {};
+        pass_desc.window = window;
+        pass_desc.clear_color = {0.04f, 0.04f, 0.04f, 1.0f};
+
+        gui::render::Result result = gui::render::begin_render_pass(context, pass_desc);
+        if (gui::render::result_failed(result)) {
+            log_result("render::begin_render_pass(assert smoke)", result);
+            return false;
+        }
+
+        base::set_assert_handler(smoke_assert_handler);
+        bool asserted = false;
+
+#if BASE_COMPILER_MSVC
+#pragma warning(push)
+#pragma warning(disable : 4611)
+#endif
+        if (setjmp(active_assert_jump_buffer) == 0) {
+            BASE_UNUSED(gui::render::present_window(context, window));
+        } else {
+            asserted = true;
+        }
+#if BASE_COMPILER_MSVC
+#pragma warning(pop)
+#endif
+
+        base::set_assert_handler(nullptr);
+
+        if (!asserted) {
+            fmt::eprintf("DX12 present active pass smoke failed: present did not assert\n");
+            return false;
+        }
+
+        gui::render::end_render_pass(context);
+        result = gui::render::present_window(context, window);
+        if (gui::render::result_failed(result)) {
+            log_result("render::present_window(assert smoke cleanup)", result);
+            return false;
+        }
+
+        return true;
     }
 
 } // namespace
@@ -628,6 +746,10 @@ auto main() -> int {
 
     if (ok) {
         ok = clear_present(context, window, {0.35f, 0.1f, 0.2f, 1.0f}, &draw_smoke, false);
+    }
+
+    if (ok) {
+        ok = expect_present_asserts_with_active_pass(context, window);
     }
 
     gui::render::destroy_window(window);
