@@ -50,13 +50,14 @@ namespace {
         gui::draw::create_context(owner_arena, {}, draw_context);
 
         gui::draw::begin_frame(draw_context);
-        gui::draw::Rect const clip0 = {{1.0f, 2.0f}, {3.0f, 4.0f}};
-        gui::draw::Rect const clip1 = {{5.0f, 6.0f}, {7.0f, 8.0f}};
+        gui::draw::Rect const clip0 = {{1.0f, 2.0f}, {8.0f, 9.0f}};
+        gui::draw::Rect const clip1 = {{5.0f, 6.0f}, {10.0f, 12.0f}};
+        gui::draw::Rect const clip01 = {{5.0f, 6.0f}, {8.0f, 9.0f}};
         gui::draw::push_clip_rect(draw_context, clip0);
         expect_rect(context, gui::draw::top_clip_rect(draw_context), clip0);
         gui::draw::push_clip_rect(draw_context, clip1);
-        expect_rect(context, gui::draw::top_clip_rect(draw_context), clip1);
-        expect_rect(context, gui::draw::pop_clip_rect(draw_context), clip1);
+        expect_rect(context, gui::draw::top_clip_rect(draw_context), clip01);
+        expect_rect(context, gui::draw::pop_clip_rect(draw_context), clip01);
         expect_rect(context, gui::draw::top_clip_rect(draw_context), clip0);
         expect_rect(context, gui::draw::pop_clip_rect(draw_context), clip0);
         TEST_EXPECT(context, gui::draw::top_clip_rect(draw_context).min.x < -1000000.0f);
@@ -86,6 +87,30 @@ namespace {
         TEST_EXPECT(context, gui::draw::top_clip_rect(draw_context).min.x < -1000000.0f);
         expect_transform(context, gui::draw::top_transform(draw_context), {});
         TEST_EXPECT(context, gui::draw::top_opacity(draw_context) == 1.0f);
+
+        gui::draw::destroy_context(draw_context);
+    }
+
+    TEST_CASE(draw_nested_clip_rects_intersect_and_pop_restore) {
+        Arena owner_arena = {};
+        owner_arena.init();
+
+        gui::draw::Context draw_context = {};
+        gui::draw::create_context(owner_arena, {}, draw_context);
+
+        gui::draw::begin_frame(draw_context);
+        gui::draw::Rect const outer = {{10.0f, 20.0f}, {110.0f, 120.0f}};
+        gui::draw::Rect const inner = {{40.0f, 0.0f}, {140.0f, 80.0f}};
+        gui::draw::Rect const clipped = {{40.0f, 20.0f}, {110.0f, 80.0f}};
+
+        gui::draw::push_clip_rect(draw_context, outer);
+        expect_rect(context, gui::draw::top_clip_rect(draw_context), outer);
+        expect_rect(context, gui::draw::push_clip_rect(draw_context, inner), outer);
+        expect_rect(context, gui::draw::top_clip_rect(draw_context), clipped);
+        expect_rect(context, gui::draw::pop_clip_rect(draw_context), clipped);
+        expect_rect(context, gui::draw::top_clip_rect(draw_context), outer);
+        expect_rect(context, gui::draw::pop_clip_rect(draw_context), outer);
+        TEST_EXPECT(context, gui::draw::top_clip_rect(draw_context).min.x < -1000000.0f);
 
         gui::draw::destroy_context(draw_context);
     }
@@ -177,6 +202,49 @@ namespace {
         gui::draw::PrimitiveCommand const* command = gui::draw::primitive_command(draw_context, 2u);
         TEST_EXPECT(context, command != nullptr);
         TEST_EXPECT(context, command->texture.handle == texture.handle);
+
+        gui::draw::destroy_context(draw_context);
+    }
+
+    TEST_CASE(draw_records_intersected_clip_metadata_for_primitives) {
+        Arena owner_arena = {};
+        owner_arena.init();
+
+        gui::draw::Context draw_context = {};
+        gui::draw::create_context(owner_arena, {}, draw_context);
+
+        gui::draw::begin_frame(draw_context);
+        gui::draw::Rect const outer = {{10.0f, 20.0f}, {110.0f, 120.0f}};
+        gui::draw::Rect const inner = {{40.0f, 0.0f}, {140.0f, 80.0f}};
+        gui::draw::Rect const clipped = {{40.0f, 20.0f}, {110.0f, 80.0f}};
+
+        gui::draw::push_clip_rect(draw_context, outer);
+        gui::draw::push_clip_rect(draw_context, inner);
+        gui::draw::draw_rect_filled(
+            draw_context, {{0.0f, 0.0f}, {4.0f, 4.0f}}, {1.0f, 1.0f, 1.0f, 1.0f}, 0.0f);
+        gui::draw::pop_clip_rect(draw_context);
+        gui::draw::draw_rect_filled(
+            draw_context, {{6.0f, 0.0f}, {10.0f, 4.0f}}, {1.0f, 1.0f, 1.0f, 1.0f}, 0.0f);
+
+        TEST_EXPECT(context, gui::draw::primitive_command_count(draw_context) == 2u);
+        TEST_EXPECT(context, gui::draw::primitive_batch_count(draw_context) == 2u);
+
+        gui::draw::PrimitiveCommand const* first_command =
+            gui::draw::primitive_command(draw_context, 0u);
+        gui::draw::PrimitiveBatch const* first_batch = gui::draw::primitive_batch(draw_context, 0u);
+        TEST_EXPECT(context, first_command != nullptr);
+        TEST_EXPECT(context, first_batch != nullptr);
+        expect_rect(context, first_command->clip_rect, clipped);
+        expect_rect(context, first_batch->clip_rect, clipped);
+
+        gui::draw::PrimitiveCommand const* second_command =
+            gui::draw::primitive_command(draw_context, 1u);
+        gui::draw::PrimitiveBatch const* second_batch =
+            gui::draw::primitive_batch(draw_context, 1u);
+        TEST_EXPECT(context, second_command != nullptr);
+        TEST_EXPECT(context, second_batch != nullptr);
+        expect_rect(context, second_command->clip_rect, outer);
+        expect_rect(context, second_batch->clip_rect, outer);
 
         gui::draw::destroy_context(draw_context);
     }
@@ -573,9 +641,12 @@ namespace {
         gui::draw::TextStyle style = {};
         style.font = font;
         style.size = 20.0f;
-        gui::draw::Rect const clip = {{1.0f, 2.0f}, {30.0f, 40.0f}};
+        gui::draw::Rect const outer = {{1.0f, 2.0f}, {50.0f, 60.0f}};
+        gui::draw::Rect const inner = {{10.0f, 0.0f}, {30.0f, 40.0f}};
+        gui::draw::Rect const clipped = {{10.0f, 2.0f}, {30.0f, 40.0f}};
         gui::draw::Transform2D const transform = {{1.0f, 0.0f}, {0.0f, 1.0f}, {3.0f, 4.0f}};
-        gui::draw::push_clip_rect(draw_context, clip);
+        gui::draw::push_clip_rect(draw_context, outer);
+        gui::draw::push_clip_rect(draw_context, inner);
         gui::draw::push_transform(draw_context, transform);
         gui::draw::push_opacity(draw_context, 0.5f);
         float advance = 0.0f;
@@ -589,7 +660,7 @@ namespace {
         TEST_EXPECT(context, command->position.y == 12.0f);
         TEST_EXPECT(context, command->text == StrRef("draw text"));
         TEST_EXPECT(context, command->run.rgba_pixels != nullptr);
-        expect_rect(context, command->clip_rect, clip);
+        expect_rect(context, command->clip_rect, clipped);
         expect_transform(context, command->transform, transform);
         TEST_EXPECT(context, command->opacity == 0.5f);
 

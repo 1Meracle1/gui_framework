@@ -105,6 +105,11 @@ namespace gui::draw {
                     {std::max(rect.min.x, rect.max.x), std::max(rect.min.y, rect.max.y)}};
         }
 
+        [[nodiscard]] auto rect_intersect(Rect lhs, Rect rhs) -> Rect {
+            return {{std::max(lhs.min.x, rhs.min.x), std::max(lhs.min.y, rhs.min.y)},
+                    {std::min(lhs.max.x, rhs.max.x), std::min(lhs.max.y, rhs.max.y)}};
+        }
+
         [[nodiscard]] auto rect_width(Rect rect) -> float {
             return rect.max.x - rect.min.x;
         }
@@ -497,7 +502,7 @@ namespace gui::draw {
         node->next = impl->clip_stack_top;
         node->value = previous;
         impl->clip_stack_top = node;
-        impl->current_clip_rect = rect;
+        impl->current_clip_rect = rect_intersect(previous, rect_normalized(rect));
         return previous;
     }
 
