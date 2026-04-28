@@ -28,6 +28,8 @@ namespace gui::render {
         SHADER_CREATION_FAILED = -11,
         PIPELINE_CREATION_FAILED = -12,
         SHADER_COMPILATION_FAILED = -13,
+        TEXTURE_CREATION_FAILED = -14,
+        SAMPLER_CREATION_FAILED = -15,
     };
 
     enum class PresentMode : uint8_t {
@@ -69,6 +71,11 @@ namespace gui::render {
 
     enum class PrimitiveTopology : uint8_t {
         TRIANGLE_LIST,
+    };
+
+    enum class BlendMode : uint8_t {
+        OPAQUE,
+        ALPHA,
     };
 
     enum class BindGroupSlot : uint8_t {
@@ -160,6 +167,12 @@ namespace gui::render {
         void const* initial_data = nullptr;
     };
 
+    struct TextureDesc {
+        SizeU32 size = {};
+        uint32_t bytes_per_row = 0u;
+        void const* rgba_pixels = nullptr;
+    };
+
     struct ShaderDesc {
         ShaderStage stage = ShaderStage::VERTEX;
         void const* bytecode = nullptr;
@@ -186,6 +199,7 @@ namespace gui::render {
         VertexAttributeDesc const* vertex_attributes = nullptr;
         size_t vertex_attribute_count = 0u;
         PrimitiveTopology topology = PrimitiveTopology::TRIANGLE_LIST;
+        BlendMode blend_mode = BlendMode::OPAQUE;
     };
 
     struct BindGroupBufferBinding {
@@ -265,6 +279,12 @@ namespace gui::render {
                                              size_t byte_size,
                                              size_t byte_alignment) -> FrameBufferSlice;
     auto commit_frame_uploads(Context context) -> void;
+
+    [[nodiscard]] auto
+    create_texture(Context context, TextureDesc const& desc, Texture& out_texture) -> Result;
+    auto destroy_texture(Context context, Texture& texture) -> void;
+    [[nodiscard]] auto create_sampler(Context context, Sampler& out_sampler) -> Result;
+    auto destroy_sampler(Context context, Sampler& sampler) -> void;
 
     [[nodiscard]] auto
     create_shader(Arena& arena, Context context, ShaderDesc const& desc, Shader& out_shader)

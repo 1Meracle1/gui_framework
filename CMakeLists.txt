@@ -61,8 +61,6 @@ if(WIN32)
         base::base
         draw::draw
         render::render
-        d3d11
-        d3dcompiler
     )
     cpp_configure_target(text_rendering_testbed)
 endif()

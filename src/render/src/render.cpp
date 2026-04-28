@@ -47,6 +47,10 @@ namespace gui::render {
             return "pipeline creation failed";
         case Result::SHADER_COMPILATION_FAILED:
             return "shader compilation failed";
+        case Result::TEXTURE_CREATION_FAILED:
+            return "texture creation failed";
+        case Result::SAMPLER_CREATION_FAILED:
+            return "sampler creation failed";
         }
 
         return "unknown";
@@ -159,6 +163,7 @@ namespace gui::render {
 #else
         BASE_UNUSED(context);
         BASE_UNUSED(desc);
+        BASE_UNUSED(out_buffer);
         return Result::UNSUPPORTED_PLATFORM;
 #endif
     }
@@ -217,6 +222,61 @@ namespace gui::render {
         d3d11::commit_frame_uploads(context);
 #else
         BASE_UNUSED(context);
+#endif
+    }
+
+    auto create_texture(Context context, TextureDesc const& desc, Texture& out_texture) -> Result {
+        ASSERT(context_valid(context));
+        ASSERT(out_texture.handle == nullptr);
+        ASSERT(desc.size.width != 0u);
+        ASSERT(desc.size.height != 0u);
+        ASSERT(desc.bytes_per_row >= desc.size.width * 4u);
+        ASSERT(desc.rgba_pixels != nullptr);
+
+#if BASE_PLATFORM_WINDOWS
+        return d3d11::create_texture(context, desc, out_texture);
+#else
+        BASE_UNUSED(context);
+        BASE_UNUSED(desc);
+        BASE_UNUSED(out_texture);
+        return Result::UNSUPPORTED_PLATFORM;
+#endif
+    }
+
+    auto destroy_texture(Context context, Texture& texture) -> void {
+        ASSERT(context_valid(context));
+        ASSERT(texture_valid(texture));
+
+#if BASE_PLATFORM_WINDOWS
+        d3d11::destroy_texture(context, texture);
+#else
+        BASE_UNUSED(context);
+        texture.handle = nullptr;
+#endif
+    }
+
+    auto create_sampler(Context context, Sampler& out_sampler) -> Result {
+        ASSERT(context_valid(context));
+        ASSERT(out_sampler.handle == nullptr);
+
+#if BASE_PLATFORM_WINDOWS
+        return d3d11::create_sampler(context, out_sampler);
+#else
+        BASE_UNUSED(context);
+        BASE_UNUSED(out_sampler);
+        return Result::UNSUPPORTED_PLATFORM;
+#endif
+    }
+
+    auto destroy_sampler(Context context, Sampler& sampler) -> void {
+        ASSERT(context_valid(context));
+        ASSERT(sampler_valid(sampler));
+
+#if BASE_PLATFORM_WINDOWS
+        d3d11::destroy_sampler(context, sampler);
+#else
+        BASE_UNUSED(context);
+        sampler.handle = nullptr;
 #endif
     }
 

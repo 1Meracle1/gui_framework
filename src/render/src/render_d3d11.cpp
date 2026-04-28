@@ -57,6 +57,7 @@ namespace gui::render::d3d11 {
             ID3D11VertexShader* vertex_shader = nullptr;
             ID3D11PixelShader* pixel_shader = nullptr;
             ID3D11InputLayout* input_layout = nullptr;
+            ID3D11BlendState* blend_state = nullptr;
             PrimitiveTopology topology = PrimitiveTopology::TRIANGLE_LIST;
         };
 
@@ -332,6 +333,7 @@ namespace gui::render::d3d11 {
         }
 
         auto destroy_pipeline_impl(D3D11Pipeline* pipeline) -> void {
+            release_com(pipeline->blend_state);
             release_com(pipeline->input_layout);
             release_com(pipeline->pixel_shader);
             release_com(pipeline->vertex_shader);
@@ -526,6 +528,81 @@ namespace gui::render::d3d11 {
         commit_frame_buffer(context_impl, &context_impl->frame_vertex_buffer);
     }
 
+    auto create_texture(Context context, TextureDesc const& desc, Texture& out_texture) -> Result {
+        D3D11Context* context_impl = context_from_handle(context);
+        ASSERT(context_impl != nullptr);
+
+        D3D11_TEXTURE2D_DESC texture_desc = {};
+        texture_desc.Width = desc.size.width;
+        texture_desc.Height = desc.size.height;
+        texture_desc.MipLevels = 1u;
+        texture_desc.ArraySize = 1u;
+        texture_desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        texture_desc.SampleDesc.Count = 1u;
+        texture_desc.Usage = D3D11_USAGE_IMMUTABLE;
+        texture_desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+
+        D3D11_SUBRESOURCE_DATA texture_data = {};
+        texture_data.pSysMem = desc.rgba_pixels;
+        texture_data.SysMemPitch = desc.bytes_per_row;
+
+        ID3D11Texture2D* texture = nullptr;
+        HRESULT hr = context_impl->device->CreateTexture2D(&texture_desc, &texture_data, &texture);
+        if (FAILED(hr) || texture == nullptr) {
+            release_com(texture);
+            return Result::TEXTURE_CREATION_FAILED;
+        }
+
+        ID3D11ShaderResourceView* view = nullptr;
+        hr = context_impl->device->CreateShaderResourceView(texture, nullptr, &view);
+        release_com(texture);
+        if (FAILED(hr) || view == nullptr) {
+            release_com(view);
+            return Result::TEXTURE_CREATION_FAILED;
+        }
+
+        out_texture.handle = view;
+        return Result::OK;
+    }
+
+    auto destroy_texture(Context context, Texture& texture) -> void {
+        BASE_UNUSED(context);
+        ID3D11ShaderResourceView* impl = texture_from_handle(texture);
+        ASSERT(impl != nullptr);
+        release_com(impl);
+        texture.handle = nullptr;
+    }
+
+    auto create_sampler(Context context, Sampler& out_sampler) -> Result {
+        D3D11Context* context_impl = context_from_handle(context);
+        ASSERT(context_impl != nullptr);
+
+        D3D11_SAMPLER_DESC sampler_desc = {};
+        sampler_desc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+        sampler_desc.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;
+        sampler_desc.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP;
+        sampler_desc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+        sampler_desc.MaxLOD = D3D11_FLOAT32_MAX;
+
+        ID3D11SamplerState* sampler = nullptr;
+        HRESULT const hr = context_impl->device->CreateSamplerState(&sampler_desc, &sampler);
+        if (FAILED(hr) || sampler == nullptr) {
+            release_com(sampler);
+            return Result::SAMPLER_CREATION_FAILED;
+        }
+
+        out_sampler.handle = sampler;
+        return Result::OK;
+    }
+
+    auto destroy_sampler(Context context, Sampler& sampler) -> void {
+        BASE_UNUSED(context);
+        ID3D11SamplerState* impl = sampler_from_handle(sampler);
+        ASSERT(impl != nullptr);
+        release_com(impl);
+        sampler.handle = nullptr;
+    }
+
     auto create_shader(Arena& arena, Context context, ShaderDesc const& desc, Shader& out_shader)
         -> Result {
         D3D11Context* context_impl = context_from_handle(context);
@@ -596,7 +673,8 @@ namespace gui::render::d3d11 {
         shader_desc.bytecode = shader_blob->GetBufferPointer();
         shader_desc.byte_size = shader_blob->GetBufferSize();
 
-        Result const result = create_shader(arena, context, shader_desc, out_shader);
+        Result const result =
+            ::gui::render::d3d11::create_shader(arena, context, shader_desc, out_shader);
         release_com(shader_blob);
         return result;
     }
@@ -662,6 +740,26 @@ namespace gui::render::d3d11 {
             }
         }
 
+        if (desc.blend_mode == BlendMode::ALPHA) {
+            D3D11_BLEND_DESC blend_desc = {};
+            blend_desc.RenderTarget[0].BlendEnable = TRUE;
+            blend_desc.RenderTarget[0].SrcBlend = D3D11_BLEND_SRC_ALPHA;
+            blend_desc.RenderTarget[0].DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
+            blend_desc.RenderTarget[0].BlendOp = D3D11_BLEND_OP_ADD;
+            blend_desc.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ONE;
+            blend_desc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_INV_SRC_ALPHA;
+            blend_desc.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
+            blend_desc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
+
+            HRESULT const hr =
+                context_impl->device->CreateBlendState(&blend_desc, &pipeline->blend_state);
+            if (FAILED(hr)) {
+                destroy_pipeline_impl(pipeline);
+                arena.reset_to(marker);
+                return Result::PIPELINE_CREATION_FAILED;
+            }
+        }
+
         pipeline->vertex_shader = vertex_shader->vertex_shader;
         pipeline->pixel_shader = pixel_shader->pixel_shader;
         pipeline->vertex_shader->AddRef();
@@ -689,6 +787,9 @@ namespace gui::render::d3d11 {
         context_impl->device_context->IASetPrimitiveTopology(d3d_topology(pipeline_impl->topology));
         context_impl->device_context->VSSetShader(pipeline_impl->vertex_shader, nullptr, 0u);
         context_impl->device_context->PSSetShader(pipeline_impl->pixel_shader, nullptr, 0u);
+        float blend_factor[] = {0.0f, 0.0f, 0.0f, 0.0f};
+        context_impl->device_context->OMSetBlendState(
+            pipeline_impl->blend_state, blend_factor, 0xffffffffu);
     }
 
     auto create_bind_group(Arena& arena,
@@ -809,9 +910,9 @@ namespace gui::render::d3d11 {
         ASSERT(context_impl != nullptr);
         ASSERT(context_impl->render_pass_active);
 
-        bind_pipeline(context, desc.pipeline);
+        ::gui::render::d3d11::bind_pipeline(context, desc.pipeline);
         for (size_t index = 0u; index < desc.bind_group_count; ++index) {
-            bind_group(context, desc.bind_groups[index]);
+            ::gui::render::d3d11::bind_group(context, desc.bind_groups[index]);
         }
 
         ID3D11DeviceContext* const device_context = context_impl->device_context;

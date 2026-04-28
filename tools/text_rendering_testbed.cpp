@@ -13,8 +13,6 @@
 #include <base/str_ref.h>
 #include <cstddef>
 #include <cstdint>
-#include <d3d11.h>
-#include <d3dcompiler.h>
 #include <draw/draw.h>
 #include <font_cache/font_cache.h>
 #include <font_provider/font_provider.h>
@@ -34,11 +32,10 @@ namespace {
     };
 
     struct TextPipeline {
-        ID3D11VertexShader* vertex_shader = nullptr;
-        ID3D11PixelShader* pixel_shader = nullptr;
-        ID3D11InputLayout* input_layout = nullptr;
-        ID3D11SamplerState* sampler = nullptr;
-        ID3D11BlendState* blend_state = nullptr;
+        gui::render::Shader vertex_shader = {};
+        gui::render::Shader pixel_shader = {};
+        gui::render::Pipeline pipeline = {};
+        gui::render::Sampler sampler = {};
     };
 
     struct TextState {
@@ -57,13 +54,6 @@ namespace {
 
     AppState* global_app_state = nullptr;
 
-    template <typename T> auto release_com(T*& value) -> void {
-        if (value != nullptr) {
-            value->Release();
-            value = nullptr;
-        }
-    }
-
     [[nodiscard]] auto loword_u32(LPARAM value) -> uint32_t {
         return static_cast<uint32_t>(static_cast<uint16_t>(value & 0xffff));
     }
@@ -80,63 +70,28 @@ namespace {
         fmt::eprintf("%s failed: %s\n", operation, gui::font_provider::result_name(result));
     }
 
-    [[nodiscard]] auto d3d11_buffer(gui::render::Buffer buffer) -> ID3D11Buffer* {
-        return static_cast<ID3D11Buffer*>(buffer.handle);
-    }
-
-    [[nodiscard]] auto
-    compile_shader(StrRef source, char const* entry_point, char const* target, ID3DBlob** out_blob)
-        -> bool {
-        ID3DBlob* error_blob = nullptr;
-        UINT compile_flags = D3DCOMPILE_ENABLE_STRICTNESS;
-#if BASE_DEBUG
-        compile_flags |= D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION;
-#endif
-
-        HRESULT const hr = D3DCompile(source.data(),
-                                      source.size(),
-                                      nullptr,
-                                      nullptr,
-                                      nullptr,
-                                      entry_point,
-                                      target,
-                                      compile_flags,
-                                      0u,
-                                      out_blob,
-                                      &error_blob);
-
-        if (FAILED(hr)) {
-            if (error_blob != nullptr) {
-                StrRef const errors(static_cast<char const*>(error_blob->GetBufferPointer()),
-                                    error_blob->GetBufferSize());
-                fmt::eprintf("shader compile failed (%s/%s):\n%s\n", entry_point, target, errors);
-            } else {
-                fmt::eprintf("shader compile failed (%s/%s): HRESULT 0x%08x\n",
-                             entry_point,
-                             target,
-                             static_cast<uint32_t>(hr));
-            }
-            release_com(error_blob);
-            return false;
-        }
-
-        release_com(error_blob);
-        return true;
-    }
-
-    auto destroy_pipeline(TextPipeline* pipeline) -> void {
+    auto destroy_pipeline(gui::render::Context context, TextPipeline* pipeline) -> void {
         if (pipeline == nullptr) {
             return;
         }
 
-        release_com(pipeline->blend_state);
-        release_com(pipeline->sampler);
-        release_com(pipeline->input_layout);
-        release_com(pipeline->pixel_shader);
-        release_com(pipeline->vertex_shader);
+        if (gui::render::sampler_valid(pipeline->sampler)) {
+            gui::render::destroy_sampler(context, pipeline->sampler);
+        }
+        if (gui::render::pipeline_valid(pipeline->pipeline)) {
+            gui::render::destroy_pipeline(context, pipeline->pipeline);
+        }
+        if (gui::render::shader_valid(pipeline->pixel_shader)) {
+            gui::render::destroy_shader(context, pipeline->pixel_shader);
+        }
+        if (gui::render::shader_valid(pipeline->vertex_shader)) {
+            gui::render::destroy_shader(context, pipeline->vertex_shader);
+        }
     }
 
-    [[nodiscard]] auto create_pipeline(ID3D11Device* device, TextPipeline* pipeline) -> bool {
+    [[nodiscard]] auto create_pipeline(Arena& arena,
+                                       gui::render::Context render_context,
+                                       TextPipeline* pipeline) -> bool {
         constexpr StrRef SHADER_SOURCE =
             "Texture2D g_text_texture : register(t0);\n"
             "SamplerState g_text_sampler : register(s0);\n"
@@ -167,132 +122,82 @@ namespace {
             "sample_value.a);\n"
             "}\n";
 
-        ID3DBlob* vertex_blob = nullptr;
-        ID3DBlob* pixel_blob = nullptr;
+        gui::render::ShaderSourceDesc shader_desc = {};
+        shader_desc.source = SHADER_SOURCE;
+        shader_desc.stage = gui::render::ShaderStage::VERTEX;
+        shader_desc.entry_point = "vs_main";
 
-        if (!compile_shader(SHADER_SOURCE, "vs_main", "vs_4_0", &vertex_blob) ||
-            !compile_shader(SHADER_SOURCE, "ps_main", "ps_4_0", &pixel_blob)) {
-            release_com(pixel_blob);
-            release_com(vertex_blob);
+        gui::render::Result result = gui::render::create_shader_from_source(
+            arena, render_context, shader_desc, pipeline->vertex_shader);
+        if (gui::render::result_failed(result)) {
             return false;
         }
 
-        HRESULT hr = device->CreateVertexShader(vertex_blob->GetBufferPointer(),
-                                                vertex_blob->GetBufferSize(),
-                                                nullptr,
-                                                &pipeline->vertex_shader);
-        if (FAILED(hr)) {
-            release_com(pixel_blob);
-            release_com(vertex_blob);
+        shader_desc.stage = gui::render::ShaderStage::PIXEL;
+        shader_desc.entry_point = "ps_main";
+
+        result = gui::render::create_shader_from_source(
+            arena, render_context, shader_desc, pipeline->pixel_shader);
+        if (gui::render::result_failed(result)) {
             return false;
         }
 
-        hr = device->CreatePixelShader(pixel_blob->GetBufferPointer(),
-                                       pixel_blob->GetBufferSize(),
-                                       nullptr,
-                                       &pipeline->pixel_shader);
-        if (FAILED(hr)) {
-            release_com(pixel_blob);
-            release_com(vertex_blob);
-            return false;
-        }
-
-        D3D11_INPUT_ELEMENT_DESC input_elements[] = {
-            {"POSITION",
-             0u,
-             DXGI_FORMAT_R32G32_FLOAT,
-             0u,
-             static_cast<UINT>(offsetof(TextVertex, position)),
-             D3D11_INPUT_PER_VERTEX_DATA,
-             0u},
-            {"TEXCOORD",
-             0u,
-             DXGI_FORMAT_R32G32_FLOAT,
-             0u,
-             static_cast<UINT>(offsetof(TextVertex, uv)),
-             D3D11_INPUT_PER_VERTEX_DATA,
-             0u},
-            {"COLOR",
-             0u,
-             DXGI_FORMAT_R32G32B32A32_FLOAT,
-             0u,
-             static_cast<UINT>(offsetof(TextVertex, color)),
-             D3D11_INPUT_PER_VERTEX_DATA,
-             0u},
+        gui::render::VertexAttributeDesc input_elements[] = {
+            {
+                "POSITION",
+                0u,
+                gui::render::VertexFormat::FLOAT32_2,
+                0u,
+                static_cast<uint32_t>(offsetof(TextVertex, position)),
+            },
+            {
+                "TEXCOORD",
+                0u,
+                gui::render::VertexFormat::FLOAT32_2,
+                0u,
+                static_cast<uint32_t>(offsetof(TextVertex, uv)),
+            },
+            {
+                "COLOR",
+                0u,
+                gui::render::VertexFormat::FLOAT32_4,
+                0u,
+                static_cast<uint32_t>(offsetof(TextVertex, color)),
+            },
         };
 
-        hr = device->CreateInputLayout(
-            input_elements,
-            static_cast<UINT>(sizeof(input_elements) / sizeof(input_elements[0u])),
-            vertex_blob->GetBufferPointer(),
-            vertex_blob->GetBufferSize(),
-            &pipeline->input_layout);
+        gui::render::PipelineDesc pipeline_desc = {};
+        pipeline_desc.vertex_shader = pipeline->vertex_shader;
+        pipeline_desc.pixel_shader = pipeline->pixel_shader;
+        pipeline_desc.vertex_attributes = input_elements;
+        pipeline_desc.vertex_attribute_count = sizeof(input_elements) / sizeof(input_elements[0u]);
+        pipeline_desc.blend_mode = gui::render::BlendMode::ALPHA;
 
-        release_com(pixel_blob);
-        release_com(vertex_blob);
-
-        if (FAILED(hr)) {
+        result =
+            gui::render::create_pipeline(arena, render_context, pipeline_desc, pipeline->pipeline);
+        if (gui::render::result_failed(result)) {
             return false;
         }
 
-        D3D11_SAMPLER_DESC sampler_desc = {};
-        sampler_desc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
-        sampler_desc.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;
-        sampler_desc.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP;
-        sampler_desc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
-        sampler_desc.MaxLOD = D3D11_FLOAT32_MAX;
-        hr = device->CreateSamplerState(&sampler_desc, &pipeline->sampler);
-        if (FAILED(hr)) {
-            return false;
-        }
-
-        D3D11_BLEND_DESC blend_desc = {};
-        blend_desc.RenderTarget[0].BlendEnable = TRUE;
-        blend_desc.RenderTarget[0].SrcBlend = D3D11_BLEND_SRC_ALPHA;
-        blend_desc.RenderTarget[0].DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
-        blend_desc.RenderTarget[0].BlendOp = D3D11_BLEND_OP_ADD;
-        blend_desc.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ONE;
-        blend_desc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_INV_SRC_ALPHA;
-        blend_desc.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
-        blend_desc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
-        hr = device->CreateBlendState(&blend_desc, &pipeline->blend_state);
-        return SUCCEEDED(hr);
+        result = gui::render::create_sampler(render_context, pipeline->sampler);
+        return gui::render::result_succeeded(result);
     }
 
-    [[nodiscard]] auto create_text_texture(ID3D11Device* device,
-                                           gui::font_cache::TextRun const& run)
-        -> ID3D11ShaderResourceView* {
-        ASSERT(device != nullptr);
+    [[nodiscard]] auto create_text_texture(gui::render::Context context,
+                                           gui::font_cache::TextRun const& run,
+                                           gui::render::Texture& out_texture) -> bool {
         ASSERT(run.rgba_pixels != nullptr);
         ASSERT(run.size.width != 0u);
         ASSERT(run.size.height != 0u);
 
-        ID3D11Texture2D* texture = nullptr;
+        gui::render::TextureDesc texture_desc = {};
+        texture_desc.size = {run.size.width, run.size.height};
+        texture_desc.bytes_per_row = run.stride;
+        texture_desc.rgba_pixels = run.rgba_pixels;
 
-        D3D11_TEXTURE2D_DESC texture_desc = {};
-        texture_desc.Width = run.size.width;
-        texture_desc.Height = run.size.height;
-        texture_desc.MipLevels = 1u;
-        texture_desc.ArraySize = 1u;
-        texture_desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-        texture_desc.SampleDesc.Count = 1u;
-        texture_desc.Usage = D3D11_USAGE_IMMUTABLE;
-        texture_desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-
-        D3D11_SUBRESOURCE_DATA texture_data = {};
-        texture_data.pSysMem = run.rgba_pixels;
-        texture_data.SysMemPitch = run.stride;
-
-        HRESULT hr = device->CreateTexture2D(&texture_desc, &texture_data, &texture);
-        ASSERT(SUCCEEDED(hr));
-        ASSERT(texture != nullptr);
-
-        ID3D11ShaderResourceView* view = nullptr;
-        hr = device->CreateShaderResourceView(texture, nullptr, &view);
-        release_com(texture);
-        ASSERT(SUCCEEDED(hr));
-        ASSERT(view != nullptr);
-        return view;
+        gui::render::Result const result =
+            gui::render::create_texture(context, texture_desc, out_texture);
+        return gui::render::result_succeeded(result);
     }
 
     [[nodiscard]] auto pixel_to_ndc_x(float value, float width) -> float {
@@ -340,14 +245,8 @@ namespace {
                               gui::render::Window render_window,
                               TextPipeline const& pipeline,
                               gui::draw::Context draw_context) -> void {
-        ID3D11Device* const device =
-            static_cast<ID3D11Device*>(gui::render::native_device(render_context));
-        ID3D11DeviceContext* const device_context =
-            static_cast<ID3D11DeviceContext*>(gui::render::native_device_context(render_context));
         gui::render::SizeU32 const window_size = gui::render::window_size(render_window);
 
-        ASSERT(device != nullptr);
-        ASSERT(device_context != nullptr);
         ASSERT(window_size.width != 0u);
         ASSERT(window_size.height != 0u);
 
@@ -374,34 +273,59 @@ namespace {
 
         gui::render::commit_frame_uploads(render_context);
 
-        ID3D11Buffer* const vertex_buffer = d3d11_buffer(upload.buffer);
-        UINT const stride = sizeof(TextVertex);
-        UINT const offset = static_cast<UINT>(upload.byte_offset);
-        float blend_factor[] = {0.0f, 0.0f, 0.0f, 0.0f};
-
-        device_context->IASetInputLayout(pipeline.input_layout);
-        device_context->IASetVertexBuffers(0u, 1u, &vertex_buffer, &stride, &offset);
-        device_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-        device_context->VSSetShader(pipeline.vertex_shader, nullptr, 0u);
-        device_context->PSSetShader(pipeline.pixel_shader, nullptr, 0u);
-        device_context->PSSetSamplers(0u, 1u, &pipeline.sampler);
-        device_context->OMSetBlendState(pipeline.blend_state, blend_factor, 0xffffffffu);
+        gui::render::VertexBufferBinding vertex_buffer = {};
+        vertex_buffer.buffer = upload.buffer;
+        vertex_buffer.byte_stride = static_cast<uint32_t>(sizeof(TextVertex));
+        vertex_buffer.byte_offset = static_cast<uint32_t>(upload.byte_offset);
 
         for (size_t index = 0u; index < command_count; ++index) {
             gui::draw::TextCommand const* const command =
                 gui::draw::text_command(draw_context, index);
+            ASSERT(command != nullptr);
             if (!text_command_visible(*command)) {
                 continue;
             }
 
-            ID3D11ShaderResourceView* texture_view = create_text_texture(device, command->run);
+            gui::render::Texture texture = {};
+            bool const texture_created = create_text_texture(render_context, command->run, texture);
+            ASSERT(texture_created);
 
-            device_context->PSSetShaderResources(0u, 1u, &texture_view);
-            device_context->Draw(6u, static_cast<UINT>(index * 6u));
+            gui::render::BindGroupTextureBinding texture_binding = {};
+            texture_binding.stage = gui::render::ShaderStage::PIXEL;
+            texture_binding.slot = 0u;
+            texture_binding.texture = texture;
 
-            ID3D11ShaderResourceView* null_view = nullptr;
-            device_context->PSSetShaderResources(0u, 1u, &null_view);
-            release_com(texture_view);
+            gui::render::BindGroupSamplerBinding sampler_binding = {};
+            sampler_binding.stage = gui::render::ShaderStage::PIXEL;
+            sampler_binding.slot = 0u;
+            sampler_binding.sampler = pipeline.sampler;
+
+            ArenaTemp temp = begin_thread_temp_arena();
+            gui::render::BindGroup bind_group = {};
+            gui::render::BindGroupDesc bind_group_desc = {};
+            bind_group_desc.textures = &texture_binding;
+            bind_group_desc.texture_count = 1u;
+            bind_group_desc.samplers = &sampler_binding;
+            bind_group_desc.sampler_count = 1u;
+
+            gui::render::Result const bind_result = gui::render::create_bind_group(
+                *temp.arena(), render_context, bind_group_desc, bind_group);
+            ASSERT(gui::render::result_succeeded(bind_result));
+            if (gui::render::result_succeeded(bind_result)) {
+                gui::render::DrawDesc draw_desc = {};
+                draw_desc.pipeline = pipeline.pipeline;
+                draw_desc.vertex_buffers = &vertex_buffer;
+                draw_desc.vertex_buffer_count = 1u;
+                draw_desc.bind_groups = &bind_group;
+                draw_desc.bind_group_count = 1u;
+                draw_desc.vertex_count = 6u;
+                draw_desc.first_vertex = static_cast<uint32_t>(index * 6u);
+
+                gui::render::draw(render_context, draw_desc);
+                gui::render::destroy_bind_group(render_context, bind_group);
+            }
+
+            gui::render::destroy_texture(render_context, texture);
         }
     }
 
@@ -613,16 +537,14 @@ auto main() -> int {
         return 1;
     }
 
-    ID3D11Device* const device =
-        static_cast<ID3D11Device*>(gui::render::native_device(render_context));
     TextPipeline pipeline = {};
     TextState text_state = {};
 
-    if (device == nullptr || !create_pipeline(device, &pipeline) ||
+    if (!create_pipeline(app_arena, render_context, &pipeline) ||
         !create_text_state(app_arena, &text_state)) {
         fmt::eprintf("failed to initialize text rendering testbed\n");
         destroy_text_state(&text_state);
-        destroy_pipeline(&pipeline);
+        destroy_pipeline(render_context, &pipeline);
         gui::render::destroy_window(render_window);
         gui::render::destroy_context(render_context);
         DestroyWindow(app_state.hwnd);
@@ -684,7 +606,7 @@ auto main() -> int {
     }
 
     destroy_text_state(&text_state);
-    destroy_pipeline(&pipeline);
+    destroy_pipeline(render_context, &pipeline);
     gui::render::destroy_window(render_window);
     gui::render::destroy_context(render_context);
 

@@ -16,8 +16,14 @@ namespace {
                     gui::render::result_name(gui::render::Result::PIPELINE_CREATION_FAILED)[0] !=
                         '\0');
         TEST_EXPECT(context,
-                    gui::render::result_name(
-                        gui::render::Result::SHADER_COMPILATION_FAILED)[0] != '\0');
+                    gui::render::result_name(gui::render::Result::SHADER_COMPILATION_FAILED)[0] !=
+                        '\0');
+        TEST_EXPECT(context,
+                    gui::render::result_name(gui::render::Result::TEXTURE_CREATION_FAILED)[0] !=
+                        '\0');
+        TEST_EXPECT(context,
+                    gui::render::result_name(gui::render::Result::SAMPLER_CREATION_FAILED)[0] !=
+                        '\0');
         TEST_EXPECT(context, gui::render::backend_name(gui::render::Backend::D3D11)[0] != '\0');
     }
 
@@ -97,6 +103,15 @@ namespace {
         TEST_EXPECT(context, desc.byte_size == 0u);
     }
 
+    TEST_CASE(render_texture_defaults_describe_empty_rgba_upload) {
+        gui::render::TextureDesc const desc = {};
+
+        TEST_EXPECT(context, desc.size.width == 0u);
+        TEST_EXPECT(context, desc.size.height == 0u);
+        TEST_EXPECT(context, desc.bytes_per_row == 0u);
+        TEST_EXPECT(context, desc.rgba_pixels == nullptr);
+    }
+
     TEST_CASE(render_shader_source_defaults_describe_vertex_shader_without_source) {
         gui::render::ShaderSourceDesc const desc = {};
 
@@ -113,6 +128,7 @@ namespace {
         TEST_EXPECT(context, desc.vertex_attributes == nullptr);
         TEST_EXPECT(context, desc.vertex_attribute_count == 0u);
         TEST_EXPECT(context, desc.topology == gui::render::PrimitiveTopology::TRIANGLE_LIST);
+        TEST_EXPECT(context, desc.blend_mode == gui::render::BlendMode::OPAQUE);
     }
 
     TEST_CASE(render_bind_group_defaults_describe_draw_frequency_group) {
