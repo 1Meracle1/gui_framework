@@ -43,6 +43,7 @@ namespace gui::render::d3d11 {
 
         struct D3D11Window {
             WindowHeader header = {Backend::D3D11};
+            D3D11Context* context = nullptr;
             IDXGISwapChain* swap_chain = nullptr;
             ID3D11RenderTargetView* render_target_view = nullptr;
             SizeU32 size = {};
@@ -326,6 +327,7 @@ namespace gui::render::d3d11 {
         auto destroy_window_impl(D3D11Window* window) -> void {
             release_render_target(window);
             release_com(window->swap_chain);
+            window->context = nullptr;
             window->size = {};
             window->present_mode = PresentMode::VSYNC;
         }
@@ -402,6 +404,7 @@ namespace gui::render::d3d11 {
 
         ArenaMarker const marker = arena.marker();
         D3D11Window* window = arena_new<D3D11Window>(arena);
+        window->context = context_impl;
 
         DXGI_SWAP_CHAIN_DESC swap_desc = {};
         swap_desc.BufferCount = desc.buffer_count;
@@ -940,6 +943,7 @@ namespace gui::render::d3d11 {
         D3D11Window* window_impl = window_from_handle(window);
         ASSERT(context_impl != nullptr);
         ASSERT(window_impl != nullptr);
+        ASSERT(window_impl->context == context_impl);
         ASSERT(!context_impl->render_pass_active);
 
         context_impl->device_context->OMSetRenderTargets(0u, nullptr, nullptr);
@@ -974,6 +978,7 @@ namespace gui::render::d3d11 {
         D3D11Window* window_impl = window_from_handle(desc.window);
         ASSERT(context_impl != nullptr);
         ASSERT(window_impl != nullptr);
+        ASSERT(window_impl->context == context_impl);
         ASSERT(window_impl->render_target_view != nullptr);
         ASSERT(!context_impl->render_pass_active);
 
@@ -1019,6 +1024,7 @@ namespace gui::render::d3d11 {
         D3D11Window* window_impl = window_from_handle(window);
         ASSERT(context_impl != nullptr);
         ASSERT(window_impl != nullptr);
+        ASSERT(window_impl->context == context_impl);
         ASSERT(window_impl->swap_chain != nullptr);
         ASSERT(!context_impl->render_pass_active);
 
