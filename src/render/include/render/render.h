@@ -89,6 +89,13 @@ namespace gui::render {
         float a = 1.0f;
     };
 
+    struct ScissorRect {
+        uint32_t x = 0u;
+        uint32_t y = 0u;
+        uint32_t width = 0u;
+        uint32_t height = 0u;
+    };
+
     struct ContextDesc {
         Backend backend = Backend::D3D11;
         bool enable_debug_layer = false;
@@ -289,6 +296,7 @@ namespace gui::render {
                                          BindGroup& out_group) -> Result;
     auto destroy_bind_group(Context context, BindGroup& bind_group) -> void;
     auto bind_group(Context context, BindGroup bind_group) -> void;
+    auto set_scissor_rect(Context context, ScissorRect rect) -> void;
     auto draw(Context context, DrawDesc const& desc) -> void;
 
     [[nodiscard]] auto resize_window(Context context, Window window, SizeU32 size) -> Result;

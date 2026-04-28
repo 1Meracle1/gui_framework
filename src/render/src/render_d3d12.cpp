@@ -273,6 +273,15 @@ namespace gui::render::d3d12 {
             return D3D_PRIMITIVE_TOPOLOGY_UNDEFINED;
         }
 
+        [[nodiscard]] auto d3d_scissor_rect(ScissorRect rect) -> D3D12_RECT {
+            D3D12_RECT result = {};
+            result.left = static_cast<LONG>(rect.x);
+            result.top = static_cast<LONG>(rect.y);
+            result.right = static_cast<LONG>(rect.x + rect.width);
+            result.bottom = static_cast<LONG>(rect.y + rect.height);
+            return result;
+        }
+
         [[nodiscard]] auto shader_target(ShaderStage stage) -> char const* {
             switch (stage) {
             case ShaderStage::VERTEX:
@@ -1809,6 +1818,15 @@ namespace gui::render::d3d12 {
         }
     }
 
+    auto set_scissor_rect(Context context, ScissorRect rect) -> void {
+        D3D12Context* context_impl = context_from_handle(context);
+        ASSERT(context_impl != nullptr);
+        ASSERT(context_impl->render_pass_active);
+
+        D3D12_RECT const scissor = d3d_scissor_rect(rect);
+        context_impl->command_list->RSSetScissorRects(1u, &scissor);
+    }
+
     auto draw(Context context, DrawDesc const& desc) -> void {
         D3D12Context* context_impl = context_from_handle(context);
         ASSERT(context_impl != nullptr);
@@ -1913,9 +1931,9 @@ namespace gui::render::d3d12 {
         viewport.Height = static_cast<float>(window_impl->size.height);
         viewport.MaxDepth = 1.0f;
 
-        D3D12_RECT scissor = {};
-        scissor.right = static_cast<LONG>(window_impl->size.width);
-        scissor.bottom = static_cast<LONG>(window_impl->size.height);
+        ScissorRect const scissor_rect = {
+            0u, 0u, window_impl->size.width, window_impl->size.height};
+        D3D12_RECT const scissor = d3d_scissor_rect(scissor_rect);
 
         D3D12_CPU_DESCRIPTOR_HANDLE const target =
             rtv_handle(window_impl, window_impl->frame_index);

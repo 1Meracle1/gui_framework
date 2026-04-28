@@ -49,6 +49,7 @@ namespace gui::render::d3d11 {
             ID3D11Device* device = nullptr;
             ID3D11DeviceContext* device_context = nullptr;
             IDXGIFactory* factory = nullptr;
+            ID3D11RasterizerState* rasterizer_state = nullptr;
             D3D_FEATURE_LEVEL feature_level = D3D_FEATURE_LEVEL_10_0;
             D3D11FrameBuffer frame_vertex_buffer = {};
             bool frame_active = false;
@@ -256,6 +257,15 @@ namespace gui::render::d3d11 {
             return D3D11_PRIMITIVE_TOPOLOGY_UNDEFINED;
         }
 
+        [[nodiscard]] auto d3d_scissor_rect(ScissorRect rect) -> D3D11_RECT {
+            D3D11_RECT result = {};
+            result.left = static_cast<LONG>(rect.x);
+            result.top = static_cast<LONG>(rect.y);
+            result.right = static_cast<LONG>(rect.x + rect.width);
+            result.bottom = static_cast<LONG>(rect.y + rect.height);
+            return result;
+        }
+
         [[nodiscard]] auto shader_target(ShaderStage stage) -> char const* {
             switch (stage) {
             case ShaderStage::VERTEX:
@@ -326,6 +336,18 @@ namespace gui::render::d3d11 {
             return hr;
         }
 
+        [[nodiscard]] auto create_rasterizer_state(D3D11Context* context) -> bool {
+            D3D11_RASTERIZER_DESC desc = {};
+            desc.FillMode = D3D11_FILL_SOLID;
+            desc.CullMode = D3D11_CULL_NONE;
+            desc.DepthClipEnable = TRUE;
+            desc.ScissorEnable = TRUE;
+
+            HRESULT const hr =
+                context->device->CreateRasterizerState(&desc, &context->rasterizer_state);
+            return SUCCEEDED(hr) && context->rasterizer_state != nullptr;
+        }
+
         [[nodiscard]] auto init_factory(D3D11Context* context) -> bool {
             IDXGIDevice* dxgi_device = nullptr;
             IDXGIAdapter* adapter = nullptr;
@@ -349,6 +371,7 @@ namespace gui::render::d3d11 {
             }
 
             release_frame_buffer(context, &context->frame_vertex_buffer);
+            release_com(context->rasterizer_state);
             release_com(context->factory);
             release_com(context->device_context);
             release_com(context->device);
@@ -431,6 +454,12 @@ namespace gui::render::d3d11 {
         }
 
         if (FAILED(hr)) {
+            destroy_context_impl(context);
+            arena.reset_to(marker);
+            return Result::DEVICE_CREATION_FAILED;
+        }
+
+        if (!create_rasterizer_state(context)) {
             destroy_context_impl(context);
             arena.reset_to(marker);
             return Result::DEVICE_CREATION_FAILED;
@@ -1041,6 +1070,15 @@ namespace gui::render::d3d11 {
         }
     }
 
+    auto set_scissor_rect(Context context, ScissorRect rect) -> void {
+        D3D11Context* context_impl = context_from_handle(context);
+        ASSERT(context_impl != nullptr);
+        ASSERT(context_impl->render_pass_active);
+
+        D3D11_RECT const scissor = d3d_scissor_rect(rect);
+        context_impl->device_context->RSSetScissorRects(1u, &scissor);
+    }
+
     auto draw(Context context, DrawDesc const& desc) -> void {
         D3D11Context* context_impl = context_from_handle(context);
         ASSERT(context_impl != nullptr);
@@ -1122,9 +1160,15 @@ namespace gui::render::d3d11 {
         viewport.MinDepth = 0.0f;
         viewport.MaxDepth = 1.0f;
 
+        ScissorRect const scissor_rect = {
+            0u, 0u, window_impl->size.width, window_impl->size.height};
+        D3D11_RECT const scissor = d3d_scissor_rect(scissor_rect);
+
         context_impl->device_context->OMSetRenderTargets(
             1u, &window_impl->render_target_view, nullptr);
+        context_impl->device_context->RSSetState(context_impl->rasterizer_state);
         context_impl->device_context->RSSetViewports(1u, &viewport);
+        context_impl->device_context->RSSetScissorRects(1u, &scissor);
 
         switch (desc.load_op) {
         case LoadOp::LOAD:

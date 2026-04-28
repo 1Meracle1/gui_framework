@@ -1,9 +1,12 @@
 #pragma once
 
 #include <base/memory.h>
+#include <base/slice.h>
 #include <base/str_ref.h>
 #include <cstddef>
+#include <cstdint>
 #include <font_cache/font_cache.h>
+#include <render/render.h>
 
 namespace gui::draw {
 
@@ -17,6 +20,52 @@ namespace gui::draw {
         float g = 1.0f;
         float b = 1.0f;
         float a = 1.0f;
+    };
+
+    struct Rect {
+        Vec2 min = {};
+        Vec2 max = {};
+    };
+
+    struct Transform2D {
+        Vec2 x_axis = {1.0f, 0.0f};
+        Vec2 y_axis = {0.0f, 1.0f};
+        Vec2 translation = {};
+    };
+
+    struct Vertex {
+        Vec2 position = {};
+        Vec2 uv = {};
+        Color color = {};
+    };
+
+    struct PrimitiveCommand {
+        Vertex const* vertices = nullptr;
+        size_t vertex_count = 0u;
+        gui::render::Texture texture = {};
+        Rect clip_rect = {};
+        Transform2D transform = {};
+        float opacity = 1.0f;
+    };
+
+    struct PrimitiveBatch {
+        size_t command_index = 0u;
+        size_t command_count = 0u;
+        size_t vertex_count = 0u;
+        gui::render::Texture texture = {};
+        Rect clip_rect = {};
+        Transform2D transform = {};
+        float opacity = 1.0f;
+    };
+
+    enum class CommandKind : uint8_t {
+        PRIMITIVE_BATCH,
+        TEXT,
+    };
+
+    struct Command {
+        CommandKind kind = CommandKind::PRIMITIVE_BATCH;
+        size_t index = 0u;
     };
 
     struct ContextDesc {
@@ -41,6 +90,9 @@ namespace gui::draw {
         TextStyle style = {};
         StrRef text = {};
         font_cache::TextRun run = {};
+        Rect clip_rect = {};
+        Transform2D transform = {};
+        float opacity = 1.0f;
     };
 
     [[nodiscard]] auto context_valid(Context context) -> bool;
@@ -51,12 +103,88 @@ namespace gui::draw {
     auto begin_frame(Context context) -> void;
     auto end_frame(Context context) -> void;
 
+    auto push_clip_rect(Context context, Rect rect) -> Rect;
+    auto pop_clip_rect(Context context) -> Rect;
+    [[nodiscard]] auto top_clip_rect(Context context) -> Rect;
+
+    auto push_transform(Context context, Transform2D transform) -> Transform2D;
+    auto pop_transform(Context context) -> Transform2D;
+    [[nodiscard]] auto top_transform(Context context) -> Transform2D;
+
+    auto push_opacity(Context context, float opacity) -> float;
+    auto pop_opacity(Context context) -> float;
+    [[nodiscard]] auto top_opacity(Context context) -> float;
+
+    auto draw_line(Context context, Vec2 p0, Vec2 p1, Color color, float thickness) -> void;
+    auto draw_polyline(Context context,
+                       Slice<Vec2 const> points,
+                       Color color,
+                       float thickness,
+                       bool closed) -> void;
+    auto draw_triangle(Context context, Vec2 p0, Vec2 p1, Vec2 p2, Color color, float thickness)
+        -> void;
+    auto draw_triangle_filled(Context context, Vec2 p0, Vec2 p1, Vec2 p2, Color color) -> void;
+    auto
+    draw_quad(Context context, Vec2 p0, Vec2 p1, Vec2 p2, Vec2 p3, Color color, float thickness)
+        -> void;
+    auto draw_quad_filled(Context context, Vec2 p0, Vec2 p1, Vec2 p2, Vec2 p3, Color color) -> void;
+    auto draw_rect(Context context, Rect rect, Color color, float thickness, float rounding)
+        -> void;
+    auto draw_rect_filled(Context context, Rect rect, Color color, float rounding) -> void;
+    auto
+    draw_image(Context context, gui::render::Texture texture, Rect rect, Rect uv_rect, Color color)
+        -> void;
+    auto draw_rect_filled_multicolor(Context context,
+                                     Rect rect,
+                                     Color top_left,
+                                     Color top_right,
+                                     Color bottom_right,
+                                     Color bottom_left) -> void;
+    auto draw_circle(Context context,
+                     Vec2 center,
+                     float radius,
+                     Color color,
+                     float thickness,
+                     int32_t segment_count) -> void;
+    auto draw_circle_filled(
+        Context context, Vec2 center, float radius, Color color, int32_t segment_count) -> void;
+    auto draw_ellipse(Context context,
+                      Vec2 center,
+                      Vec2 radius,
+                      Color color,
+                      float thickness,
+                      int32_t segment_count) -> void;
+    auto draw_ellipse_filled(
+        Context context, Vec2 center, Vec2 radius, Color color, int32_t segment_count) -> void;
+
+    auto path_clear(Context context) -> void;
+    auto path_line_to(Context context, Vec2 p) -> void;
+    auto path_arc_to(Context context,
+                     Vec2 center,
+                     float radius,
+                     float angle_min,
+                     float angle_max,
+                     int32_t segment_count) -> void;
+    auto path_bezier_quadratic_to(Context context, Vec2 control, Vec2 end, int32_t segment_count)
+        -> void;
+    auto path_bezier_cubic_to(
+        Context context, Vec2 control0, Vec2 control1, Vec2 end, int32_t segment_count) -> void;
+    auto path_rect(Context context, Rect rect, float rounding) -> void;
+    auto path_stroke(Context context, Color color, bool closed, float thickness) -> void;
+    auto path_fill_convex(Context context, Color color) -> void;
+
     auto draw_text(Context context,
                    Vec2 position,
                    TextStyle const& style,
                    StrRef text,
                    float* out_advance) -> void;
 
+    [[nodiscard]] auto primitive_command_count(Context context) -> size_t;
+    [[nodiscard]] auto primitive_command(Context context, size_t index) -> PrimitiveCommand const*;
+    [[nodiscard]] auto primitive_batch_count(Context context) -> size_t;
+    [[nodiscard]] auto primitive_batch(Context context, size_t index) -> PrimitiveBatch const*;
+    [[nodiscard]] auto command_count(Context context) -> size_t;
+    [[nodiscard]] auto command(Context context, size_t index) -> Command const*;
     [[nodiscard]] auto text_command_count(Context context) -> size_t;
     [[nodiscard]] auto text_command(Context context, size_t index) -> TextCommand const*;
 

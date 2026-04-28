@@ -53,6 +53,7 @@ namespace gui::render::d3d12 {
                                          BindGroup& out_group) -> Result;
     auto destroy_bind_group(Context context, BindGroup& bind_group) -> void;
     auto bind_group(Context context, BindGroup bind_group) -> void;
+    auto set_scissor_rect(Context context, ScissorRect rect) -> void;
     auto draw(Context context, DrawDesc const& desc) -> void;
 
     [[nodiscard]] auto resize_window(Context context, Window window, SizeU32 size) -> Result;

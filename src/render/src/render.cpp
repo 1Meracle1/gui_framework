@@ -585,6 +585,24 @@ namespace gui::render {
 #endif
     }
 
+    auto set_scissor_rect(Context context, ScissorRect rect) -> void {
+        ASSERT(context_valid(context));
+
+#if BASE_PLATFORM_WINDOWS
+        switch (context_backend(context)) {
+        case Backend::D3D11:
+            d3d11::set_scissor_rect(context, rect);
+            return;
+        case Backend::D3D12:
+            d3d12::set_scissor_rect(context, rect);
+            return;
+        }
+#else
+        BASE_UNUSED(context);
+        BASE_UNUSED(rect);
+#endif
+    }
+
     auto draw(Context context, DrawDesc const& desc) -> void {
         ASSERT(context_valid(context));
         ASSERT(desc.vertex_count != 0u);

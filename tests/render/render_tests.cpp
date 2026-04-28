@@ -108,6 +108,15 @@ namespace {
         TEST_EXPECT(context, desc.rgba_pixels == nullptr);
     }
 
+    TEST_CASE(render_scissor_rect_defaults_describe_empty_rect) {
+        gui::render::ScissorRect const rect = {};
+
+        TEST_EXPECT(context, rect.x == 0u);
+        TEST_EXPECT(context, rect.y == 0u);
+        TEST_EXPECT(context, rect.width == 0u);
+        TEST_EXPECT(context, rect.height == 0u);
+    }
+
     TEST_CASE(render_shader_source_defaults_describe_vertex_shader_without_source) {
         gui::render::ShaderSourceDesc const desc = {};
 

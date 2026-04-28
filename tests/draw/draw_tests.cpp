@@ -4,12 +4,546 @@
 
 namespace {
 
+    auto expect_position(test::Context* context, gui::draw::Vec2 position, float x, float y)
+        -> void {
+        TEST_EXPECT(context, position.x == x);
+        TEST_EXPECT(context, position.y == y);
+    }
+
+    auto expect_rect(test::Context* context, gui::draw::Rect rect, gui::draw::Rect expected)
+        -> void {
+        expect_position(context, rect.min, expected.min.x, expected.min.y);
+        expect_position(context, rect.max, expected.max.x, expected.max.y);
+    }
+
+    auto expect_transform(test::Context* context,
+                          gui::draw::Transform2D transform,
+                          gui::draw::Transform2D expected) -> void {
+        expect_position(context, transform.x_axis, expected.x_axis.x, expected.x_axis.y);
+        expect_position(context, transform.y_axis, expected.y_axis.x, expected.y_axis.y);
+        expect_position(
+            context, transform.translation, expected.translation.x, expected.translation.y);
+    }
+
     TEST_CASE(draw_context_starts_empty) {
         gui::draw::Context const draw_context = {};
 
         TEST_EXPECT(context, !gui::draw::context_valid(draw_context));
+        TEST_EXPECT(context, gui::draw::primitive_command_count(draw_context) == 0u);
+        TEST_EXPECT(context, gui::draw::primitive_command(draw_context, 0u) == nullptr);
+        TEST_EXPECT(context, gui::draw::primitive_batch_count(draw_context) == 0u);
+        TEST_EXPECT(context, gui::draw::primitive_batch(draw_context, 0u) == nullptr);
+        TEST_EXPECT(context, gui::draw::command_count(draw_context) == 0u);
+        TEST_EXPECT(context, gui::draw::command(draw_context, 0u) == nullptr);
         TEST_EXPECT(context, gui::draw::text_command_count(draw_context) == 0u);
         TEST_EXPECT(context, gui::draw::text_command(draw_context, 0u) == nullptr);
+        TEST_EXPECT(context, gui::draw::top_clip_rect(draw_context).min.x < -1000000.0f);
+        expect_transform(context, gui::draw::top_transform(draw_context), {});
+        TEST_EXPECT(context, gui::draw::top_opacity(draw_context) == 1.0f);
+    }
+
+    TEST_CASE(draw_state_stacks_push_pop_top) {
+        Arena owner_arena = {};
+        owner_arena.init();
+
+        gui::draw::Context draw_context = {};
+        gui::draw::create_context(owner_arena, {}, draw_context);
+
+        gui::draw::begin_frame(draw_context);
+        gui::draw::Rect const clip0 = {{1.0f, 2.0f}, {3.0f, 4.0f}};
+        gui::draw::Rect const clip1 = {{5.0f, 6.0f}, {7.0f, 8.0f}};
+        gui::draw::push_clip_rect(draw_context, clip0);
+        expect_rect(context, gui::draw::top_clip_rect(draw_context), clip0);
+        gui::draw::push_clip_rect(draw_context, clip1);
+        expect_rect(context, gui::draw::top_clip_rect(draw_context), clip1);
+        expect_rect(context, gui::draw::pop_clip_rect(draw_context), clip1);
+        expect_rect(context, gui::draw::top_clip_rect(draw_context), clip0);
+        expect_rect(context, gui::draw::pop_clip_rect(draw_context), clip0);
+        TEST_EXPECT(context, gui::draw::top_clip_rect(draw_context).min.x < -1000000.0f);
+
+        gui::draw::Transform2D const transform0 = {{2.0f, 0.0f}, {0.0f, 3.0f}, {4.0f, 5.0f}};
+        gui::draw::Transform2D const transform1 = {{0.0f, 1.0f}, {-1.0f, 0.0f}, {8.0f, 9.0f}};
+        expect_transform(context, gui::draw::push_transform(draw_context, transform0), {});
+        expect_transform(context, gui::draw::top_transform(draw_context), transform0);
+        expect_transform(context, gui::draw::push_transform(draw_context, transform1), transform0);
+        expect_transform(context, gui::draw::pop_transform(draw_context), transform1);
+        expect_transform(context, gui::draw::top_transform(draw_context), transform0);
+        expect_transform(context, gui::draw::pop_transform(draw_context), transform0);
+        expect_transform(context, gui::draw::top_transform(draw_context), {});
+
+        TEST_EXPECT(context, gui::draw::push_opacity(draw_context, 0.5f) == 1.0f);
+        TEST_EXPECT(context, gui::draw::top_opacity(draw_context) == 0.5f);
+        TEST_EXPECT(context, gui::draw::push_opacity(draw_context, 0.25f) == 0.5f);
+        TEST_EXPECT(context, gui::draw::pop_opacity(draw_context) == 0.25f);
+        TEST_EXPECT(context, gui::draw::top_opacity(draw_context) == 0.5f);
+        TEST_EXPECT(context, gui::draw::pop_opacity(draw_context) == 0.5f);
+        TEST_EXPECT(context, gui::draw::top_opacity(draw_context) == 1.0f);
+
+        gui::draw::push_clip_rect(draw_context, clip0);
+        gui::draw::push_transform(draw_context, transform0);
+        gui::draw::push_opacity(draw_context, 0.5f);
+        gui::draw::begin_frame(draw_context);
+        TEST_EXPECT(context, gui::draw::top_clip_rect(draw_context).min.x < -1000000.0f);
+        expect_transform(context, gui::draw::top_transform(draw_context), {});
+        TEST_EXPECT(context, gui::draw::top_opacity(draw_context) == 1.0f);
+
+        gui::draw::destroy_context(draw_context);
+    }
+
+    TEST_CASE(draw_records_filled_rect_primitive_vertices) {
+        Arena owner_arena = {};
+        owner_arena.init();
+
+        gui::draw::Context draw_context = {};
+        gui::draw::create_context(owner_arena, {}, draw_context);
+
+        gui::draw::begin_frame(draw_context);
+        gui::draw::draw_rect_filled(
+            draw_context, {{1.0f, 2.0f}, {11.0f, 7.0f}}, {0.25f, 0.5f, 0.75f, 1.0f}, 0.0f);
+
+        TEST_EXPECT(context, gui::draw::primitive_command_count(draw_context) == 1u);
+
+        gui::draw::PrimitiveCommand const* command = gui::draw::primitive_command(draw_context, 0u);
+        TEST_EXPECT(context, command != nullptr);
+        TEST_EXPECT(context, command->vertex_count == 6u);
+        TEST_EXPECT(context, !gui::render::texture_valid(command->texture));
+        TEST_EXPECT(context, command->vertices[0u].position.x == 1.0f);
+        TEST_EXPECT(context, command->vertices[0u].position.y == 2.0f);
+        TEST_EXPECT(context, command->vertices[0u].uv.x == 0.0f);
+        TEST_EXPECT(context, command->vertices[0u].uv.y == 0.0f);
+        TEST_EXPECT(context, command->vertices[2u].position.x == 11.0f);
+        TEST_EXPECT(context, command->vertices[2u].position.y == 7.0f);
+        TEST_EXPECT(context, command->vertices[5u].color.b == 0.75f);
+
+        gui::draw::begin_frame(draw_context);
+        TEST_EXPECT(context, gui::draw::primitive_command_count(draw_context) == 0u);
+
+        gui::draw::destroy_context(draw_context);
+    }
+
+    TEST_CASE(draw_batches_adjacent_compatible_primitive_commands) {
+        Arena owner_arena = {};
+        owner_arena.init();
+
+        gui::draw::Context draw_context = {};
+        gui::draw::create_context(owner_arena, {}, draw_context);
+
+        int texture_storage = 0;
+        gui::render::Texture const texture = {&texture_storage};
+
+        gui::draw::begin_frame(draw_context);
+        gui::draw::draw_rect_filled(
+            draw_context, {{0.0f, 0.0f}, {4.0f, 4.0f}}, {1.0f, 0.0f, 0.0f, 1.0f}, 0.0f);
+        gui::draw::draw_triangle_filled(
+            draw_context, {6.0f, 0.0f}, {10.0f, 0.0f}, {6.0f, 4.0f}, {0.0f, 1.0f, 0.0f, 1.0f});
+        gui::draw::draw_image(draw_context,
+                              texture,
+                              {{12.0f, 0.0f}, {16.0f, 4.0f}},
+                              {{0.0f, 0.0f}, {1.0f, 1.0f}},
+                              {1.0f, 1.0f, 1.0f, 1.0f});
+        gui::draw::draw_image(draw_context,
+                              texture,
+                              {{18.0f, 0.0f}, {22.0f, 4.0f}},
+                              {{0.0f, 0.0f}, {1.0f, 1.0f}},
+                              {1.0f, 1.0f, 1.0f, 1.0f});
+        gui::draw::draw_rect_filled(
+            draw_context, {{24.0f, 0.0f}, {28.0f, 4.0f}}, {0.0f, 0.0f, 1.0f, 1.0f}, 0.0f);
+
+        TEST_EXPECT(context, gui::draw::primitive_command_count(draw_context) == 5u);
+        TEST_EXPECT(context, gui::draw::primitive_batch_count(draw_context) == 3u);
+
+        gui::draw::PrimitiveBatch const* solid_batch = gui::draw::primitive_batch(draw_context, 0u);
+        TEST_EXPECT(context, solid_batch != nullptr);
+        TEST_EXPECT(context, solid_batch->command_index == 0u);
+        TEST_EXPECT(context, solid_batch->command_count == 2u);
+        TEST_EXPECT(context, solid_batch->vertex_count == 9u);
+        TEST_EXPECT(context, !gui::render::texture_valid(solid_batch->texture));
+
+        gui::draw::PrimitiveBatch const* textured_batch =
+            gui::draw::primitive_batch(draw_context, 1u);
+        TEST_EXPECT(context, textured_batch != nullptr);
+        TEST_EXPECT(context, textured_batch->command_index == 2u);
+        TEST_EXPECT(context, textured_batch->command_count == 2u);
+        TEST_EXPECT(context, textured_batch->vertex_count == 12u);
+        TEST_EXPECT(context, textured_batch->texture.handle == texture.handle);
+
+        gui::draw::PrimitiveBatch const* final_solid_batch =
+            gui::draw::primitive_batch(draw_context, 2u);
+        TEST_EXPECT(context, final_solid_batch != nullptr);
+        TEST_EXPECT(context, final_solid_batch->command_index == 4u);
+        TEST_EXPECT(context, final_solid_batch->command_count == 1u);
+        TEST_EXPECT(context, final_solid_batch->vertex_count == 6u);
+
+        gui::draw::PrimitiveCommand const* command = gui::draw::primitive_command(draw_context, 2u);
+        TEST_EXPECT(context, command != nullptr);
+        TEST_EXPECT(context, command->texture.handle == texture.handle);
+
+        gui::draw::destroy_context(draw_context);
+    }
+
+    TEST_CASE(draw_batches_break_on_state_changes) {
+        Arena owner_arena = {};
+        owner_arena.init();
+
+        gui::draw::Context draw_context = {};
+        gui::draw::create_context(owner_arena, {}, draw_context);
+
+        gui::draw::begin_frame(draw_context);
+        gui::draw::draw_rect_filled(
+            draw_context, {{0.0f, 0.0f}, {4.0f, 4.0f}}, {1.0f, 1.0f, 1.0f, 1.0f}, 0.0f);
+
+        gui::draw::Rect const clip = {{1.0f, 1.0f}, {8.0f, 8.0f}};
+        gui::draw::push_clip_rect(draw_context, clip);
+        gui::draw::draw_rect_filled(
+            draw_context, {{6.0f, 0.0f}, {10.0f, 4.0f}}, {1.0f, 1.0f, 1.0f, 1.0f}, 0.0f);
+        gui::draw::draw_rect_filled(
+            draw_context, {{12.0f, 0.0f}, {16.0f, 4.0f}}, {1.0f, 1.0f, 1.0f, 1.0f}, 0.0f);
+        gui::draw::pop_clip_rect(draw_context);
+
+        gui::draw::Transform2D const transform = {{1.0f, 0.0f}, {0.0f, 1.0f}, {2.0f, 3.0f}};
+        gui::draw::push_transform(draw_context, transform);
+        gui::draw::draw_rect_filled(
+            draw_context, {{18.0f, 0.0f}, {22.0f, 4.0f}}, {1.0f, 1.0f, 1.0f, 1.0f}, 0.0f);
+        gui::draw::pop_transform(draw_context);
+
+        gui::draw::push_opacity(draw_context, 0.5f);
+        gui::draw::draw_rect_filled(
+            draw_context, {{24.0f, 0.0f}, {28.0f, 4.0f}}, {1.0f, 1.0f, 1.0f, 1.0f}, 0.0f);
+        gui::draw::pop_opacity(draw_context);
+
+        gui::draw::draw_rect_filled(
+            draw_context, {{30.0f, 0.0f}, {34.0f, 4.0f}}, {1.0f, 1.0f, 1.0f, 1.0f}, 0.0f);
+
+        TEST_EXPECT(context, gui::draw::primitive_command_count(draw_context) == 6u);
+        TEST_EXPECT(context, gui::draw::primitive_batch_count(draw_context) == 5u);
+
+        gui::draw::PrimitiveBatch const* clip_batch = gui::draw::primitive_batch(draw_context, 1u);
+        TEST_EXPECT(context, clip_batch != nullptr);
+        TEST_EXPECT(context, clip_batch->command_index == 1u);
+        TEST_EXPECT(context, clip_batch->command_count == 2u);
+        TEST_EXPECT(context, clip_batch->vertex_count == 12u);
+        expect_rect(context, clip_batch->clip_rect, clip);
+
+        gui::draw::PrimitiveBatch const* transform_batch =
+            gui::draw::primitive_batch(draw_context, 2u);
+        TEST_EXPECT(context, transform_batch != nullptr);
+        TEST_EXPECT(context, transform_batch->command_index == 3u);
+        TEST_EXPECT(context, transform_batch->command_count == 1u);
+        expect_transform(context, transform_batch->transform, transform);
+
+        gui::draw::PrimitiveBatch const* opacity_batch =
+            gui::draw::primitive_batch(draw_context, 3u);
+        TEST_EXPECT(context, opacity_batch != nullptr);
+        TEST_EXPECT(context, opacity_batch->command_index == 4u);
+        TEST_EXPECT(context, opacity_batch->command_count == 1u);
+        TEST_EXPECT(context, opacity_batch->opacity == 0.5f);
+
+        gui::draw::PrimitiveBatch const* final_batch = gui::draw::primitive_batch(draw_context, 4u);
+        TEST_EXPECT(context, final_batch != nullptr);
+        TEST_EXPECT(context, final_batch->command_index == 5u);
+        TEST_EXPECT(context, final_batch->command_count == 1u);
+
+        gui::draw::destroy_context(draw_context);
+    }
+
+    TEST_CASE(draw_records_mixed_primitive_text_command_order) {
+        Arena owner_arena = {};
+        owner_arena.init();
+
+        gui::font_provider::Context provider = {};
+        gui::font_provider::Result const provider_result =
+            gui::font_provider::create_context(owner_arena, {}, provider);
+
+#if BASE_PLATFORM_WINDOWS
+        TEST_EXPECT(context, provider_result == gui::font_provider::Result::OK);
+
+        gui::font_cache::Cache cache = {};
+        gui::font_cache::create_cache(owner_arena, provider, {}, cache);
+
+        gui::font_cache::Font font = {};
+        gui::font_cache::open_system_font(cache, {}, font);
+
+        gui::draw::Context draw_context = {};
+        gui::draw::ContextDesc draw_desc = {};
+        draw_desc.font_cache = cache;
+        gui::draw::create_context(owner_arena, draw_desc, draw_context);
+
+        gui::draw::TextStyle style = {};
+        style.font = font;
+        style.size = 16.0f;
+
+        gui::draw::begin_frame(draw_context);
+        gui::draw::draw_rect_filled(
+            draw_context, {{0.0f, 0.0f}, {4.0f, 4.0f}}, {1.0f, 1.0f, 1.0f, 1.0f}, 0.0f);
+        gui::draw::draw_triangle_filled(
+            draw_context, {6.0f, 0.0f}, {10.0f, 0.0f}, {6.0f, 4.0f}, {1.0f, 1.0f, 1.0f, 1.0f});
+        gui::draw::draw_text(draw_context, {0.0f, 8.0f}, style, "middle", nullptr);
+        gui::draw::draw_rect_filled(
+            draw_context, {{12.0f, 0.0f}, {16.0f, 4.0f}}, {1.0f, 1.0f, 1.0f, 1.0f}, 0.0f);
+        gui::draw::draw_text(draw_context, {0.0f, 24.0f}, style, "end", nullptr);
+        gui::draw::draw_rect_filled(
+            draw_context, {{18.0f, 0.0f}, {22.0f, 4.0f}}, {1.0f, 1.0f, 1.0f, 1.0f}, 0.0f);
+
+        TEST_EXPECT(context, gui::draw::primitive_command_count(draw_context) == 4u);
+        TEST_EXPECT(context, gui::draw::primitive_batch_count(draw_context) == 3u);
+        TEST_EXPECT(context, gui::draw::text_command_count(draw_context) == 2u);
+        TEST_EXPECT(context, gui::draw::command_count(draw_context) == 5u);
+
+        gui::draw::PrimitiveBatch const* first_batch = gui::draw::primitive_batch(draw_context, 0u);
+        TEST_EXPECT(context, first_batch != nullptr);
+        TEST_EXPECT(context, first_batch->command_index == 0u);
+        TEST_EXPECT(context, first_batch->command_count == 2u);
+
+        gui::draw::PrimitiveBatch const* middle_batch =
+            gui::draw::primitive_batch(draw_context, 1u);
+        TEST_EXPECT(context, middle_batch != nullptr);
+        TEST_EXPECT(context, middle_batch->command_index == 2u);
+        TEST_EXPECT(context, middle_batch->command_count == 1u);
+
+        gui::draw::PrimitiveBatch const* final_batch = gui::draw::primitive_batch(draw_context, 2u);
+        TEST_EXPECT(context, final_batch != nullptr);
+        TEST_EXPECT(context, final_batch->command_index == 3u);
+        TEST_EXPECT(context, final_batch->command_count == 1u);
+
+        gui::draw::Command const* command0 = gui::draw::command(draw_context, 0u);
+        gui::draw::Command const* command1 = gui::draw::command(draw_context, 1u);
+        gui::draw::Command const* command2 = gui::draw::command(draw_context, 2u);
+        gui::draw::Command const* command3 = gui::draw::command(draw_context, 3u);
+        gui::draw::Command const* command4 = gui::draw::command(draw_context, 4u);
+        TEST_EXPECT(context, command0 != nullptr);
+        TEST_EXPECT(context, command0->kind == gui::draw::CommandKind::PRIMITIVE_BATCH);
+        TEST_EXPECT(context, command0->index == 0u);
+        TEST_EXPECT(context, command1 != nullptr);
+        TEST_EXPECT(context, command1->kind == gui::draw::CommandKind::TEXT);
+        TEST_EXPECT(context, command1->index == 0u);
+        TEST_EXPECT(context, command2 != nullptr);
+        TEST_EXPECT(context, command2->kind == gui::draw::CommandKind::PRIMITIVE_BATCH);
+        TEST_EXPECT(context, command2->index == 1u);
+        TEST_EXPECT(context, command3 != nullptr);
+        TEST_EXPECT(context, command3->kind == gui::draw::CommandKind::TEXT);
+        TEST_EXPECT(context, command3->index == 1u);
+        TEST_EXPECT(context, command4 != nullptr);
+        TEST_EXPECT(context, command4->kind == gui::draw::CommandKind::PRIMITIVE_BATCH);
+        TEST_EXPECT(context, command4->index == 2u);
+
+        gui::draw::begin_frame(draw_context);
+        TEST_EXPECT(context, gui::draw::command_count(draw_context) == 0u);
+
+        gui::draw::destroy_context(draw_context);
+        gui::font_cache::destroy_cache(cache);
+        gui::font_provider::destroy_context(provider);
+#else
+        TEST_EXPECT(context, provider_result == gui::font_provider::Result::UNSUPPORTED_PLATFORM);
+#endif
+    }
+
+    TEST_CASE(draw_records_image_rect_texture_uvs_and_state) {
+        Arena owner_arena = {};
+        owner_arena.init();
+
+        gui::draw::Context draw_context = {};
+        gui::draw::create_context(owner_arena, {}, draw_context);
+
+        int texture_storage = 0;
+        gui::render::Texture const texture = {&texture_storage};
+
+        gui::draw::begin_frame(draw_context);
+        gui::draw::Rect const clip = {{2.0f, 3.0f}, {20.0f, 30.0f}};
+        gui::draw::Transform2D const transform = {{2.0f, 0.0f}, {0.0f, 3.0f}, {5.0f, 7.0f}};
+        gui::draw::push_clip_rect(draw_context, clip);
+        gui::draw::push_transform(draw_context, transform);
+        gui::draw::push_opacity(draw_context, 0.25f);
+        gui::draw::draw_image(draw_context,
+                              texture,
+                              {{1.0f, 2.0f}, {4.0f, 6.0f}},
+                              {{0.1f, 0.2f}, {0.7f, 0.8f}},
+                              {0.4f, 0.5f, 0.6f, 0.8f});
+
+        gui::draw::PrimitiveCommand const* command = gui::draw::primitive_command(draw_context, 0u);
+        TEST_EXPECT(context, command != nullptr);
+        TEST_EXPECT(context, command->texture.handle == texture.handle);
+        TEST_EXPECT(context, command->vertex_count == 6u);
+        expect_rect(context, command->clip_rect, clip);
+        expect_transform(context, command->transform, transform);
+        TEST_EXPECT(context, command->opacity == 0.25f);
+        expect_position(context, command->vertices[0u].position, 7.0f, 13.0f);
+        expect_position(context, command->vertices[2u].position, 13.0f, 25.0f);
+        expect_position(context, command->vertices[0u].uv, 0.1f, 0.2f);
+        expect_position(context, command->vertices[1u].uv, 0.7f, 0.2f);
+        expect_position(context, command->vertices[2u].uv, 0.7f, 0.8f);
+        expect_position(context, command->vertices[5u].uv, 0.1f, 0.8f);
+        TEST_EXPECT(context, command->vertices[0u].color.a == 0.2f);
+
+        gui::draw::destroy_context(draw_context);
+    }
+
+    TEST_CASE(draw_stamps_state_and_applies_transform_opacity_to_primitives) {
+        Arena owner_arena = {};
+        owner_arena.init();
+
+        gui::draw::Context draw_context = {};
+        gui::draw::create_context(owner_arena, {}, draw_context);
+
+        gui::draw::begin_frame(draw_context);
+        gui::draw::Rect const clip = {{2.0f, 3.0f}, {20.0f, 30.0f}};
+        gui::draw::Transform2D const transform = {{2.0f, 0.0f}, {0.0f, 3.0f}, {5.0f, 7.0f}};
+        gui::draw::push_clip_rect(draw_context, clip);
+        gui::draw::push_transform(draw_context, transform);
+        gui::draw::push_opacity(draw_context, 0.25f);
+        gui::draw::draw_rect_filled(
+            draw_context, {{1.0f, 2.0f}, {4.0f, 6.0f}}, {0.4f, 0.5f, 0.6f, 0.8f}, 0.0f);
+
+        gui::draw::PrimitiveCommand const* command = gui::draw::primitive_command(draw_context, 0u);
+        TEST_EXPECT(context, command != nullptr);
+        expect_rect(context, command->clip_rect, clip);
+        expect_transform(context, command->transform, transform);
+        TEST_EXPECT(context, command->opacity == 0.25f);
+        expect_position(context, command->vertices[0u].position, 7.0f, 13.0f);
+        expect_position(context, command->vertices[2u].position, 13.0f, 25.0f);
+        TEST_EXPECT(context, command->vertices[0u].color.a == 0.2f);
+
+        gui::draw::destroy_context(draw_context);
+    }
+
+    TEST_CASE(draw_records_open_polyline_with_joined_corner) {
+        Arena owner_arena = {};
+        owner_arena.init();
+
+        gui::draw::Context draw_context = {};
+        gui::draw::create_context(owner_arena, {}, draw_context);
+
+        gui::draw::begin_frame(draw_context);
+        gui::draw::Vec2 const points[] = {{0.0f, 0.0f}, {10.0f, 0.0f}, {10.0f, 10.0f}};
+        gui::draw::draw_polyline(draw_context, points, {1.0f, 1.0f, 1.0f, 1.0f}, 2.0f, false);
+
+        TEST_EXPECT(context, gui::draw::primitive_command_count(draw_context) == 1u);
+
+        gui::draw::PrimitiveCommand const* command = gui::draw::primitive_command(draw_context, 0u);
+        TEST_EXPECT(context, command != nullptr);
+        TEST_EXPECT(context, command->vertex_count == 12u);
+        expect_position(context, command->vertices[1u].position, 9.0f, 1.0f);
+        expect_position(context, command->vertices[6u].position, 9.0f, 1.0f);
+        expect_position(context, command->vertices[2u].position, 11.0f, -1.0f);
+        expect_position(context, command->vertices[11u].position, 11.0f, -1.0f);
+
+        gui::draw::destroy_context(draw_context);
+    }
+
+    TEST_CASE(draw_records_closed_triangle_and_rect_strokes) {
+        Arena owner_arena = {};
+        owner_arena.init();
+
+        gui::draw::Context draw_context = {};
+        gui::draw::create_context(owner_arena, {}, draw_context);
+
+        gui::draw::begin_frame(draw_context);
+        gui::draw::draw_triangle(draw_context,
+                                 {0.0f, 0.0f},
+                                 {10.0f, 0.0f},
+                                 {0.0f, 10.0f},
+                                 {1.0f, 1.0f, 1.0f, 1.0f},
+                                 2.0f);
+
+        gui::draw::PrimitiveCommand const* triangle_command =
+            gui::draw::primitive_command(draw_context, 0u);
+        TEST_EXPECT(context, triangle_command != nullptr);
+        TEST_EXPECT(context, triangle_command->vertex_count == 18u);
+        expect_position(context, triangle_command->vertices[0u].position, 1.0f, 1.0f);
+        expect_position(context, triangle_command->vertices[13u].position, 1.0f, 1.0f);
+        expect_position(context, triangle_command->vertices[14u].position, -1.0f, -1.0f);
+
+        gui::draw::begin_frame(draw_context);
+        gui::draw::draw_rect(
+            draw_context, {{0.0f, 0.0f}, {10.0f, 8.0f}}, {1.0f, 1.0f, 1.0f, 1.0f}, 2.0f, 0.0f);
+
+        gui::draw::PrimitiveCommand const* rect_command =
+            gui::draw::primitive_command(draw_context, 0u);
+        TEST_EXPECT(context, rect_command != nullptr);
+        TEST_EXPECT(context, rect_command->vertex_count == 24u);
+        expect_position(context, rect_command->vertices[0u].position, 1.0f, 1.0f);
+        expect_position(context, rect_command->vertices[19u].position, 1.0f, 1.0f);
+        expect_position(context, rect_command->vertices[20u].position, -1.0f, -1.0f);
+
+        gui::draw::destroy_context(draw_context);
+    }
+
+    TEST_CASE(draw_stroke_skips_degenerate_segments) {
+        Arena owner_arena = {};
+        owner_arena.init();
+
+        gui::draw::Context draw_context = {};
+        gui::draw::create_context(owner_arena, {}, draw_context);
+
+        gui::draw::begin_frame(draw_context);
+        gui::draw::Vec2 const points[] = {
+            {0.0f, 0.0f}, {0.0f, 0.0f}, {8.0f, 0.0f}, {8.0f, 0.0f}, {8.0f, 4.0f}};
+        gui::draw::draw_polyline(draw_context, points, {1.0f, 1.0f, 1.0f, 1.0f}, 2.0f, false);
+
+        gui::draw::PrimitiveCommand const* command = gui::draw::primitive_command(draw_context, 0u);
+        TEST_EXPECT(context, command != nullptr);
+        TEST_EXPECT(context, command->vertex_count == 12u);
+        expect_position(context, command->vertices[1u].position, 7.0f, 1.0f);
+        expect_position(context, command->vertices[6u].position, 7.0f, 1.0f);
+
+        gui::draw::begin_frame(draw_context);
+        gui::draw::Vec2 const degenerate_points[] = {{2.0f, 3.0f}, {2.0f, 3.0f}, {2.0f, 3.0f}};
+        gui::draw::draw_polyline(
+            draw_context, degenerate_points, {1.0f, 1.0f, 1.0f, 1.0f}, 2.0f, false);
+        TEST_EXPECT(context, gui::draw::primitive_command_count(draw_context) == 0u);
+
+        gui::draw::destroy_context(draw_context);
+    }
+
+    TEST_CASE(draw_records_lines_gradients_circles_and_paths) {
+        Arena owner_arena = {};
+        owner_arena.init();
+
+        gui::draw::Context draw_context = {};
+        gui::draw::create_context(owner_arena, {}, draw_context);
+
+        gui::draw::begin_frame(draw_context);
+        gui::draw::draw_line(
+            draw_context, {0.0f, 0.0f}, {10.0f, 0.0f}, {1.0f, 0.0f, 0.0f, 1.0f}, 2.0f);
+        gui::draw::draw_rect_filled_multicolor(draw_context,
+                                               {{0.0f, 0.0f}, {4.0f, 3.0f}},
+                                               {1.0f, 0.0f, 0.0f, 1.0f},
+                                               {0.0f, 1.0f, 0.0f, 1.0f},
+                                               {0.0f, 0.0f, 1.0f, 1.0f},
+                                               {1.0f, 1.0f, 1.0f, 1.0f});
+        gui::draw::draw_circle_filled(
+            draw_context, {8.0f, 8.0f}, 5.0f, {0.0f, 1.0f, 1.0f, 1.0f}, 8);
+        gui::draw::path_line_to(draw_context, {0.0f, 0.0f});
+        gui::draw::path_line_to(draw_context, {2.0f, 0.0f});
+        gui::draw::path_line_to(draw_context, {0.0f, 2.0f});
+        gui::draw::path_fill_convex(draw_context, {1.0f, 1.0f, 0.0f, 1.0f});
+
+        TEST_EXPECT(context, gui::draw::primitive_command_count(draw_context) == 4u);
+
+        gui::draw::PrimitiveCommand const* line_command =
+            gui::draw::primitive_command(draw_context, 0u);
+        TEST_EXPECT(context, line_command != nullptr);
+        TEST_EXPECT(context, line_command->vertex_count == 6u);
+        TEST_EXPECT(context, line_command->vertices[0u].position.y == 1.0f);
+        TEST_EXPECT(context, line_command->vertices[2u].position.y == -1.0f);
+
+        gui::draw::PrimitiveCommand const* gradient_command =
+            gui::draw::primitive_command(draw_context, 1u);
+        TEST_EXPECT(context, gradient_command != nullptr);
+        TEST_EXPECT(context, gradient_command->vertex_count == 6u);
+        TEST_EXPECT(context, gradient_command->vertices[1u].color.g == 1.0f);
+        TEST_EXPECT(context, gradient_command->vertices[4u].color.b == 1.0f);
+
+        gui::draw::PrimitiveCommand const* circle_command =
+            gui::draw::primitive_command(draw_context, 2u);
+        TEST_EXPECT(context, circle_command != nullptr);
+        TEST_EXPECT(context, circle_command->vertex_count == 18u);
+
+        gui::draw::PrimitiveCommand const* path_command =
+            gui::draw::primitive_command(draw_context, 3u);
+        TEST_EXPECT(context, path_command != nullptr);
+        TEST_EXPECT(context, path_command->vertex_count == 3u);
+
+        gui::draw::destroy_context(draw_context);
     }
 
     TEST_CASE(draw_records_text_commands_on_supported_platforms) {
@@ -39,6 +573,11 @@ namespace {
         gui::draw::TextStyle style = {};
         style.font = font;
         style.size = 20.0f;
+        gui::draw::Rect const clip = {{1.0f, 2.0f}, {30.0f, 40.0f}};
+        gui::draw::Transform2D const transform = {{1.0f, 0.0f}, {0.0f, 1.0f}, {3.0f, 4.0f}};
+        gui::draw::push_clip_rect(draw_context, clip);
+        gui::draw::push_transform(draw_context, transform);
+        gui::draw::push_opacity(draw_context, 0.5f);
         float advance = 0.0f;
         gui::draw::draw_text(draw_context, {8.0f, 12.0f}, style, "draw text", &advance);
         TEST_EXPECT(context, advance > 0.0f);
@@ -50,6 +589,9 @@ namespace {
         TEST_EXPECT(context, command->position.y == 12.0f);
         TEST_EXPECT(context, command->text == StrRef("draw text"));
         TEST_EXPECT(context, command->run.rgba_pixels != nullptr);
+        expect_rect(context, command->clip_rect, clip);
+        expect_transform(context, command->transform, transform);
+        TEST_EXPECT(context, command->opacity == 0.5f);
 
         gui::draw::begin_frame(draw_context);
         TEST_EXPECT(context, gui::draw::text_command_count(draw_context) == 0u);

@@ -19,4 +19,5 @@ target_link_libraries(draw INTERFACE
     gui_framework
     base::base
     font_cache::font_cache
+    render::render
 )
