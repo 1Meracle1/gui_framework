@@ -57,7 +57,6 @@ namespace {
         TEST_EXPECT(context, gui::render::native_device(context_handle) == nullptr);
         TEST_EXPECT(context, gui::render::native_device_context(context_handle) == nullptr);
         TEST_EXPECT(context, gui::render::native_swap_chain(window_handle) == nullptr);
-        TEST_EXPECT(context, gui::render::native_render_target_view(window_handle) == nullptr);
     }
 
     TEST_CASE(render_resource_handles_validate_non_null_values) {

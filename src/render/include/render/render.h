@@ -258,10 +258,9 @@ namespace gui::render {
         -> Result;
     auto destroy_buffer(Context context, Buffer& buffer) -> void;
     auto update_buffer(Context context, Buffer buffer, void const* data, size_t byte_size) -> void;
-    [[nodiscard]] auto allocate_frame_buffer(Context context,
-                                             BufferBinding binding,
-                                             size_t byte_size,
-                                             size_t byte_alignment) -> FrameBufferSlice;
+    [[nodiscard]] auto allocate_frame_vertex_buffer(Context context,
+                                                    size_t byte_size,
+                                                    size_t byte_alignment) -> FrameBufferSlice;
     auto commit_frame_uploads(Context context) -> void;
 
     [[nodiscard]] auto
@@ -305,6 +304,5 @@ namespace gui::render {
     [[nodiscard]] auto native_device(Context context) -> void*;
     [[nodiscard]] auto native_device_context(Context context) -> void*;
     [[nodiscard]] auto native_swap_chain(Window window) -> void*;
-    [[nodiscard]] auto native_render_target_view(Window window) -> void*;
 
 } // namespace gui::render

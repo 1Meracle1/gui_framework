@@ -255,11 +255,8 @@ namespace {
             return;
         }
 
-        gui::render::FrameBufferSlice const upload =
-            gui::render::allocate_frame_buffer(render_context,
-                                               gui::render::BufferBinding::VERTEX,
-                                               command_count * 6u * sizeof(TextVertex),
-                                               alignof(TextVertex));
+        gui::render::FrameBufferSlice const upload = gui::render::allocate_frame_vertex_buffer(
+            render_context, command_count * 6u * sizeof(TextVertex), alignof(TextVertex));
 
         TextVertex* const vertices = static_cast<TextVertex*>(upload.data);
         for (size_t index = 0u; index < command_count; ++index) {

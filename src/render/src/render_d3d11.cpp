@@ -498,13 +498,10 @@ namespace gui::render::d3d11 {
         context_impl->device_context->Unmap(buffer_impl, 0u);
     }
 
-    auto allocate_frame_buffer(Context context,
-                               BufferBinding binding,
-                               size_t byte_size,
-                               size_t byte_alignment) -> FrameBufferSlice {
+    auto allocate_frame_vertex_buffer(Context context, size_t byte_size, size_t byte_alignment)
+        -> FrameBufferSlice {
         D3D11Context* context_impl = context_from_handle(context);
         ASSERT(context_impl != nullptr);
-        ASSERT(binding == BufferBinding::VERTEX);
 
         D3D11FrameBuffer& frame_buffer = context_impl->frame_vertex_buffer;
         size_t const offset = align_up(frame_buffer.used_size, byte_alignment);
@@ -1059,12 +1056,6 @@ namespace gui::render::d3d11 {
         D3D11Window const* const window_impl = window_from_handle(window);
         ASSERT(window_impl != nullptr);
         return window_impl->swap_chain;
-    }
-
-    auto native_render_target_view(Window window) -> void* {
-        D3D11Window const* const window_impl = window_from_handle(window);
-        ASSERT(window_impl != nullptr);
-        return window_impl->render_target_view;
     }
 
 } // namespace gui::render::d3d11

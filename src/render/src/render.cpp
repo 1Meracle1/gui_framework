@@ -247,10 +247,8 @@ namespace gui::render {
 #endif
     }
 
-    auto allocate_frame_buffer(Context context,
-                               BufferBinding binding,
-                               size_t byte_size,
-                               size_t byte_alignment) -> FrameBufferSlice {
+    auto allocate_frame_vertex_buffer(Context context, size_t byte_size, size_t byte_alignment)
+        -> FrameBufferSlice {
         ASSERT(context_valid(context));
         ASSERT(byte_size != 0u);
         ASSERT(byte_alignment != 0u);
@@ -258,15 +256,14 @@ namespace gui::render {
 #if BASE_PLATFORM_WINDOWS
         switch (context_backend(context)) {
         case Backend::D3D11:
-            return d3d11::allocate_frame_buffer(context, binding, byte_size, byte_alignment);
+            return d3d11::allocate_frame_vertex_buffer(context, byte_size, byte_alignment);
         case Backend::D3D12:
-            return d3d12::allocate_frame_buffer(context, binding, byte_size, byte_alignment);
+            return d3d12::allocate_frame_vertex_buffer(context, byte_size, byte_alignment);
         }
 
         return {};
 #else
         BASE_UNUSED(context);
-        BASE_UNUSED(binding);
         BASE_UNUSED(byte_size);
         BASE_UNUSED(byte_alignment);
         return {};
@@ -783,26 +780,6 @@ namespace gui::render {
             return d3d11::native_swap_chain(window);
         case Backend::D3D12:
             return d3d12::native_swap_chain(window);
-        }
-
-        return nullptr;
-#else
-        BASE_UNUSED(window);
-        return nullptr;
-#endif
-    }
-
-    auto native_render_target_view(Window window) -> void* {
-        if (!window_valid(window)) {
-            return nullptr;
-        }
-
-#if BASE_PLATFORM_WINDOWS
-        switch (window_backend(window)) {
-        case Backend::D3D11:
-            return d3d11::native_render_target_view(window);
-        case Backend::D3D12:
-            return d3d12::native_render_target_view(window);
         }
 
         return nullptr;
