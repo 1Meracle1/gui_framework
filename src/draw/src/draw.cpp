@@ -293,6 +293,10 @@ namespace gui::draw {
             return {-dy / length, dx / length};
         }
 
+        [[nodiscard]] auto tangent_from_normal(Vec2 normal) -> Vec2 {
+            return {normal.y, -normal.x};
+        }
+
         [[nodiscard]] auto
         stroke_join_offset(Vec2 prev_normal, Vec2 next_normal, float half_thickness) -> Vec2 {
             Vec2 const average = vec2_mul(vec2_add(prev_normal, next_normal), 0.5f);
@@ -340,6 +344,22 @@ namespace gui::draw {
             write_vertex(impl, vertices[3u], a, inner_color);
             write_vertex(impl, vertices[4u], c, outer_color);
             write_vertex(impl, vertices[5u], d, outer_color);
+        }
+
+        auto write_stroke_cap(ContextImpl const* impl,
+                              Vertex* vertices,
+                              Vec2 point,
+                              Vec2 inner_offset,
+                              Vec2 outer_offset,
+                              Vec2 cap_offset,
+                              Color inner_color,
+                              Color outer_color) -> void {
+            Vec2 const p0 = vec2_sub(point, inner_offset);
+            Vec2 const p1 = vec2_add(point, inner_offset);
+            Vec2 const offset0 = vec2_add(vec2_sub(inner_offset, outer_offset), cap_offset);
+            Vec2 const offset1 = vec2_add(vec2_sub(outer_offset, inner_offset), cap_offset);
+            write_fringe_segment(
+                impl, vertices, p0, p1, offset0, offset1, inner_color, outer_color);
         }
 
         auto
@@ -698,25 +718,43 @@ namespace gui::draw {
                 segment_normal(stroke_points[index], stroke_points[(index + 1u) % point_count]);
         }
 
-        float const half_thickness = thickness * 0.5f;
+        Color inner_color = color;
+        inner_color.a *= std::min(thickness, 1.0f);
+        Color outer_color = inner_color;
+        outer_color.a = 0.0f;
+
+        float const half_thickness = std::max(thickness, 1.0f) * 0.5f;
+        float const outer_half_thickness = half_thickness + AA_FRINGE_SIZE;
         Vec2* const point_offsets = arena_alloc<Vec2>(impl->frame_arena, point_count);
+        Vec2* const outer_point_offsets = arena_alloc<Vec2>(impl->frame_arena, point_count);
         if (closed) {
             for (size_t index = 0u; index < point_count; ++index) {
                 size_t const prev_index = (index + segment_count - 1u) % segment_count;
                 point_offsets[index] = stroke_join_offset(
                     segment_normals[prev_index], segment_normals[index], half_thickness);
+                outer_point_offsets[index] = stroke_join_offset(
+                    segment_normals[prev_index], segment_normals[index], outer_half_thickness);
             }
         } else {
             point_offsets[0u] = vec2_mul(segment_normals[0u], half_thickness);
+            outer_point_offsets[0u] = vec2_mul(segment_normals[0u], outer_half_thickness);
             point_offsets[point_count - 1u] =
                 vec2_mul(segment_normals[segment_count - 1u], half_thickness);
+            outer_point_offsets[point_count - 1u] =
+                vec2_mul(segment_normals[segment_count - 1u], outer_half_thickness);
             for (size_t index = 1u; index + 1u < point_count; ++index) {
                 point_offsets[index] = stroke_join_offset(
                     segment_normals[index - 1u], segment_normals[index], half_thickness);
+                outer_point_offsets[index] = stroke_join_offset(
+                    segment_normals[index - 1u], segment_normals[index], outer_half_thickness);
             }
         }
 
-        Vertex* const vertices = push_primitive_vertices(impl, segment_count * 6u);
+        size_t const core_vertex_count = segment_count * 6u;
+        size_t const side_fringe_vertex_count = segment_count * 12u;
+        size_t const cap_vertex_count = closed ? 0u : 12u;
+        Vertex* const vertices = push_primitive_vertices(
+            impl, core_vertex_count + side_fringe_vertex_count + cap_vertex_count);
         for (size_t index = 0u; index < segment_count; ++index) {
             size_t const next_index = (index + 1u) % point_count;
             write_stroke_segment(impl,
@@ -725,7 +763,56 @@ namespace gui::draw {
                                  stroke_points[next_index],
                                  point_offsets[index],
                                  point_offsets[next_index],
-                                 color);
+                                 inner_color);
+        }
+
+        Vertex* const fringe_vertices = vertices + core_vertex_count;
+        for (size_t index = 0u; index < segment_count; ++index) {
+            size_t const next_index = (index + 1u) % point_count;
+            Vec2 const positive_delta0 = vec2_sub(outer_point_offsets[index], point_offsets[index]);
+            Vec2 const positive_delta1 =
+                vec2_sub(outer_point_offsets[next_index], point_offsets[next_index]);
+            Vec2 const negative_delta0 = vec2_sub(point_offsets[index], outer_point_offsets[index]);
+            Vec2 const negative_delta1 =
+                vec2_sub(point_offsets[next_index], outer_point_offsets[next_index]);
+            write_fringe_segment(impl,
+                                 fringe_vertices + (index * 12u),
+                                 vec2_add(stroke_points[index], point_offsets[index]),
+                                 vec2_add(stroke_points[next_index], point_offsets[next_index]),
+                                 positive_delta0,
+                                 positive_delta1,
+                                 inner_color,
+                                 outer_color);
+            write_fringe_segment(impl,
+                                 fringe_vertices + (index * 12u) + 6u,
+                                 vec2_sub(stroke_points[index], point_offsets[index]),
+                                 vec2_sub(stroke_points[next_index], point_offsets[next_index]),
+                                 negative_delta0,
+                                 negative_delta1,
+                                 inner_color,
+                                 outer_color);
+        }
+
+        if (!closed) {
+            Vec2 const start_tangent = tangent_from_normal(segment_normals[0u]);
+            Vec2 const end_tangent = tangent_from_normal(segment_normals[segment_count - 1u]);
+            Vertex* const cap_vertices = fringe_vertices + side_fringe_vertex_count;
+            write_stroke_cap(impl,
+                             cap_vertices,
+                             stroke_points[0u],
+                             point_offsets[0u],
+                             outer_point_offsets[0u],
+                             vec2_mul(start_tangent, -AA_FRINGE_SIZE),
+                             inner_color,
+                             outer_color);
+            write_stroke_cap(impl,
+                             cap_vertices + 6u,
+                             stroke_points[point_count - 1u],
+                             point_offsets[point_count - 1u],
+                             outer_point_offsets[point_count - 1u],
+                             vec2_mul(end_tangent, AA_FRINGE_SIZE),
+                             inner_color,
+                             outer_color);
         }
     }
 

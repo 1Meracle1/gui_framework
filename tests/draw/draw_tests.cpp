@@ -547,11 +547,47 @@ namespace {
 
         gui::draw::PrimitiveCommand const* command = gui::draw::primitive_command(draw_context, 0u);
         TEST_EXPECT(context, command != nullptr);
-        TEST_EXPECT(context, command->vertex_count == 12u);
+        TEST_EXPECT(context, command->vertex_count == 48u);
         expect_position(context, command->vertices[1u].position, 9.0f, 1.0f);
         expect_position(context, command->vertices[6u].position, 9.0f, 1.0f);
         expect_position(context, command->vertices[2u].position, 11.0f, -1.0f);
         expect_position(context, command->vertices[11u].position, 11.0f, -1.0f);
+        TEST_EXPECT(context, command->vertices[12u].color.a == 1.0f);
+        TEST_EXPECT(context, command->vertices[14u].color.a == 0.0f);
+        expect_position(context, command->vertices[36u].position, 0.0f, -1.0f);
+        expect_position(context, command->vertices[38u].position, -1.0f, 2.0f);
+
+        gui::draw::destroy_context(draw_context);
+    }
+
+    TEST_CASE(draw_stroke_aa_records_caps_subpixel_alpha_and_state) {
+        Arena owner_arena = {};
+        owner_arena.init();
+
+        gui::draw::Context draw_context = {};
+        gui::draw::create_context(owner_arena, {}, draw_context);
+
+        gui::draw::Rect const clip = {{0.0f, 0.0f}, {20.0f, 20.0f}};
+        gui::draw::Transform2D const transform = {{1.0f, 0.0f}, {0.0f, 1.0f}, {1.0f, 2.0f}};
+
+        gui::draw::begin_frame(draw_context);
+        gui::draw::push_clip_rect(draw_context, clip);
+        gui::draw::push_transform(draw_context, transform);
+        gui::draw::push_opacity(draw_context, 0.5f);
+        gui::draw::draw_line(
+            draw_context, {0.0f, 0.0f}, {10.0f, 0.0f}, {1.0f, 1.0f, 1.0f, 1.0f}, 0.5f);
+
+        gui::draw::PrimitiveCommand const* command = gui::draw::primitive_command(draw_context, 0u);
+        TEST_EXPECT(context, command != nullptr);
+        TEST_EXPECT(context, command->vertex_count == 30u);
+        expect_rect(context, command->clip_rect, clip);
+        expect_transform(context, command->transform, transform);
+        TEST_EXPECT(context, command->opacity == 0.5f);
+        expect_position(context, command->vertices[0u].position, 1.0f, 2.5f);
+        expect_position(context, command->vertices[8u].position, 11.0f, 3.5f);
+        expect_position(context, command->vertices[20u].position, 0.0f, 3.5f);
+        TEST_EXPECT(context, command->vertices[0u].color.a == 0.25f);
+        TEST_EXPECT(context, command->vertices[8u].color.a == 0.0f);
 
         gui::draw::destroy_context(draw_context);
     }
@@ -574,10 +610,12 @@ namespace {
         gui::draw::PrimitiveCommand const* triangle_command =
             gui::draw::primitive_command(draw_context, 0u);
         TEST_EXPECT(context, triangle_command != nullptr);
-        TEST_EXPECT(context, triangle_command->vertex_count == 18u);
+        TEST_EXPECT(context, triangle_command->vertex_count == 54u);
         expect_position(context, triangle_command->vertices[0u].position, 1.0f, 1.0f);
         expect_position(context, triangle_command->vertices[13u].position, 1.0f, 1.0f);
         expect_position(context, triangle_command->vertices[14u].position, -1.0f, -1.0f);
+        TEST_EXPECT(context, triangle_command->vertices[18u].color.a == 1.0f);
+        TEST_EXPECT(context, triangle_command->vertices[20u].color.a == 0.0f);
 
         gui::draw::begin_frame(draw_context);
         gui::draw::draw_rect(
@@ -586,7 +624,7 @@ namespace {
         gui::draw::PrimitiveCommand const* rect_command =
             gui::draw::primitive_command(draw_context, 0u);
         TEST_EXPECT(context, rect_command != nullptr);
-        TEST_EXPECT(context, rect_command->vertex_count == 24u);
+        TEST_EXPECT(context, rect_command->vertex_count == 72u);
         expect_position(context, rect_command->vertices[0u].position, 1.0f, 1.0f);
         expect_position(context, rect_command->vertices[19u].position, 1.0f, 1.0f);
         expect_position(context, rect_command->vertices[20u].position, -1.0f, -1.0f);
@@ -608,7 +646,7 @@ namespace {
 
         gui::draw::PrimitiveCommand const* command = gui::draw::primitive_command(draw_context, 0u);
         TEST_EXPECT(context, command != nullptr);
-        TEST_EXPECT(context, command->vertex_count == 12u);
+        TEST_EXPECT(context, command->vertex_count == 48u);
         expect_position(context, command->vertices[1u].position, 7.0f, 1.0f);
         expect_position(context, command->vertices[6u].position, 7.0f, 1.0f);
 
@@ -676,7 +714,7 @@ namespace {
         gui::draw::PrimitiveCommand const* ellipse_command =
             gui::draw::primitive_command(draw_context, 1u);
         TEST_EXPECT(context, ellipse_command != nullptr);
-        TEST_EXPECT(context, ellipse_command->vertex_count == 768u);
+        TEST_EXPECT(context, ellipse_command->vertex_count == 2304u);
 
         gui::draw::destroy_context(draw_context);
     }
@@ -709,9 +747,10 @@ namespace {
         gui::draw::PrimitiveCommand const* line_command =
             gui::draw::primitive_command(draw_context, 0u);
         TEST_EXPECT(context, line_command != nullptr);
-        TEST_EXPECT(context, line_command->vertex_count == 6u);
+        TEST_EXPECT(context, line_command->vertex_count == 30u);
         TEST_EXPECT(context, line_command->vertices[0u].position.y == 1.0f);
         TEST_EXPECT(context, line_command->vertices[2u].position.y == -1.0f);
+        TEST_EXPECT(context, line_command->vertices[8u].color.a == 0.0f);
 
         gui::draw::PrimitiveCommand const* gradient_command =
             gui::draw::primitive_command(draw_context, 1u);

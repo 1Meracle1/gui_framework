@@ -67,6 +67,11 @@ namespace {
         gui::render::VertexBufferBinding vertex_buffer = {};
     };
 
+    struct DrawUpload {
+        PrimitiveUpload primitive = {};
+        TextUpload text = {};
+    };
+
     struct TextState {
         gui::font_provider::Context provider = {};
         gui::font_cache::Cache cache = {};
@@ -462,29 +467,40 @@ float4 ps_main(PSInput input) : SV_Target
                         {color.r, color.g, color.b, color.a}};
     }
 
-    [[nodiscard]] auto upload_primitive_vertices(gui::render::Context render_context,
-                                                 gui::render::SizeU32 window_size,
-                                                 gui::draw::Context draw_context)
-        -> PrimitiveUpload {
-        size_t const command_count = gui::draw::primitive_command_count(draw_context);
-        if (command_count == 0u) {
-            return {};
-        }
-
+    [[nodiscard]] auto upload_draw_vertices(gui::render::Context render_context,
+                                            gui::render::SizeU32 window_size,
+                                            gui::draw::Context draw_context) -> DrawUpload {
+        size_t const primitive_command_count = gui::draw::primitive_command_count(draw_context);
         size_t vertex_count = 0u;
-        for (size_t index = 0u; index < command_count; ++index) {
+        for (size_t index = 0u; index < primitive_command_count; ++index) {
             gui::draw::PrimitiveCommand const* const command =
                 gui::draw::primitive_command(draw_context, index);
             ASSERT(command != nullptr);
             vertex_count += command->vertex_count;
         }
 
+        size_t const text_command_count = gui::draw::text_command_count(draw_context);
+        size_t const primitive_bytes = vertex_count * sizeof(PrimitiveVertex);
+        size_t text_offset = primitive_bytes;
+        size_t const text_alignment_remainder = text_offset % alignof(TextVertex);
+        if (text_alignment_remainder != 0u) {
+            text_offset += alignof(TextVertex) - text_alignment_remainder;
+        }
+
+        size_t const text_bytes = text_command_count * 6u * sizeof(TextVertex);
+        size_t const total_bytes = text_offset + text_bytes;
+        if (total_bytes == 0u) {
+            return {};
+        }
+
         gui::render::FrameBufferSlice const upload = gui::render::allocate_frame_vertex_buffer(
-            render_context, vertex_count * sizeof(PrimitiveVertex), alignof(PrimitiveVertex));
+            render_context, total_bytes, std::max(alignof(PrimitiveVertex), alignof(TextVertex)));
+
+        DrawUpload result = {};
 
         PrimitiveVertex* const vertices = static_cast<PrimitiveVertex*>(upload.data);
         size_t vertex_offset = 0u;
-        for (size_t index = 0u; index < command_count; ++index) {
+        for (size_t index = 0u; index < primitive_command_count; ++index) {
             gui::draw::PrimitiveCommand const* const command =
                 gui::draw::primitive_command(draw_context, index);
             ASSERT(command != nullptr);
@@ -497,38 +513,31 @@ float4 ps_main(PSInput input) : SV_Target
             vertex_offset += command->vertex_count;
         }
 
-        PrimitiveUpload result = {};
-        result.vertex_buffer.buffer = upload.buffer;
-        result.vertex_buffer.byte_stride = static_cast<uint32_t>(sizeof(PrimitiveVertex));
-        result.vertex_buffer.byte_offset = static_cast<uint32_t>(upload.byte_offset);
-        return result;
-    }
-
-    [[nodiscard]] auto upload_text_vertices(gui::render::Context render_context,
-                                            gui::render::SizeU32 window_size,
-                                            gui::draw::Context draw_context) -> TextUpload {
-        size_t const command_count = gui::draw::text_command_count(draw_context);
-        if (command_count == 0u) {
-            return {};
+        if (vertex_count != 0u) {
+            result.primitive.vertex_buffer.buffer = upload.buffer;
+            result.primitive.vertex_buffer.byte_stride =
+                static_cast<uint32_t>(sizeof(PrimitiveVertex));
+            result.primitive.vertex_buffer.byte_offset = static_cast<uint32_t>(upload.byte_offset);
         }
 
-        gui::render::FrameBufferSlice const upload = gui::render::allocate_frame_vertex_buffer(
-            render_context, command_count * 6u * sizeof(TextVertex), alignof(TextVertex));
-
-        TextVertex* const vertices = static_cast<TextVertex*>(upload.data);
-        for (size_t index = 0u; index < command_count; ++index) {
+        uint8_t* const text_data = static_cast<uint8_t*>(upload.data) + text_offset;
+        TextVertex* const text_vertices = reinterpret_cast<TextVertex*>(text_data);
+        for (size_t index = 0u; index < text_command_count; ++index) {
             gui::draw::TextCommand const* const command =
                 gui::draw::text_command(draw_context, index);
             ASSERT(command != nullptr);
             if (text_command_visible(*command)) {
-                write_text_vertices(vertices + (index * 6u), window_size, *command);
+                write_text_vertices(text_vertices + (index * 6u), window_size, *command);
             }
         }
 
-        TextUpload result = {};
-        result.vertex_buffer.buffer = upload.buffer;
-        result.vertex_buffer.byte_stride = static_cast<uint32_t>(sizeof(TextVertex));
-        result.vertex_buffer.byte_offset = static_cast<uint32_t>(upload.byte_offset);
+        if (text_command_count != 0u) {
+            result.text.vertex_buffer.buffer = upload.buffer;
+            result.text.vertex_buffer.byte_stride = static_cast<uint32_t>(sizeof(TextVertex));
+            result.text.vertex_buffer.byte_offset =
+                static_cast<uint32_t>(upload.byte_offset + text_offset);
+        }
+
         return result;
     }
 
@@ -655,10 +664,7 @@ float4 ps_main(PSInput input) : SV_Target
             return;
         }
 
-        PrimitiveUpload const primitive_upload =
-            upload_primitive_vertices(render_context, window_size, draw_context);
-        TextUpload const text_upload =
-            upload_text_vertices(render_context, window_size, draw_context);
+        DrawUpload const upload = upload_draw_vertices(render_context, window_size, draw_context);
         gui::render::commit_frame_uploads(render_context);
 
         uint32_t primitive_first_vertex = 0u;
@@ -673,7 +679,7 @@ float4 ps_main(PSInput input) : SV_Target
                 submit_primitive_batch(render_context,
                                        window_size,
                                        primitive_pipeline,
-                                       primitive_upload,
+                                       upload.primitive,
                                        *batch,
                                        primitive_first_vertex);
                 primitive_first_vertex += static_cast<uint32_t>(batch->vertex_count);
@@ -684,7 +690,7 @@ float4 ps_main(PSInput input) : SV_Target
                 submit_text_command(render_context,
                                     window_size,
                                     text_pipeline,
-                                    text_upload,
+                                    upload.text,
                                     *text_command,
                                     command->index);
             }
