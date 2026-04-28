@@ -345,6 +345,29 @@ namespace gui::render {
 #endif
     }
 
+    auto draw(Context context, DrawDesc const& desc) -> void {
+        ASSERT(context_valid(context));
+        ASSERT(pipeline_valid(desc.pipeline));
+        ASSERT(desc.vertex_count != 0u);
+        ASSERT(desc.vertex_buffer_count == 0u || desc.vertex_buffers != nullptr);
+        ASSERT(desc.bind_group_count == 0u || desc.bind_groups != nullptr);
+
+        for (size_t index = 0u; index < desc.vertex_buffer_count; ++index) {
+            ASSERT(buffer_valid(desc.vertex_buffers[index].buffer));
+            ASSERT(desc.vertex_buffers[index].byte_stride != 0u);
+        }
+        for (size_t index = 0u; index < desc.bind_group_count; ++index) {
+            ASSERT(bind_group_valid(desc.bind_groups[index]));
+        }
+
+#if BASE_PLATFORM_WINDOWS
+        d3d11::draw(context, desc);
+#else
+        BASE_UNUSED(context);
+        BASE_UNUSED(desc);
+#endif
+    }
+
     auto resize_window(Context context, Window window, SizeU32 size) -> Result {
         ASSERT(context_valid(context));
         ASSERT(window_valid(window));

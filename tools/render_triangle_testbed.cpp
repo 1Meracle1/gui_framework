@@ -14,7 +14,6 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
-#include <d3d11.h>
 #include <d3dcompiler.h>
 #include <render/render.h>
 #include <windows.h>
@@ -75,10 +74,6 @@ namespace {
 
     auto log_result(char const* operation, gui::render::Result result) -> void {
         fmt::eprintf("%s failed: %s\n", operation, gui::render::result_name(result));
-    }
-
-    [[nodiscard]] auto d3d11_buffer(gui::render::Buffer buffer) -> ID3D11Buffer* {
-        return static_cast<ID3D11Buffer*>(buffer.handle);
     }
 
     [[nodiscard]] auto
@@ -317,10 +312,6 @@ namespace {
     auto render_triangle(gui::render::Context context,
                          TrianglePipeline const& pipeline,
                          float time_seconds) -> void {
-        ID3D11DeviceContext* const device_context =
-            static_cast<ID3D11DeviceContext*>(gui::render::native_device_context(context));
-        ASSERT(device_context != nullptr);
-
         TransformConstants transform = {};
         transform.offset[0] = 0.15f * static_cast<float>(std::sin(time_seconds));
         transform.offset[1] = 0.08f * static_cast<float>(std::cos(time_seconds * 0.75f));
@@ -336,15 +327,24 @@ namespace {
             context, pipeline.transform_constants, &transform, sizeof(transform));
         gui::render::update_buffer(context, pipeline.tint_constants, &tint, sizeof(tint));
 
-        UINT const stride = sizeof(Vertex);
-        UINT const offset = 0u;
-        ID3D11Buffer* const vertex_buffer = d3d11_buffer(pipeline.vertex_buffer);
+        gui::render::VertexBufferBinding vertex_buffer = {};
+        vertex_buffer.buffer = pipeline.vertex_buffer;
+        vertex_buffer.byte_stride = static_cast<uint32_t>(sizeof(Vertex));
 
-        gui::render::bind_pipeline(context, pipeline.pipeline);
-        gui::render::bind_group(context, pipeline.transform_bind_group);
-        gui::render::bind_group(context, pipeline.tint_bind_group);
-        device_context->IASetVertexBuffers(0u, 1u, &vertex_buffer, &stride, &offset);
-        device_context->Draw(3u, 0u);
+        gui::render::BindGroup bind_groups[] = {
+            pipeline.transform_bind_group,
+            pipeline.tint_bind_group,
+        };
+
+        gui::render::DrawDesc draw_desc = {};
+        draw_desc.pipeline = pipeline.pipeline;
+        draw_desc.vertex_buffers = &vertex_buffer;
+        draw_desc.vertex_buffer_count = 1u;
+        draw_desc.bind_groups = bind_groups;
+        draw_desc.bind_group_count = sizeof(bind_groups) / sizeof(bind_groups[0u]);
+        draw_desc.vertex_count = 3u;
+
+        gui::render::draw(context, draw_desc);
     }
 
     auto window_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) -> LRESULT {

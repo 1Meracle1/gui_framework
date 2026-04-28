@@ -116,6 +116,27 @@ namespace {
         TEST_EXPECT(context, desc.sampler_count == 0u);
     }
 
+    TEST_CASE(render_vertex_buffer_binding_defaults_describe_slot_zero) {
+        gui::render::VertexBufferBinding const binding = {};
+
+        TEST_EXPECT(context, !gui::render::buffer_valid(binding.buffer));
+        TEST_EXPECT(context, binding.slot == 0u);
+        TEST_EXPECT(context, binding.byte_stride == 0u);
+        TEST_EXPECT(context, binding.byte_offset == 0u);
+    }
+
+    TEST_CASE(render_draw_defaults_describe_empty_draw) {
+        gui::render::DrawDesc const desc = {};
+
+        TEST_EXPECT(context, !gui::render::pipeline_valid(desc.pipeline));
+        TEST_EXPECT(context, desc.vertex_buffers == nullptr);
+        TEST_EXPECT(context, desc.vertex_buffer_count == 0u);
+        TEST_EXPECT(context, desc.bind_groups == nullptr);
+        TEST_EXPECT(context, desc.bind_group_count == 0u);
+        TEST_EXPECT(context, desc.vertex_count == 0u);
+        TEST_EXPECT(context, desc.first_vertex == 0u);
+    }
+
     TEST_CASE(render_vertex_attribute_defaults_describe_float2_attribute) {
         gui::render::VertexAttributeDesc const desc = {};
 

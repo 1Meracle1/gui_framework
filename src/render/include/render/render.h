@@ -198,6 +198,13 @@ namespace gui::render {
         Sampler sampler = {};
     };
 
+    struct VertexBufferBinding {
+        Buffer buffer = {};
+        uint32_t slot = 0u;
+        uint32_t byte_stride = 0u;
+        uint32_t byte_offset = 0u;
+    };
+
     // Resource handles are referenced, not owned.
     struct BindGroupDesc {
         BindGroupSlot slot = BindGroupSlot::DRAW;
@@ -207,6 +214,16 @@ namespace gui::render {
         size_t texture_count = 0u;
         BindGroupSamplerBinding const* samplers = nullptr;
         size_t sampler_count = 0u;
+    };
+
+    struct DrawDesc {
+        Pipeline pipeline = {};
+        VertexBufferBinding const* vertex_buffers = nullptr;
+        size_t vertex_buffer_count = 0u;
+        BindGroup const* bind_groups = nullptr;
+        size_t bind_group_count = 0u;
+        uint32_t vertex_count = 0u;
+        uint32_t first_vertex = 0u;
     };
 
     [[nodiscard]] auto result_succeeded(Result result) -> bool;
@@ -258,6 +275,7 @@ namespace gui::render {
                                          BindGroup& out_group) -> Result;
     auto destroy_bind_group(Context context, BindGroup& bind_group) -> void;
     auto bind_group(Context context, BindGroup bind_group) -> void;
+    auto draw(Context context, DrawDesc const& desc) -> void;
 
     [[nodiscard]] auto resize_window(Context context, Window window, SizeU32 size) -> Result;
     auto begin_frame(Context context) -> void;

@@ -40,6 +40,7 @@ namespace gui::render::d3d11 {
                                          BindGroup& out_group) -> Result;
     auto destroy_bind_group(Context context, BindGroup& bind_group) -> void;
     auto bind_group(Context context, BindGroup bind_group) -> void;
+    auto draw(Context context, DrawDesc const& desc) -> void;
 
     [[nodiscard]] auto resize_window(Context context, Window window, SizeU32 size) -> Result;
     auto begin_frame(Context context) -> void;

@@ -753,6 +753,30 @@ namespace gui::render::d3d11 {
         }
     }
 
+    auto draw(Context context, DrawDesc const& desc) -> void {
+        D3D11Context* context_impl = context_from_handle(context);
+        ASSERT(context_impl != nullptr);
+        ASSERT(context_impl->render_pass_active);
+
+        bind_pipeline(context, desc.pipeline);
+        for (size_t index = 0u; index < desc.bind_group_count; ++index) {
+            bind_group(context, desc.bind_groups[index]);
+        }
+
+        ID3D11DeviceContext* const device_context = context_impl->device_context;
+        for (size_t index = 0u; index < desc.vertex_buffer_count; ++index) {
+            VertexBufferBinding const& binding = desc.vertex_buffers[index];
+            ASSERT(binding.slot < D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT);
+
+            ID3D11Buffer* const buffer = buffer_from_handle(binding.buffer);
+            UINT const stride = binding.byte_stride;
+            UINT const offset = binding.byte_offset;
+            device_context->IASetVertexBuffers(binding.slot, 1u, &buffer, &stride, &offset);
+        }
+
+        device_context->Draw(desc.vertex_count, desc.first_vertex);
+    }
+
     auto resize_window(Context context, Window window, SizeU32 size) -> Result {
         D3D11Context* context_impl = context_from_handle(context);
         D3D11Window* window_impl = window_from_handle(window);
