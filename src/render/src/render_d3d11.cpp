@@ -691,12 +691,22 @@ namespace gui::render::d3d11 {
         ASSERT(context_impl->frame_active);
 
         D3D11FrameBuffer& frame_buffer = context_impl->frame_vertex_buffer;
-        size_t const offset = align_up(frame_buffer.used_size, byte_alignment);
-        size_t const needed_size = offset + byte_size;
+        size_t offset = align_up(frame_buffer.used_size, byte_alignment);
+        size_t needed_size = offset + byte_size;
         if (needed_size > frame_buffer.capacity) {
-            ASSERT(frame_buffer.used_size == 0u);
-            ASSERT(frame_buffer.mapped_data == nullptr);
-            size_t const capacity = std::max(needed_size, FRAME_VERTEX_BUFFER_DEFAULT_SIZE);
+            commit_frame_buffer(context_impl, &frame_buffer);
+            if (byte_size <= frame_buffer.capacity) {
+                frame_buffer.used_size = 0u;
+            } else {
+                size_t const capacity = std::max(byte_size, FRAME_VERTEX_BUFFER_DEFAULT_SIZE);
+                create_frame_vertex_buffer(context_impl, capacity);
+            }
+            offset = 0u;
+            needed_size = byte_size;
+        }
+
+        if (frame_buffer.capacity == 0u) {
+            size_t const capacity = std::max(byte_size, FRAME_VERTEX_BUFFER_DEFAULT_SIZE);
             create_frame_vertex_buffer(context_impl, capacity);
         }
 
