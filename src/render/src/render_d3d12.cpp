@@ -54,13 +54,29 @@ namespace gui::render::d3d12 {
             size_t byte_size = 0u;
         };
 
+        struct D3D12Texture {
+            TextureHeader header = {Backend::D3D12};
+            D3D12Context* context = nullptr;
+            ID3D12Resource* resource = nullptr;
+        };
+
+        struct D3D12Sampler {
+            SamplerHeader header = {Backend::D3D12};
+            D3D12Context* context = nullptr;
+            D3D12_SAMPLER_DESC desc = {};
+        };
+
         struct D3D12Shader {
+            ShaderHeader header = {Backend::D3D12};
+            D3D12Context* context = nullptr;
             uint8_t* bytecode = nullptr;
             size_t byte_size = 0u;
             ShaderStage stage = ShaderStage::VERTEX;
         };
 
         struct D3D12Pipeline {
+            PipelineHeader header = {Backend::D3D12};
+            D3D12Context* context = nullptr;
             ID3D12PipelineState* pipeline_state = nullptr;
             PrimitiveTopology topology = PrimitiveTopology::TRIANGLE_LIST;
         };
@@ -70,12 +86,32 @@ namespace gui::render::d3d12 {
             uint32_t mask = 0u;
         };
 
+        struct D3D12BufferBinding {
+            D3D12Buffer* buffer = nullptr;
+            ShaderStage stage = ShaderStage::VERTEX;
+            uint32_t slot = 0u;
+        };
+
+        struct D3D12TextureBinding {
+            D3D12Texture* texture = nullptr;
+            ShaderStage stage = ShaderStage::PIXEL;
+            uint32_t slot = 0u;
+        };
+
+        struct D3D12SamplerBinding {
+            D3D12Sampler* sampler = nullptr;
+            ShaderStage stage = ShaderStage::PIXEL;
+            uint32_t slot = 0u;
+        };
+
         struct D3D12BindGroup {
-            BindGroupBufferBinding* buffers = nullptr;
+            BindGroupHeader header = {Backend::D3D12};
+            D3D12Context* context = nullptr;
+            D3D12BufferBinding* buffers = nullptr;
             size_t buffer_count = 0u;
-            BindGroupTextureBinding* textures = nullptr;
+            D3D12TextureBinding* textures = nullptr;
             size_t texture_count = 0u;
-            BindGroupSamplerBinding* samplers = nullptr;
+            D3D12SamplerBinding* samplers = nullptr;
             size_t sampler_count = 0u;
         };
 
@@ -163,19 +199,28 @@ namespace gui::render::d3d12 {
             return static_cast<D3D12Buffer*>(buffer.handle);
         }
 
-        [[nodiscard]] auto texture_from_handle(Texture texture) -> ID3D12Resource* {
-            return static_cast<ID3D12Resource*>(texture.handle);
+        [[nodiscard]] auto texture_from_handle(Texture texture) -> D3D12Texture* {
+            ASSERT(texture_backend(texture) == Backend::D3D12);
+            return static_cast<D3D12Texture*>(texture.handle);
+        }
+
+        [[nodiscard]] auto sampler_from_handle(Sampler sampler) -> D3D12Sampler* {
+            ASSERT(sampler_backend(sampler) == Backend::D3D12);
+            return static_cast<D3D12Sampler*>(sampler.handle);
         }
 
         [[nodiscard]] auto shader_from_handle(Shader shader) -> D3D12Shader* {
+            ASSERT(shader_backend(shader) == Backend::D3D12);
             return static_cast<D3D12Shader*>(shader.handle);
         }
 
         [[nodiscard]] auto pipeline_from_handle(Pipeline pipeline) -> D3D12Pipeline* {
+            ASSERT(pipeline_backend(pipeline) == Backend::D3D12);
             return static_cast<D3D12Pipeline*>(pipeline.handle);
         }
 
         [[nodiscard]] auto bind_group_from_handle(BindGroup bind_group) -> D3D12BindGroup* {
+            ASSERT(bind_group_backend(bind_group) == Backend::D3D12);
             return static_cast<D3D12BindGroup*>(bind_group.handle);
         }
 
@@ -678,6 +723,7 @@ namespace gui::render::d3d12 {
 
         auto destroy_pipeline_impl(D3D12Context* context, D3D12Pipeline* pipeline) -> void {
             defer_release_com(context, pipeline->pipeline_state);
+            pipeline->context = nullptr;
             pipeline->topology = PrimitiveTopology::TRIANGLE_LIST;
         }
 
@@ -1303,35 +1349,57 @@ namespace gui::render::d3d12 {
         }
 
         defer_release(context_impl, upload);
-        out_texture.handle = texture;
+        D3D12Texture* texture_impl = arena_new<D3D12Texture>(*context_impl->arena);
+        texture_impl->context = context_impl;
+        texture_impl->resource = texture;
+        out_texture.handle = texture_impl;
         return Result::OK;
     }
 
     auto destroy_texture(Context context, Texture& texture) -> void {
         D3D12Context* context_impl = context_from_handle(context);
-        ID3D12Resource* texture_impl = texture_from_handle(texture);
+        D3D12Texture* texture_impl = texture_from_handle(texture);
         ASSERT(context_impl != nullptr);
         ASSERT(texture_impl != nullptr);
-        defer_release_com(context_impl, texture_impl);
+        ASSERT(texture_impl->context == context_impl);
+        defer_release_com(context_impl, texture_impl->resource);
+        texture_impl->context = nullptr;
         texture.handle = nullptr;
     }
 
     auto create_sampler(Context context, Sampler& out_sampler) -> Result {
-        ASSERT(context_valid(context));
-        out_sampler.handle = context.handle;
+        D3D12Context* context_impl = context_from_handle(context);
+        ASSERT(context_impl != nullptr);
+
+        D3D12Sampler* sampler = arena_new<D3D12Sampler>(*context_impl->arena);
+        sampler->context = context_impl;
+        sampler->desc.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+        sampler->desc.AddressU = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+        sampler->desc.AddressV = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+        sampler->desc.AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+        sampler->desc.MaxLOD = D3D12_FLOAT32_MAX;
+        out_sampler.handle = sampler;
         return Result::OK;
     }
 
     auto destroy_sampler(Context context, Sampler& sampler) -> void {
-        BASE_UNUSED(context);
+        D3D12Context* context_impl = context_from_handle(context);
+        D3D12Sampler* sampler_impl = sampler_from_handle(sampler);
+        ASSERT(context_impl != nullptr);
+        ASSERT(sampler_impl != nullptr);
+        ASSERT(sampler_impl->context == context_impl);
+        sampler_impl->context = nullptr;
         sampler.handle = nullptr;
     }
 
     auto create_shader(Arena& arena, Context context, ShaderDesc const& desc, Shader& out_shader)
         -> Result {
-        BASE_UNUSED(context);
+        D3D12Context* context_impl = context_from_handle(context);
+        ASSERT(context_impl != nullptr);
+
         ArenaMarker const marker = arena.marker();
         D3D12Shader* shader = arena_new<D3D12Shader>(arena);
+        shader->context = context_impl;
         shader->bytecode = arena_alloc<uint8_t>(arena, desc.byte_size);
         std::memcpy(shader->bytecode, desc.bytecode, desc.byte_size);
         shader->byte_size = desc.byte_size;
@@ -1387,9 +1455,12 @@ namespace gui::render::d3d12 {
     }
 
     auto destroy_shader(Context context, Shader& shader) -> void {
-        BASE_UNUSED(context);
+        D3D12Context* context_impl = context_from_handle(context);
         D3D12Shader* shader_impl = shader_from_handle(shader);
+        ASSERT(context_impl != nullptr);
         ASSERT(shader_impl != nullptr);
+        ASSERT(shader_impl->context == context_impl);
+        shader_impl->context = nullptr;
         shader_impl->bytecode = nullptr;
         shader_impl->byte_size = 0u;
         shader_impl->stage = ShaderStage::VERTEX;
@@ -1405,9 +1476,12 @@ namespace gui::render::d3d12 {
         ASSERT(context_impl != nullptr);
         ASSERT(vertex_shader != nullptr);
         ASSERT(pixel_shader != nullptr);
+        ASSERT(vertex_shader->context == context_impl);
+        ASSERT(pixel_shader->context == context_impl);
 
         ArenaMarker const marker = arena.marker();
         D3D12Pipeline* pipeline = arena_new<D3D12Pipeline>(arena);
+        pipeline->context = context_impl;
 
         D3D12_INPUT_ELEMENT_DESC* input_elements = nullptr;
         if (desc.vertex_attribute_count != 0u) {
@@ -1467,6 +1541,7 @@ namespace gui::render::d3d12 {
         D3D12Pipeline* pipeline_impl = pipeline_from_handle(pipeline);
         ASSERT(context_impl != nullptr);
         ASSERT(pipeline_impl != nullptr);
+        ASSERT(pipeline_impl->context == context_impl);
         destroy_pipeline_impl(context_impl, pipeline_impl);
         pipeline.handle = nullptr;
     }
@@ -1476,6 +1551,7 @@ namespace gui::render::d3d12 {
         D3D12Pipeline* pipeline_impl = pipeline_from_handle(pipeline);
         ASSERT(context_impl != nullptr);
         ASSERT(pipeline_impl != nullptr);
+        ASSERT(pipeline_impl->context == context_impl);
 
         ID3D12DescriptorHeap* heaps[] = {context_impl->shader_heap, context_impl->sampler_heap};
         context_impl->command_list->SetDescriptorHeaps(sizeof(heaps) / sizeof(heaps[0u]), heaps);
@@ -1493,9 +1569,10 @@ namespace gui::render::d3d12 {
         ASSERT(context_impl != nullptr);
 
         D3D12BindGroup* group = arena_new<D3D12BindGroup>(arena);
+        group->context = context_impl;
 
         if (desc.buffer_count != 0u) {
-            group->buffers = arena_alloc<BindGroupBufferBinding>(arena, desc.buffer_count);
+            group->buffers = arena_alloc<D3D12BufferBinding>(arena, desc.buffer_count);
             group->buffer_count = desc.buffer_count;
             for (size_t index = 0u; index < desc.buffer_count; ++index) {
                 BindGroupBufferBinding const& source = desc.buffers[index];
@@ -1507,33 +1584,47 @@ namespace gui::render::d3d12 {
                 ASSERT(buffer->resource != nullptr);
                 ASSERT(buffer->binding == BufferBinding::UNIFORM);
 
-                group->buffers[index] = source;
+                D3D12BufferBinding& target = group->buffers[index];
+                target.buffer = buffer;
+                target.stage = source.stage;
+                target.slot = source.slot;
             }
         }
 
         if (desc.texture_count != 0u) {
-            group->textures = arena_alloc<BindGroupTextureBinding>(arena, desc.texture_count);
+            group->textures = arena_alloc<D3D12TextureBinding>(arena, desc.texture_count);
             group->texture_count = desc.texture_count;
             for (size_t index = 0u; index < desc.texture_count; ++index) {
                 BindGroupTextureBinding const& source = desc.textures[index];
                 ASSERT(source.slot < DESCRIPTOR_SLOT_COUNT);
 
-                ID3D12Resource* texture = texture_from_handle(source.texture);
+                D3D12Texture* texture = texture_from_handle(source.texture);
                 ASSERT(texture != nullptr);
+                ASSERT(texture->context == context_impl);
+                ASSERT(texture->resource != nullptr);
 
-                group->textures[index] = source;
+                D3D12TextureBinding& target = group->textures[index];
+                target.texture = texture;
+                target.stage = source.stage;
+                target.slot = source.slot;
             }
         }
 
         if (desc.sampler_count != 0u) {
-            group->samplers = arena_alloc<BindGroupSamplerBinding>(arena, desc.sampler_count);
+            group->samplers = arena_alloc<D3D12SamplerBinding>(arena, desc.sampler_count);
             group->sampler_count = desc.sampler_count;
             for (size_t index = 0u; index < desc.sampler_count; ++index) {
                 BindGroupSamplerBinding const& source = desc.samplers[index];
                 ASSERT(source.slot < DESCRIPTOR_SLOT_COUNT);
-                ASSERT(sampler_valid(source.sampler));
 
-                group->samplers[index] = source;
+                D3D12Sampler* sampler = sampler_from_handle(source.sampler);
+                ASSERT(sampler != nullptr);
+                ASSERT(sampler->context == context_impl);
+
+                D3D12SamplerBinding& target = group->samplers[index];
+                target.sampler = sampler;
+                target.stage = source.stage;
+                target.slot = source.slot;
             }
         }
 
@@ -1542,9 +1633,12 @@ namespace gui::render::d3d12 {
     }
 
     auto destroy_bind_group(Context context, BindGroup& bind_group) -> void {
-        BASE_UNUSED(context);
+        D3D12Context* context_impl = context_from_handle(context);
         D3D12BindGroup* group = bind_group_from_handle(bind_group);
+        ASSERT(context_impl != nullptr);
         ASSERT(group != nullptr);
+        ASSERT(group->context == context_impl);
+        group->context = nullptr;
         group->buffers = nullptr;
         group->buffer_count = 0u;
         group->textures = nullptr;
@@ -1559,13 +1653,14 @@ namespace gui::render::d3d12 {
         D3D12BindGroup* group = bind_group_from_handle(bind_group);
         ASSERT(context_impl != nullptr);
         ASSERT(group != nullptr);
+        ASSERT(group->context == context_impl);
         ASSERT(context_impl->frame_active);
 
         D3D12DescriptorTable tables[ROOT_COUNT] = {};
 
         for (size_t index = 0u; index < group->buffer_count; ++index) {
-            BindGroupBufferBinding const& binding = group->buffers[index];
-            D3D12Buffer* buffer = buffer_from_handle(binding.buffer);
+            D3D12BufferBinding const& binding = group->buffers[index];
+            D3D12Buffer* buffer = binding.buffer;
             ASSERT(buffer != nullptr);
             ASSERT(buffer->context == context_impl);
             ASSERT(buffer->resource != nullptr);
@@ -1590,8 +1685,11 @@ namespace gui::render::d3d12 {
         }
 
         for (size_t index = 0u; index < group->texture_count; ++index) {
-            BindGroupTextureBinding const& binding = group->textures[index];
-            ID3D12Resource* texture = texture_from_handle(binding.texture);
+            D3D12TextureBinding const& binding = group->textures[index];
+            D3D12Texture* texture = binding.texture;
+            ASSERT(texture != nullptr);
+            ASSERT(texture->context == context_impl);
+            ASSERT(texture->resource != nullptr);
             uint32_t const root_parameter =
                 binding.stage == ShaderStage::VERTEX ? ROOT_VS_SRV : ROOT_PS_SRV;
             D3D12DescriptorTable& table =
@@ -1606,14 +1704,17 @@ namespace gui::render::d3d12 {
             view_desc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
             view_desc.Texture2D.MipLevels = 1u;
             context_impl->device->CreateShaderResourceView(
-                texture,
+                texture->resource,
                 &view_desc,
                 descriptor_cpu_handle(
                     context_impl, root_parameter, descriptor_offset + binding.slot));
         }
 
         for (size_t index = 0u; index < group->sampler_count; ++index) {
-            BindGroupSamplerBinding const& binding = group->samplers[index];
+            D3D12SamplerBinding const& binding = group->samplers[index];
+            D3D12Sampler* sampler = binding.sampler;
+            ASSERT(sampler != nullptr);
+            ASSERT(sampler->context == context_impl);
             uint32_t const root_parameter =
                 binding.stage == ShaderStage::VERTEX ? ROOT_VS_SAMPLER : ROOT_PS_SAMPLER;
             D3D12DescriptorTable& table =
@@ -1622,14 +1723,8 @@ namespace gui::render::d3d12 {
 
             uint32_t const descriptor_offset =
                 descriptor_index(context_impl, root_parameter, table.gpu);
-            D3D12_SAMPLER_DESC sampler_desc = {};
-            sampler_desc.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
-            sampler_desc.AddressU = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
-            sampler_desc.AddressV = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
-            sampler_desc.AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
-            sampler_desc.MaxLOD = D3D12_FLOAT32_MAX;
             context_impl->device->CreateSampler(
-                &sampler_desc,
+                &sampler->desc,
                 descriptor_cpu_handle(
                     context_impl, root_parameter, descriptor_offset + binding.slot));
         }

@@ -62,7 +62,21 @@ namespace gui::render::d3d11 {
             PresentMode present_mode = PresentMode::VSYNC;
         };
 
+        struct D3D11Texture {
+            TextureHeader header = {Backend::D3D11};
+            D3D11Context* context = nullptr;
+            ID3D11ShaderResourceView* view = nullptr;
+        };
+
+        struct D3D11Sampler {
+            SamplerHeader header = {Backend::D3D11};
+            D3D11Context* context = nullptr;
+            ID3D11SamplerState* state = nullptr;
+        };
+
         struct D3D11Shader {
+            ShaderHeader header = {Backend::D3D11};
+            D3D11Context* context = nullptr;
             ID3D11VertexShader* vertex_shader = nullptr;
             ID3D11PixelShader* pixel_shader = nullptr;
             void const* bytecode = nullptr;
@@ -71,6 +85,8 @@ namespace gui::render::d3d11 {
         };
 
         struct D3D11Pipeline {
+            PipelineHeader header = {Backend::D3D11};
+            D3D11Context* context = nullptr;
             ID3D11VertexShader* vertex_shader = nullptr;
             ID3D11PixelShader* pixel_shader = nullptr;
             ID3D11InputLayout* input_layout = nullptr;
@@ -85,18 +101,20 @@ namespace gui::render::d3d11 {
         };
 
         struct D3D11TextureBinding {
-            ID3D11ShaderResourceView* texture = nullptr;
+            D3D11Texture* texture = nullptr;
             ShaderStage stage = ShaderStage::PIXEL;
             uint32_t slot = 0u;
         };
 
         struct D3D11SamplerBinding {
-            ID3D11SamplerState* sampler = nullptr;
+            D3D11Sampler* sampler = nullptr;
             ShaderStage stage = ShaderStage::PIXEL;
             uint32_t slot = 0u;
         };
 
         struct D3D11BindGroup {
+            BindGroupHeader header = {Backend::D3D11};
+            D3D11Context* context = nullptr;
             D3D11BufferBinding* buffers = nullptr;
             size_t buffer_count = 0u;
             D3D11TextureBinding* textures = nullptr;
@@ -127,23 +145,28 @@ namespace gui::render::d3d11 {
             return static_cast<D3D11Buffer*>(buffer.handle);
         }
 
-        [[nodiscard]] auto texture_from_handle(Texture texture) -> ID3D11ShaderResourceView* {
-            return static_cast<ID3D11ShaderResourceView*>(texture.handle);
+        [[nodiscard]] auto texture_from_handle(Texture texture) -> D3D11Texture* {
+            ASSERT(texture_backend(texture) == Backend::D3D11);
+            return static_cast<D3D11Texture*>(texture.handle);
         }
 
-        [[nodiscard]] auto sampler_from_handle(Sampler sampler) -> ID3D11SamplerState* {
-            return static_cast<ID3D11SamplerState*>(sampler.handle);
+        [[nodiscard]] auto sampler_from_handle(Sampler sampler) -> D3D11Sampler* {
+            ASSERT(sampler_backend(sampler) == Backend::D3D11);
+            return static_cast<D3D11Sampler*>(sampler.handle);
         }
 
         [[nodiscard]] auto shader_from_handle(Shader shader) -> D3D11Shader* {
+            ASSERT(shader_backend(shader) == Backend::D3D11);
             return static_cast<D3D11Shader*>(shader.handle);
         }
 
         [[nodiscard]] auto pipeline_from_handle(Pipeline pipeline) -> D3D11Pipeline* {
+            ASSERT(pipeline_backend(pipeline) == Backend::D3D11);
             return static_cast<D3D11Pipeline*>(pipeline.handle);
         }
 
         [[nodiscard]] auto bind_group_from_handle(BindGroup bind_group) -> D3D11BindGroup* {
+            ASSERT(bind_group_backend(bind_group) == Backend::D3D11);
             return static_cast<D3D11BindGroup*>(bind_group.handle);
         }
 
@@ -354,6 +377,7 @@ namespace gui::render::d3d11 {
         auto destroy_shader_impl(D3D11Shader* shader) -> void {
             release_com(shader->pixel_shader);
             release_com(shader->vertex_shader);
+            shader->context = nullptr;
             shader->bytecode = nullptr;
             shader->byte_size = 0u;
             shader->stage = ShaderStage::VERTEX;
@@ -364,6 +388,7 @@ namespace gui::render::d3d11 {
             release_com(pipeline->input_layout);
             release_com(pipeline->pixel_shader);
             release_com(pipeline->vertex_shader);
+            pipeline->context = nullptr;
             pipeline->topology = PrimitiveTopology::TRIANGLE_LIST;
         }
 
@@ -601,15 +626,21 @@ namespace gui::render::d3d11 {
             return Result::TEXTURE_CREATION_FAILED;
         }
 
-        out_texture.handle = view;
+        D3D11Texture* texture_impl = arena_new<D3D11Texture>(*context_impl->arena);
+        texture_impl->context = context_impl;
+        texture_impl->view = view;
+        out_texture.handle = texture_impl;
         return Result::OK;
     }
 
     auto destroy_texture(Context context, Texture& texture) -> void {
-        BASE_UNUSED(context);
-        ID3D11ShaderResourceView* impl = texture_from_handle(texture);
+        D3D11Context* context_impl = context_from_handle(context);
+        D3D11Texture* impl = texture_from_handle(texture);
+        ASSERT(context_impl != nullptr);
         ASSERT(impl != nullptr);
-        release_com(impl);
+        ASSERT(impl->context == context_impl);
+        release_com(impl->view);
+        impl->context = nullptr;
         texture.handle = nullptr;
     }
 
@@ -631,15 +662,21 @@ namespace gui::render::d3d11 {
             return Result::SAMPLER_CREATION_FAILED;
         }
 
-        out_sampler.handle = sampler;
+        D3D11Sampler* sampler_impl = arena_new<D3D11Sampler>(*context_impl->arena);
+        sampler_impl->context = context_impl;
+        sampler_impl->state = sampler;
+        out_sampler.handle = sampler_impl;
         return Result::OK;
     }
 
     auto destroy_sampler(Context context, Sampler& sampler) -> void {
-        BASE_UNUSED(context);
-        ID3D11SamplerState* impl = sampler_from_handle(sampler);
+        D3D11Context* context_impl = context_from_handle(context);
+        D3D11Sampler* impl = sampler_from_handle(sampler);
+        ASSERT(context_impl != nullptr);
         ASSERT(impl != nullptr);
-        release_com(impl);
+        ASSERT(impl->context == context_impl);
+        release_com(impl->state);
+        impl->context = nullptr;
         sampler.handle = nullptr;
     }
 
@@ -653,6 +690,7 @@ namespace gui::render::d3d11 {
         uint8_t* const bytecode = arena_alloc<uint8_t>(arena, desc.byte_size);
         std::memcpy(bytecode, desc.bytecode, desc.byte_size);
 
+        shader->context = context_impl;
         shader->bytecode = bytecode;
         shader->byte_size = desc.byte_size;
         shader->stage = desc.stage;
@@ -720,9 +758,11 @@ namespace gui::render::d3d11 {
     }
 
     auto destroy_shader(Context context, Shader& shader) -> void {
-        BASE_UNUSED(context);
+        D3D11Context* context_impl = context_from_handle(context);
         D3D11Shader* impl = shader_from_handle(shader);
+        ASSERT(context_impl != nullptr);
         ASSERT(impl != nullptr);
+        ASSERT(impl->context == context_impl);
         destroy_shader_impl(impl);
         shader.handle = nullptr;
     }
@@ -736,6 +776,8 @@ namespace gui::render::d3d11 {
         ASSERT(context_impl != nullptr);
         ASSERT(vertex_shader != nullptr);
         ASSERT(pixel_shader != nullptr);
+        ASSERT(vertex_shader->context == context_impl);
+        ASSERT(pixel_shader->context == context_impl);
         ASSERT(desc.vertex_attribute_count <= static_cast<size_t>(UINT_MAX));
 
         if (vertex_shader->stage != ShaderStage::VERTEX ||
@@ -746,6 +788,7 @@ namespace gui::render::d3d11 {
 
         ArenaMarker const marker = arena.marker();
         D3D11Pipeline* pipeline = arena_new<D3D11Pipeline>(arena);
+        pipeline->context = context_impl;
         pipeline->topology = desc.topology;
 
         if (desc.vertex_attribute_count != 0u) {
@@ -810,9 +853,11 @@ namespace gui::render::d3d11 {
     }
 
     auto destroy_pipeline(Context context, Pipeline& pipeline) -> void {
-        BASE_UNUSED(context);
+        D3D11Context* context_impl = context_from_handle(context);
         D3D11Pipeline* impl = pipeline_from_handle(pipeline);
+        ASSERT(context_impl != nullptr);
         ASSERT(impl != nullptr);
+        ASSERT(impl->context == context_impl);
         destroy_pipeline_impl(impl);
         pipeline.handle = nullptr;
     }
@@ -822,6 +867,7 @@ namespace gui::render::d3d11 {
         D3D11Pipeline* pipeline_impl = pipeline_from_handle(pipeline);
         ASSERT(context_impl != nullptr);
         ASSERT(pipeline_impl != nullptr);
+        ASSERT(pipeline_impl->context == context_impl);
 
         context_impl->device_context->IASetInputLayout(pipeline_impl->input_layout);
         context_impl->device_context->IASetPrimitiveTopology(d3d_topology(pipeline_impl->topology));
@@ -840,6 +886,7 @@ namespace gui::render::d3d11 {
         ASSERT(context_impl != nullptr);
 
         D3D11BindGroup* group = arena_new<D3D11BindGroup>(arena);
+        group->context = context_impl;
 
         if (desc.buffer_count != 0u) {
             group->buffers = arena_alloc<D3D11BufferBinding>(arena, desc.buffer_count);
@@ -866,8 +913,13 @@ namespace gui::render::d3d11 {
             for (size_t index = 0u; index < desc.texture_count; ++index) {
                 BindGroupTextureBinding const& source = desc.textures[index];
                 ASSERT(source.slot < D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT);
+                D3D11Texture* texture = texture_from_handle(source.texture);
+                ASSERT(texture != nullptr);
+                ASSERT(texture->context == context_impl);
+                ASSERT(texture->view != nullptr);
+
                 D3D11TextureBinding& target = group->textures[index];
-                target.texture = texture_from_handle(source.texture);
+                target.texture = texture;
                 target.stage = source.stage;
                 target.slot = source.slot;
             }
@@ -879,8 +931,13 @@ namespace gui::render::d3d11 {
             for (size_t index = 0u; index < desc.sampler_count; ++index) {
                 BindGroupSamplerBinding const& source = desc.samplers[index];
                 ASSERT(source.slot < D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT);
+                D3D11Sampler* sampler = sampler_from_handle(source.sampler);
+                ASSERT(sampler != nullptr);
+                ASSERT(sampler->context == context_impl);
+                ASSERT(sampler->state != nullptr);
+
                 D3D11SamplerBinding& target = group->samplers[index];
-                target.sampler = sampler_from_handle(source.sampler);
+                target.sampler = sampler;
                 target.stage = source.stage;
                 target.slot = source.slot;
             }
@@ -891,9 +948,12 @@ namespace gui::render::d3d11 {
     }
 
     auto destroy_bind_group(Context context, BindGroup& group) -> void {
-        BASE_UNUSED(context);
+        D3D11Context* context_impl = context_from_handle(context);
         D3D11BindGroup* impl = bind_group_from_handle(group);
+        ASSERT(context_impl != nullptr);
         ASSERT(impl != nullptr);
+        ASSERT(impl->context == context_impl);
+        impl->context = nullptr;
         impl->buffers = nullptr;
         impl->buffer_count = 0u;
         impl->textures = nullptr;
@@ -908,6 +968,7 @@ namespace gui::render::d3d11 {
         D3D11BindGroup* group_impl = bind_group_from_handle(group);
         ASSERT(context_impl != nullptr);
         ASSERT(group_impl != nullptr);
+        ASSERT(group_impl->context == context_impl);
 
         ID3D11DeviceContext* const device_context = context_impl->device_context;
         for (size_t index = 0u; index < group_impl->buffer_count; ++index) {
@@ -929,7 +990,10 @@ namespace gui::render::d3d11 {
 
         for (size_t index = 0u; index < group_impl->texture_count; ++index) {
             D3D11TextureBinding const& binding = group_impl->textures[index];
-            ID3D11ShaderResourceView* texture = binding.texture;
+            ASSERT(binding.texture != nullptr);
+            ASSERT(binding.texture->context == context_impl);
+            ASSERT(binding.texture->view != nullptr);
+            ID3D11ShaderResourceView* texture = binding.texture->view;
             switch (binding.stage) {
             case ShaderStage::VERTEX:
                 device_context->VSSetShaderResources(binding.slot, 1u, &texture);
@@ -942,7 +1006,10 @@ namespace gui::render::d3d11 {
 
         for (size_t index = 0u; index < group_impl->sampler_count; ++index) {
             D3D11SamplerBinding const& binding = group_impl->samplers[index];
-            ID3D11SamplerState* sampler = binding.sampler;
+            ASSERT(binding.sampler != nullptr);
+            ASSERT(binding.sampler->context == context_impl);
+            ASSERT(binding.sampler->state != nullptr);
+            ID3D11SamplerState* sampler = binding.sampler->state;
             switch (binding.stage) {
             case ShaderStage::VERTEX:
                 device_context->VSSetSamplers(binding.slot, 1u, &sampler);
