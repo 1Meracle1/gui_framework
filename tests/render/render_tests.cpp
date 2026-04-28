@@ -39,6 +39,7 @@ namespace {
         gui::render::BindGroup const bind_group_handle = {};
         gui::render::FrameBufferSlice const frame_slice = {};
         gui::render::SizeU32 const size = gui::render::window_size(window_handle);
+        gui::render::SizeU32 const texture_size = gui::render::texture_size(texture_handle);
 
         TEST_EXPECT(context, !gui::render::context_valid(context_handle));
         TEST_EXPECT(context, !gui::render::window_valid(window_handle));
@@ -54,6 +55,8 @@ namespace {
         TEST_EXPECT(context, frame_slice.byte_size == 0u);
         TEST_EXPECT(context, size.width == 0u);
         TEST_EXPECT(context, size.height == 0u);
+        TEST_EXPECT(context, texture_size.width == 0u);
+        TEST_EXPECT(context, texture_size.height == 0u);
     }
 
     TEST_CASE(render_resource_handles_validate_non_null_values) {
@@ -82,6 +85,14 @@ namespace {
         TEST_EXPECT(context, desc.clear_color.a == 1.0f);
     }
 
+    TEST_CASE(texture_render_pass_defaults_target_invalid_texture) {
+        gui::render::TextureRenderPassDesc const desc = {};
+
+        TEST_EXPECT(context, !gui::render::texture_valid(desc.target));
+        TEST_EXPECT(context, desc.load_op == gui::render::LoadOp::CLEAR);
+        TEST_EXPECT(context, desc.clear_color.a == 1.0f);
+    }
+
     TEST_CASE(render_buffer_defaults_describe_immutable_vertex_buffer) {
         gui::render::BufferDesc const desc = {};
 
@@ -106,6 +117,19 @@ namespace {
         TEST_EXPECT(context, desc.size.height == 0u);
         TEST_EXPECT(context, desc.bytes_per_row == 0u);
         TEST_EXPECT(context, desc.rgba_pixels == nullptr);
+        TEST_EXPECT(context, !desc.render_target);
+    }
+
+    TEST_CASE(render_target_texture_desc_keeps_upload_optional) {
+        gui::render::TextureDesc desc = {};
+        desc.size = {16u, 8u};
+        desc.render_target = true;
+
+        TEST_EXPECT(context, desc.size.width == 16u);
+        TEST_EXPECT(context, desc.size.height == 8u);
+        TEST_EXPECT(context, desc.bytes_per_row == 0u);
+        TEST_EXPECT(context, desc.rgba_pixels == nullptr);
+        TEST_EXPECT(context, desc.render_target);
     }
 
     TEST_CASE(render_scissor_rect_defaults_describe_empty_rect) {

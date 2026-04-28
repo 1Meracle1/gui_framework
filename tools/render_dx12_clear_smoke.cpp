@@ -386,12 +386,19 @@ float4 ps_main(PSInput input) : SV_Target
 
         gui::render::TextureDesc texture_desc = {};
         texture_desc.size = {1u, 1u};
-        texture_desc.bytes_per_row = sizeof(SMOKE_TEXTURE_RGBA);
-        texture_desc.rgba_pixels = SMOKE_TEXTURE_RGBA;
+        texture_desc.render_target = true;
 
         result = gui::render::create_texture(context, texture_desc, smoke->texture);
         if (gui::render::result_failed(result)) {
             log_result("render::create_texture", result);
+            return false;
+        }
+
+        gui::render::SizeU32 const texture_size = gui::render::texture_size(smoke->texture);
+        if (texture_size.width != 1u || texture_size.height != 1u) {
+            fmt::eprintf("render::texture_size failed: size=(%u,%u)\n",
+                         texture_size.width,
+                         texture_size.height);
             return false;
         }
 
@@ -610,6 +617,26 @@ float4 ps_main(PSInput input) : SV_Target
         return true;
     }
 
+    [[nodiscard]] auto clear_smoke_texture(gui::render::Context context,
+                                           gui::render::Texture texture) -> bool {
+        gui::render::TextureRenderPassDesc pass_desc = {};
+        pass_desc.target = texture;
+        pass_desc.clear_color = {static_cast<float>(SMOKE_TEXTURE_RGBA[0u]) / 255.0f,
+                                 static_cast<float>(SMOKE_TEXTURE_RGBA[1u]) / 255.0f,
+                                 static_cast<float>(SMOKE_TEXTURE_RGBA[2u]) / 255.0f,
+                                 static_cast<float>(SMOKE_TEXTURE_RGBA[3u]) / 255.0f};
+
+        gui::render::Result const result =
+            gui::render::begin_texture_render_pass(context, pass_desc);
+        if (gui::render::result_failed(result)) {
+            log_result("render::begin_texture_render_pass", result);
+            return false;
+        }
+
+        gui::render::end_render_pass(context);
+        return true;
+    }
+
     [[nodiscard]] auto clear_present(Arena& arena,
                                      gui::render::Context context,
                                      gui::render::Window window,
@@ -618,6 +645,9 @@ float4 ps_main(PSInput input) : SV_Target
                                      bool capture_pixel) -> bool {
         gui::render::begin_frame(context);
         bool const aligned = verify_frame_upload_alignment(context);
+        if (smoke != nullptr && !clear_smoke_texture(context, smoke->texture)) {
+            return false;
+        }
 
         gui::render::WindowRenderPassDesc pass_desc = {};
         pass_desc.window = window;

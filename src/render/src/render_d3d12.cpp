@@ -33,6 +33,9 @@ namespace gui::render::d3d12 {
         constexpr size_t FRAME_VERTEX_BUFFER_DEFAULT_SIZE = 64u * 1024u;
         constexpr size_t MAX_D3D12_BUFFER_VIEW_BYTE_SIZE = 0xffffffffu;
         constexpr size_t DEFERRED_RELEASE_CAPACITY = 4096u;
+        constexpr D3D12_RESOURCE_STATES TEXTURE_SHADER_RESOURCE_STATE =
+            static_cast<D3D12_RESOURCE_STATES>(D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE |
+                                               D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
 
         enum RootParameter : uint32_t {
             ROOT_VS_CBV,
@@ -59,6 +62,9 @@ namespace gui::render::d3d12 {
             TextureHeader header = {Backend::D3D12};
             D3D12Context* context = nullptr;
             ID3D12Resource* resource = nullptr;
+            ID3D12DescriptorHeap* rtv_heap = nullptr;
+            SizeU32 size = {};
+            D3D12_RESOURCE_STATES state = TEXTURE_SHADER_RESOURCE_STATE;
         };
 
         struct D3D12Sampler {
@@ -170,6 +176,7 @@ namespace gui::render::d3d12 {
             uint32_t next_frame_resource_index = 0u;
             uint32_t active_frame_resource_index = 0u;
             D3D12Window* active_window = nullptr;
+            D3D12Texture* active_texture = nullptr;
             D3D12FrameResource frame_resources[FRAME_RESOURCE_COUNT] = {};
             D3D12DescriptorTable bound_tables[ROOT_COUNT] = {};
             D3D12DeferredRelease* deferred_releases = nullptr;
@@ -299,6 +306,27 @@ namespace gui::render::d3d12 {
                 window->rtv_heap->GetCPUDescriptorHandleForHeapStart();
             handle.ptr += static_cast<SIZE_T>(index) * window->rtv_descriptor_size;
             return handle;
+        }
+
+        [[nodiscard]] auto rtv_handle(D3D12Texture const* texture) -> D3D12_CPU_DESCRIPTOR_HANDLE {
+            return texture->rtv_heap->GetCPUDescriptorHandleForHeapStart();
+        }
+
+        auto transition_texture(D3D12Context* context,
+                                D3D12Texture* texture,
+                                D3D12_RESOURCE_STATES state) -> void {
+            if (texture->state == state) {
+                return;
+            }
+
+            D3D12_RESOURCE_BARRIER barrier = {};
+            barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+            barrier.Transition.pResource = texture->resource;
+            barrier.Transition.StateBefore = texture->state;
+            barrier.Transition.StateAfter = state;
+            barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+            context->command_list->ResourceBarrier(1u, &barrier);
+            texture->state = state;
         }
 
         [[nodiscard]] auto shader_cpu_handle(D3D12Context const* context, uint32_t index)
@@ -1029,9 +1057,7 @@ namespace gui::render::d3d12 {
             barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
             barrier.Transition.pResource = texture;
             barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
-            barrier.Transition.StateAfter =
-                static_cast<D3D12_RESOURCE_STATES>(D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE |
-                                                   D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+            barrier.Transition.StateAfter = TEXTURE_SHADER_RESOURCE_STATE;
             barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
             context->command_list->ResourceBarrier(1u, &barrier);
         }
@@ -1357,15 +1383,20 @@ namespace gui::render::d3d12 {
         texture_desc.MipLevels = 1u;
         texture_desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
         texture_desc.SampleDesc.Count = 1u;
+        texture_desc.Flags =
+            desc.render_target ? D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET : D3D12_RESOURCE_FLAG_NONE;
 
         D3D12_HEAP_PROPERTIES default_heap = {};
         default_heap.Type = D3D12_HEAP_TYPE_DEFAULT;
 
+        D3D12_RESOURCE_STATES texture_state = desc.rgba_pixels != nullptr
+                                                  ? D3D12_RESOURCE_STATE_COPY_DEST
+                                                  : D3D12_RESOURCE_STATE_COMMON;
         ID3D12Resource* texture = nullptr;
         HRESULT hr = context_impl->device->CreateCommittedResource(&default_heap,
                                                                    D3D12_HEAP_FLAG_NONE,
                                                                    &texture_desc,
-                                                                   D3D12_RESOURCE_STATE_COPY_DEST,
+                                                                   texture_state,
                                                                    nullptr,
                                                                    IID_PPV_ARGS(&texture));
         if (FAILED(hr) || texture == nullptr) {
@@ -1373,44 +1404,71 @@ namespace gui::render::d3d12 {
             return Result::TEXTURE_CREATION_FAILED;
         }
 
-        D3D12_PLACED_SUBRESOURCE_FOOTPRINT layout = {};
-        UINT row_count = 0u;
-        UINT64 row_size = 0u;
-        UINT64 upload_size = 0u;
-        context_impl->device->GetCopyableFootprints(
-            &texture_desc, 0u, 1u, 0u, &layout, &row_count, &row_size, &upload_size);
+        if (desc.rgba_pixels != nullptr) {
+            D3D12_PLACED_SUBRESOURCE_FOOTPRINT layout = {};
+            UINT row_count = 0u;
+            UINT64 row_size = 0u;
+            UINT64 upload_size = 0u;
+            context_impl->device->GetCopyableFootprints(
+                &texture_desc, 0u, 1u, 0u, &layout, &row_count, &row_size, &upload_size);
 
-        ID3D12Resource* upload = nullptr;
-        uint8_t* upload_data = nullptr;
-        Result result = create_upload_buffer(
-            context_impl, static_cast<size_t>(upload_size), upload, upload_data);
-        if (result_failed(result)) {
-            release_com(texture);
-            return Result::TEXTURE_CREATION_FAILED;
-        }
+            ID3D12Resource* upload = nullptr;
+            uint8_t* upload_data = nullptr;
+            Result result = create_upload_buffer(
+                context_impl, static_cast<size_t>(upload_size), upload, upload_data);
+            if (result_failed(result)) {
+                release_com(texture);
+                return Result::TEXTURE_CREATION_FAILED;
+            }
 
-        uint8_t const* const source = static_cast<uint8_t const*>(desc.rgba_pixels);
-        for (UINT row = 0u; row < row_count; ++row) {
-            std::memcpy(upload_data + layout.Offset +
-                            (static_cast<size_t>(row) * layout.Footprint.RowPitch),
-                        source + (static_cast<size_t>(row) * desc.bytes_per_row),
-                        static_cast<size_t>(row_size));
-        }
+            uint8_t const* const source = static_cast<uint8_t const*>(desc.rgba_pixels);
+            for (UINT row = 0u; row < row_count; ++row) {
+                std::memcpy(upload_data + layout.Offset +
+                                (static_cast<size_t>(row) * layout.Footprint.RowPitch),
+                            source + (static_cast<size_t>(row) * desc.bytes_per_row),
+                            static_cast<size_t>(row_size));
+            }
 
-        upload->Unmap(0u, nullptr);
-        upload_data = nullptr;
+            upload->Unmap(0u, nullptr);
+            upload_data = nullptr;
 
-        result = upload_texture(context_impl, texture, upload, layout);
-        if (result_failed(result)) {
+            result = upload_texture(context_impl, texture, upload, layout);
+            if (result_failed(result)) {
+                defer_release(context_impl, upload);
+                defer_release(context_impl, texture);
+                return result;
+            }
+
             defer_release(context_impl, upload);
-            defer_release(context_impl, texture);
-            return result;
+            texture_state = TEXTURE_SHADER_RESOURCE_STATE;
         }
 
-        defer_release(context_impl, upload);
+        ID3D12DescriptorHeap* rtv_heap = nullptr;
+        if (desc.render_target) {
+            D3D12_DESCRIPTOR_HEAP_DESC heap_desc = {};
+            heap_desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
+            heap_desc.NumDescriptors = 1u;
+            hr = context_impl->device->CreateDescriptorHeap(&heap_desc, IID_PPV_ARGS(&rtv_heap));
+            if (FAILED(hr) || rtv_heap == nullptr) {
+                release_com(rtv_heap);
+                if (context_impl->frame_active && desc.rgba_pixels != nullptr) {
+                    defer_release(context_impl, texture);
+                } else {
+                    release_com(texture);
+                }
+                return Result::RENDER_TARGET_CREATION_FAILED;
+            }
+
+            context_impl->device->CreateRenderTargetView(
+                texture, nullptr, rtv_heap->GetCPUDescriptorHandleForHeapStart());
+        }
+
         D3D12Texture* texture_impl = arena_new<D3D12Texture>(*context_impl->arena);
         texture_impl->context = context_impl;
         texture_impl->resource = texture;
+        texture_impl->rtv_heap = rtv_heap;
+        texture_impl->size = desc.size;
+        texture_impl->state = texture_state;
         out_texture.handle = texture_impl;
         return Result::OK;
     }
@@ -1421,7 +1479,10 @@ namespace gui::render::d3d12 {
         ASSERT(context_impl != nullptr);
         ASSERT(texture_impl != nullptr);
         ASSERT(texture_impl->context == context_impl);
+        defer_release_com(context_impl, texture_impl->rtv_heap);
         defer_release_com(context_impl, texture_impl->resource);
+        texture_impl->size = {};
+        texture_impl->state = TEXTURE_SHADER_RESOURCE_STATE;
         texture_impl->context = nullptr;
         texture.handle = nullptr;
     }
@@ -1774,6 +1835,7 @@ namespace gui::render::d3d12 {
             ASSERT(texture != nullptr);
             ASSERT(texture->context == context_impl);
             ASSERT(texture->resource != nullptr);
+            transition_texture(context_impl, texture, TEXTURE_SHADER_RESOURCE_STATE);
             uint32_t const root_parameter =
                 binding.stage == ShaderStage::VERTEX ? ROOT_VS_SRV : ROOT_PS_SRV;
             D3D12DescriptorTable& table = writable_descriptor_table(
@@ -1958,22 +2020,73 @@ namespace gui::render::d3d12 {
         return Result::OK;
     }
 
+    auto begin_texture_render_pass(Context context, TextureRenderPassDesc const& desc) -> Result {
+        D3D12Context* context_impl = context_from_handle(context);
+        D3D12Texture* texture_impl = texture_from_handle(desc.target);
+        ASSERT(context_impl != nullptr);
+        ASSERT(texture_impl != nullptr);
+        ASSERT(texture_impl->context == context_impl);
+        ASSERT(texture_impl->resource != nullptr);
+        ASSERT(texture_impl->rtv_heap != nullptr);
+        ASSERT(context_impl->frame_active);
+        ASSERT(!context_impl->render_pass_active);
+
+        transition_texture(context_impl, texture_impl, D3D12_RESOURCE_STATE_RENDER_TARGET);
+
+        D3D12_VIEWPORT viewport = {};
+        viewport.Width = static_cast<float>(texture_impl->size.width);
+        viewport.Height = static_cast<float>(texture_impl->size.height);
+        viewport.MaxDepth = 1.0f;
+
+        ScissorRect const scissor_rect = {
+            0u, 0u, texture_impl->size.width, texture_impl->size.height};
+        D3D12_RECT const scissor = d3d_scissor_rect(scissor_rect);
+
+        D3D12_CPU_DESCRIPTOR_HANDLE const target = rtv_handle(texture_impl);
+        context_impl->command_list->RSSetViewports(1u, &viewport);
+        context_impl->command_list->RSSetScissorRects(1u, &scissor);
+        context_impl->command_list->OMSetRenderTargets(1u, &target, FALSE, nullptr);
+
+        switch (desc.load_op) {
+        case LoadOp::LOAD:
+        case LoadOp::DONT_CARE:
+            break;
+        case LoadOp::CLEAR: {
+            float const clear_color[] = {
+                desc.clear_color.r, desc.clear_color.g, desc.clear_color.b, desc.clear_color.a};
+            context_impl->command_list->ClearRenderTargetView(target, clear_color, 0u, nullptr);
+            break;
+        }
+        }
+
+        context_impl->active_texture = texture_impl;
+        context_impl->render_pass_active = true;
+        return Result::OK;
+    }
+
     auto end_render_pass(Context context) -> void {
         D3D12Context* context_impl = context_from_handle(context);
         ASSERT(context_impl != nullptr);
         ASSERT(context_impl->render_pass_active);
-        ASSERT(context_impl->active_window != nullptr);
+        ASSERT(context_impl->active_window != nullptr || context_impl->active_texture != nullptr);
 
-        D3D12Window* const window = context_impl->active_window;
-        D3D12_RESOURCE_BARRIER barrier = {};
-        barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-        barrier.Transition.pResource = window->back_buffers[window->frame_index];
-        barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
-        barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
-        barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-        context_impl->command_list->ResourceBarrier(1u, &barrier);
+        if (context_impl->active_window != nullptr) {
+            D3D12Window* const window = context_impl->active_window;
+            D3D12_RESOURCE_BARRIER barrier = {};
+            barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+            barrier.Transition.pResource = window->back_buffers[window->frame_index];
+            barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
+            barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
+            barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+            context_impl->command_list->ResourceBarrier(1u, &barrier);
+            context_impl->active_window = nullptr;
+        }
 
-        context_impl->active_window = nullptr;
+        if (context_impl->active_texture != nullptr) {
+            transition_texture(
+                context_impl, context_impl->active_texture, TEXTURE_SHADER_RESOURCE_STATE);
+            context_impl->active_texture = nullptr;
+        }
         context_impl->render_pass_active = false;
     }
 
@@ -2017,6 +2130,12 @@ namespace gui::render::d3d12 {
         D3D12Window const* const window_impl = window_from_handle(window);
         ASSERT(window_impl != nullptr);
         return window_impl->size;
+    }
+
+    auto texture_size(Texture texture) -> SizeU32 {
+        D3D12Texture const* const texture_impl = texture_from_handle(texture);
+        ASSERT(texture_impl != nullptr);
+        return texture_impl->size;
     }
 
     auto native_device(Context context) -> ID3D12Device* {

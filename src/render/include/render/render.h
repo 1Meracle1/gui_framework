@@ -154,6 +154,12 @@ namespace gui::render {
         Color clear_color = {};
     };
 
+    struct TextureRenderPassDesc {
+        Texture target = {};
+        LoadOp load_op = LoadOp::CLEAR;
+        Color clear_color = {};
+    };
+
     struct BufferDesc {
         BufferBinding binding = BufferBinding::VERTEX;
         BufferUsage usage = BufferUsage::IMMUTABLE;
@@ -165,6 +171,7 @@ namespace gui::render {
         SizeU32 size = {};
         uint32_t bytes_per_row = 0u;
         void const* rgba_pixels = nullptr;
+        bool render_target = false;
     };
 
     struct ShaderDesc {
@@ -305,9 +312,12 @@ namespace gui::render {
     // require an active begin_render_pass/end_render_pass scope.
     [[nodiscard]] auto begin_render_pass(Context context, WindowRenderPassDesc const& desc)
         -> Result;
+    [[nodiscard]] auto begin_texture_render_pass(Context context, TextureRenderPassDesc const& desc)
+        -> Result;
     auto end_render_pass(Context context) -> void;
     [[nodiscard]] auto present_window(Context context, Window window) -> Result;
 
     [[nodiscard]] auto window_size(Window window) -> SizeU32;
+    [[nodiscard]] auto texture_size(Texture texture) -> SizeU32;
 
 } // namespace gui::render

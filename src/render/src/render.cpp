@@ -292,8 +292,8 @@ namespace gui::render {
         ASSERT(out_texture.handle == nullptr);
         ASSERT(desc.size.width != 0u);
         ASSERT(desc.size.height != 0u);
-        ASSERT(desc.bytes_per_row >= desc.size.width * 4u);
-        ASSERT(desc.rgba_pixels != nullptr);
+        ASSERT(desc.render_target || desc.rgba_pixels != nullptr);
+        ASSERT(desc.rgba_pixels == nullptr || desc.bytes_per_row >= desc.size.width * 4u);
 
 #if BASE_PLATFORM_WINDOWS
         switch (context_backend(context)) {
@@ -688,6 +688,26 @@ namespace gui::render {
 #endif
     }
 
+    auto begin_texture_render_pass(Context context, TextureRenderPassDesc const& desc) -> Result {
+        ASSERT(context_valid(context));
+        ASSERT(texture_valid(desc.target));
+
+#if BASE_PLATFORM_WINDOWS
+        switch (context_backend(context)) {
+        case Backend::D3D11:
+            return d3d11::begin_texture_render_pass(context, desc);
+        case Backend::D3D12:
+            return d3d12::begin_texture_render_pass(context, desc);
+        }
+
+        return Result::UNSUPPORTED_BACKEND;
+#else
+        BASE_UNUSED(context);
+        BASE_UNUSED(desc);
+        return Result::UNSUPPORTED_PLATFORM;
+#endif
+    }
+
     auto end_render_pass(Context context) -> void {
         ASSERT(context_valid(context));
 
@@ -741,6 +761,26 @@ namespace gui::render {
         return {};
 #else
         BASE_UNUSED(window);
+        return {};
+#endif
+    }
+
+    auto texture_size(Texture texture) -> SizeU32 {
+        if (!texture_valid(texture)) {
+            return {};
+        }
+
+#if BASE_PLATFORM_WINDOWS
+        switch (texture_backend(texture)) {
+        case Backend::D3D11:
+            return d3d11::texture_size(texture);
+        case Backend::D3D12:
+            return d3d12::texture_size(texture);
+        }
+
+        return {};
+#else
+        BASE_UNUSED(texture);
         return {};
 #endif
     }

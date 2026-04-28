@@ -60,10 +60,13 @@ namespace gui::render::d3d12 {
     auto begin_frame(Context context) -> void;
     [[nodiscard]] auto begin_render_pass(Context context, WindowRenderPassDesc const& desc)
         -> Result;
+    [[nodiscard]] auto begin_texture_render_pass(Context context, TextureRenderPassDesc const& desc)
+        -> Result;
     auto end_render_pass(Context context) -> void;
     [[nodiscard]] auto present_window(Context context, Window window) -> Result;
 
     [[nodiscard]] auto window_size(Window window) -> SizeU32;
+    [[nodiscard]] auto texture_size(Texture texture) -> SizeU32;
 
     [[nodiscard]] auto native_device(Context context) -> ID3D12Device*;
     [[nodiscard]] auto active_render_pass_command_list(Context context)
