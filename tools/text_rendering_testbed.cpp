@@ -158,35 +158,39 @@ namespace {
     [[nodiscard]] auto create_primitive_pipeline(Arena& arena,
                                                  gui::render::Context render_context,
                                                  PrimitivePipeline* pipeline) -> bool {
-        constexpr StrRef SHADER_SOURCE =
-            "Texture2D g_primitive_texture : register(t0);\n"
-            "SamplerState g_primitive_sampler : register(s0);\n"
-            "struct VSInput\n"
-            "{\n"
-            "    float2 position : POSITION;\n"
-            "    float2 uv : TEXCOORD0;\n"
-            "    float4 color : COLOR0;\n"
-            "};\n"
-            "struct PSInput\n"
-            "{\n"
-            "    float4 position : SV_POSITION;\n"
-            "    float2 uv : TEXCOORD0;\n"
-            "    float4 color : COLOR0;\n"
-            "};\n"
-            "PSInput vs_main(VSInput input)\n"
-            "{\n"
-            "    PSInput output;\n"
-            "    output.position = float4(input.position, 0.0f, 1.0f);\n"
-            "    output.uv = input.uv;\n"
-            "    output.color = input.color;\n"
-            "    return output;\n"
-            "}\n"
-            "float4 ps_main(PSInput input) : SV_Target\n"
-            "{\n"
-            "    float4 sample_value = g_primitive_texture.Sample(g_primitive_sampler, input.uv);\n"
-            "    return float4(input.color.rgb * sample_value.rgb, input.color.a * "
-            "sample_value.a);\n"
-            "}\n";
+        constexpr StrRef SHADER_SOURCE = R"hlsl(
+Texture2D g_primitive_texture : register(t0);
+SamplerState g_primitive_sampler : register(s0);
+
+struct VSInput
+{
+    float2 position : POSITION;
+    float2 uv : TEXCOORD0;
+    float4 color : COLOR0;
+};
+
+struct PSInput
+{
+    float4 position : SV_POSITION;
+    float2 uv : TEXCOORD0;
+    float4 color : COLOR0;
+};
+
+PSInput vs_main(VSInput input)
+{
+    PSInput output;
+    output.position = float4(input.position, 0.0f, 1.0f);
+    output.uv = input.uv;
+    output.color = input.color;
+    return output;
+}
+
+float4 ps_main(PSInput input) : SV_Target
+{
+    float4 sample_value = g_primitive_texture.Sample(g_primitive_sampler, input.uv);
+    return float4(input.color.rgb * sample_value.rgb, input.color.a * sample_value.a);
+}
+)hlsl";
 
         gui::render::ShaderSourceDesc shader_desc = {};
         shader_desc.source = SHADER_SOURCE;
@@ -257,35 +261,39 @@ namespace {
     [[nodiscard]] auto create_pipeline(Arena& arena,
                                        gui::render::Context render_context,
                                        TextPipeline* pipeline) -> bool {
-        constexpr StrRef SHADER_SOURCE =
-            "Texture2D g_text_texture : register(t0);\n"
-            "SamplerState g_text_sampler : register(s0);\n"
-            "struct VSInput\n"
-            "{\n"
-            "    float2 position : POSITION;\n"
-            "    float2 uv : TEXCOORD0;\n"
-            "    float4 color : COLOR0;\n"
-            "};\n"
-            "struct PSInput\n"
-            "{\n"
-            "    float4 position : SV_POSITION;\n"
-            "    float2 uv : TEXCOORD0;\n"
-            "    float4 color : COLOR0;\n"
-            "};\n"
-            "PSInput vs_main(VSInput input)\n"
-            "{\n"
-            "    PSInput output;\n"
-            "    output.position = float4(input.position, 0.0f, 1.0f);\n"
-            "    output.uv = input.uv;\n"
-            "    output.color = input.color;\n"
-            "    return output;\n"
-            "}\n"
-            "float4 ps_main(PSInput input) : SV_Target\n"
-            "{\n"
-            "    float4 sample_value = g_text_texture.Sample(g_text_sampler, input.uv);\n"
-            "    return float4(input.color.rgb * sample_value.rgb, input.color.a * "
-            "sample_value.a);\n"
-            "}\n";
+        constexpr StrRef SHADER_SOURCE = R"hlsl(
+Texture2D g_text_texture : register(t0);
+SamplerState g_text_sampler : register(s0);
+
+struct VSInput
+{
+    float2 position : POSITION;
+    float2 uv : TEXCOORD0;
+    float4 color : COLOR0;
+};
+
+struct PSInput
+{
+    float4 position : SV_POSITION;
+    float2 uv : TEXCOORD0;
+    float4 color : COLOR0;
+};
+
+PSInput vs_main(VSInput input)
+{
+    PSInput output;
+    output.position = float4(input.position, 0.0f, 1.0f);
+    output.uv = input.uv;
+    output.color = input.color;
+    return output;
+}
+
+float4 ps_main(PSInput input) : SV_Target
+{
+    float4 sample_value = g_text_texture.Sample(g_text_sampler, input.uv);
+    return float4(input.color.rgb * sample_value.rgb, input.color.a * sample_value.a);
+}
+)hlsl";
 
         gui::render::ShaderSourceDesc shader_desc = {};
         shader_desc.source = SHADER_SOURCE;

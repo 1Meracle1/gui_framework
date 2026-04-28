@@ -102,36 +102,37 @@ namespace {
     [[nodiscard]] auto create_pipeline(Arena& arena,
                                        gui::render::Context render_context,
                                        TrianglePipeline* pipeline) -> bool {
-        constexpr StrRef SHADER_SOURCE =
-            "cbuffer TransformConstants : register(b0)\n"
-            "{\n"
-            "    float4 g_offset;\n"
-            "};\n"
-            "cbuffer TintConstants : register(b0)\n"
-            "{\n"
-            "    float4 g_color_scale;\n"
-            "};\n"
-            "struct VSInput\n"
-            "{\n"
-            "    float2 position : POSITION;\n"
-            "    float3 color : COLOR0;\n"
-            "};\n"
-            "struct PSInput\n"
-            "{\n"
-            "    float4 position : SV_POSITION;\n"
-            "    float3 color : COLOR0;\n"
-            "};\n"
-            "PSInput vs_main(VSInput input)\n"
-            "{\n"
-            "    PSInput output;\n"
-            "    output.position = float4(input.position + g_offset.xy, 0.0f, 1.0f);\n"
-            "    output.color = input.color;\n"
-            "    return output;\n"
-            "}\n"
-            "float4 ps_main(PSInput input) : SV_Target\n"
-            "{\n"
-            "    return float4(input.color * g_color_scale.rgb, g_color_scale.a);\n"
-            "}\n";
+        constexpr StrRef SHADER_SOURCE = R"hlsl(
+cbuffer TransformConstants : register(b0)
+{
+    float4 g_offset;
+};
+cbuffer TintConstants : register(b0)
+{
+    float4 g_color_scale;
+};
+struct VSInput
+{
+    float2 position : POSITION;
+    float3 color : COLOR0;
+};
+struct PSInput
+{
+    float4 position : SV_POSITION;
+    float3 color : COLOR0;
+};
+PSInput vs_main(VSInput input)
+{
+    PSInput output;
+    output.position = float4(input.position + g_offset.xy, 0.0f, 1.0f);
+    output.color = input.color;
+    return output;
+}
+float4 ps_main(PSInput input) : SV_Target
+{
+    return float4(input.color * g_color_scale.rgb, g_color_scale.a);
+}
+)hlsl";
 
         gui::render::ShaderSourceDesc shader_desc = {};
         shader_desc.source = SHADER_SOURCE;

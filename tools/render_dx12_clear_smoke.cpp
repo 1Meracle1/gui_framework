@@ -263,46 +263,44 @@ namespace {
 
     [[nodiscard]] auto
     create_draw_smoke(Arena& arena, gui::render::Context context, DrawSmoke* smoke) -> bool {
-        constexpr StrRef SHADER_SOURCE =
-            "Texture2D g_smoke_texture : register(t0);\n"
-            "SamplerState g_smoke_sampler : register(s0);\n"
-            "cbuffer VertexOffsetConstants : register(b0)\n"
-            "{\n"
-            "    float4 g_offset;\n"
-            "};\n"
-            "cbuffer VertexScaleConstants : register(b1)\n"
-            "{\n"
-            "    float4 g_scale;\n"
-            "};\n"
-            "cbuffer PixelConstants : register(b0)\n"
-            "{\n"
-            "    float4 g_tint;\n"
-            "};\n"
-            "struct VSInput\n"
-            "{\n"
-            "    float2 position : POSITION;\n"
-            "    float3 color : COLOR0;\n"
-            "};\n"
-            "struct PSInput\n"
-            "{\n"
-            "    float4 position : SV_POSITION;\n"
-            "    float3 color : COLOR0;\n"
-            "};\n"
-            "PSInput vs_main(VSInput input)\n"
-            "{\n"
-            "    PSInput output;\n"
-            "    output.position = float4((input.position * g_scale.xy) + g_offset.xy, 0.0f, "
-            "1.0f);\n"
-            "    output.color = input.color;\n"
-            "    return output;\n"
-            "}\n"
-            "float4 ps_main(PSInput input) : SV_Target\n"
-            "{\n"
-            "    float4 sample_value = g_smoke_texture.Sample(g_smoke_sampler, float2(0.5f, "
-            "0.5f));\n"
-            "    return float4(g_tint.rgb * sample_value.rgb + (input.color * 0.0f), g_tint.a * "
-            "sample_value.a);\n"
-            "}\n";
+        constexpr StrRef SHADER_SOURCE = R"hlsl(
+Texture2D g_smoke_texture : register(t0);
+SamplerState g_smoke_sampler : register(s0);
+cbuffer VertexOffsetConstants : register(b0)
+{
+    float4 g_offset;
+};
+cbuffer VertexScaleConstants : register(b1)
+{
+    float4 g_scale;
+};
+cbuffer PixelConstants : register(b0)
+{
+    float4 g_tint;
+};
+struct VSInput
+{
+    float2 position : POSITION;
+    float3 color : COLOR0;
+};
+struct PSInput
+{
+    float4 position : SV_POSITION;
+    float3 color : COLOR0;
+};
+PSInput vs_main(VSInput input)
+{
+    PSInput output;
+    output.position = float4((input.position * g_scale.xy) + g_offset.xy, 0.0f, 1.0f);
+    output.color = input.color;
+    return output;
+}
+float4 ps_main(PSInput input) : SV_Target
+{
+    float4 sample_value = g_smoke_texture.Sample(g_smoke_sampler, float2(0.5f, 0.5f));
+    return float4(g_tint.rgb * sample_value.rgb + (input.color * 0.0f), g_tint.a * sample_value.a);
+}
+)hlsl";
 
         gui::render::ShaderSourceDesc shader_desc = {};
         shader_desc.source = SHADER_SOURCE;
