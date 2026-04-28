@@ -225,19 +225,18 @@ namespace {
         return true;
     }
 
-    [[nodiscard]] auto verify_transient_bind_groups(Arena& arena,
-                                                    gui::render::Context context,
-                                                    gui::render::Texture texture,
-                                                    gui::render::Sampler sampler) -> bool {
+    [[nodiscard]] auto bind_transient_texture_sampler_groups(Arena& arena,
+                                                             gui::render::Context context,
+                                                             DrawSmoke const& smoke) -> bool {
         constexpr size_t TRANSIENT_BIND_GROUP_COUNT = 20u;
 
         gui::render::BindGroupTextureBinding texture_binding = {};
         texture_binding.stage = gui::render::ShaderStage::PIXEL;
-        texture_binding.texture = texture;
+        texture_binding.texture = smoke.texture;
 
         gui::render::BindGroupSamplerBinding sampler_binding = {};
         sampler_binding.stage = gui::render::ShaderStage::PIXEL;
-        sampler_binding.sampler = sampler;
+        sampler_binding.sampler = smoke.sampler;
 
         gui::render::BindGroupDesc desc = {};
         desc.textures = &texture_binding;
@@ -246,6 +245,7 @@ namespace {
         desc.sampler_count = 1u;
 
         ArenaMarker const marker = arena.marker();
+        gui::render::bind_pipeline(context, smoke.pipeline);
         for (size_t index = 0u; index < TRANSIENT_BIND_GROUP_COUNT; ++index) {
             gui::render::BindGroup bind_group = {};
             gui::render::Result const result =
@@ -255,9 +255,10 @@ namespace {
                 arena.reset_to(marker);
                 return false;
             }
+            gui::render::bind_group(context, bind_group);
             gui::render::destroy_bind_group(context, bind_group);
+            arena.reset_to(marker);
         }
-        arena.reset_to(marker);
         return true;
     }
 
@@ -400,10 +401,6 @@ namespace {
         result = gui::render::create_sampler(context, smoke->sampler);
         if (gui::render::result_failed(result)) {
             log_result("render::create_sampler", result);
-            return false;
-        }
-
-        if (!verify_transient_bind_groups(arena, context, smoke->texture, smoke->sampler)) {
             return false;
         }
 
@@ -621,7 +618,8 @@ namespace {
         return true;
     }
 
-    [[nodiscard]] auto clear_present(gui::render::Context context,
+    [[nodiscard]] auto clear_present(Arena& arena,
+                                     gui::render::Context context,
                                      gui::render::Window window,
                                      gui::render::Color color,
                                      DrawSmoke const* smoke,
@@ -640,6 +638,9 @@ namespace {
         }
 
         if (smoke != nullptr) {
+            if (!bind_transient_texture_sampler_groups(arena, context, *smoke)) {
+                return false;
+            }
             draw_smoke_triangle(context, *smoke);
         }
 
@@ -751,7 +752,7 @@ auto main() -> int {
     DrawSmoke draw_smoke = {};
     bool ok = create_draw_smoke(arena, context, &draw_smoke);
     if (ok) {
-        ok = clear_present(context, window, {0.1f, 0.2f, 0.35f, 1.0f}, &draw_smoke, true);
+        ok = clear_present(arena, context, window, {0.1f, 0.2f, 0.35f, 1.0f}, &draw_smoke, true);
     }
     pump_messages();
 
@@ -768,7 +769,7 @@ auto main() -> int {
     }
 
     if (ok) {
-        ok = clear_present(context, window, {0.35f, 0.1f, 0.2f, 1.0f}, &draw_smoke, false);
+        ok = clear_present(arena, context, window, {0.35f, 0.1f, 0.2f, 1.0f}, &draw_smoke, false);
     }
 
     if (ok) {

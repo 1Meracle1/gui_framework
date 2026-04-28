@@ -368,15 +368,29 @@ namespace gui::render::d3d12 {
             return static_cast<uint32_t>((handle.ptr - base.ptr) / size);
         }
 
+        [[nodiscard]] auto descriptor_count(uint32_t mask) -> uint32_t {
+            ASSERT(mask != 0u);
+            uint32_t count = 0u;
+            while (mask != 0u) {
+                ++count;
+                mask >>= 1u;
+            }
+            return count;
+        }
+
         [[nodiscard]] auto allocate_frame_descriptor_table(D3D12Context* context,
-                                                           uint32_t root_parameter)
+                                                           uint32_t root_parameter,
+                                                           uint32_t mask)
             -> D3D12_GPU_DESCRIPTOR_HANDLE {
+            if (root_uses_sampler(root_parameter)) {
+                uint32_t const index =
+                    allocate_frame_sampler_descriptors(context, descriptor_count(mask));
+                return sampler_gpu_handle(context, index);
+            }
+
             uint32_t const index =
-                root_uses_sampler(root_parameter)
-                    ? allocate_frame_sampler_descriptors(context, DESCRIPTOR_SLOT_COUNT)
-                    : allocate_frame_shader_descriptors(context, DESCRIPTOR_SLOT_COUNT);
-            return root_uses_sampler(root_parameter) ? sampler_gpu_handle(context, index)
-                                                     : shader_gpu_handle(context, index);
+                allocate_frame_shader_descriptors(context, DESCRIPTOR_SLOT_COUNT);
+            return shader_gpu_handle(context, index);
         }
 
         auto copy_descriptor(D3D12Context* context,
@@ -408,14 +422,17 @@ namespace gui::render::d3d12 {
 
         [[nodiscard]] auto writable_descriptor_table(D3D12Context* context,
                                                      D3D12DescriptorTable* tables,
-                                                     uint32_t root_parameter)
+                                                     uint32_t root_parameter,
+                                                     uint32_t update_mask)
             -> D3D12DescriptorTable& {
             D3D12DescriptorTable& table = tables[root_parameter];
             if (table.gpu.ptr == 0u) {
-                table.gpu = allocate_frame_descriptor_table(context, root_parameter);
-                table.mask = context->bound_tables[root_parameter].mask;
+                table.mask = context->bound_tables[root_parameter].mask | update_mask;
+                table.gpu = allocate_frame_descriptor_table(context, root_parameter, table.mask);
                 copy_table(
                     context, root_parameter, table.gpu, context->bound_tables[root_parameter]);
+            } else {
+                ASSERT((update_mask & ~table.mask) == 0u);
             }
             return table;
         }
@@ -1657,6 +1674,28 @@ namespace gui::render::d3d12 {
         ASSERT(context_impl->frame_active);
 
         D3D12DescriptorTable tables[ROOT_COUNT] = {};
+        uint32_t update_masks[ROOT_COUNT] = {};
+
+        for (size_t index = 0u; index < group->buffer_count; ++index) {
+            D3D12BufferBinding const& binding = group->buffers[index];
+            uint32_t const root_parameter =
+                binding.stage == ShaderStage::VERTEX ? ROOT_VS_CBV : ROOT_PS_CBV;
+            update_masks[root_parameter] |= descriptor_mask(binding.slot);
+        }
+
+        for (size_t index = 0u; index < group->texture_count; ++index) {
+            D3D12TextureBinding const& binding = group->textures[index];
+            uint32_t const root_parameter =
+                binding.stage == ShaderStage::VERTEX ? ROOT_VS_SRV : ROOT_PS_SRV;
+            update_masks[root_parameter] |= descriptor_mask(binding.slot);
+        }
+
+        for (size_t index = 0u; index < group->sampler_count; ++index) {
+            D3D12SamplerBinding const& binding = group->samplers[index];
+            uint32_t const root_parameter =
+                binding.stage == ShaderStage::VERTEX ? ROOT_VS_SAMPLER : ROOT_PS_SAMPLER;
+            update_masks[root_parameter] |= descriptor_mask(binding.slot);
+        }
 
         for (size_t index = 0u; index < group->buffer_count; ++index) {
             D3D12BufferBinding const& binding = group->buffers[index];
@@ -1668,9 +1707,8 @@ namespace gui::render::d3d12 {
 
             uint32_t const root_parameter =
                 binding.stage == ShaderStage::VERTEX ? ROOT_VS_CBV : ROOT_PS_CBV;
-            D3D12DescriptorTable& table =
-                writable_descriptor_table(context_impl, tables, root_parameter);
-            table.mask |= descriptor_mask(binding.slot);
+            D3D12DescriptorTable& table = writable_descriptor_table(
+                context_impl, tables, root_parameter, update_masks[root_parameter]);
 
             uint32_t const descriptor_offset =
                 descriptor_index(context_impl, root_parameter, table.gpu);
@@ -1692,9 +1730,8 @@ namespace gui::render::d3d12 {
             ASSERT(texture->resource != nullptr);
             uint32_t const root_parameter =
                 binding.stage == ShaderStage::VERTEX ? ROOT_VS_SRV : ROOT_PS_SRV;
-            D3D12DescriptorTable& table =
-                writable_descriptor_table(context_impl, tables, root_parameter);
-            table.mask |= descriptor_mask(binding.slot);
+            D3D12DescriptorTable& table = writable_descriptor_table(
+                context_impl, tables, root_parameter, update_masks[root_parameter]);
 
             uint32_t const descriptor_offset =
                 descriptor_index(context_impl, root_parameter, table.gpu);
@@ -1717,9 +1754,8 @@ namespace gui::render::d3d12 {
             ASSERT(sampler->context == context_impl);
             uint32_t const root_parameter =
                 binding.stage == ShaderStage::VERTEX ? ROOT_VS_SAMPLER : ROOT_PS_SAMPLER;
-            D3D12DescriptorTable& table =
-                writable_descriptor_table(context_impl, tables, root_parameter);
-            table.mask |= descriptor_mask(binding.slot);
+            D3D12DescriptorTable& table = writable_descriptor_table(
+                context_impl, tables, root_parameter, update_masks[root_parameter]);
 
             uint32_t const descriptor_offset =
                 descriptor_index(context_impl, root_parameter, table.gpu);
