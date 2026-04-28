@@ -132,6 +132,22 @@ namespace {
         TEST_EXPECT(context, desc.render_target);
     }
 
+    TEST_CASE(render_sampler_defaults_describe_linear_clamp) {
+        gui::render::SamplerDesc const desc = {};
+
+        TEST_EXPECT(context, desc.filter == gui::render::SamplerFilter::LINEAR);
+        TEST_EXPECT(context, desc.address_mode == gui::render::SamplerAddressMode::CLAMP);
+    }
+
+    TEST_CASE(render_sampler_desc_can_request_nearest_repeat) {
+        gui::render::SamplerDesc desc = {};
+        desc.filter = gui::render::SamplerFilter::NEAREST;
+        desc.address_mode = gui::render::SamplerAddressMode::REPEAT;
+
+        TEST_EXPECT(context, desc.filter == gui::render::SamplerFilter::NEAREST);
+        TEST_EXPECT(context, desc.address_mode == gui::render::SamplerAddressMode::REPEAT);
+    }
+
     TEST_CASE(render_scissor_rect_defaults_describe_empty_rect) {
         gui::render::ScissorRect const rect = {};
 
@@ -158,6 +174,12 @@ namespace {
         TEST_EXPECT(context, desc.vertex_attribute_count == 0u);
         TEST_EXPECT(context, desc.topology == gui::render::PrimitiveTopology::TRIANGLE_LIST);
         TEST_EXPECT(context, desc.blend_mode == gui::render::BlendMode::OPAQUE);
+    }
+
+    TEST_CASE(render_blend_modes_include_compositor_foundations) {
+        TEST_EXPECT(context,
+                    gui::render::BlendMode::PREMULTIPLIED_ALPHA != gui::render::BlendMode::ALPHA);
+        TEST_EXPECT(context, gui::render::BlendMode::ADDITIVE != gui::render::BlendMode::OPAQUE);
     }
 
     TEST_CASE(render_bind_group_defaults_describe_empty_group) {

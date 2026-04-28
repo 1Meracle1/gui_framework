@@ -29,7 +29,8 @@ namespace gui::render::d3d12 {
     [[nodiscard]] auto
     create_texture(Context context, TextureDesc const& desc, Texture& out_texture) -> Result;
     auto destroy_texture(Context context, Texture& texture) -> void;
-    [[nodiscard]] auto create_sampler(Context context, Sampler& out_sampler) -> Result;
+    [[nodiscard]] auto
+    create_sampler(Context context, SamplerDesc const& desc, Sampler& out_sampler) -> Result;
     auto destroy_sampler(Context context, Sampler& sampler) -> void;
 
     [[nodiscard]] auto

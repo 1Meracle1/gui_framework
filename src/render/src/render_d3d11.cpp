@@ -259,6 +259,67 @@ namespace gui::render::d3d11 {
             return D3D11_PRIMITIVE_TOPOLOGY_UNDEFINED;
         }
 
+        [[nodiscard]] auto d3d_sampler_filter(SamplerFilter filter) -> D3D11_FILTER {
+            switch (filter) {
+            case SamplerFilter::NEAREST:
+                return D3D11_FILTER_MIN_MAG_MIP_POINT;
+            case SamplerFilter::LINEAR:
+                return D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+            }
+
+            return D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+        }
+
+        [[nodiscard]] auto d3d_sampler_address(SamplerAddressMode mode)
+            -> D3D11_TEXTURE_ADDRESS_MODE {
+            switch (mode) {
+            case SamplerAddressMode::CLAMP:
+                return D3D11_TEXTURE_ADDRESS_CLAMP;
+            case SamplerAddressMode::REPEAT:
+                return D3D11_TEXTURE_ADDRESS_WRAP;
+            }
+
+            return D3D11_TEXTURE_ADDRESS_CLAMP;
+        }
+
+        [[nodiscard]] auto d3d_blend_desc(BlendMode blend_mode) -> D3D11_BLEND_DESC {
+            D3D11_BLEND_DESC desc = {};
+            desc.RenderTarget[0].BlendEnable = TRUE;
+            desc.RenderTarget[0].BlendOp = D3D11_BLEND_OP_ADD;
+            desc.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
+            desc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
+
+            switch (blend_mode) {
+            case BlendMode::OPAQUE:
+                desc.RenderTarget[0].BlendEnable = FALSE;
+                desc.RenderTarget[0].SrcBlend = D3D11_BLEND_ONE;
+                desc.RenderTarget[0].DestBlend = D3D11_BLEND_ZERO;
+                desc.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ONE;
+                desc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_ZERO;
+                break;
+            case BlendMode::ALPHA:
+                desc.RenderTarget[0].SrcBlend = D3D11_BLEND_SRC_ALPHA;
+                desc.RenderTarget[0].DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
+                desc.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ONE;
+                desc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_INV_SRC_ALPHA;
+                break;
+            case BlendMode::PREMULTIPLIED_ALPHA:
+                desc.RenderTarget[0].SrcBlend = D3D11_BLEND_ONE;
+                desc.RenderTarget[0].DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
+                desc.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ONE;
+                desc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_INV_SRC_ALPHA;
+                break;
+            case BlendMode::ADDITIVE:
+                desc.RenderTarget[0].SrcBlend = D3D11_BLEND_ONE;
+                desc.RenderTarget[0].DestBlend = D3D11_BLEND_ONE;
+                desc.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ONE;
+                desc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_ONE;
+                break;
+            }
+
+            return desc;
+        }
+
         [[nodiscard]] auto d3d_scissor_rect(ScissorRect rect) -> D3D11_RECT {
             D3D11_RECT result = {};
             result.left = static_cast<LONG>(rect.x);
@@ -717,15 +778,15 @@ namespace gui::render::d3d11 {
         texture.handle = nullptr;
     }
 
-    auto create_sampler(Context context, Sampler& out_sampler) -> Result {
+    auto create_sampler(Context context, SamplerDesc const& desc, Sampler& out_sampler) -> Result {
         D3D11Context* context_impl = context_from_handle(context);
         ASSERT(context_impl != nullptr);
 
         D3D11_SAMPLER_DESC sampler_desc = {};
-        sampler_desc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
-        sampler_desc.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;
-        sampler_desc.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP;
-        sampler_desc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+        sampler_desc.Filter = d3d_sampler_filter(desc.filter);
+        sampler_desc.AddressU = d3d_sampler_address(desc.address_mode);
+        sampler_desc.AddressV = sampler_desc.AddressU;
+        sampler_desc.AddressW = sampler_desc.AddressU;
         sampler_desc.MaxLOD = D3D11_FLOAT32_MAX;
 
         ID3D11SamplerState* sampler = nullptr;
@@ -896,17 +957,8 @@ namespace gui::render::d3d11 {
             }
         }
 
-        if (desc.blend_mode == BlendMode::ALPHA) {
-            D3D11_BLEND_DESC blend_desc = {};
-            blend_desc.RenderTarget[0].BlendEnable = TRUE;
-            blend_desc.RenderTarget[0].SrcBlend = D3D11_BLEND_SRC_ALPHA;
-            blend_desc.RenderTarget[0].DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
-            blend_desc.RenderTarget[0].BlendOp = D3D11_BLEND_OP_ADD;
-            blend_desc.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ONE;
-            blend_desc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_INV_SRC_ALPHA;
-            blend_desc.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
-            blend_desc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
-
+        if (desc.blend_mode != BlendMode::OPAQUE) {
+            D3D11_BLEND_DESC const blend_desc = d3d_blend_desc(desc.blend_mode);
             HRESULT const hr =
                 context_impl->device->CreateBlendState(&blend_desc, &pipeline->blend_state);
             if (FAILED(hr)) {

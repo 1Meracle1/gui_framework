@@ -73,6 +73,18 @@ namespace gui::render {
     enum class BlendMode : uint8_t {
         OPAQUE,
         ALPHA,
+        PREMULTIPLIED_ALPHA,
+        ADDITIVE,
+    };
+
+    enum class SamplerFilter : uint8_t {
+        NEAREST,
+        LINEAR,
+    };
+
+    enum class SamplerAddressMode : uint8_t {
+        CLAMP,
+        REPEAT,
     };
 
     inline constexpr uint32_t BIND_GROUP_SLOT_COUNT = 14u;
@@ -172,6 +184,11 @@ namespace gui::render {
         uint32_t bytes_per_row = 0u;
         void const* rgba_pixels = nullptr;
         bool render_target = false;
+    };
+
+    struct SamplerDesc {
+        SamplerFilter filter = SamplerFilter::LINEAR;
+        SamplerAddressMode address_mode = SamplerAddressMode::CLAMP;
     };
 
     struct ShaderDesc {
@@ -279,6 +296,8 @@ namespace gui::render {
     [[nodiscard]] auto
     create_texture(Context context, TextureDesc const& desc, Texture& out_texture) -> Result;
     auto destroy_texture(Context context, Texture& texture) -> void;
+    [[nodiscard]] auto
+    create_sampler(Context context, SamplerDesc const& desc, Sampler& out_sampler) -> Result;
     [[nodiscard]] auto create_sampler(Context context, Sampler& out_sampler) -> Result;
     auto destroy_sampler(Context context, Sampler& sampler) -> void;
 

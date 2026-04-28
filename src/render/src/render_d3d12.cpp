@@ -280,6 +280,29 @@ namespace gui::render::d3d12 {
             return D3D_PRIMITIVE_TOPOLOGY_UNDEFINED;
         }
 
+        [[nodiscard]] auto d3d_sampler_filter(SamplerFilter filter) -> D3D12_FILTER {
+            switch (filter) {
+            case SamplerFilter::NEAREST:
+                return D3D12_FILTER_MIN_MAG_MIP_POINT;
+            case SamplerFilter::LINEAR:
+                return D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+            }
+
+            return D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+        }
+
+        [[nodiscard]] auto d3d_sampler_address(SamplerAddressMode mode)
+            -> D3D12_TEXTURE_ADDRESS_MODE {
+            switch (mode) {
+            case SamplerAddressMode::CLAMP:
+                return D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+            case SamplerAddressMode::REPEAT:
+                return D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+            }
+
+            return D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+        }
+
         [[nodiscard]] auto d3d_scissor_rect(ScissorRect rect) -> D3D12_RECT {
             D3D12_RECT result = {};
             result.left = static_cast<LONG>(rect.x);
@@ -1100,15 +1123,37 @@ namespace gui::render::d3d12 {
         [[nodiscard]] auto blend_desc(BlendMode blend_mode) -> D3D12_BLEND_DESC {
             D3D12_BLEND_DESC desc = {};
             desc.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+            desc.RenderTarget[0].BlendOp = D3D12_BLEND_OP_ADD;
+            desc.RenderTarget[0].BlendOpAlpha = D3D12_BLEND_OP_ADD;
 
-            if (blend_mode == BlendMode::ALPHA) {
+            switch (blend_mode) {
+            case BlendMode::OPAQUE:
+                desc.RenderTarget[0].SrcBlend = D3D12_BLEND_ONE;
+                desc.RenderTarget[0].DestBlend = D3D12_BLEND_ZERO;
+                desc.RenderTarget[0].SrcBlendAlpha = D3D12_BLEND_ONE;
+                desc.RenderTarget[0].DestBlendAlpha = D3D12_BLEND_ZERO;
+                break;
+            case BlendMode::ALPHA:
                 desc.RenderTarget[0].BlendEnable = TRUE;
                 desc.RenderTarget[0].SrcBlend = D3D12_BLEND_SRC_ALPHA;
                 desc.RenderTarget[0].DestBlend = D3D12_BLEND_INV_SRC_ALPHA;
-                desc.RenderTarget[0].BlendOp = D3D12_BLEND_OP_ADD;
                 desc.RenderTarget[0].SrcBlendAlpha = D3D12_BLEND_ONE;
                 desc.RenderTarget[0].DestBlendAlpha = D3D12_BLEND_INV_SRC_ALPHA;
-                desc.RenderTarget[0].BlendOpAlpha = D3D12_BLEND_OP_ADD;
+                break;
+            case BlendMode::PREMULTIPLIED_ALPHA:
+                desc.RenderTarget[0].BlendEnable = TRUE;
+                desc.RenderTarget[0].SrcBlend = D3D12_BLEND_ONE;
+                desc.RenderTarget[0].DestBlend = D3D12_BLEND_INV_SRC_ALPHA;
+                desc.RenderTarget[0].SrcBlendAlpha = D3D12_BLEND_ONE;
+                desc.RenderTarget[0].DestBlendAlpha = D3D12_BLEND_INV_SRC_ALPHA;
+                break;
+            case BlendMode::ADDITIVE:
+                desc.RenderTarget[0].BlendEnable = TRUE;
+                desc.RenderTarget[0].SrcBlend = D3D12_BLEND_ONE;
+                desc.RenderTarget[0].DestBlend = D3D12_BLEND_ONE;
+                desc.RenderTarget[0].SrcBlendAlpha = D3D12_BLEND_ONE;
+                desc.RenderTarget[0].DestBlendAlpha = D3D12_BLEND_ONE;
+                break;
             }
 
             return desc;
@@ -1487,16 +1532,16 @@ namespace gui::render::d3d12 {
         texture.handle = nullptr;
     }
 
-    auto create_sampler(Context context, Sampler& out_sampler) -> Result {
+    auto create_sampler(Context context, SamplerDesc const& desc, Sampler& out_sampler) -> Result {
         D3D12Context* context_impl = context_from_handle(context);
         ASSERT(context_impl != nullptr);
 
         D3D12Sampler* sampler = arena_new<D3D12Sampler>(*context_impl->arena);
         sampler->context = context_impl;
-        sampler->desc.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
-        sampler->desc.AddressU = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
-        sampler->desc.AddressV = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
-        sampler->desc.AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+        sampler->desc.Filter = d3d_sampler_filter(desc.filter);
+        sampler->desc.AddressU = d3d_sampler_address(desc.address_mode);
+        sampler->desc.AddressV = sampler->desc.AddressU;
+        sampler->desc.AddressW = sampler->desc.AddressU;
         sampler->desc.MaxLOD = D3D12_FLOAT32_MAX;
         out_sampler.handle = sampler;
         return Result::OK;

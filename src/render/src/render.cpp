@@ -331,24 +331,30 @@ namespace gui::render {
 #endif
     }
 
-    auto create_sampler(Context context, Sampler& out_sampler) -> Result {
+    auto create_sampler(Context context, SamplerDesc const& desc, Sampler& out_sampler) -> Result {
         ASSERT(context_valid(context));
         ASSERT(out_sampler.handle == nullptr);
 
 #if BASE_PLATFORM_WINDOWS
         switch (context_backend(context)) {
         case Backend::D3D11:
-            return d3d11::create_sampler(context, out_sampler);
+            return d3d11::create_sampler(context, desc, out_sampler);
         case Backend::D3D12:
-            return d3d12::create_sampler(context, out_sampler);
+            return d3d12::create_sampler(context, desc, out_sampler);
         }
 
         return Result::UNSUPPORTED_BACKEND;
 #else
         BASE_UNUSED(context);
+        BASE_UNUSED(desc);
         BASE_UNUSED(out_sampler);
         return Result::UNSUPPORTED_PLATFORM;
 #endif
+    }
+
+    auto create_sampler(Context context, Sampler& out_sampler) -> Result {
+        SamplerDesc const desc = {};
+        return create_sampler(context, desc, out_sampler);
     }
 
     auto destroy_sampler(Context context, Sampler& sampler) -> void {
