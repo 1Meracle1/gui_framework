@@ -13,7 +13,6 @@
 #include <base/str_ref.h>
 #include <cstddef>
 #include <cstdint>
-#include <cstring>
 #include <d3d11.h>
 #include <d3dcompiler.h>
 #include <draw/draw.h>
@@ -38,7 +37,6 @@ namespace {
         ID3D11VertexShader* vertex_shader = nullptr;
         ID3D11PixelShader* pixel_shader = nullptr;
         ID3D11InputLayout* input_layout = nullptr;
-        ID3D11Buffer* vertex_buffer = nullptr;
         ID3D11SamplerState* sampler = nullptr;
         ID3D11BlendState* blend_state = nullptr;
     };
@@ -80,6 +78,10 @@ namespace {
 
     auto log_font_result(char const* operation, gui::font_provider::Result result) -> void {
         fmt::eprintf("%s failed: %s\n", operation, gui::font_provider::result_name(result));
+    }
+
+    [[nodiscard]] auto d3d11_buffer(gui::render::Buffer buffer) -> ID3D11Buffer* {
+        return static_cast<ID3D11Buffer*>(buffer.handle);
     }
 
     [[nodiscard]] auto
@@ -129,7 +131,6 @@ namespace {
 
         release_com(pipeline->blend_state);
         release_com(pipeline->sampler);
-        release_com(pipeline->vertex_buffer);
         release_com(pipeline->input_layout);
         release_com(pipeline->pixel_shader);
         release_com(pipeline->vertex_shader);
@@ -234,16 +235,6 @@ namespace {
             return false;
         }
 
-        D3D11_BUFFER_DESC vertex_desc = {};
-        vertex_desc.ByteWidth = sizeof(TextVertex) * 6u;
-        vertex_desc.Usage = D3D11_USAGE_DYNAMIC;
-        vertex_desc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
-        vertex_desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
-        hr = device->CreateBuffer(&vertex_desc, nullptr, &pipeline->vertex_buffer);
-        if (FAILED(hr)) {
-            return false;
-        }
-
         D3D11_SAMPLER_DESC sampler_desc = {};
         sampler_desc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
         sampler_desc.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;
@@ -269,12 +260,12 @@ namespace {
     }
 
     [[nodiscard]] auto create_text_texture(ID3D11Device* device,
-                                           gui::font_cache::TextRun const& run,
-                                           ID3D11ShaderResourceView** out_view) -> bool {
-        if (device == nullptr || out_view == nullptr || run.rgba_pixels == nullptr ||
-            run.size.width == 0u || run.size.height == 0u) {
-            return false;
-        }
+                                           gui::font_cache::TextRun const& run)
+        -> ID3D11ShaderResourceView* {
+        ASSERT(device != nullptr);
+        ASSERT(run.rgba_pixels != nullptr);
+        ASSERT(run.size.width != 0u);
+        ASSERT(run.size.height != 0u);
 
         ID3D11Texture2D* texture = nullptr;
 
@@ -293,14 +284,15 @@ namespace {
         texture_data.SysMemPitch = run.stride;
 
         HRESULT hr = device->CreateTexture2D(&texture_desc, &texture_data, &texture);
-        if (FAILED(hr) || texture == nullptr) {
-            release_com(texture);
-            return false;
-        }
+        ASSERT(SUCCEEDED(hr));
+        ASSERT(texture != nullptr);
 
-        hr = device->CreateShaderResourceView(texture, nullptr, out_view);
+        ID3D11ShaderResourceView* view = nullptr;
+        hr = device->CreateShaderResourceView(texture, nullptr, &view);
         release_com(texture);
-        return SUCCEEDED(hr) && *out_view != nullptr;
+        ASSERT(SUCCEEDED(hr));
+        ASSERT(view != nullptr);
+        return view;
     }
 
     [[nodiscard]] auto pixel_to_ndc_x(float value, float width) -> float {
@@ -311,21 +303,15 @@ namespace {
         return 1.0f - ((value / height) * 2.0f);
     }
 
-    [[nodiscard]] auto render_text_command(ID3D11Device* device,
-                                           ID3D11DeviceContext* device_context,
-                                           TextPipeline const& pipeline,
-                                           gui::render::SizeU32 window_size,
-                                           gui::draw::TextCommand const& command) -> bool {
+    [[nodiscard]] auto text_command_visible(gui::draw::TextCommand const& command) -> bool {
         gui::font_cache::TextRun const& run = command.run;
-        if (run.rgba_pixels == nullptr || run.size.width == 0u || run.size.height == 0u) {
-            return true;
-        }
+        return run.rgba_pixels != nullptr && run.size.width != 0u && run.size.height != 0u;
+    }
 
-        ID3D11ShaderResourceView* texture_view = nullptr;
-        if (!create_text_texture(device, run, &texture_view)) {
-            return false;
-        }
-
+    auto write_text_vertices(TextVertex* vertices,
+                             gui::render::SizeU32 window_size,
+                             gui::draw::TextCommand const& command) -> void {
+        gui::font_cache::TextRun const& run = command.run;
         float const window_width = static_cast<float>(window_size.width);
         float const window_height = static_cast<float>(window_size.height);
         float const x0 = command.position.x;
@@ -334,83 +320,89 @@ namespace {
         float const y1 = y0 + static_cast<float>(run.size.height);
         gui::draw::Color const color = command.style.color;
 
-        TextVertex const vertices[] = {
-            {{pixel_to_ndc_x(x0, window_width), pixel_to_ndc_y(y0, window_height)},
-             {0.0f, 0.0f},
-             {color.r, color.g, color.b, color.a}},
-            {{pixel_to_ndc_x(x1, window_width), pixel_to_ndc_y(y0, window_height)},
-             {1.0f, 0.0f},
-             {color.r, color.g, color.b, color.a}},
-            {{pixel_to_ndc_x(x1, window_width), pixel_to_ndc_y(y1, window_height)},
-             {1.0f, 1.0f},
-             {color.r, color.g, color.b, color.a}},
-            {{pixel_to_ndc_x(x0, window_width), pixel_to_ndc_y(y0, window_height)},
-             {0.0f, 0.0f},
-             {color.r, color.g, color.b, color.a}},
-            {{pixel_to_ndc_x(x1, window_width), pixel_to_ndc_y(y1, window_height)},
-             {1.0f, 1.0f},
-             {color.r, color.g, color.b, color.a}},
-            {{pixel_to_ndc_x(x0, window_width), pixel_to_ndc_y(y1, window_height)},
-             {0.0f, 1.0f},
-             {color.r, color.g, color.b, color.a}},
-        };
-
-        D3D11_MAPPED_SUBRESOURCE mapped = {};
-        HRESULT hr =
-            device_context->Map(pipeline.vertex_buffer, 0u, D3D11_MAP_WRITE_DISCARD, 0u, &mapped);
-        if (FAILED(hr)) {
-            release_com(texture_view);
-            return false;
-        }
-        std::memcpy(mapped.pData, vertices, sizeof(vertices));
-        device_context->Unmap(pipeline.vertex_buffer, 0u);
-
-        UINT const stride = sizeof(TextVertex);
-        UINT const offset = 0u;
-        float blend_factor[] = {0.0f, 0.0f, 0.0f, 0.0f};
-
-        device_context->IASetInputLayout(pipeline.input_layout);
-        device_context->IASetVertexBuffers(0u, 1u, &pipeline.vertex_buffer, &stride, &offset);
-        device_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-        device_context->VSSetShader(pipeline.vertex_shader, nullptr, 0u);
-        device_context->PSSetShader(pipeline.pixel_shader, nullptr, 0u);
-        device_context->PSSetSamplers(0u, 1u, &pipeline.sampler);
-        device_context->PSSetShaderResources(0u, 1u, &texture_view);
-        device_context->OMSetBlendState(pipeline.blend_state, blend_factor, 0xffffffffu);
-        device_context->Draw(6u, 0u);
-
-        ID3D11ShaderResourceView* null_view = nullptr;
-        device_context->PSSetShaderResources(0u, 1u, &null_view);
-        release_com(texture_view);
-        return true;
+        vertices[0u] = {{pixel_to_ndc_x(x0, window_width), pixel_to_ndc_y(y0, window_height)},
+                        {0.0f, 0.0f},
+                        {color.r, color.g, color.b, color.a}};
+        vertices[1u] = {{pixel_to_ndc_x(x1, window_width), pixel_to_ndc_y(y0, window_height)},
+                        {1.0f, 0.0f},
+                        {color.r, color.g, color.b, color.a}};
+        vertices[2u] = {{pixel_to_ndc_x(x1, window_width), pixel_to_ndc_y(y1, window_height)},
+                        {1.0f, 1.0f},
+                        {color.r, color.g, color.b, color.a}};
+        vertices[3u] = vertices[0u];
+        vertices[4u] = vertices[2u];
+        vertices[5u] = {{pixel_to_ndc_x(x0, window_width), pixel_to_ndc_y(y1, window_height)},
+                        {0.0f, 1.0f},
+                        {color.r, color.g, color.b, color.a}};
     }
 
-    [[nodiscard]] auto render_text_commands(gui::render::Context render_context,
-                                            gui::render::Window render_window,
-                                            TextPipeline const& pipeline,
-                                            gui::draw::Context draw_context) -> bool {
+    auto render_text_commands(gui::render::Context render_context,
+                              gui::render::Window render_window,
+                              TextPipeline const& pipeline,
+                              gui::draw::Context draw_context) -> void {
         ID3D11Device* const device =
             static_cast<ID3D11Device*>(gui::render::native_device(render_context));
         ID3D11DeviceContext* const device_context =
             static_cast<ID3D11DeviceContext*>(gui::render::native_device_context(render_context));
         gui::render::SizeU32 const window_size = gui::render::window_size(render_window);
 
-        if (device == nullptr || device_context == nullptr || window_size.width == 0u ||
-            window_size.height == 0u) {
-            return false;
-        }
+        ASSERT(device != nullptr);
+        ASSERT(device_context != nullptr);
+        ASSERT(window_size.width != 0u);
+        ASSERT(window_size.height != 0u);
 
         size_t const command_count = gui::draw::text_command_count(draw_context);
+        if (command_count == 0u) {
+            return;
+        }
+
+        gui::render::FrameBufferSlice const upload =
+            gui::render::allocate_frame_buffer(render_context,
+                                               gui::render::BufferBinding::VERTEX,
+                                               command_count * 6u * sizeof(TextVertex),
+                                               alignof(TextVertex));
+
+        TextVertex* const vertices = static_cast<TextVertex*>(upload.data);
         for (size_t index = 0u; index < command_count; ++index) {
             gui::draw::TextCommand const* const command =
                 gui::draw::text_command(draw_context, index);
-            if (command == nullptr ||
-                !render_text_command(device, device_context, pipeline, window_size, *command)) {
-                return false;
+            ASSERT(command != nullptr);
+            if (text_command_visible(*command)) {
+                write_text_vertices(vertices + (index * 6u), window_size, *command);
             }
         }
 
-        return true;
+        gui::render::commit_frame_uploads(render_context);
+
+        ID3D11Buffer* const vertex_buffer = d3d11_buffer(upload.buffer);
+        UINT const stride = sizeof(TextVertex);
+        UINT const offset = static_cast<UINT>(upload.byte_offset);
+        float blend_factor[] = {0.0f, 0.0f, 0.0f, 0.0f};
+
+        device_context->IASetInputLayout(pipeline.input_layout);
+        device_context->IASetVertexBuffers(0u, 1u, &vertex_buffer, &stride, &offset);
+        device_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        device_context->VSSetShader(pipeline.vertex_shader, nullptr, 0u);
+        device_context->PSSetShader(pipeline.pixel_shader, nullptr, 0u);
+        device_context->PSSetSamplers(0u, 1u, &pipeline.sampler);
+        device_context->OMSetBlendState(pipeline.blend_state, blend_factor, 0xffffffffu);
+
+        for (size_t index = 0u; index < command_count; ++index) {
+            gui::draw::TextCommand const* const command =
+                gui::draw::text_command(draw_context, index);
+            if (!text_command_visible(*command)) {
+                continue;
+            }
+
+            ID3D11ShaderResourceView* texture_view = create_text_texture(device, command->run);
+
+            device_context->PSSetShaderResources(0u, 1u, &texture_view);
+            device_context->Draw(6u, static_cast<UINT>(index * 6u));
+
+            ID3D11ShaderResourceView* null_view = nullptr;
+            device_context->PSSetShaderResources(0u, 1u, &null_view);
+            release_com(texture_view);
+        }
     }
 
     auto destroy_text_state(TextState* text_state) -> void {
@@ -663,11 +655,7 @@ auto main() -> int {
             app_state.resize_pending = false;
         }
 
-        render_result = gui::render::begin_frame(render_context);
-        if (gui::render::result_failed(render_result)) {
-            log_render_result("render::begin_frame", render_result);
-            break;
-        }
+        gui::render::begin_frame(render_context);
 
         build_text_commands(&text_state);
 
@@ -681,13 +669,8 @@ auto main() -> int {
             break;
         }
 
-        bool const rendered =
-            render_text_commands(render_context, render_window, pipeline, text_state.draw_context);
+        render_text_commands(render_context, render_window, pipeline, text_state.draw_context);
         gui::render::end_render_pass(render_context);
-        if (!rendered) {
-            fmt::eprintf("failed to render text commands\n");
-            break;
-        }
 
         render_result = gui::render::present_window(render_window);
         if (render_result == gui::render::Result::OCCLUDED) {

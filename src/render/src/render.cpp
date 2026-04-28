@@ -41,8 +41,6 @@ namespace gui::render {
             return "present failed";
         case Result::BUFFER_CREATION_FAILED:
             return "buffer creation failed";
-        case Result::BUFFER_UPDATE_FAILED:
-            return "buffer update failed";
         case Result::SHADER_CREATION_FAILED:
             return "shader creation failed";
         case Result::PIPELINE_CREATION_FAILED:
@@ -175,21 +173,48 @@ namespace gui::render {
 #endif
     }
 
-    auto update_buffer(Context context, Buffer buffer, void const* data, size_t byte_size)
-        -> Result {
+    auto update_buffer(Context context, Buffer buffer, void const* data, size_t byte_size) -> void {
         ASSERT(context_valid(context));
         ASSERT(buffer_valid(buffer));
         ASSERT(data != nullptr);
         ASSERT(byte_size != 0u);
 
 #if BASE_PLATFORM_WINDOWS
-        return d3d11::update_buffer(context, buffer, data, byte_size);
+        d3d11::update_buffer(context, buffer, data, byte_size);
 #else
         BASE_UNUSED(context);
         BASE_UNUSED(buffer);
         BASE_UNUSED(data);
         BASE_UNUSED(byte_size);
-        return Result::UNSUPPORTED_PLATFORM;
+#endif
+    }
+
+    auto allocate_frame_buffer(Context context,
+                               BufferBinding binding,
+                               size_t byte_size,
+                               size_t byte_alignment) -> FrameBufferSlice {
+        ASSERT(context_valid(context));
+        ASSERT(byte_size != 0u);
+        ASSERT(byte_alignment != 0u);
+
+#if BASE_PLATFORM_WINDOWS
+        return d3d11::allocate_frame_buffer(context, binding, byte_size, byte_alignment);
+#else
+        BASE_UNUSED(context);
+        BASE_UNUSED(binding);
+        BASE_UNUSED(byte_size);
+        BASE_UNUSED(byte_alignment);
+        return {};
+#endif
+    }
+
+    auto commit_frame_uploads(Context context) -> void {
+        ASSERT(context_valid(context));
+
+#if BASE_PLATFORM_WINDOWS
+        d3d11::commit_frame_uploads(context);
+#else
+        BASE_UNUSED(context);
 #endif
     }
 
@@ -336,14 +361,13 @@ namespace gui::render {
 #endif
     }
 
-    auto begin_frame(Context context) -> Result {
+    auto begin_frame(Context context) -> void {
         ASSERT(context_valid(context));
 
 #if BASE_PLATFORM_WINDOWS
-        return d3d11::begin_frame(context);
+        d3d11::begin_frame(context);
 #else
         BASE_UNUSED(context);
-        return Result::UNSUPPORTED_PLATFORM;
 #endif
     }
 

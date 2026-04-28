@@ -16,8 +16,12 @@ namespace gui::render::d3d11 {
     [[nodiscard]] auto create_buffer(Context context, BufferDesc const& desc, Buffer& out_buffer)
         -> Result;
     auto destroy_buffer(Context context, Buffer& buffer) -> void;
-    [[nodiscard]] auto
-    update_buffer(Context context, Buffer buffer, void const* data, size_t byte_size) -> Result;
+    auto update_buffer(Context context, Buffer buffer, void const* data, size_t byte_size) -> void;
+    [[nodiscard]] auto allocate_frame_buffer(Context context,
+                                             BufferBinding binding,
+                                             size_t byte_size,
+                                             size_t byte_alignment) -> FrameBufferSlice;
+    auto commit_frame_uploads(Context context) -> void;
 
     [[nodiscard]] auto
     create_shader(Arena& arena, Context context, ShaderDesc const& desc, Shader& out_shader)
@@ -38,7 +42,7 @@ namespace gui::render::d3d11 {
     auto bind_group(Context context, BindGroup bind_group) -> void;
 
     [[nodiscard]] auto resize_window(Context context, Window window, SizeU32 size) -> Result;
-    [[nodiscard]] auto begin_frame(Context context) -> Result;
+    auto begin_frame(Context context) -> void;
     [[nodiscard]] auto begin_render_pass(Context context, RenderPassDesc const& desc) -> Result;
     auto end_render_pass(Context context) -> void;
     [[nodiscard]] auto present_window(Window window) -> Result;

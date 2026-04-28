@@ -27,6 +27,7 @@ namespace {
         gui::render::Shader const shader_handle = {};
         gui::render::Pipeline const pipeline_handle = {};
         gui::render::BindGroup const bind_group_handle = {};
+        gui::render::FrameBufferSlice const frame_slice = {};
         gui::render::SizeU32 const size = gui::render::window_size(window_handle);
 
         TEST_EXPECT(context, !gui::render::context_valid(context_handle));
@@ -37,6 +38,10 @@ namespace {
         TEST_EXPECT(context, !gui::render::shader_valid(shader_handle));
         TEST_EXPECT(context, !gui::render::pipeline_valid(pipeline_handle));
         TEST_EXPECT(context, !gui::render::bind_group_valid(bind_group_handle));
+        TEST_EXPECT(context, !gui::render::buffer_valid(frame_slice.buffer));
+        TEST_EXPECT(context, frame_slice.data == nullptr);
+        TEST_EXPECT(context, frame_slice.byte_offset == 0u);
+        TEST_EXPECT(context, frame_slice.byte_size == 0u);
         TEST_EXPECT(context, size.width == 0u);
         TEST_EXPECT(context, size.height == 0u);
         TEST_EXPECT(context, gui::render::native_device(context_handle) == nullptr);

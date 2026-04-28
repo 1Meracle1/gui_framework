@@ -24,9 +24,8 @@ namespace gui::render {
         RESIZE_FAILED = -8,
         PRESENT_FAILED = -9,
         BUFFER_CREATION_FAILED = -10,
-        BUFFER_UPDATE_FAILED = -11,
-        SHADER_CREATION_FAILED = -12,
-        PIPELINE_CREATION_FAILED = -13,
+        SHADER_CREATION_FAILED = -11,
+        PIPELINE_CREATION_FAILED = -12,
     };
 
     enum class PresentMode : uint8_t {
@@ -112,6 +111,13 @@ namespace gui::render {
 
     struct Buffer {
         void* handle = nullptr;
+    };
+
+    struct FrameBufferSlice {
+        Buffer buffer = {};
+        void* data = nullptr;
+        size_t byte_offset = 0u;
+        size_t byte_size = 0u;
     };
 
     struct Texture {
@@ -228,8 +234,12 @@ namespace gui::render {
     [[nodiscard]] auto create_buffer(Context context, BufferDesc const& desc, Buffer& out_buffer)
         -> Result;
     auto destroy_buffer(Context context, Buffer& buffer) -> void;
-    [[nodiscard]] auto
-    update_buffer(Context context, Buffer buffer, void const* data, size_t byte_size) -> Result;
+    auto update_buffer(Context context, Buffer buffer, void const* data, size_t byte_size) -> void;
+    [[nodiscard]] auto allocate_frame_buffer(Context context,
+                                             BufferBinding binding,
+                                             size_t byte_size,
+                                             size_t byte_alignment) -> FrameBufferSlice;
+    auto commit_frame_uploads(Context context) -> void;
 
     [[nodiscard]] auto
     create_shader(Arena& arena, Context context, ShaderDesc const& desc, Shader& out_shader)
@@ -250,7 +260,7 @@ namespace gui::render {
     auto bind_group(Context context, BindGroup bind_group) -> void;
 
     [[nodiscard]] auto resize_window(Context context, Window window, SizeU32 size) -> Result;
-    [[nodiscard]] auto begin_frame(Context context) -> Result;
+    auto begin_frame(Context context) -> void;
     [[nodiscard]] auto begin_render_pass(Context context, RenderPassDesc const& desc) -> Result;
     auto end_render_pass(Context context) -> void;
     [[nodiscard]] auto clear_window(Context context, Window window, Color color) -> Result;

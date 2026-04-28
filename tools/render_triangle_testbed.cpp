@@ -314,15 +314,12 @@ namespace {
         return gui::render::result_succeeded(result);
     }
 
-    [[nodiscard]] auto render_triangle(gui::render::Context context,
-                                       TrianglePipeline const& pipeline,
-                                       float time_seconds) -> bool {
+    auto render_triangle(gui::render::Context context,
+                         TrianglePipeline const& pipeline,
+                         float time_seconds) -> void {
         ID3D11DeviceContext* const device_context =
             static_cast<ID3D11DeviceContext*>(gui::render::native_device_context(context));
-
-        if (device_context == nullptr) {
-            return false;
-        }
+        ASSERT(device_context != nullptr);
 
         TransformConstants transform = {};
         transform.offset[0] = 0.15f * static_cast<float>(std::sin(time_seconds));
@@ -335,16 +332,9 @@ namespace {
         tint.color_scale[2] = 1.0f;
         tint.color_scale[3] = 1.0f;
 
-        gui::render::Result result = gui::render::update_buffer(
+        gui::render::update_buffer(
             context, pipeline.transform_constants, &transform, sizeof(transform));
-        if (gui::render::result_failed(result)) {
-            return false;
-        }
-
-        result = gui::render::update_buffer(context, pipeline.tint_constants, &tint, sizeof(tint));
-        if (gui::render::result_failed(result)) {
-            return false;
-        }
+        gui::render::update_buffer(context, pipeline.tint_constants, &tint, sizeof(tint));
 
         UINT const stride = sizeof(Vertex);
         UINT const offset = 0u;
@@ -355,7 +345,6 @@ namespace {
         gui::render::bind_group(context, pipeline.tint_bind_group);
         device_context->IASetVertexBuffers(0u, 1u, &vertex_buffer, &stride, &offset);
         device_context->Draw(3u, 0u);
-        return true;
     }
 
     auto window_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) -> LRESULT {
@@ -519,11 +508,7 @@ auto main() -> int {
             app_state.resize_pending = false;
         }
 
-        result = gui::render::begin_frame(render_context);
-        if (gui::render::result_failed(result)) {
-            log_result("render::begin_frame", result);
-            break;
-        }
+        gui::render::begin_frame(render_context);
 
         gui::render::RenderPassDesc pass_desc = {};
         pass_desc.color.window = render_window;
@@ -537,12 +522,8 @@ auto main() -> int {
 
         uint64_t const elapsed_ticks = GetTickCount64() - start_ticks;
         float const time_seconds = static_cast<float>(elapsed_ticks) * 0.001f;
-        bool const rendered = render_triangle(render_context, pipeline, time_seconds);
+        render_triangle(render_context, pipeline, time_seconds);
         gui::render::end_render_pass(render_context);
-        if (!rendered) {
-            fmt::eprintf("failed to render triangle\n");
-            break;
-        }
 
         result = gui::render::present_window(render_window);
         if (result == gui::render::Result::OCCLUDED) {
