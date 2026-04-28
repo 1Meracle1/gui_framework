@@ -1814,11 +1814,6 @@ namespace gui::render::d3d12 {
         ASSERT(context_impl != nullptr);
         ASSERT(context_impl->render_pass_active);
 
-        ::gui::render::d3d12::bind_pipeline(context, desc.pipeline);
-        for (size_t index = 0u; index < desc.bind_group_count; ++index) {
-            ::gui::render::d3d12::bind_group(context, desc.bind_groups[index]);
-        }
-
         for (size_t index = 0u; index < desc.vertex_buffer_count; ++index) {
             VertexBufferBinding const& binding = desc.vertex_buffers[index];
             D3D12Buffer* buffer = buffer_from_handle(binding.buffer);

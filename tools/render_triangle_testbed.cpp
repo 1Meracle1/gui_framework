@@ -264,17 +264,13 @@ namespace {
         vertex_buffer.buffer = pipeline.vertex_buffer;
         vertex_buffer.byte_stride = static_cast<uint32_t>(sizeof(Vertex));
 
-        gui::render::BindGroup bind_groups[] = {
-            pipeline.transform_bind_group,
-            pipeline.tint_bind_group,
-        };
+        gui::render::bind_pipeline(context, pipeline.pipeline);
+        gui::render::bind_group(context, pipeline.transform_bind_group);
+        gui::render::bind_group(context, pipeline.tint_bind_group);
 
         gui::render::DrawDesc draw_desc = {};
-        draw_desc.pipeline = pipeline.pipeline;
         draw_desc.vertex_buffers = &vertex_buffer;
         draw_desc.vertex_buffer_count = 1u;
-        draw_desc.bind_groups = bind_groups;
-        draw_desc.bind_group_count = sizeof(bind_groups) / sizeof(bind_groups[0u]);
         draw_desc.vertex_count = 3u;
 
         gui::render::draw(context, draw_desc);

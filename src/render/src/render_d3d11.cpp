@@ -1046,11 +1046,6 @@ namespace gui::render::d3d11 {
         ASSERT(context_impl != nullptr);
         ASSERT(context_impl->render_pass_active);
 
-        ::gui::render::d3d11::bind_pipeline(context, desc.pipeline);
-        for (size_t index = 0u; index < desc.bind_group_count; ++index) {
-            ::gui::render::d3d11::bind_group(context, desc.bind_groups[index]);
-        }
-
         ID3D11DeviceContext* const device_context = context_impl->device_context;
         for (size_t index = 0u; index < desc.vertex_buffer_count; ++index) {
             VertexBufferBinding const& binding = desc.vertex_buffers[index];

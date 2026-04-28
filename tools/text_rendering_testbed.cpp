@@ -274,6 +274,7 @@ namespace {
         vertex_buffer.buffer = upload.buffer;
         vertex_buffer.byte_stride = static_cast<uint32_t>(sizeof(TextVertex));
         vertex_buffer.byte_offset = static_cast<uint32_t>(upload.byte_offset);
+        gui::render::bind_pipeline(render_context, pipeline.pipeline);
 
         for (size_t index = 0u; index < command_count; ++index) {
             gui::draw::TextCommand const* const command =
@@ -309,12 +310,11 @@ namespace {
                 *temp.arena(), render_context, bind_group_desc, bind_group);
             ASSERT(gui::render::result_succeeded(bind_result));
             if (gui::render::result_succeeded(bind_result)) {
+                gui::render::bind_group(render_context, bind_group);
+
                 gui::render::DrawDesc draw_desc = {};
-                draw_desc.pipeline = pipeline.pipeline;
                 draw_desc.vertex_buffers = &vertex_buffer;
                 draw_desc.vertex_buffer_count = 1u;
-                draw_desc.bind_groups = &bind_group;
-                draw_desc.bind_group_count = 1u;
                 draw_desc.vertex_count = 6u;
                 draw_desc.first_vertex = static_cast<uint32_t>(index * 6u);
 

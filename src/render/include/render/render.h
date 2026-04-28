@@ -225,11 +225,8 @@ namespace gui::render {
     };
 
     struct DrawDesc {
-        Pipeline pipeline = {};
         VertexBufferBinding const* vertex_buffers = nullptr;
         size_t vertex_buffer_count = 0u;
-        BindGroup const* bind_groups = nullptr;
-        size_t bind_group_count = 0u;
         uint32_t vertex_count = 0u;
         uint32_t first_vertex = 0u;
     };

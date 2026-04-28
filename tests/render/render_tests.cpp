@@ -163,11 +163,8 @@ namespace {
     TEST_CASE(render_draw_defaults_describe_empty_draw) {
         gui::render::DrawDesc const desc = {};
 
-        TEST_EXPECT(context, !gui::render::pipeline_valid(desc.pipeline));
         TEST_EXPECT(context, desc.vertex_buffers == nullptr);
         TEST_EXPECT(context, desc.vertex_buffer_count == 0u);
-        TEST_EXPECT(context, desc.bind_groups == nullptr);
-        TEST_EXPECT(context, desc.bind_group_count == 0u);
         TEST_EXPECT(context, desc.vertex_count == 0u);
         TEST_EXPECT(context, desc.first_vertex == 0u);
     }

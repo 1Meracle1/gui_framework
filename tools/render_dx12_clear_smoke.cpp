@@ -498,19 +498,15 @@ namespace {
         vertex_buffer.buffer = smoke.vertex_buffer;
         vertex_buffer.byte_stride = static_cast<uint32_t>(sizeof(Vertex));
 
-        gui::render::BindGroup bind_groups[] = {
-            smoke.vertex_offset_bind_group,
-            smoke.vertex_scale_bind_group,
-            smoke.pixel_bind_group,
-            smoke.texture_bind_group,
-        };
+        gui::render::bind_pipeline(context, smoke.pipeline);
+        gui::render::bind_group(context, smoke.vertex_offset_bind_group);
+        gui::render::bind_group(context, smoke.vertex_scale_bind_group);
+        gui::render::bind_group(context, smoke.pixel_bind_group);
+        gui::render::bind_group(context, smoke.texture_bind_group);
 
         gui::render::DrawDesc draw_desc = {};
-        draw_desc.pipeline = smoke.pipeline;
         draw_desc.vertex_buffers = &vertex_buffer;
         draw_desc.vertex_buffer_count = 1u;
-        draw_desc.bind_groups = bind_groups;
-        draw_desc.bind_group_count = sizeof(bind_groups) / sizeof(bind_groups[0u]);
         draw_desc.vertex_count = 3u;
 
         gui::render::draw(context, draw_desc);
