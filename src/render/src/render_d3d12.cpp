@@ -405,7 +405,7 @@ namespace gui::render::d3d12 {
             }
 
             uint32_t const index =
-                allocate_frame_shader_descriptors(context, DESCRIPTOR_SLOT_COUNT);
+                allocate_frame_shader_descriptors(context, descriptor_count(mask));
             return shader_gpu_handle(context, index);
         }
 

@@ -228,7 +228,7 @@ namespace {
     [[nodiscard]] auto bind_transient_texture_sampler_groups(Arena& arena,
                                                              gui::render::Context context,
                                                              DrawSmoke const& smoke) -> bool {
-        constexpr size_t TRANSIENT_BIND_GROUP_COUNT = 20u;
+        constexpr size_t TRANSIENT_BIND_GROUP_COUNT = 129u;
 
         gui::render::BindGroupTextureBinding texture_binding = {};
         texture_binding.stage = gui::render::ShaderStage::PIXEL;
