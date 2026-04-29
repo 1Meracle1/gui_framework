@@ -1,4 +1,5 @@
 target_sources(gui_framework PRIVATE
+    src/gui.cpp
     src/version.cpp
 )
 
@@ -15,7 +16,7 @@ target_include_directories(gui
         "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
 )
 
-target_link_libraries(gui INTERFACE gui_framework base::base)
+target_link_libraries(gui INTERFACE gui_framework base::base draw::draw)
 target_compile_definitions(gui_framework
     PRIVATE
         "GUI_VERSION_MAJOR=${PROJECT_VERSION_MAJOR}"
