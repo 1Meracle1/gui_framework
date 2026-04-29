@@ -49,7 +49,6 @@ namespace gui {
     struct Size {
         SizeKind kind = SizeKind::AUTO;
         float value = 0.0f;
-        float strictness = 1.0f;
     };
 
     enum class Align : uint8_t {
@@ -88,7 +87,29 @@ namespace gui {
         Color color = {};
     };
 
+    enum class StyleRole : uint8_t {
+        AUTO,
+        NONE,
+        CANVAS,
+        PANEL,
+        TEXT,
+        CONTROL,
+        ACCENT,
+        DANGER,
+        COUNT,
+    };
+
+    using StyleStateFlags = uint16_t;
+    inline constexpr StyleStateFlags STYLE_STATE_NONE = 0u;
+    inline constexpr StyleStateFlags STYLE_STATE_HOVERED = 1u << 0u;
+    inline constexpr StyleStateFlags STYLE_STATE_ACTIVE = 1u << 1u;
+    inline constexpr StyleStateFlags STYLE_STATE_FOCUSED = 1u << 2u;
+    inline constexpr StyleStateFlags STYLE_STATE_DISABLED = 1u << 3u;
+    inline constexpr StyleStateFlags STYLE_STATE_READ_ONLY = 1u << 4u;
+    inline constexpr StyleStateFlags STYLE_STATE_CHECKED = 1u << 5u;
+
     struct StyleDesc {
+        StyleRole role = StyleRole::AUTO;
         Color background = {};
         Color foreground = {};
         Color border = {};
@@ -103,6 +124,7 @@ namespace gui {
     using BoxFlags = uint32_t;
     inline constexpr BoxFlags BOX_FLAG_NONE = 0u;
     inline constexpr BoxFlags BOX_FLAG_DISABLED = 1u << 0u;
+    inline constexpr BoxFlags BOX_FLAG_READ_ONLY = 1u << 1u;
 
     struct BoxDesc {
         LayoutDesc layout = {};
@@ -111,22 +133,55 @@ namespace gui {
         StrRef debug_name = {};
     };
 
+    using KeyMods = uint8_t;
+    inline constexpr KeyMods KEY_MOD_NONE = 0u;
+    inline constexpr KeyMods KEY_MOD_SHIFT = 1u << 0u;
+    inline constexpr KeyMods KEY_MOD_CTRL = 1u << 1u;
+    inline constexpr KeyMods KEY_MOD_ALT = 1u << 2u;
+    inline constexpr KeyMods KEY_MOD_SUPER = 1u << 3u;
+
+    enum class Key : uint16_t {
+        UNKNOWN,
+        TAB,
+        ENTER,
+        ESCAPE,
+        SPACE,
+        LEFT,
+        RIGHT,
+        UP,
+        DOWN,
+        HOME,
+        END,
+        BACKSPACE,
+        DELETE_KEY,
+    };
+
+    enum class KeyEventKind : uint8_t {
+        PRESS,
+        RELEASE,
+        REPEAT,
+        TEXT,
+    };
+
+    struct KeyEvent {
+        Key key = Key::UNKNOWN;
+        KeyEventKind kind = KeyEventKind::PRESS;
+        KeyMods mods = KEY_MOD_NONE;
+        uint32_t codepoint = 0u;
+    };
+
     struct InputState {
         Vec2 mouse_pos = {};
         bool mouse_down[3] = {};
         float scroll_delta_y = 0.0f;
+        KeyEvent const* key_events = nullptr;
+        size_t key_event_count = 0u;
     };
 
     struct FrameDesc {
         Vec2 size = {};
         float delta_time = 0.0f;
         InputState input = {};
-    };
-
-    struct ContextDesc {
-        size_t initial_box_capacity = 256u;
-        size_t frame_arena_reserve_size = 4u * 1024u * 1024u;
-        size_t frame_arena_commit_size = DEFAULT_ARENA_COMMIT_SIZE;
     };
 
     struct Context {
@@ -136,20 +191,42 @@ namespace gui {
     struct Signal {
         bool hovered = false;
         bool active = false;
+        bool focused = false;
+        bool focus_gained = false;
+        bool focus_lost = false;
         bool pressed_left = false;
         bool released_left = false;
         bool clicked_left = false;
+        bool activated = false;
+        bool changed = false;
+    };
+
+    struct SliderFloatDesc {
+        BoxDesc box = {};
+        float min = 0.0f;
+        float max = 1.0f;
+        float step = 0.0f;
+    };
+
+    struct ScrollState {
+        float y = 0.0f;
+        float max_y = 0.0f;
+        float viewport_height = 0.0f;
+        float content_height = 0.0f;
+        bool valid = false;
+    };
+
+    enum class ScrollReveal : uint8_t {
+        KEEP_VISIBLE,
+        START,
+        CENTER,
+        END,
     };
 
     struct ListFixedDesc {
         size_t item_count = 0u;
         float item_height = 0.0f;
         BoxDesc box = {};
-    };
-
-    struct ListRange {
-        size_t first = 0u;
-        size_t end = 0u;
     };
 
     enum class BoxKind : uint8_t {
@@ -159,14 +236,72 @@ namespace gui {
         OVERLAY,
         LABEL,
         BUTTON,
+        CHECKBOX,
+        TOGGLE,
+        SLIDER_FLOAT,
         SPACER,
         SCROLL_PANEL,
         LIST,
+        COUNT,
+    };
+
+    enum class BoxIdSource : uint8_t {
+        STRUCTURAL,
+        TEXT,
+        EXPLICIT,
+    };
+
+    struct ThemeStyle {
+        StyleDesc normal = {};
+        StyleDesc checked = {};
+        StyleDesc focused = {};
+        StyleDesc hovered = {};
+        StyleDesc active = {};
+        StyleDesc read_only = {};
+        StyleDesc disabled = {};
+    };
+
+    struct ThemeKindStyle {
+        StyleRole role = StyleRole::NONE;
+        ThemeStyle style = {};
+    };
+
+    struct ThemeTokens {
+        Color canvas = {};
+        Color panel = {};
+        Color control = {};
+        Color control_hovered = {};
+        Color control_active = {};
+        Color accent = {};
+        Color danger = {};
+        Color text = {};
+        Color text_muted = {};
+        Color border = {};
+        Color disabled_text = {};
+        float radius_sm = 3.0f;
+        float radius_md = 4.0f;
+        float border_thickness = 1.0f;
+    };
+
+    struct ThemeDesc {
+        ThemeTokens tokens = {};
+        StyleDesc root = {};
+        ThemeStyle roles[static_cast<size_t>(StyleRole::COUNT)] = {};
+        ThemeKindStyle kinds[static_cast<size_t>(BoxKind::COUNT)] = {};
+    };
+
+    struct ContextDesc {
+        size_t initial_box_capacity = 256u;
+        size_t frame_arena_reserve_size = 4u * 1024u * 1024u;
+        size_t frame_arena_commit_size = DEFAULT_ARENA_COMMIT_SIZE;
+        ThemeDesc const* theme = nullptr;
     };
 
     struct BoxInfo {
         Id id = {};
         Id parent_id = {};
+        Id authored_id = {};
+        BoxIdSource id_source = BoxIdSource::STRUCTURAL;
         BoxKind kind = BoxKind::ROOT;
         StrRef text = {};
         StrRef debug_name = {};
@@ -176,6 +311,7 @@ namespace gui {
         LayoutDesc layout = {};
         StyleDesc style = {};
         bool duplicate_id = false;
+        bool stable_id = false;
     };
 
     [[nodiscard]] constexpr auto unset_color() -> Color {
@@ -202,19 +338,19 @@ namespace gui {
     }
 
     [[nodiscard]] constexpr auto px(float value) -> Size {
-        return {SizeKind::PIXELS, value, 1.0f};
+        return {SizeKind::PIXELS, value};
     }
 
     [[nodiscard]] constexpr auto fill(float weight = 1.0f) -> Size {
-        return {SizeKind::FILL, weight, 0.0f};
+        return {SizeKind::FILL, weight};
     }
 
     [[nodiscard]] constexpr auto text() -> Size {
-        return {SizeKind::TEXT, 0.0f, 1.0f};
+        return {SizeKind::TEXT, 0.0f};
     }
 
     [[nodiscard]] constexpr auto children() -> Size {
-        return {SizeKind::CHILDREN, 0.0f, 1.0f};
+        return {SizeKind::CHILDREN, 0.0f};
     }
 
     [[nodiscard]] constexpr auto insets(float all) -> Insets {
@@ -233,9 +369,13 @@ namespace gui {
     [[nodiscard]] auto id(StrRef value) -> Id;
     [[nodiscard]] auto id(uint64_t value) -> Id;
     [[nodiscard]] auto context_valid(Context context) -> bool;
+    [[nodiscard]] auto default_theme() -> ThemeDesc;
+    [[nodiscard]] auto theme_role(ThemeDesc& theme, StyleRole role) -> ThemeStyle&;
+    [[nodiscard]] auto theme_kind(ThemeDesc& theme, BoxKind kind) -> ThemeKindStyle&;
 
     auto create_context(Arena& arena, ContextDesc const& desc, Context& out_context) -> void;
     auto destroy_context(Context& context) -> void;
+    auto set_theme(Context context, ThemeDesc const& theme) -> void;
 
     class Frame;
 
@@ -254,9 +394,11 @@ namespace gui {
         auto operator=(Scope const&) -> Scope& = delete;
 
         [[nodiscard]] explicit auto operator bool() const -> bool;
+        [[nodiscard]] auto signal() const -> Signal;
 
       private:
         friend class Frame;
+        friend class ListScope;
 
         Scope(Frame* frame, size_t box_index);
 
@@ -276,7 +418,7 @@ namespace gui {
         auto operator=(ListScope&&) noexcept -> ListScope& = default;
         auto operator=(ListScope const&) -> ListScope& = delete;
 
-        [[nodiscard]] auto range() const -> ListRange;
+        [[nodiscard]] auto row(Id id, BoxDesc const& desc = {}) -> Scope;
 
         size_t first = 0u;
         size_t end = 0u;
@@ -284,9 +426,10 @@ namespace gui {
       private:
         friend class Frame;
 
-        ListScope(Scope&& scope, ListRange range);
+        ListScope(Scope&& scope, size_t first_index, size_t end_index, float item_height);
 
         Scope m_scope = {};
+        float m_item_height = 0.0f;
     };
 
     class Frame final {
@@ -307,10 +450,31 @@ namespace gui {
         [[nodiscard]] auto label(Id id, StrRef text, BoxDesc const& desc = {}) -> Signal;
         [[nodiscard]] auto button(StrRef text, BoxDesc const& desc = {}) -> Signal;
         [[nodiscard]] auto button(Id id, StrRef text, BoxDesc const& desc = {}) -> Signal;
+        [[nodiscard]] auto checkbox(StrRef text, bool* value, BoxDesc const& desc = {}) -> Signal;
+        [[nodiscard]] auto checkbox(Id id, StrRef text, bool* value, BoxDesc const& desc = {})
+            -> Signal;
+        [[nodiscard]] auto toggle(StrRef text, bool* value, BoxDesc const& desc = {}) -> Signal;
+        [[nodiscard]] auto toggle(Id id, StrRef text, bool* value, BoxDesc const& desc = {})
+            -> Signal;
+        [[nodiscard]] auto slider_float(StrRef text, float* value, SliderFloatDesc const& desc = {})
+            -> Signal;
+        [[nodiscard]] auto
+        slider_float(Id id, StrRef text, float* value, SliderFloatDesc const& desc = {}) -> Signal;
         [[nodiscard]] auto list_fixed(Id id, ListFixedDesc const& desc) -> ListScope;
+
+        [[nodiscard]] auto scroll_state(Id id) const -> ScrollState;
+        auto set_scroll_y(Id id, float y) -> void;
+        auto scroll_to_end(Id id) -> void;
+        auto scroll_to_index(Id id, size_t index, ScrollReveal reveal = ScrollReveal::KEEP_VISIBLE)
+            -> void;
+        auto request_focus(Id id) -> void;
+        auto clear_focus() -> void;
 
         [[nodiscard]] auto box_info_count() const -> size_t;
         [[nodiscard]] auto box_info(size_t index) const -> BoxInfo const*;
+        [[nodiscard]] auto find_box(Id id) const -> BoxInfo const*;
+        [[nodiscard]] auto find_box(Id id, BoxKind kind) const -> BoxInfo const*;
+        [[nodiscard]] auto hit_test(Vec2 point) const -> BoxInfo const*;
 
       private:
         friend class Scope;
