@@ -72,6 +72,12 @@ namespace gui {
             StateEntry* scroll_state = nullptr;
         };
 
+        struct TextLine {
+            StrRef text = {};
+            size_t start = 0u;
+            size_t end = 0u;
+        };
+
         struct ContextImpl {
             Arena frame_arena = {};
             BoxNode* boxes = nullptr;
@@ -283,11 +289,6 @@ namespace gui {
                        : static_cast<float>(text.size()) * font_size * 0.5f;
         }
 
-        [[nodiscard]] auto text_size(BoxNode const& box) -> Vec2 {
-            float const font_size = text_font_size(box);
-            return {text_advance(box, box.text), font_size * 1.25f};
-        }
-
         [[nodiscard]] auto rendered_text_height(font_cache::Font font, float font_size) -> float {
             font_provider::Metrics metrics = {};
             font_cache::metrics_from_font(font, font_size, metrics);
@@ -300,6 +301,43 @@ namespace gui {
             return font_cache::font_valid(font)
                        ? rendered_text_height(font, font_size)
                        : font_size * 1.25f;
+        }
+
+        [[nodiscard]] auto next_text_line(StrRef text, size_t& offset, TextLine& out_line)
+            -> bool {
+            if (text.empty() || offset >= text.size()) {
+                return false;
+            }
+
+            size_t const start = offset;
+            size_t const newline = text.find('\n', start);
+            size_t end = newline == StrRef::NPOS ? text.size() : newline;
+            if (end > start && text[end - 1u] == '\r') {
+                end -= 1u;
+            }
+
+            out_line = {text.substr(start, end - start), start, end};
+            offset = newline == StrRef::NPOS ? text.size() : newline + 1u;
+            return true;
+        }
+
+        [[nodiscard]] auto text_size(BoxNode const& box) -> Vec2 {
+            if (box.text.empty()) {
+                float const font_size = text_font_size(box);
+                return {0.0f, font_size * 1.25f};
+            }
+
+            float const line_height = text_line_height(box);
+            Vec2 size = {};
+            size_t line_count = 0u;
+            size_t offset = 0u;
+            TextLine line = {};
+            while (next_text_line(box.text, offset, line)) {
+                size.x = std::max(size.x, text_advance(box, line.text));
+                line_count += 1u;
+            }
+            size.y = line_height * static_cast<float>(line_count);
+            return size;
         }
 
         [[nodiscard]] auto text_x_offset(BoxNode const& box, float content_width, float text_width)
@@ -321,12 +359,11 @@ namespace gui {
             float const content_width =
                 std::max(0.0f, rect_width(rect) - inset_width(box.layout.padding));
             float const x_offset = text_x_offset(box, content_width, text_dim.x);
-            float const text_height = text_line_height(box);
             return {
                 rect.min.x + box.layout.padding.left + x_offset,
                 rect.min.y + box.layout.padding.top +
                     std::max(0.0f,
-                             rect_height(rect) - inset_height(box.layout.padding) - text_height) *
+                             rect_height(rect) - inset_height(box.layout.padding) - text_dim.y) *
                         0.5f,
             };
         }
@@ -1241,32 +1278,58 @@ namespace gui {
             );
         }
 
-        [[nodiscard]] auto text_index_from_mouse(BoxNode const& box, float mouse_x) -> size_t {
-            if (box.text.empty()) {
-                return 0u;
+        [[nodiscard]] auto text_line_index_from_x(BoxNode const& box,
+                                                  TextLine const& line,
+                                                  float text_x) -> size_t {
+            if (line.text.empty()) {
+                return line.start;
             }
-
-            float const text_x =
-                mouse_x - text_position(box, box.state != nullptr ? box.state->rect : box.rect).x;
             if (text_x <= 0.0f) {
-                return 0u;
+                return line.start;
             }
 
             size_t previous = 0u;
             float previous_x = 0.0f;
-            for (size_t offset = next_text_offset(box.text, 0u); offset <= box.text.size();
-                 offset = next_text_offset(box.text, offset)) {
-                float const advance = text_advance(box, box.text.prefix(offset));
+            for (size_t offset = next_text_offset(line.text, 0u); offset <= line.text.size();
+                 offset = next_text_offset(line.text, offset)) {
+                float const advance = text_advance(box, line.text.prefix(offset));
                 if (text_x < (previous_x + advance) * 0.5f) {
-                    return previous;
+                    return line.start + previous;
                 }
-                if (offset == box.text.size()) {
+                if (offset == line.text.size()) {
                     break;
                 }
                 previous = offset;
                 previous_x = advance;
             }
-            return box.text.size();
+            return line.end;
+        }
+
+        [[nodiscard]] auto text_index_from_mouse(BoxNode const& box, Vec2 mouse_pos) -> size_t {
+            if (box.text.empty()) {
+                return 0u;
+            }
+
+            Vec2 const pos = text_position(box, box.state != nullptr ? box.state->rect : box.rect);
+            float const line_height = text_line_height(box);
+            size_t const target_line =
+                mouse_pos.y <= pos.y
+                    ? 0u
+                    : static_cast<size_t>(std::floor((mouse_pos.y - pos.y) / line_height));
+            float const text_x = mouse_pos.x - pos.x;
+
+            size_t line_index = 0u;
+            size_t offset = 0u;
+            TextLine line = {};
+            TextLine last_line = {};
+            while (next_text_line(box.text, offset, line)) {
+                if (line_index == target_line) {
+                    return text_line_index_from_x(box, line, text_x);
+                }
+                last_line = line;
+                line_index += 1u;
+            }
+            return text_line_index_from_x(box, last_line, text_x);
         }
 
         auto apply_selectable_label(ContextImpl* impl, BoxNode& box, TextSelection* selection)
@@ -1280,7 +1343,7 @@ namespace gui {
 
             if (box.state != nullptr) {
                 size_t const cursor =
-                    text_index_from_mouse(box, impl->frame_desc.input.mouse_pos.x);
+                    text_index_from_mouse(box, impl->frame_desc.input.mouse_pos);
                 bool const triple_clicked =
                     signal.hovered && impl->frame_desc.input.mouse_triple_clicked[0u];
                 bool const double_clicked =
@@ -1543,21 +1606,36 @@ namespace gui {
             }
 
             Vec2 const pos = text_position(box);
-            float const selection_start = text_advance(box, box.text.prefix(selection.start));
-            float const selection_end = text_advance(box, box.text.prefix(selection.end));
-            Rect const selection_rect = {
-                {pos.x + selection_start, pos.y},
-                {pos.x + selection_end, pos.y + text_line_height(box)},
-            };
             Color color = impl->theme.tokens.accent;
             color.a *= 0.45f;
-            draw_widget_rect(draw_context,
-                             selection_rect,
-                             color,
-                             {},
-                             0.0f,
-                             0.0f,
-                             box.resolved_style.opacity);
+            float const line_height = text_line_height(box);
+            size_t line_index = 0u;
+            size_t offset = 0u;
+            TextLine line = {};
+            while (next_text_line(box.text, offset, line)) {
+                size_t const start = std::max(selection.start, line.start);
+                size_t const end = std::min(selection.end, line.end);
+                if (start < end) {
+                    float const selection_start =
+                        text_advance(box, line.text.prefix(start - line.start));
+                    float const selection_end =
+                        text_advance(box, line.text.prefix(end - line.start));
+                    Rect const selection_rect = {
+                        {pos.x + selection_start,
+                         pos.y + line_height * static_cast<float>(line_index)},
+                        {pos.x + selection_end,
+                         pos.y + line_height * static_cast<float>(line_index + 1u)},
+                    };
+                    draw_widget_rect(draw_context,
+                                     selection_rect,
+                                     color,
+                                     {},
+                                     0.0f,
+                                     0.0f,
+                                     box.resolved_style.opacity);
+                }
+                line_index += 1u;
+            }
         }
 
         [[nodiscard]] auto hit_passes_clips(ContextImpl const* impl, size_t index, Vec2 point)
@@ -1616,8 +1694,22 @@ namespace gui {
                     text_style.color = to_draw_color(
                         color_mul_alpha(box.resolved_style.foreground, box.resolved_style.opacity));
                     Vec2 const text_pos = text_position(box);
-                    draw::draw_text(
-                        draw_context, {text_pos.x, text_pos.y}, text_style, box.text, nullptr);
+                    float const line_height = text_line_height(box);
+                    size_t line_index = 0u;
+                    size_t offset = 0u;
+                    TextLine line = {};
+                    while (next_text_line(box.text, offset, line)) {
+                        if (!line.text.empty()) {
+                            draw::draw_text(draw_context,
+                                            {text_pos.x,
+                                             text_pos.y +
+                                                 line_height * static_cast<float>(line_index)},
+                                            text_style,
+                                            line.text,
+                                            nullptr);
+                        }
+                        line_index += 1u;
+                    }
                 }
             }
 

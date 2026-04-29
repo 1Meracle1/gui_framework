@@ -269,6 +269,26 @@ namespace {
         gui::destroy_context(gui_context);
     }
 
+    TEST_CASE(multiline_label_measures_lines) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {100.0f, 80.0f}});
+        ui.label("AB\nCDE", {.layout = {.width = gui::text(), .height = gui::text()}});
+        gui::end_frame(ui);
+
+        gui::BoxInfo const* label = ui.box_info(1u);
+        TEST_EXPECT(context, label != nullptr && label->kind == gui::BoxKind::LABEL);
+        if (label != nullptr) {
+            expect_rect(context, label->rect, {{0.0f, 0.0f}, {24.0f, 40.0f}});
+        }
+
+        gui::destroy_context(gui_context);
+    }
+
     TEST_CASE(row_layout_aligns_child_run_when_no_fill_consumes_space) {
         Arena arena = {};
         arena.init();
@@ -1243,6 +1263,84 @@ namespace {
             TEST_EXPECT(context, command->rect.min.y == 0.0f);
             TEST_EXPECT(context, command->rect.max.y == 20.0f);
             TEST_EXPECT(context, command->style.fill_color.a > 0.0f);
+        }
+
+        gui::draw::destroy_context(draw_context);
+        gui::destroy_context(gui_context);
+    }
+
+    TEST_CASE(selectable_label_hit_tests_multiline_text) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::TextSelection selection = {};
+        gui::Id const label_id = gui::id("copyable");
+        gui::BoxDesc const box = {
+            .layout = {.width = gui::px(100.0f), .height = gui::px(40.0f)}};
+
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {120.0f, 60.0f}});
+        ui.selectable_label(label_id, "AB\nCDE", &selection, box);
+        gui::end_frame(ui);
+
+        gui::InputState input = {};
+        input.mouse_pos = {13.0f, 25.0f};
+        input.mouse_down[0u] = true;
+        ui = gui::begin_frame(gui_context, {.size = {120.0f, 60.0f}, .input = input});
+        ui.selectable_label(label_id, "AB\nCDE", &selection, box);
+        gui::end_frame(ui);
+
+        input.mouse_down[0u] = false;
+        ui = gui::begin_frame(gui_context, {.size = {120.0f, 60.0f}, .input = input});
+        gui::Signal const signal = ui.selectable_label(label_id, "AB\nCDE", &selection, box);
+        gui::end_frame(ui);
+
+        TEST_EXPECT(context, signal.released_left);
+        TEST_EXPECT(context, selection.start == 5u);
+        TEST_EXPECT(context, selection.end == 5u);
+
+        gui::destroy_context(gui_context);
+    }
+
+    TEST_CASE(selectable_label_renders_multiline_selection_highlight_without_font) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::draw::Context draw_context = {};
+        gui::draw::create_context(arena, {}, draw_context);
+
+        gui::TextSelection selection = {1u, 5u};
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {120.0f, 60.0f}});
+        ui.selectable_label(gui::id("copyable"),
+                            "ABC\nDE",
+                            &selection,
+                            {.layout = {.width = gui::px(100.0f), .height = gui::px(40.0f)}});
+        gui::end_frame(ui);
+
+        gui::draw::begin_frame(draw_context);
+        gui::render_frame(ui, draw_context);
+
+        TEST_EXPECT(context, gui::draw::styled_rect_command_count(draw_context) == 2u);
+        gui::draw::StyledRectCommand const* first =
+            gui::draw::styled_rect_command(draw_context, 0u);
+        gui::draw::StyledRectCommand const* second =
+            gui::draw::styled_rect_command(draw_context, 1u);
+        TEST_EXPECT(context, first != nullptr);
+        TEST_EXPECT(context, second != nullptr);
+        if (first != nullptr && second != nullptr) {
+            TEST_EXPECT(context, first->rect.min.x == 8.0f);
+            TEST_EXPECT(context, first->rect.max.x == 24.0f);
+            TEST_EXPECT(context, first->rect.min.y == 0.0f);
+            TEST_EXPECT(context, first->rect.max.y == 20.0f);
+            TEST_EXPECT(context, second->rect.min.x == 0.0f);
+            TEST_EXPECT(context, second->rect.max.x == 8.0f);
+            TEST_EXPECT(context, second->rect.min.y == 20.0f);
+            TEST_EXPECT(context, second->rect.max.y == 40.0f);
         }
 
         gui::draw::destroy_context(draw_context);

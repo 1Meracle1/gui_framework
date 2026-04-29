@@ -38,6 +38,7 @@ namespace {
         float scale = 1.25f;
         size_t selected_index = 12u;
         gui::TextSelection title_selection = {};
+        gui::TextSelection body_selection = {};
         gui::Signal header_signal = {};
         gui::Signal selected_row_signal = {};
     };
@@ -45,6 +46,14 @@ namespace {
     auto row_id(size_t index) -> gui::Id {
         return gui::id(0xA1100000ull + static_cast<uint64_t>(index));
     }
+
+    constexpr char BODY_TEXT[] =
+        "Lorem ipsum dolor sit amet, consectetur adipiscing elit.\n"
+        "Integer posuere erat a ante venenatis dapibus posuere velit aliquet.\n\n"
+        "Donec ullamcorper nulla non metus auctor fringilla.\n"
+        "Cras mattis consectetur purus sit amet fermentum.\n\n"
+        "Maecenas sed diam eget risus varius blandit sit amet non magna.\n"
+        "Vestibulum id ligula porta felis euismod semper.";
 
     auto draw_scroll_lines(gui::Frame& ui, StrRef prefix, size_t count) -> void {
         for (size_t index = 0u; index < count; ++index) {
@@ -58,6 +67,7 @@ namespace {
     auto draw_ui(gui::Frame& ui, TestbedState& state) -> void {
         gui::Id const list_id = gui::id("asset_list");
         gui::Id const notes_id = gui::id("notes_scroll");
+        gui::Id const body_text_id = gui::id("body_text_scroll");
         gui::Id const log_id = gui::id("log_scroll");
 
         ui.scroll_to_index(list_id, state.selected_index, gui::ScrollReveal::CENTER);
@@ -360,6 +370,37 @@ namespace {
                                         .padding = gui::insets(3.0f, 6.0f),
                                     },
                                 .flags = gui::BOX_FLAG_DISABLED,
+                            }
+                        );
+                    }
+
+                    if (auto body_text = ui.scroll_panel(
+                            body_text_id,
+                            {
+                                .layout =
+                                    {
+                                        .width = gui::fill(),
+                                        .height = gui::px(148.0f),
+                                        .padding = gui::insets(8.0f),
+                                        .clip = true,
+                                    },
+                                .style =
+                                    {
+                                        .role = gui::StyleRole::PANEL,
+                                        .background = gui::rgb(30, 34, 40),
+                                        .radius = 4.0f,
+                                    },
+                                .debug_name = "body_text_scroll",
+                            }
+                        )) {
+                        ui.selectable_label(
+                            gui::id("body_text"),
+                            BODY_TEXT,
+                            &state.body_selection,
+                            {
+                                .layout = {.width = gui::fill(), .height = gui::text()},
+                                .style = {.foreground = gui::rgb(210, 218, 230)},
+                                .debug_name = "body_text",
                             }
                         );
                     }

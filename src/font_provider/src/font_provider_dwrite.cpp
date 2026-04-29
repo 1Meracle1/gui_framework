@@ -486,8 +486,10 @@ namespace gui::font_provider::platform {
         impl->font_face->GetMetrics(&font_metrics);
         float const scale = metrics_scale(font_metrics, size);
         float advance = 0.0f;
+        FLOAT* const glyph_advances = arena_alloc<FLOAT>(*temp.arena(), glyph_count);
         for (uint32_t index = 0u; index < glyph_count; ++index) {
-            advance += static_cast<float>(glyph_metrics[index].advanceWidth) * scale;
+            glyph_advances[index] = static_cast<FLOAT>(glyph_metrics[index].advanceWidth) * scale;
+            advance += glyph_advances[index];
         }
 
         uint32_t bitmap_width = 0u;
@@ -518,11 +520,12 @@ namespace gui::font_provider::platform {
         glyph_run.fontEmSize = size * POINTS_TO_DIPS;
         glyph_run.glyphCount = glyph_count;
         glyph_run.glyphIndices = glyph_indices;
+        glyph_run.glyphAdvances = glyph_advances;
 
         RECT bounding_box = {};
         hr = render_target->DrawGlyphRun(1.0f,
                                          baseline_y,
-                                         DWRITE_MEASURING_MODE_NATURAL,
+                                         DWRITE_MEASURING_MODE_GDI_NATURAL,
                                          &glyph_run,
                                          impl->context->rendering_params,
                                          RGB(255, 255, 255),
