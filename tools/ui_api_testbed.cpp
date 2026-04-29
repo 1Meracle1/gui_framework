@@ -37,6 +37,7 @@ namespace {
         bool read_only_value = false;
         float scale = 1.25f;
         size_t selected_index = 12u;
+        gui::TextSelection title_selection = {};
         gui::Signal header_signal = {};
         gui::Signal selected_row_signal = {};
     };
@@ -166,9 +167,9 @@ namespace {
                             .debug_name = "sidebar",
                         }
                     )) {
-
-                    ui.label(
+                    ui.selectable_label(
                         "Virtualized Assets",
+                        &state.title_selection,
                         {.layout = {.width = gui::text(), .height = gui::px(24.0f)}}
                     );
 

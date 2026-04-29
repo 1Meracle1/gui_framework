@@ -196,6 +196,37 @@ namespace gui::font_provider::platform {
             return true;
         }
 
+        [[nodiscard]] auto metrics_scale(DWRITE_FONT_METRICS const& metrics, float size) -> float;
+
+        [[nodiscard]] auto text_advance(FontImpl* impl, float size, StrRef text) -> float {
+            ArenaTemp temp = begin_thread_temp_arena();
+            uint32_t* codepoints = nullptr;
+            uint32_t glyph_count = 0u;
+            ASSERT(utf8_to_codepoints(text, *temp.arena(), codepoints, glyph_count));
+            if (glyph_count == 0u) {
+                return 0.0f;
+            }
+
+            uint16_t* const glyph_indices = arena_alloc<uint16_t>(*temp.arena(), glyph_count);
+            HRESULT hr = impl->font_face->GetGlyphIndices(codepoints, glyph_count, glyph_indices);
+            ASSERT(SUCCEEDED(hr));
+
+            auto* const glyph_metrics =
+                arena_alloc<DWRITE_GLYPH_METRICS>(*temp.arena(), glyph_count);
+            hr = impl->font_face->GetGdiCompatibleGlyphMetrics(
+                size, 1.0f, nullptr, TRUE, glyph_indices, glyph_count, glyph_metrics, FALSE);
+            ASSERT(SUCCEEDED(hr));
+
+            DWRITE_FONT_METRICS font_metrics = {};
+            impl->font_face->GetMetrics(&font_metrics);
+            float const scale = metrics_scale(font_metrics, size);
+            float advance = 0.0f;
+            for (uint32_t index = 0u; index < glyph_count; ++index) {
+                advance += static_cast<float>(glyph_metrics[index].advanceWidth) * scale;
+            }
+            return advance;
+        }
+
         [[nodiscard]] auto create_font_impl(Arena& arena, ContextImpl* context) -> FontImpl* {
             ASSERT(context != nullptr);
 
@@ -417,6 +448,14 @@ namespace gui::font_provider::platform {
         out_metrics.ascent = static_cast<float>(dwrite_metrics.ascent) * scale;
         out_metrics.descent = static_cast<float>(dwrite_metrics.descent) * scale;
         out_metrics.capital_height = static_cast<float>(dwrite_metrics.capHeight) * scale;
+    }
+
+    auto text_advance(Font font, float size, StrRef text) -> float {
+        FontImpl* const impl = font_from_handle(font);
+        ASSERT(impl != nullptr);
+        ASSERT(impl->font_face != nullptr);
+
+        return text_advance(impl, size, text);
     }
 
     auto raster_text(Font font, float size, StrRef text, Arena& arena, RasterResult& out_raster)

@@ -42,6 +42,11 @@ namespace {
         TEST_EXPECT(context, first.rgba_pixels != nullptr);
         TEST_EXPECT(context, first.rgba_pixels == second.rgba_pixels);
         TEST_EXPECT(context, first.advance == second.advance);
+        TEST_EXPECT(context,
+                    gui::font_cache::text_advance(font, 18.0f, "cached text") == first.advance);
+        TEST_EXPECT(context,
+                    gui::font_cache::text_advance(font, 18.0f, "iiii") <
+                        gui::font_cache::text_advance(font, 18.0f, "WWWW"));
 
         gui::font_cache::destroy_cache(cache);
         TEST_EXPECT(context, !gui::font_cache::cache_valid(cache));

@@ -12,6 +12,7 @@ namespace gui::font_provider::platform {
     auto close_font(Font& font) -> void;
 
     auto metrics_from_font(Font font, float size, Metrics& out_metrics) -> void;
+    [[nodiscard]] auto text_advance(Font font, float size, StrRef text) -> float;
     auto raster_text(Font font, float size, StrRef text, Arena& arena, RasterResult& out_raster)
         -> void;
 

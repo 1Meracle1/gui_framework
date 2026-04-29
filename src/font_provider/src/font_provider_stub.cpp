@@ -32,6 +32,13 @@ namespace gui::font_provider::platform {
         out_metrics = {};
     }
 
+    auto text_advance(Font font, float size, StrRef text) -> float {
+        BASE_UNUSED(font);
+        BASE_UNUSED(size);
+        BASE_UNUSED(text);
+        return 0.0f;
+    }
+
     auto raster_text(Font font, float size, StrRef text, Arena& arena, RasterResult& out_raster)
         -> void {
         BASE_UNUSED(font);

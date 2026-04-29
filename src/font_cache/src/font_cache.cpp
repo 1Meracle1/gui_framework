@@ -198,6 +198,13 @@ namespace gui::font_cache {
         font_provider::metrics_from_font(impl->provider_font, size, out_metrics);
     }
 
+    auto text_advance(Font font, float size, StrRef text) -> float {
+        CacheFont* const impl = font_from_handle(font);
+        ASSERT(impl != nullptr);
+
+        return font_provider::text_advance(impl->provider_font, size, text);
+    }
+
     auto text_run(Cache cache, Font font, float size, StrRef text, TextRun& out_run) -> void {
         CacheImpl* const impl = cache_from_handle(cache);
         CacheFont* const font_impl = font_from_handle(font);

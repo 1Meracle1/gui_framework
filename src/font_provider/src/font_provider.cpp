@@ -94,6 +94,13 @@ namespace gui::font_provider {
         platform::metrics_from_font(font, size, out_metrics);
     }
 
+    auto text_advance(Font font, float size, StrRef text) -> float {
+        ASSERT(font_valid(font));
+        ASSERT(size > 0.0f);
+
+        return text.empty() ? 0.0f : platform::text_advance(font, size, text);
+    }
+
     auto raster_text(Font font, float size, StrRef text, Arena& arena, RasterResult& out_raster)
         -> void {
         ASSERT(font_valid(font));

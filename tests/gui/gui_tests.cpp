@@ -1,3 +1,4 @@
+#include <base/config.h>
 #include <gui/gui.h>
 #include <test/test.h>
 
@@ -981,6 +982,180 @@ namespace {
         TEST_EXPECT(context, state.y == 200.0f);
 
         gui::destroy_context(gui_context);
+    }
+
+    TEST_CASE(selectable_label_preserves_selection_until_click_release_or_drag) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::TextSelection selection = {1u, 4u};
+        gui::Id const label_id = gui::id("copyable");
+        gui::BoxDesc const box = {
+            .layout = {.width = gui::px(100.0f), .height = gui::px(20.0f)}};
+
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {120.0f, 40.0f}});
+        ui.selectable_label(label_id, "ABCDE", &selection, box);
+        gui::end_frame(ui);
+
+        gui::InputState input = {};
+        input.mouse_pos = {42.0f, 5.0f};
+        input.mouse_down[0u] = true;
+        ui = gui::begin_frame(gui_context, {.size = {120.0f, 40.0f}, .input = input});
+        gui::Signal signal = ui.selectable_label(label_id, "ABCDE", &selection, box);
+        gui::end_frame(ui);
+
+        TEST_EXPECT(context, signal.hovered);
+        TEST_EXPECT(context, signal.pressed_left);
+        TEST_EXPECT(context, signal.active);
+        TEST_EXPECT(context, !signal.changed);
+        TEST_EXPECT(context, !signal.focused);
+        TEST_EXPECT(context, selection.start == 1u);
+        TEST_EXPECT(context, selection.end == 4u);
+
+        input.mouse_down[0u] = false;
+        ui = gui::begin_frame(gui_context, {.size = {120.0f, 40.0f}, .input = input});
+        signal = ui.selectable_label(label_id, "ABCDE", &selection, box);
+        gui::end_frame(ui);
+
+        TEST_EXPECT(context, signal.released_left);
+        TEST_EXPECT(context, signal.changed);
+        TEST_EXPECT(context, selection.start == 5u);
+        TEST_EXPECT(context, selection.end == 5u);
+
+        input.mouse_pos = {9.0f, 5.0f};
+        input.mouse_down[0u] = true;
+        ui = gui::begin_frame(gui_context, {.size = {120.0f, 40.0f}, .input = input});
+        signal = ui.selectable_label(label_id, "ABCDE", &selection, box);
+        gui::end_frame(ui);
+
+        TEST_EXPECT(context, signal.active);
+        TEST_EXPECT(context, !signal.changed);
+        TEST_EXPECT(context, selection.start == 5u);
+        TEST_EXPECT(context, selection.end == 5u);
+
+        input.mouse_pos = {34.0f, 5.0f};
+        ui = gui::begin_frame(gui_context, {.size = {120.0f, 40.0f}, .input = input});
+        signal = ui.selectable_label(label_id, "ABCDE", &selection, box);
+        gui::end_frame(ui);
+
+        TEST_EXPECT(context, signal.active);
+        TEST_EXPECT(context, signal.changed);
+        TEST_EXPECT(context, selection.start == 1u);
+        TEST_EXPECT(context, selection.end == 4u);
+
+        input.mouse_down[0u] = false;
+        ui = gui::begin_frame(gui_context, {.size = {120.0f, 40.0f}, .input = input});
+        signal = ui.selectable_label(label_id, "ABCDE", &selection, box);
+        gui::end_frame(ui);
+
+        TEST_EXPECT(context, signal.released_left);
+        TEST_EXPECT(context, selection.start == 1u);
+        TEST_EXPECT(context, selection.end == 4u);
+
+        gui::BoxInfo const* label = ui.box_info(1u);
+        TEST_EXPECT(context, label != nullptr && label->kind == gui::BoxKind::SELECTABLE_LABEL);
+
+        gui::destroy_context(gui_context);
+    }
+
+    TEST_CASE(selectable_label_renders_selection_highlight_without_font) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::draw::Context draw_context = {};
+        gui::draw::create_context(arena, {}, draw_context);
+
+        gui::TextSelection selection = {1u, 4u};
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {120.0f, 40.0f}});
+        ui.selectable_label(gui::id("copyable"),
+                            "ABCDE",
+                            &selection,
+                            {.layout = {.width = gui::px(100.0f), .height = gui::px(20.0f)}});
+        gui::end_frame(ui);
+
+        gui::draw::begin_frame(draw_context);
+        gui::render_frame(ui, draw_context);
+
+        TEST_EXPECT(context, gui::draw::styled_rect_command_count(draw_context) == 1u);
+        gui::draw::StyledRectCommand const* command =
+            gui::draw::styled_rect_command(draw_context, 0u);
+        TEST_EXPECT(context, command != nullptr);
+        if (command != nullptr) {
+            TEST_EXPECT(context, command->rect.min.x == 8.0f);
+            TEST_EXPECT(context, command->rect.max.x == 32.0f);
+            TEST_EXPECT(context, command->rect.min.y == 0.0f);
+            TEST_EXPECT(context, command->rect.max.y == 20.0f);
+            TEST_EXPECT(context, command->style.fill_color.a > 0.0f);
+        }
+
+        gui::draw::destroy_context(draw_context);
+        gui::destroy_context(gui_context);
+    }
+
+    TEST_CASE(selectable_label_uses_font_advance_for_hit_testing) {
+        Arena arena = {};
+        arena.init();
+
+        gui::font_provider::Context provider = {};
+        gui::font_provider::Result const provider_result =
+            gui::font_provider::create_context(arena, {}, provider);
+
+#if BASE_PLATFORM_WINDOWS
+        TEST_EXPECT(context, provider_result == gui::font_provider::Result::OK);
+
+        gui::font_cache::Cache cache = {};
+        gui::font_cache::create_cache(arena, provider, {}, cache);
+
+        gui::font_cache::Font font = {};
+        gui::font_cache::open_system_font(cache, {}, font);
+
+        float const narrow_advance = gui::font_cache::text_advance(font, 18.0f, "i");
+        float const wide_advance = gui::font_cache::text_advance(font, 18.0f, "W");
+        TEST_EXPECT(context, narrow_advance < wide_advance);
+
+        gui::ThemeDesc theme = gui::default_theme();
+        theme.root.font = font;
+        theme.root.font_size = 18.0f;
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {.theme = &theme}, gui_context);
+
+        gui::TextSelection selection = {};
+        gui::Id const label_id = gui::id("variable_width");
+        gui::BoxDesc const box = {
+            .layout = {.width = gui::px(200.0f), .height = gui::px(28.0f)}};
+
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {220.0f, 60.0f}});
+        ui.selectable_label(label_id, "iW", &selection, box);
+        gui::end_frame(ui);
+
+        gui::InputState input = {};
+        input.mouse_pos = {narrow_advance + wide_advance * 0.65f, 8.0f};
+        input.mouse_down[0u] = true;
+        ui = gui::begin_frame(gui_context, {.size = {220.0f, 60.0f}, .input = input});
+        ui.selectable_label(label_id, "iW", &selection, box);
+        gui::end_frame(ui);
+
+        input.mouse_down[0u] = false;
+        ui = gui::begin_frame(gui_context, {.size = {220.0f, 60.0f}, .input = input});
+        ui.selectable_label(label_id, "iW", &selection, box);
+        gui::end_frame(ui);
+
+        TEST_EXPECT(context, selection.start == 2u);
+        TEST_EXPECT(context, selection.end == 2u);
+
+        gui::destroy_context(gui_context);
+        gui::font_cache::destroy_cache(cache);
+        gui::font_provider::destroy_context(provider);
+#else
+        TEST_EXPECT(context, provider_result == gui::font_provider::Result::UNSUPPORTED_PLATFORM);
+#endif
     }
 
     TEST_CASE(widget_metadata_and_draw_output_are_published) {

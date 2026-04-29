@@ -67,6 +67,10 @@ namespace {
         gui::font_provider::metrics_from_font(font, 16.0f, metrics);
         TEST_EXPECT(context, metrics.ascent > 0.0f);
         TEST_EXPECT(context, metrics.descent >= 0.0f);
+        TEST_EXPECT(context, gui::font_provider::text_advance(font, 16.0f, "hello") > 0.0f);
+        TEST_EXPECT(context,
+                    gui::font_provider::text_advance(font, 16.0f, "iiii") <
+                        gui::font_provider::text_advance(font, 16.0f, "WWWW"));
 
         Arena arena = {};
         arena.init({4u * 1024u * 1024u, DEFAULT_ARENA_COMMIT_SIZE});

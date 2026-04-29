@@ -201,6 +201,11 @@ namespace gui {
         bool changed = false;
     };
 
+    struct TextSelection {
+        size_t start = 0u;
+        size_t end = 0u;
+    };
+
     struct SliderFloatDesc {
         BoxDesc box = {};
         float min = 0.0f;
@@ -235,6 +240,7 @@ namespace gui {
         COLUMN,
         OVERLAY,
         LABEL,
+        SELECTABLE_LABEL,
         BUTTON,
         CHECKBOX,
         TOGGLE,
@@ -448,6 +454,12 @@ namespace gui {
         auto spacer(float size) -> void;
         auto label(StrRef text, BoxDesc const& desc = {}) -> Signal;
         auto label(Id id, StrRef text, BoxDesc const& desc = {}) -> Signal;
+        auto selectable_label(StrRef text, TextSelection* selection, BoxDesc const& desc = {})
+            -> Signal;
+        auto selectable_label(Id id,
+                              StrRef text,
+                              TextSelection* selection,
+                              BoxDesc const& desc = {}) -> Signal;
         auto button(StrRef text, BoxDesc const& desc = {}) -> Signal;
         auto button(Id id, StrRef text, BoxDesc const& desc = {}) -> Signal;
         auto checkbox(StrRef text, bool* value, BoxDesc const& desc = {}) -> Signal;

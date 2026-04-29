@@ -43,6 +43,7 @@ namespace gui::font_cache {
     auto open_system_font(Cache cache, StrRef family_name, Font& out_font) -> void;
     auto open_font_file(Cache cache, StrRef file_path, Font& out_font) -> void;
     auto metrics_from_font(Font font, float size, font_provider::Metrics& out_metrics) -> void;
+    [[nodiscard]] auto text_advance(Font font, float size, StrRef text) -> float;
 
     auto text_run(Cache cache, Font font, float size, StrRef text, TextRun& out_run) -> void;
 

@@ -24,6 +24,9 @@ namespace gui {
             float scroll_content_height = 0.0f;
             float scroll_request_y = 0.0f;
             size_t scroll_request_index = 0u;
+            size_t text_selection_anchor = 0u;
+            font_cache::Font font = {};
+            float font_size = 0.0f;
             ScrollReveal scroll_request_reveal = ScrollReveal::KEEP_VISIBLE;
             bool scroll_request_set = false;
             bool scroll_request_end = false;
@@ -44,6 +47,7 @@ namespace gui {
             size_t depth = 0u;
             StrRef text = {};
             StrRef debug_name = {};
+            TextSelection text_selection = {};
             LayoutDesc layout = {};
             StyleDesc style = {};
             StyleDesc resolved_style = {};
@@ -242,16 +246,87 @@ namespace gui {
             return rect;
         }
 
+        [[nodiscard]] auto text_font_size(BoxNode const& box) -> float {
+            if (box.resolved_style.font_size > 0.0f) {
+                return box.resolved_style.font_size;
+            }
+            if (box.state != nullptr && box.state->font_size > 0.0f) {
+                return box.state->font_size;
+            }
+            return box.style.font_size > 0.0f ? box.style.font_size : 16.0f;
+        }
+
+        [[nodiscard]] auto text_font(BoxNode const& box) -> font_cache::Font {
+            if (font_cache::font_valid(box.resolved_style.font)) {
+                return box.resolved_style.font;
+            }
+            if (box.state != nullptr && font_cache::font_valid(box.state->font)) {
+                return box.state->font;
+            }
+            return box.style.font;
+        }
+
+        [[nodiscard]] auto text_advance(BoxNode const& box, StrRef text) -> float {
+            if (text.empty()) {
+                return 0.0f;
+            }
+            font_cache::Font const font = text_font(box);
+            float const font_size = text_font_size(box);
+            return font_cache::font_valid(font)
+                       ? font_cache::text_advance(font, font_size, text)
+                       : static_cast<float>(text.size()) * font_size * 0.5f;
+        }
+
         [[nodiscard]] auto text_size(BoxNode const& box) -> Vec2 {
-            float const font_size =
-                box.resolved_style.font_size > 0.0f ? box.resolved_style.font_size : 16.0f;
-            return {static_cast<float>(box.text.size()) * font_size * 0.5f, font_size * 1.25f};
+            float const font_size = text_font_size(box);
+            return {text_advance(box, box.text), font_size * 1.25f};
         }
 
         [[nodiscard]] auto rendered_text_height(font_cache::Font font, float font_size) -> float {
             font_provider::Metrics metrics = {};
             font_cache::metrics_from_font(font, font_size, metrics);
             return std::ceil(metrics.ascent + metrics.descent + 4.0f);
+        }
+
+        [[nodiscard]] auto text_line_height(BoxNode const& box) -> float {
+            float const font_size = text_font_size(box);
+            font_cache::Font const font = text_font(box);
+            return font_cache::font_valid(font)
+                       ? rendered_text_height(font, font_size)
+                       : font_size * 1.25f;
+        }
+
+        [[nodiscard]] auto text_x_offset(BoxNode const& box, float content_width, float text_width)
+            -> float {
+            if (box.kind == BoxKind::BUTTON) {
+                return std::max(0.0f, content_width - text_width) * 0.5f;
+            }
+            if (box.kind == BoxKind::CHECKBOX) {
+                return 24.0f;
+            }
+            if (box.kind == BoxKind::TOGGLE) {
+                return 44.0f;
+            }
+            return 0.0f;
+        }
+
+        [[nodiscard]] auto text_position(BoxNode const& box, Rect rect) -> Vec2 {
+            Vec2 const text_dim = text_size(box);
+            float const content_width =
+                std::max(0.0f, rect_width(rect) - inset_width(box.layout.padding));
+            float const x_offset = text_x_offset(box, content_width, text_dim.x);
+            float const text_height = text_line_height(box);
+            return {
+                rect.min.x + box.layout.padding.left + x_offset,
+                rect.min.y + box.layout.padding.top +
+                    std::max(0.0f,
+                             rect_height(rect) - inset_height(box.layout.padding) - text_height) *
+                        0.5f,
+            };
+        }
+
+        [[nodiscard]] auto text_position(BoxNode const& box) -> Vec2 {
+            return text_position(box, box.rect);
         }
 
         [[nodiscard]] auto copy_frame_str(ContextImpl* impl, StrRef value) -> StrRef {
@@ -1043,6 +1118,8 @@ namespace gui {
                 info.stable_id = box.stable_id && !box.duplicate_id;
                 if (box.state != nullptr) {
                     box.state->rect = box.rect;
+                    box.state->font = box.resolved_style.font;
+                    box.state->font_size = box.resolved_style.font_size;
                     box.state->last_frame = impl->frame_index;
                 }
             }
@@ -1053,6 +1130,101 @@ namespace gui {
             signal.activated =
                 signal.clicked_left || (signal.focused && (key_pressed(impl, Key::ENTER, false) ||
                                                            key_pressed(impl, Key::SPACE, false)));
+            box.signal = signal;
+            return signal;
+        }
+
+        [[nodiscard]] auto clamp_text_selection(TextSelection selection, size_t text_size)
+            -> TextSelection {
+            selection.start = std::min(selection.start, text_size);
+            selection.end = std::min(selection.end, text_size);
+            return selection;
+        }
+
+        [[nodiscard]] auto ordered_text_selection(TextSelection selection) -> TextSelection {
+            return selection.start <= selection.end ? selection : TextSelection{selection.end,
+                                                                                selection.start};
+        }
+
+        [[nodiscard]] auto utf8_trailing_byte(char value) -> bool {
+            return (static_cast<uint8_t>(value) & 0xc0u) == 0x80u;
+        }
+
+        [[nodiscard]] auto next_text_offset(StrRef text, size_t offset) -> size_t {
+            offset = std::min(offset + 1u, text.size());
+            while (offset < text.size() && utf8_trailing_byte(text[offset])) {
+                offset += 1u;
+            }
+            return offset;
+        }
+
+        [[nodiscard]] auto text_index_from_mouse(BoxNode const& box, float mouse_x) -> size_t {
+            if (box.text.empty()) {
+                return 0u;
+            }
+
+            float const text_x =
+                mouse_x - text_position(box, box.state != nullptr ? box.state->rect : box.rect).x;
+            if (text_x <= 0.0f) {
+                return 0u;
+            }
+
+            size_t previous = 0u;
+            float previous_x = 0.0f;
+            for (size_t offset = next_text_offset(box.text, 0u); offset <= box.text.size();
+                 offset = next_text_offset(box.text, offset)) {
+                float const advance = text_advance(box, box.text.prefix(offset));
+                if (text_x < (previous_x + advance) * 0.5f) {
+                    return previous;
+                }
+                if (offset == box.text.size()) {
+                    break;
+                }
+                previous = offset;
+                previous_x = advance;
+            }
+            return box.text.size();
+        }
+
+        auto apply_selectable_label(ContextImpl const* impl,
+                                    BoxNode& box,
+                                    TextSelection* selection) -> Signal {
+            ASSERT(selection != nullptr);
+
+            TextSelection const previous = *selection;
+            TextSelection next =
+                ordered_text_selection(clamp_text_selection(previous, box.text.size()));
+            Signal signal = box.signal;
+
+            if (box.state != nullptr && signal.pressed_left) {
+                size_t const index = text_index_from_mouse(box, impl->frame_desc.input.mouse_pos.x);
+                box.state->text_selection_anchor = index;
+            }
+            if (box.state != nullptr &&
+                signal.active && impl->frame_desc.input.mouse_down[0u]) {
+                size_t const cursor =
+                    text_index_from_mouse(box, impl->frame_desc.input.mouse_pos.x);
+                size_t const anchor = box.state->text_selection_anchor;
+                if (cursor != anchor) {
+                    next = ordered_text_selection({anchor, cursor});
+                }
+            }
+            if (box.state != nullptr && signal.released_left) {
+                size_t const cursor =
+                    text_index_from_mouse(box, impl->frame_desc.input.mouse_pos.x);
+                size_t const anchor = box.state->text_selection_anchor;
+                bool const clicked_selected_text =
+                    cursor == anchor && previous.start < cursor && cursor < previous.end;
+                if (!clicked_selected_text) {
+                    next = cursor == anchor ? TextSelection{cursor, cursor}
+                                            : ordered_text_selection({anchor, cursor});
+                }
+            }
+
+            next = ordered_text_selection(clamp_text_selection(next, box.text.size()));
+            signal.changed = previous.start != next.start || previous.end != next.end;
+            *selection = next;
+            box.text_selection = next;
             box.signal = signal;
             return signal;
         }
@@ -1233,6 +1405,37 @@ namespace gui {
             }
         }
 
+        auto render_text_selection(ContextImpl const* impl,
+                                   BoxNode const& box,
+                                   draw::Context draw_context) -> void {
+            if (box.kind != BoxKind::SELECTABLE_LABEL || box.text.empty()) {
+                return;
+            }
+
+            TextSelection const selection =
+                ordered_text_selection(clamp_text_selection(box.text_selection, box.text.size()));
+            if (selection.start == selection.end) {
+                return;
+            }
+
+            Vec2 const pos = text_position(box);
+            float const selection_start = text_advance(box, box.text.prefix(selection.start));
+            float const selection_end = text_advance(box, box.text.prefix(selection.end));
+            Rect const selection_rect = {
+                {pos.x + selection_start, pos.y},
+                {pos.x + selection_end, pos.y + text_line_height(box)},
+            };
+            Color color = impl->theme.tokens.accent;
+            color.a *= 0.45f;
+            draw_widget_rect(draw_context,
+                             selection_rect,
+                             color,
+                             {},
+                             0.0f,
+                             0.0f,
+                             box.resolved_style.opacity);
+        }
+
         [[nodiscard]] auto hit_passes_clips(ContextImpl const* impl, size_t index, Vec2 point)
             -> bool {
             for (size_t parent = impl->boxes[index].parent_index; parent != INVALID_INDEX;
@@ -1274,38 +1477,21 @@ namespace gui {
                 }
 
                 render_widget_parts(impl, box, draw_context);
+                render_text_selection(impl, box, draw_context);
 
-                bool const text_kind = box.kind == BoxKind::LABEL || box.kind == BoxKind::BUTTON ||
+                bool const text_kind = box.kind == BoxKind::LABEL ||
+                                       box.kind == BoxKind::SELECTABLE_LABEL ||
+                                       box.kind == BoxKind::BUTTON ||
                                        box.kind == BoxKind::CHECKBOX ||
                                        box.kind == BoxKind::TOGGLE ||
                                        box.kind == BoxKind::SLIDER_FLOAT;
                 if (text_kind && font_cache::font_valid(box.resolved_style.font)) {
                     draw::TextStyle text_style = {};
                     text_style.font = box.resolved_style.font;
-                    text_style.size =
-                        box.resolved_style.font_size > 0.0f ? box.resolved_style.font_size : 16.0f;
+                    text_style.size = text_font_size(box);
                     text_style.color = to_draw_color(
                         color_mul_alpha(box.resolved_style.foreground, box.resolved_style.opacity));
-                    Vec2 const text_dim = text_size(box);
-                    float const text_offset = box.kind == BoxKind::CHECKBOX       ? 24.0f
-                                              : box.kind == BoxKind::TOGGLE       ? 44.0f
-                                              : box.kind == BoxKind::SLIDER_FLOAT ? 0.0f
-                                                                                  : 0.0f;
-                    float const content_width =
-                        std::max(0.0f, rect_width(box.rect) - inset_width(box.layout.padding));
-                    float const x_offset = box.kind == BoxKind::BUTTON
-                                               ? std::max(0.0f, content_width - text_dim.x) * 0.5f
-                                               : text_offset;
-                    float const text_height =
-                        rendered_text_height(text_style.font, text_style.size);
-                    Vec2 const text_pos = {
-                        box.rect.min.x + box.layout.padding.left + x_offset,
-                        box.rect.min.y + box.layout.padding.top +
-                            std::max(0.0f,
-                                     rect_height(box.rect) - inset_height(box.layout.padding) -
-                                         text_height) *
-                                0.5f,
-                    };
+                    Vec2 const text_pos = text_position(box);
                     draw::draw_text(
                         draw_context, {text_pos.x, text_pos.y}, text_style, box.text, nullptr);
                 }
@@ -1401,6 +1587,7 @@ namespace gui {
 
         theme_kind(theme, BoxKind::ROOT).role = StyleRole::CANVAS;
         theme_kind(theme, BoxKind::LABEL).role = StyleRole::TEXT;
+        theme_kind(theme, BoxKind::SELECTABLE_LABEL).role = StyleRole::TEXT;
         theme_kind(theme, BoxKind::BUTTON).role = StyleRole::CONTROL;
         theme_kind(theme, BoxKind::CHECKBOX).role = StyleRole::CONTROL;
         theme_kind(theme, BoxKind::TOGGLE).role = StyleRole::CONTROL;
@@ -1695,6 +1882,40 @@ namespace gui {
                                         false,
                                         false);
         return impl->boxes[index].signal;
+    }
+
+    auto Frame::selectable_label(StrRef text_value,
+                                 TextSelection* selection,
+                                 BoxDesc const& desc) -> Signal {
+        ContextImpl* const impl = impl_from_frame(*this);
+        size_t const parent = top_parent_index(impl);
+        size_t const index = append_box(impl,
+                                        BoxKind::SELECTABLE_LABEL,
+                                        text_id(impl, parent, BoxKind::SELECTABLE_LABEL, text_value),
+                                        {},
+                                        text_value,
+                                        desc,
+                                        true,
+                                        false);
+        return apply_selectable_label(impl, impl->boxes[index], selection);
+    }
+
+    auto Frame::selectable_label(Id id_value,
+                                 StrRef text_value,
+                                 TextSelection* selection,
+                                 BoxDesc const& desc) -> Signal {
+        ContextImpl* const impl = impl_from_frame(*this);
+        size_t const parent = top_parent_index(impl);
+        size_t const index =
+            append_box(impl,
+                       BoxKind::SELECTABLE_LABEL,
+                       explicit_id(impl, parent, BoxKind::SELECTABLE_LABEL, id_value),
+                       id_value,
+                       text_value,
+                       desc,
+                       true,
+                       false);
+        return apply_selectable_label(impl, impl->boxes[index], selection);
     }
 
     auto Frame::button(StrRef text_value, BoxDesc const& desc) -> Signal {
