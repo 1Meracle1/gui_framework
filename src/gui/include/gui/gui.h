@@ -154,6 +154,7 @@ namespace gui {
         END,
         BACKSPACE,
         DELETE_KEY,
+        C,
     };
 
     enum class KeyEventKind : uint8_t {
@@ -298,11 +299,15 @@ namespace gui {
         ThemeKindStyle kinds[static_cast<size_t>(BoxKind::COUNT)] = {};
     };
 
+    using SetClipboardTextFn = auto (*)(void* user_data, StrRef text) -> void;
+
     struct ContextDesc {
         size_t initial_box_capacity = 256u;
         size_t frame_arena_reserve_size = 4u * 1024u * 1024u;
         size_t frame_arena_commit_size = DEFAULT_ARENA_COMMIT_SIZE;
         ThemeDesc const* theme = nullptr;
+        SetClipboardTextFn set_clipboard_text = nullptr;
+        void* clipboard_user_data = nullptr;
     };
 
     struct BoxInfo {

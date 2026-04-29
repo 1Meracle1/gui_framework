@@ -21,6 +21,18 @@ namespace {
         TEST_EXPECT(context, value.a == expected.a);
     }
 
+    struct ClipboardCapture {
+        char text[32] = {};
+        size_t text_size = 0u;
+        size_t call_count = 0u;
+    };
+
+    auto capture_clipboard_text(void* user_data, StrRef text) -> void {
+        ClipboardCapture* const capture = static_cast<ClipboardCapture*>(user_data);
+        capture->text_size = text.copy_to(capture->text, sizeof(capture->text));
+        capture->call_count += 1u;
+    }
+
     TEST_CASE(version_is_available) {
         gui::Version const gui_version = gui::version();
 
@@ -1159,6 +1171,43 @@ namespace {
         TEST_EXPECT(context, !signal.changed);
         TEST_EXPECT(context, selection.start == 0u);
         TEST_EXPECT(context, selection.end == 10u);
+
+        gui::destroy_context(gui_context);
+    }
+
+    TEST_CASE(selectable_label_copies_selected_text_on_ctrl_c) {
+        Arena arena = {};
+        arena.init();
+
+        ClipboardCapture clipboard = {};
+        gui::Context gui_context = {};
+        gui::create_context(
+            arena,
+            {.set_clipboard_text = capture_clipboard_text, .clipboard_user_data = &clipboard},
+            gui_context
+        );
+
+        gui::TextSelection selection = {1u, 4u};
+        gui::Id const label_id = gui::id("copyable");
+        gui::BoxDesc const box = {.layout = {.width = gui::px(100.0f), .height = gui::px(20.0f)}};
+
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {120.0f, 40.0f}});
+        ui.selectable_label(label_id, "ABCDE", &selection, box);
+        gui::end_frame(ui);
+
+        gui::KeyEvent const events[] = {{.key = gui::Key::C, .mods = gui::KEY_MOD_CTRL}};
+        gui::InputState input = {};
+        input.key_events = events;
+        input.key_event_count = 1u;
+        ui = gui::begin_frame(gui_context, {.size = {120.0f, 40.0f}, .input = input});
+        gui::Signal const signal = ui.selectable_label(label_id, "ABCDE", &selection, box);
+        gui::end_frame(ui);
+
+        TEST_EXPECT(context, !signal.changed);
+        TEST_EXPECT(context, selection.start == 1u);
+        TEST_EXPECT(context, selection.end == 4u);
+        TEST_EXPECT(context, clipboard.call_count == 1u);
+        TEST_EXPECT(context, StrRef(clipboard.text, clipboard.text_size) == StrRef("BCD"));
 
         gui::destroy_context(gui_context);
     }

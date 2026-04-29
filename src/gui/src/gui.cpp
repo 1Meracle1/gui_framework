@@ -87,11 +87,14 @@ namespace gui {
             FrameDesc frame_desc = {};
             InputState previous_input = {};
             ThemeDesc theme = {};
+            SetClipboardTextFn set_clipboard_text = nullptr;
+            void* clipboard_user_data = nullptr;
             Id hot_id = {};
             Id active_id = {};
             Id focused_id = {};
             Id frame_start_focus_id = {};
             Id focus_request_id = {};
+            Id text_selection_owner_id = {};
             uint64_t frame_index = 0u;
             bool building = false;
         };
@@ -481,6 +484,21 @@ namespace gui {
                 KeyEvent const& event = input.key_events[index];
                 if (event.key == key_value && (event.kind == KeyEventKind::PRESS ||
                                                (repeat && event.kind == KeyEventKind::REPEAT))) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        [[nodiscard]] auto copy_shortcut_pressed(ContextImpl const* impl) -> bool {
+            InputState const& input = impl->frame_desc.input;
+            if (input.key_events == nullptr) {
+                return false;
+            }
+            for (size_t index = 0u; index < input.key_event_count; ++index) {
+                KeyEvent const& event = input.key_events[index];
+                if (event.key == Key::C && event.kind == KeyEventKind::PRESS &&
+                    (event.mods & KEY_MOD_CTRL) != 0u) {
                     return true;
                 }
             }
@@ -1211,6 +1229,18 @@ namespace gui {
             return {start, end};
         }
 
+        auto
+        copy_selected_text(ContextImpl const* impl, BoxNode const& box, TextSelection selection)
+            -> void {
+            if (impl->set_clipboard_text == nullptr || selection.start == selection.end) {
+                return;
+            }
+            impl->set_clipboard_text(
+                impl->clipboard_user_data,
+                box.text.substr(selection.start, selection.end - selection.start)
+            );
+        }
+
         [[nodiscard]] auto text_index_from_mouse(BoxNode const& box, float mouse_x) -> size_t {
             if (box.text.empty()) {
                 return 0u;
@@ -1239,9 +1269,8 @@ namespace gui {
             return box.text.size();
         }
 
-        auto apply_selectable_label(ContextImpl const* impl,
-                                    BoxNode& box,
-                                    TextSelection* selection) -> Signal {
+        auto apply_selectable_label(ContextImpl* impl, BoxNode& box, TextSelection* selection)
+            -> Signal {
             ASSERT(selection != nullptr);
 
             TextSelection const previous = *selection;
@@ -1256,6 +1285,9 @@ namespace gui {
                     signal.hovered && impl->frame_desc.input.mouse_triple_clicked[0u];
                 bool const double_clicked =
                     signal.hovered && impl->frame_desc.input.mouse_double_clicked[0u];
+                if (signal.pressed_left || triple_clicked || double_clicked) {
+                    impl->text_selection_owner_id = box.id;
+                }
                 if (triple_clicked || double_clicked) {
                     next = triple_clicked ? TextSelection{0u, box.text.size()}
                                           : text_word_selection(box.text, cursor);
@@ -1291,9 +1323,9 @@ namespace gui {
                             box.state->text_selection_word_active = false;
                         } else {
                             size_t const anchor = box.state->text_selection_anchor;
-                            bool const clicked_selected_text =
-                                cursor == anchor && previous.start < cursor &&
-                                cursor < previous.end;
+                            bool const clicked_selected_text = cursor == anchor &&
+                                                               previous.start < cursor &&
+                                                               cursor < previous.end;
                             if (!clicked_selected_text) {
                                 next = cursor == anchor ? TextSelection{cursor, cursor}
                                                         : ordered_text_selection({anchor, cursor});
@@ -1305,6 +1337,16 @@ namespace gui {
 
             next = ordered_text_selection(clamp_text_selection(next, box.text.size()));
             signal.changed = previous.start != next.start || previous.end != next.end;
+            if (next.start != next.end && impl->text_selection_owner_id.value == 0u) {
+                impl->text_selection_owner_id = box.id;
+            } else if (next.start == next.end &&
+                       impl->text_selection_owner_id.value == box.id.value) {
+                impl->text_selection_owner_id = {};
+            }
+            if (impl->text_selection_owner_id.value == box.id.value &&
+                copy_shortcut_pressed(impl)) {
+                copy_selected_text(impl, box, next);
+            }
             *selection = next;
             box.text_selection = next;
             box.signal = signal;
@@ -1704,6 +1746,8 @@ namespace gui {
         std::memset(impl->state_table, 0, sizeof(StateEntry) * impl->state_table_size);
         impl->frame_arena.init({desc.frame_arena_reserve_size, desc.frame_arena_commit_size});
         impl->theme = desc.theme != nullptr ? *desc.theme : default_theme();
+        impl->set_clipboard_text = desc.set_clipboard_text;
+        impl->clipboard_user_data = desc.clipboard_user_data;
         out_context.handle = impl;
     }
 

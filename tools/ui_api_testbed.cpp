@@ -465,6 +465,7 @@ namespace {
     constexpr wchar_t WINDOW_CLASS_NAME[] = L"gui_framework_ui_api_testbed";
     constexpr uint32_t INITIAL_WINDOW_WIDTH = 960u;
     constexpr uint32_t INITIAL_WINDOW_HEIGHT = 600u;
+    constexpr size_t MAX_KEY_EVENTS_PER_FRAME = 32u;
 
     struct UiRuntime {
         font_provider::Context provider = {};
@@ -482,6 +483,7 @@ namespace {
         bool resize_pending = false;
         render::SizeU32 pending_size = {};
         gui::InputState input = {};
+        gui::KeyEvent key_events[MAX_KEY_EVENTS_PER_FRAME] = {};
         gui::Vec2 left_double_click_pos = {};
         uint64_t left_double_click_ticks = 0u;
         bool left_double_click_pending = false;
@@ -525,6 +527,100 @@ namespace {
         fmt::eprintf("%s failed: %s\n", operation, font_provider::result_name(result));
     }
 
+    [[nodiscard]] auto key_from_virtual_key(WPARAM value) -> gui::Key {
+        return value == 'C' ? gui::Key::C : gui::Key::UNKNOWN;
+    }
+
+    [[nodiscard]] auto current_key_mods() -> gui::KeyMods {
+        return (GetKeyState(VK_CONTROL) & 0x8000) != 0 ? gui::KEY_MOD_CTRL : gui::KEY_MOD_NONE;
+    }
+
+    auto push_key_event(AppState* state, gui::Key key, gui::KeyEventKind kind) -> void {
+        if (state == nullptr || key == gui::Key::UNKNOWN) {
+            return;
+        }
+        if (state->input.key_event_count >= MAX_KEY_EVENTS_PER_FRAME) {
+#if BASE_DEBUG
+            fmt::eprintf("dropped key event\n");
+#endif
+            return;
+        }
+
+        size_t const index = state->input.key_event_count;
+        state->key_events[index] = {.key = key, .kind = kind, .mods = current_key_mods()};
+        state->input.key_events = state->key_events;
+        state->input.key_event_count += 1u;
+
+#if BASE_DEBUG
+        if (kind == gui::KeyEventKind::PRESS || kind == gui::KeyEventKind::REPEAT) {
+            fmt::printf(
+                "key %s: C mods=0x%02x\n",
+                kind == gui::KeyEventKind::REPEAT ? "repeat" : "press",
+                static_cast<unsigned>(state->key_events[index].mods)
+            );
+        }
+#endif
+    }
+
+    [[nodiscard]] auto key_down_kind(LPARAM lparam) -> gui::KeyEventKind {
+        return (lparam & (1ll << 30)) != 0 ? gui::KeyEventKind::REPEAT : gui::KeyEventKind::PRESS;
+    }
+
+    auto set_windows_clipboard_text(void* user_data, StrRef text) -> void {
+        HWND const hwnd = static_cast<HWND>(user_data);
+        if (!OpenClipboard(hwnd)) {
+            fmt::eprintf("OpenClipboard failed: %lu\n", GetLastError());
+            return;
+        }
+
+        int const wide_count = MultiByteToWideChar(
+            CP_UTF8, MB_ERR_INVALID_CHARS, text.data(), static_cast<int>(text.size()), nullptr, 0
+        );
+        if (wide_count <= 0) {
+            CloseClipboard();
+            fmt::eprintf("MultiByteToWideChar failed: %lu\n", GetLastError());
+            return;
+        }
+
+        HGLOBAL const memory =
+            GlobalAlloc(GMEM_MOVEABLE, sizeof(wchar_t) * (static_cast<size_t>(wide_count) + 1u));
+        if (memory == nullptr) {
+            CloseClipboard();
+            fmt::eprintf("GlobalAlloc failed: %lu\n", GetLastError());
+            return;
+        }
+
+        wchar_t* const wide_text = static_cast<wchar_t*>(GlobalLock(memory));
+        if (wide_text == nullptr) {
+            GlobalFree(memory);
+            CloseClipboard();
+            fmt::eprintf("GlobalLock failed: %lu\n", GetLastError());
+            return;
+        }
+        MultiByteToWideChar(
+            CP_UTF8,
+            MB_ERR_INVALID_CHARS,
+            text.data(),
+            static_cast<int>(text.size()),
+            wide_text,
+            wide_count
+        );
+        wide_text[wide_count] = L'\0';
+        GlobalUnlock(memory);
+
+        EmptyClipboard();
+        if (SetClipboardData(CF_UNICODETEXT, memory) == nullptr) {
+            GlobalFree(memory);
+            fmt::eprintf("SetClipboardData failed: %lu\n", GetLastError());
+        }
+#if BASE_DEBUG
+        else {
+            fmt::printf("copied %zu byte(s) to clipboard\n", text.size());
+        }
+#endif
+        CloseClipboard();
+    }
+
     auto destroy_ui_runtime(render::Context render_context, UiRuntime* runtime) -> void {
         if (runtime == nullptr) {
             return;
@@ -549,7 +645,8 @@ namespace {
     }
 
     [[nodiscard]] auto
-    create_ui_runtime(Arena& arena, render::Context render_context, UiRuntime* runtime) -> bool {
+    create_ui_runtime(Arena& arena, render::Context render_context, HWND hwnd, UiRuntime* runtime)
+        -> bool {
         render::Result render_result =
             draw::create_renderer(arena, render_context, {}, runtime->draw_renderer);
         if (render::result_failed(render_result)) {
@@ -576,7 +673,15 @@ namespace {
         theme.root.font_size = 13.0f;
         gui::theme_role(theme, gui::StyleRole::ACCENT).normal.background = gui::rgb(58, 108, 220);
         gui::theme_role(theme, gui::StyleRole::DANGER).normal.background = gui::rgb(150, 54, 58);
-        gui::create_context(arena, {.theme = &theme}, runtime->ui_context);
+        gui::create_context(
+            arena,
+            {
+                .theme = &theme,
+                .set_clipboard_text = set_windows_clipboard_text,
+                .clipboard_user_data = hwnd,
+            },
+            runtime->ui_context
+        );
         return true;
     }
 
@@ -668,6 +773,16 @@ namespace {
                     static_cast<float>(WHEEL_DELTA) * 36.0f;
             }
             return 0;
+
+        case WM_KEYDOWN:
+        case WM_SYSKEYDOWN: {
+            gui::Key const key = key_from_virtual_key(wparam);
+            if (key != gui::Key::UNKNOWN) {
+                push_key_event(global_app_state, key, key_down_kind(lparam));
+                return 0;
+            }
+            return DefWindowProcW(hwnd, message, wparam, lparam);
+        }
 
         case WM_CLOSE:
             if (global_app_state != nullptr) {
@@ -787,7 +902,7 @@ namespace {
         }
 
         UiRuntime runtime = {};
-        if (!create_ui_runtime(app_arena, render_context, &runtime)) {
+        if (!create_ui_runtime(app_arena, render_context, app_state.hwnd, &runtime)) {
             destroy_ui_runtime(render_context, &runtime);
             render::destroy_window(render_window);
             render::destroy_context(render_context);
@@ -847,6 +962,8 @@ namespace {
             app_state.input.scroll_delta_y = 0.0f;
             app_state.input.mouse_double_clicked[0u] = false;
             app_state.input.mouse_triple_clicked[0u] = false;
+            app_state.input.key_events = app_state.key_events;
+            app_state.input.key_event_count = 0u;
             if (result == render::Result::OCCLUDED) {
                 Sleep(16u);
                 continue;
