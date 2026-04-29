@@ -1252,10 +1252,13 @@ namespace gui {
             if (box.state != nullptr) {
                 size_t const cursor =
                     text_index_from_mouse(box, impl->frame_desc.input.mouse_pos.x);
+                bool const triple_clicked =
+                    signal.hovered && impl->frame_desc.input.mouse_triple_clicked[0u];
                 bool const double_clicked =
                     signal.hovered && impl->frame_desc.input.mouse_double_clicked[0u];
-                if (double_clicked) {
-                    next = text_word_selection(box.text, cursor);
+                if (triple_clicked || double_clicked) {
+                    next = triple_clicked ? TextSelection{0u, box.text.size()}
+                                          : text_word_selection(box.text, cursor);
                     box.state->text_selection_anchor = next.start;
                     box.state->text_selection_word_start = next.start;
                     box.state->text_selection_word_end = next.end;

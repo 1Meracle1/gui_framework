@@ -482,6 +482,9 @@ namespace {
         bool resize_pending = false;
         render::SizeU32 pending_size = {};
         gui::InputState input = {};
+        gui::Vec2 left_double_click_pos = {};
+        uint64_t left_double_click_ticks = 0u;
+        bool left_double_click_pending = false;
     };
 
     AppState* global_app_state = nullptr;
@@ -500,6 +503,18 @@ namespace {
 
     [[nodiscard]] auto lparam_y(LPARAM value) -> float {
         return static_cast<float>(static_cast<int16_t>((value >> 16) & 0xffff));
+    }
+
+    [[nodiscard]] auto left_triple_click(AppState const& state, gui::Vec2 pos) -> bool {
+        float const x_radius = static_cast<float>(GetSystemMetrics(SM_CXDOUBLECLK)) * 0.5f;
+        float const y_radius = static_cast<float>(GetSystemMetrics(SM_CYDOUBLECLK)) * 0.5f;
+        return state.left_double_click_pending &&
+               GetTickCount64() - state.left_double_click_ticks <=
+                   static_cast<uint64_t>(GetDoubleClickTime()) &&
+               pos.x >= state.left_double_click_pos.x - x_radius &&
+               pos.x <= state.left_double_click_pos.x + x_radius &&
+               pos.y >= state.left_double_click_pos.y - y_radius &&
+               pos.y <= state.left_double_click_pos.y + y_radius;
     }
 
     auto log_render_result(char const* operation, render::Result result) -> void {
@@ -611,8 +626,12 @@ namespace {
 
         case WM_LBUTTONDOWN:
             if (global_app_state != nullptr) {
+                gui::Vec2 const pos = {lparam_x(lparam), lparam_y(lparam)};
                 global_app_state->input.mouse_down[0u] = true;
-                global_app_state->input.mouse_pos = {lparam_x(lparam), lparam_y(lparam)};
+                global_app_state->input.mouse_pos = pos;
+                global_app_state->input.mouse_triple_clicked[0u] =
+                    left_triple_click(*global_app_state, pos);
+                global_app_state->left_double_click_pending = false;
             }
             SetCapture(hwnd);
             SetFocus(hwnd);
@@ -630,9 +649,13 @@ namespace {
 
         case WM_LBUTTONDBLCLK:
             if (global_app_state != nullptr) {
+                gui::Vec2 const pos = {lparam_x(lparam), lparam_y(lparam)};
                 global_app_state->input.mouse_down[0u] = true;
                 global_app_state->input.mouse_double_clicked[0u] = true;
-                global_app_state->input.mouse_pos = {lparam_x(lparam), lparam_y(lparam)};
+                global_app_state->input.mouse_pos = pos;
+                global_app_state->left_double_click_pos = pos;
+                global_app_state->left_double_click_ticks = GetTickCount64();
+                global_app_state->left_double_click_pending = true;
             }
             SetCapture(hwnd);
             SetFocus(hwnd);
@@ -823,6 +846,7 @@ namespace {
             result = render::present_window(render_context, render_window);
             app_state.input.scroll_delta_y = 0.0f;
             app_state.input.mouse_double_clicked[0u] = false;
+            app_state.input.mouse_triple_clicked[0u] = false;
             if (result == render::Result::OCCLUDED) {
                 Sleep(16u);
                 continue;
