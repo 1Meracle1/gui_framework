@@ -35,6 +35,8 @@ namespace {
         bool enabled = true;
         bool preview = true;
         bool read_only_value = false;
+        bool reveal_asset_list = true;
+        bool reveal_log_scroll = true;
         float scale = 1.25f;
         size_t selected_index = 12u;
         gui::TextSelection title_selection = {};
@@ -70,9 +72,15 @@ namespace {
         gui::Id const body_text_id = gui::id("body_text_scroll");
         gui::Id const log_id = gui::id("log_scroll");
 
-        ui.scroll_to_index(list_id, state.selected_index, gui::ScrollReveal::CENTER);
+        if (state.reveal_asset_list) {
+            ui.scroll_to_index(list_id, state.selected_index, gui::ScrollReveal::CENTER);
+            state.reveal_asset_list = false;
+        }
         ui.set_scroll_y(notes_id, 18.0f);
-        ui.scroll_to_end(log_id);
+        if (state.reveal_log_scroll) {
+            ui.scroll_to_end(log_id);
+            state.reveal_log_scroll = false;
+        }
         state.selected_row_signal = {};
 
         if (auto root = ui.column(
