@@ -1304,6 +1304,47 @@ namespace {
         gui::destroy_context(gui_context);
     }
 
+    TEST_CASE(selectable_label_clicking_multiline_selection_resets_selection) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::TextSelection selection = {3u, 5u};
+        gui::Id const label_id = gui::id("copyable");
+        gui::BoxDesc const box = {
+            .layout = {.width = gui::px(100.0f), .height = gui::px(40.0f)}};
+
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {120.0f, 60.0f}});
+        ui.selectable_label(label_id, "AB\nCDE", &selection, box);
+        gui::end_frame(ui);
+
+        gui::InputState input = {};
+        input.mouse_pos = {9.0f, 25.0f};
+        input.mouse_down[0u] = true;
+        ui = gui::begin_frame(gui_context, {.size = {120.0f, 60.0f}, .input = input});
+        gui::Signal signal = ui.selectable_label(label_id, "AB\nCDE", &selection, box);
+        gui::end_frame(ui);
+
+        TEST_EXPECT(context, signal.pressed_left);
+        TEST_EXPECT(context, !signal.changed);
+        TEST_EXPECT(context, selection.start == 3u);
+        TEST_EXPECT(context, selection.end == 5u);
+
+        input.mouse_down[0u] = false;
+        ui = gui::begin_frame(gui_context, {.size = {120.0f, 60.0f}, .input = input});
+        signal = ui.selectable_label(label_id, "AB\nCDE", &selection, box);
+        gui::end_frame(ui);
+
+        TEST_EXPECT(context, signal.released_left);
+        TEST_EXPECT(context, signal.changed);
+        TEST_EXPECT(context, selection.start == 4u);
+        TEST_EXPECT(context, selection.end == 4u);
+
+        gui::destroy_context(gui_context);
+    }
+
     TEST_CASE(selectable_label_renders_multiline_selection_highlight_without_font) {
         Arena arena = {};
         arena.init();

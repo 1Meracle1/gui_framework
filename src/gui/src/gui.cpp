@@ -1386,13 +1386,8 @@ namespace gui {
                             box.state->text_selection_word_active = false;
                         } else {
                             size_t const anchor = box.state->text_selection_anchor;
-                            bool const clicked_selected_text = cursor == anchor &&
-                                                               previous.start < cursor &&
-                                                               cursor < previous.end;
-                            if (!clicked_selected_text) {
-                                next = cursor == anchor ? TextSelection{cursor, cursor}
-                                                        : ordered_text_selection({anchor, cursor});
-                            }
+                            next = cursor == anchor ? TextSelection{cursor, cursor}
+                                                    : ordered_text_selection({anchor, cursor});
                         }
                     }
                 }
