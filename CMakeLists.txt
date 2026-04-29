@@ -78,6 +78,20 @@ if(WIN32)
     )
     cpp_configure_target(render_effects_testbed)
 
+    add_executable(liquid_glass_testbed
+        tools/liquid_glass_testbed.cpp
+    )
+    target_compile_definitions(liquid_glass_testbed PRIVATE
+        WIN32_LEAN_AND_MEAN
+        NOMINMAX
+    )
+    target_link_libraries(liquid_glass_testbed PRIVATE
+        base::base
+        draw::draw
+        render::render
+    )
+    cpp_configure_target(liquid_glass_testbed)
+
     add_executable(render_dx12_clear_smoke
         tools/render_dx12_clear_smoke.cpp
     )
