@@ -405,6 +405,68 @@ namespace {
         gui::destroy_context(gui_context);
     }
 
+    TEST_CASE(scroll_panel_renders_vertical_scrollbar_when_content_overflows) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::draw::Context draw_context = {};
+        gui::draw::create_context(arena, {}, draw_context);
+
+        gui::Id const panel_id = gui::id("panel");
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {100.0f, 50.0f}});
+        ui.set_scroll_y(panel_id, 15.0f);
+        {
+            auto panel = ui.scroll_panel(
+                panel_id, {.layout = {.width = gui::fill(), .height = gui::px(30.0f)}});
+            TEST_EXPECT(context, panel);
+            ui.spacer({.layout = {.width = gui::fill(), .height = gui::px(20.0f)},
+                       .style = {.background = gui::rgb(1, 2, 3)}});
+            ui.spacer({.layout = {.width = gui::fill(), .height = gui::px(20.0f)}});
+            ui.spacer({.layout = {.width = gui::fill(), .height = gui::px(20.0f)}});
+        }
+        gui::end_frame(ui);
+
+        gui::draw::begin_frame(draw_context);
+        gui::render_frame(ui, draw_context);
+
+        TEST_EXPECT(context, gui::draw::styled_rect_command_count(draw_context) == 3u);
+        TEST_EXPECT(context, gui::draw::command_count(draw_context) == 3u);
+        gui::draw::Command const* content_command = gui::draw::command(draw_context, 0u);
+        gui::draw::Command const* track_command = gui::draw::command(draw_context, 1u);
+        gui::draw::Command const* thumb_command = gui::draw::command(draw_context, 2u);
+        TEST_EXPECT(context,
+                    content_command != nullptr &&
+                        content_command->kind == gui::draw::CommandKind::STYLED_RECT);
+        TEST_EXPECT(context,
+                    track_command != nullptr &&
+                        track_command->kind == gui::draw::CommandKind::STYLED_RECT);
+        TEST_EXPECT(context,
+                    thumb_command != nullptr &&
+                        thumb_command->kind == gui::draw::CommandKind::STYLED_RECT);
+        gui::draw::StyledRectCommand const* track =
+            gui::draw::styled_rect_command(draw_context, 1u);
+        gui::draw::StyledRectCommand const* thumb =
+            gui::draw::styled_rect_command(draw_context, 2u);
+        TEST_EXPECT(context, track != nullptr);
+        TEST_EXPECT(context, thumb != nullptr);
+        if (track != nullptr && thumb != nullptr) {
+            TEST_EXPECT(context, track->rect.min.x == 92.0f);
+            TEST_EXPECT(context, track->rect.max.x == 98.0f);
+            TEST_EXPECT(context, track->rect.min.y == 2.0f);
+            TEST_EXPECT(context, track->rect.max.y == 28.0f);
+            TEST_EXPECT(context, thumb->rect.min.x == 92.0f);
+            TEST_EXPECT(context, thumb->rect.max.x == 98.0f);
+            TEST_EXPECT(context, thumb->rect.min.y == 8.5f);
+            TEST_EXPECT(context, thumb->rect.max.y == 21.5f);
+        }
+
+        gui::draw::destroy_context(draw_context);
+        gui::destroy_context(gui_context);
+    }
+
     TEST_CASE(hit_test_returns_deepest_box) {
         Arena arena = {};
         arena.init();
@@ -1263,6 +1325,91 @@ namespace {
             TEST_EXPECT(context, command->rect.min.y == 0.0f);
             TEST_EXPECT(context, command->rect.max.y == 20.0f);
             TEST_EXPECT(context, command->style.fill_color.a > 0.0f);
+        }
+
+        gui::draw::destroy_context(draw_context);
+        gui::destroy_context(gui_context);
+    }
+
+    TEST_CASE(selectable_label_does_not_scroll_single_line_overflow_text) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::draw::Context draw_context = {};
+        gui::draw::create_context(arena, {}, draw_context);
+
+        gui::TextSelection selection = {};
+        gui::Id const label_id = gui::id("title");
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {100.0f, 40.0f}});
+        ui.set_scroll_y(label_id, 20.0f);
+        ui.selectable_label(label_id,
+                            "Virtualized Assets",
+                            &selection,
+                            {.layout = {.width = gui::px(80.0f), .height = gui::px(10.0f)}});
+        gui::end_frame(ui);
+
+        gui::ScrollState state = ui.scroll_state(label_id);
+        TEST_EXPECT(context, state.valid);
+        TEST_EXPECT(context, state.y == 0.0f);
+        TEST_EXPECT(context, state.max_y == 0.0f);
+
+        gui::draw::begin_frame(draw_context);
+        gui::render_frame(ui, draw_context);
+        TEST_EXPECT(context, gui::draw::styled_rect_command_count(draw_context) == 0u);
+
+        gui::draw::destroy_context(draw_context);
+        gui::destroy_context(gui_context);
+    }
+
+    TEST_CASE(selectable_label_scrolls_overflow_text_and_renders_scrollbar) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::draw::Context draw_context = {};
+        gui::draw::create_context(arena, {}, draw_context);
+
+        gui::TextSelection selection = {};
+        gui::Id const label_id = gui::id("copyable");
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {100.0f, 40.0f}});
+        ui.set_scroll_y(label_id, 20.0f);
+        ui.selectable_label(label_id,
+                            "A\nB\nC",
+                            &selection,
+                            {.layout = {.width = gui::px(80.0f), .height = gui::px(20.0f)}});
+        gui::end_frame(ui);
+
+        gui::ScrollState state = ui.scroll_state(label_id);
+        TEST_EXPECT(context, state.valid);
+        TEST_EXPECT(context, state.y == 20.0f);
+        TEST_EXPECT(context, state.max_y == 40.0f);
+        TEST_EXPECT(context, state.viewport_height == 20.0f);
+        TEST_EXPECT(context, state.content_height == 60.0f);
+
+        gui::draw::begin_frame(draw_context);
+        gui::render_frame(ui, draw_context);
+
+        TEST_EXPECT(context, gui::draw::styled_rect_command_count(draw_context) == 2u);
+        gui::draw::StyledRectCommand const* track =
+            gui::draw::styled_rect_command(draw_context, 0u);
+        gui::draw::StyledRectCommand const* thumb =
+            gui::draw::styled_rect_command(draw_context, 1u);
+        TEST_EXPECT(context, track != nullptr);
+        TEST_EXPECT(context, thumb != nullptr);
+        if (track != nullptr && thumb != nullptr) {
+            TEST_EXPECT(context, track->rect.min.x == 72.0f);
+            TEST_EXPECT(context, track->rect.max.x == 78.0f);
+            TEST_EXPECT(context, track->rect.min.y == 2.0f);
+            TEST_EXPECT(context, track->rect.max.y == 18.0f);
+            TEST_EXPECT(context, thumb->rect.min.x == 72.0f);
+            TEST_EXPECT(context, thumb->rect.max.x == 78.0f);
+            TEST_EXPECT(context, thumb->rect.min.y == 4.0f);
+            TEST_EXPECT(context, thumb->rect.max.y == 16.0f);
         }
 
         gui::draw::destroy_context(draw_context);

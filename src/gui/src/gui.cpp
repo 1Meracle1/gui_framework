@@ -13,6 +13,9 @@ namespace gui {
         inline constexpr size_t INVALID_INDEX = static_cast<size_t>(-1);
         inline constexpr uint64_t FNV_OFFSET = 14695981039346656037ull;
         inline constexpr uint64_t FNV_PRIME = 1099511628211ull;
+        inline constexpr float SCROLLBAR_MARGIN = 2.0f;
+        inline constexpr float SCROLLBAR_WIDTH = 6.0f;
+        inline constexpr float SCROLLBAR_MIN_THUMB_HEIGHT = 12.0f;
 
         struct StateEntry {
             Id id = {};
@@ -303,6 +306,10 @@ namespace gui {
                        : font_size * 1.25f;
         }
 
+        [[nodiscard]] auto text_multiline(StrRef text) -> bool {
+            return text.find('\n') != StrRef::NPOS;
+        }
+
         [[nodiscard]] auto next_text_line(StrRef text, size_t& offset, TextLine& out_line)
             -> bool {
             if (text.empty() || offset >= text.size()) {
@@ -359,9 +366,13 @@ namespace gui {
             float const content_width =
                 std::max(0.0f, rect_width(rect) - inset_width(box.layout.padding));
             float const x_offset = text_x_offset(box, content_width, text_dim.x);
+            float const scroll_y = box.layout.scroll_y && box.scroll_state != nullptr &&
+                                           text_multiline(box.text)
+                                       ? box.scroll_state->scroll_y
+                                       : 0.0f;
             return {
                 rect.min.x + box.layout.padding.left + x_offset,
-                rect.min.y + box.layout.padding.top +
+                rect.min.y + box.layout.padding.top - scroll_y +
                     std::max(0.0f,
                              rect_height(rect) - inset_height(box.layout.padding) - text_dim.y) *
                         0.5f,
@@ -478,6 +489,11 @@ namespace gui {
 
         [[nodiscard]] auto scroll_state_key(Id id_value) -> Id {
             return id_value.value == 0u ? Id{} : Id{hash_combine(id_value.value, 0x7d9f4a7c15ull)};
+        }
+
+        auto set_scroll_state(ContextImpl* impl, BoxNode& box, Id id_value) -> void {
+            Id const key = scroll_state_key(id_value);
+            box.scroll_state = key.value != 0u ? state_entry(impl, key) : box.state;
         }
 
         [[nodiscard]] auto box_disabled(BoxNode const& box) -> bool {
@@ -1018,6 +1034,12 @@ namespace gui {
                 if (box.scroll_state != nullptr) {
                     box.scroll_offset_y = -box.scroll_state->scroll_y;
                 }
+            } else if (box.kind == BoxKind::SELECTABLE_LABEL && box.layout.scroll_y) {
+                float content_height = rect_height(rect);
+                if (text_multiline(box.text)) {
+                    content_height = text_size(box).y + inset_height(box.layout.padding);
+                }
+                update_scroll_metrics(impl, box.scroll_state, rect, content_height, true, true);
             } else if (box.kind == BoxKind::LIST) {
                 update_scroll_metrics(
                     impl, box.scroll_state, rect, box.scroll_content_height, false, false);
@@ -1633,6 +1655,40 @@ namespace gui {
             }
         }
 
+        auto render_scrollbar(ContextImpl const* impl,
+                              BoxNode const& box,
+                              draw::Context draw_context) -> void {
+            StateEntry const* const state = box.scroll_state;
+            if (state == nullptr || !state->scroll_valid || state->scroll_max_y <= 0.0f) {
+                return;
+            }
+
+            float const width = std::min(
+                SCROLLBAR_WIDTH, std::max(0.0f, rect_width(box.rect) - SCROLLBAR_MARGIN * 2.0f));
+            float const height = std::max(0.0f, rect_height(box.rect) - SCROLLBAR_MARGIN * 2.0f);
+            if (width <= 0.0f || height <= 0.0f) {
+                return;
+            }
+
+            Rect const track = {
+                {box.rect.max.x - SCROLLBAR_MARGIN - width, box.rect.min.y + SCROLLBAR_MARGIN},
+                {box.rect.max.x - SCROLLBAR_MARGIN, box.rect.max.y - SCROLLBAR_MARGIN}};
+            float const min_thumb = std::min(SCROLLBAR_MIN_THUMB_HEIGHT, height);
+            float const thumb_height =
+                std::clamp(height * state->scroll_viewport_height / state->scroll_content_height,
+                           min_thumb,
+                           height);
+            float const thumb_y =
+                track.min.y + (height - thumb_height) * (state->scroll_y / state->scroll_max_y);
+            Rect const thumb = {{track.min.x, thumb_y}, {track.max.x, thumb_y + thumb_height}};
+
+            ThemeTokens const& tokens = impl->theme.tokens;
+            float const opacity = box.resolved_style.opacity;
+            draw_widget_rect(draw_context, track, tokens.panel, {}, 0.0f, width * 0.5f, opacity);
+            draw_widget_rect(
+                draw_context, thumb, tokens.text_muted, {}, 0.0f, width * 0.5f, opacity);
+        }
+
         [[nodiscard]] auto hit_passes_clips(ContextImpl const* impl, size_t index, Vec2 point)
             -> bool {
             for (size_t parent = impl->boxes[index].parent_index; parent != INVALID_INDEX;
@@ -1712,6 +1768,26 @@ namespace gui {
                  child = impl->boxes[child].next_sibling) {
                 render_box(impl, draw_context, child);
             }
+
+            if (clips) {
+                draw::pop_clip_rect(draw_context);
+            }
+        }
+
+        auto render_scrollbars(ContextImpl const* impl, draw::Context draw_context, size_t index)
+            -> void {
+            BoxNode const& box = impl->boxes[index];
+            bool const clips = box_clips(box);
+            if (clips) {
+                draw::push_clip_rect(draw_context, to_draw_rect(box.rect));
+            }
+
+            for (size_t child = box.first_child; child != INVALID_INDEX;
+                 child = impl->boxes[child].next_sibling) {
+                render_scrollbars(impl, draw_context, child);
+            }
+
+            render_scrollbar(impl, box, draw_context);
 
             if (clips) {
                 draw::pop_clip_rect(draw_context);
@@ -2036,8 +2112,7 @@ namespace gui {
                                         false,
                                         false);
         BoxNode& panel = impl->boxes[index];
-        Id const scroll_key = scroll_state_key(id_value);
-        panel.scroll_state = scroll_key.value != 0u ? state_entry(impl, scroll_key) : panel.state;
+        set_scroll_state(impl, panel, id_value);
         push_parent(impl, index);
         return {this, index};
     }
@@ -2102,14 +2177,18 @@ namespace gui {
                                  BoxDesc const& desc) -> Signal {
         ContextImpl* const impl = impl_from_frame(*this);
         size_t const parent = top_parent_index(impl);
+        BoxDesc label_desc = desc;
+        label_desc.layout.clip = true;
+        label_desc.layout.scroll_y = true;
         size_t const index = append_box(impl,
                                         BoxKind::SELECTABLE_LABEL,
                                         text_id(impl, parent, BoxKind::SELECTABLE_LABEL, text_value),
                                         {},
                                         text_value,
-                                        desc,
+                                        label_desc,
                                         true,
                                         false);
+        impl->boxes[index].scroll_state = impl->boxes[index].state;
         return apply_selectable_label(impl, impl->boxes[index], selection);
     }
 
@@ -2119,15 +2198,19 @@ namespace gui {
                                  BoxDesc const& desc) -> Signal {
         ContextImpl* const impl = impl_from_frame(*this);
         size_t const parent = top_parent_index(impl);
+        BoxDesc label_desc = desc;
+        label_desc.layout.clip = true;
+        label_desc.layout.scroll_y = true;
         size_t const index =
             append_box(impl,
                        BoxKind::SELECTABLE_LABEL,
                        explicit_id(impl, parent, BoxKind::SELECTABLE_LABEL, id_value),
                        id_value,
                        text_value,
-                       desc,
+                       label_desc,
                        true,
                        false);
+        set_scroll_state(impl, impl->boxes[index], id_value);
         return apply_selectable_label(impl, impl->boxes[index], selection);
     }
 
@@ -2263,8 +2346,7 @@ namespace gui {
                                         false);
 
         BoxNode& list = impl->boxes[index];
-        Id const scroll_key = scroll_state_key(id_value);
-        list.scroll_state = scroll_key.value != 0u ? state_entry(impl, scroll_key) : list.state;
+        set_scroll_state(impl, list, id_value);
         float viewport_height = rect_height(list.scroll_state->rect);
         if (viewport_height <= 0.0f && box_desc.layout.height.kind == SizeKind::PIXELS) {
             viewport_height = box_desc.layout.height.value;
@@ -2472,6 +2554,7 @@ namespace gui {
             return;
         }
         render_box(impl, draw_context, 0u);
+        render_scrollbars(impl, draw_context, 0u);
     }
 
 } // namespace gui
