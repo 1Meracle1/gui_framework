@@ -63,12 +63,12 @@ namespace hash_map_detail {
     }
 
     [[nodiscard]] inline auto ceil_log2(size_t value) -> size_t {
-        ASSERT(value > 0u);
+        DEBUG_ASSERT(value > 0u);
 
         size_t log2 = 0u;
         size_t capacity = 1u;
         while (capacity < value) {
-            ASSERT(capacity <= std::numeric_limits<size_t>::max() / 2u);
+            DEBUG_ASSERT(capacity <= std::numeric_limits<size_t>::max() / 2u);
             capacity <<= 1u;
             log2 += 1u;
         }
@@ -765,7 +765,7 @@ class HashMap final {
 
     [[nodiscard]] auto allocate_data(size_t log2_capacity, uintptr_t& out_data) -> bool {
         size_t constexpr SIZE_BITS = sizeof(size_t) * 8u;
-        ASSERT(log2_capacity < SIZE_BITS);
+        DEBUG_ASSERT(log2_capacity < SIZE_BITS);
 
         size_t const map_capacity = size_t{1u} << log2_capacity;
         size_t allocation_size = 0u;
@@ -781,7 +781,7 @@ class HashMap final {
             if (data != nullptr) {
                 m_resource->deallocate(data, allocation_size, hash_map_detail::MAP_CACHE_LINE_SIZE);
             }
-            ASSERT_MSG(false, "HashMap allocation was not cache-line aligned");
+            DEBUG_ASSERT_MSG(false, "HashMap allocation was not cache-line aligned");
             return false;
         }
 
@@ -879,7 +879,7 @@ class HashMap final {
         Entry result = {nullptr, nullptr};
 
         for (;;) {
-            ASSERT(distance <= mask);
+            DEBUG_ASSERT(distance <= mask);
 
             hash_map_detail::MapHash const element_hash = hash_values[position];
 

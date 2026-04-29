@@ -306,19 +306,19 @@ template <typename T, size_t SHIFT> class XarArray final {
     }
 
     [[nodiscard]] auto get(size_t index) const -> T {
-        ASSERT(index < m_len);
+        DEBUG_ASSERT(index < m_len);
         T value = {};
         xar_detail::copy_value(&value, get_ptr_unsafe(index));
         return value;
     }
 
     [[nodiscard]] auto get_ptr(size_t index) -> T* {
-        ASSERT(index < m_len);
+        DEBUG_ASSERT(index < m_len);
         return get_ptr_unsafe(index);
     }
 
     [[nodiscard]] auto get_ptr(size_t index) const -> T const* {
-        ASSERT(index < m_len);
+        DEBUG_ASSERT(index < m_len);
         return get_ptr_unsafe(index);
     }
 
@@ -344,7 +344,7 @@ template <typename T, size_t SHIFT> class XarArray final {
     }
 
     auto set(size_t index, T const& value) -> void {
-        ASSERT(index < m_len);
+        DEBUG_ASSERT(index < m_len);
         xar_detail::copy_value(get_ptr_unsafe(index), &value);
     }
 
@@ -393,7 +393,7 @@ template <typename T, size_t SHIFT> class XarArray final {
         }
 
         xar_detail::Meta const meta = xar_detail::meta_get<SHIFT>(m_len);
-        ASSERT(meta.chunk_index < CHUNK_COUNT);
+        DEBUG_ASSERT(meta.chunk_index < CHUNK_COUNT);
 
         if (m_chunks[meta.chunk_index] == nullptr && !allocate_chunk(meta.chunk_index)) {
             return nullptr;
@@ -406,7 +406,7 @@ template <typename T, size_t SHIFT> class XarArray final {
     }
 
     [[nodiscard]] auto pop() -> T {
-        ASSERT(m_len > 0u);
+        DEBUG_ASSERT(m_len > 0u);
         size_t const index = m_len - 1u;
         T const value = get(index);
         m_len -= 1u;
@@ -421,7 +421,7 @@ template <typename T, size_t SHIFT> class XarArray final {
     }
 
     auto unordered_remove(size_t index) -> void {
-        ASSERT(index < m_len);
+        DEBUG_ASSERT(index < m_len);
 
         size_t const last_index = m_len - 1u;
         if (index != last_index) {
@@ -471,7 +471,7 @@ template <typename T, size_t SHIFT> class XarArray final {
         if (xar_detail::mul_overflows(sizeof(T), chunk_capacity, allocation_size)) {
             return false;
         }
-        ASSERT(m_resource != nullptr);
+        DEBUG_ASSERT(m_resource != nullptr);
         void* const memory = m_resource->allocate(allocation_size, alignof(T));
         if (memory == nullptr) {
             return false;
@@ -496,15 +496,15 @@ template <typename T, size_t SHIFT> class XarArray final {
 
     [[nodiscard]] auto get_ptr_unsafe(size_t index) -> T* {
         xar_detail::Meta const meta = xar_detail::meta_get<SHIFT>(index);
-        ASSERT(meta.chunk_index < CHUNK_COUNT);
-        ASSERT(m_chunks[meta.chunk_index] != nullptr);
+        DEBUG_ASSERT(meta.chunk_index < CHUNK_COUNT);
+        DEBUG_ASSERT(m_chunks[meta.chunk_index] != nullptr);
         return m_chunks[meta.chunk_index] + meta.element_index;
     }
 
     [[nodiscard]] auto get_ptr_unsafe(size_t index) const -> T const* {
         xar_detail::Meta const meta = xar_detail::meta_get<SHIFT>(index);
-        ASSERT(meta.chunk_index < CHUNK_COUNT);
-        ASSERT(m_chunks[meta.chunk_index] != nullptr);
+        DEBUG_ASSERT(meta.chunk_index < CHUNK_COUNT);
+        DEBUG_ASSERT(m_chunks[meta.chunk_index] != nullptr);
         return m_chunks[meta.chunk_index] + meta.element_index;
     }
 
@@ -648,22 +648,22 @@ template <typename T, size_t SHIFT> class XarFreelistArray final {
     }
 
     [[nodiscard]] auto get(size_t index) const -> T {
-        ASSERT(!is_freed(index));
+        DEBUG_ASSERT(!is_freed(index));
         return m_array.get(index);
     }
 
     [[nodiscard]] auto get_ptr(size_t index) -> T* {
-        ASSERT(!is_freed(index));
+        DEBUG_ASSERT(!is_freed(index));
         return m_array.get_ptr(index);
     }
 
     [[nodiscard]] auto get_ptr(size_t index) const -> T const* {
-        ASSERT(!is_freed(index));
+        DEBUG_ASSERT(!is_freed(index));
         return m_array.get_ptr(index);
     }
 
     auto set(size_t index, T const& value) -> void {
-        ASSERT(!is_freed(index));
+        DEBUG_ASSERT(!is_freed(index));
         m_array.set(index, value);
     }
 
@@ -675,7 +675,7 @@ template <typename T, size_t SHIFT> class XarFreelistArray final {
         if (m_freelist != nullptr) {
             T* const slot = m_freelist;
             XarIndexResult const found = linear_search(slot);
-            ASSERT(found);
+            DEBUG_ASSERT(found);
 
             m_freelist = read_next_free(slot);
             xar_detail::copy_value(slot, &value);
@@ -689,7 +689,7 @@ template <typename T, size_t SHIFT> class XarFreelistArray final {
 
     [[nodiscard]] auto pop(size_t index) -> T {
         T* const item = m_array.get_ptr(index);
-        ASSERT(!is_freed(index));
+        DEBUG_ASSERT(!is_freed(index));
 
         T result = {};
         xar_detail::copy_value(&result, item);
@@ -700,7 +700,7 @@ template <typename T, size_t SHIFT> class XarFreelistArray final {
 
     auto release(size_t index) -> void {
         T* const item = m_array.get_ptr(index);
-        ASSERT(!is_freed(index));
+        DEBUG_ASSERT(!is_freed(index));
         write_next_free(item, m_freelist);
         m_freelist = item;
     }

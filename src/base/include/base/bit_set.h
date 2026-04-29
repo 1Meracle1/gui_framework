@@ -181,7 +181,7 @@ class BitSet final {
     }
 
     [[nodiscard]] constexpr auto word(size_t index) const -> Word {
-        ASSERT(index < WORD_COUNT);
+        DEBUG_ASSERT(index < WORD_COUNT);
         return m_words[index];
     }
 

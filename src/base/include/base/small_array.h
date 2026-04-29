@@ -89,27 +89,27 @@ template <typename T, size_t N> struct SmallArray {
     }
 
     [[nodiscard]] constexpr auto get(size_t index) const -> T {
-        ASSERT(index < CAPACITY);
+        DEBUG_ASSERT(index < CAPACITY);
         return data[index];
     }
 
     [[nodiscard]] constexpr auto operator[](size_t index) -> T& {
-        ASSERT(index < CAPACITY);
+        DEBUG_ASSERT(index < CAPACITY);
         return data[index];
     }
 
     [[nodiscard]] constexpr auto operator[](size_t index) const -> T const& {
-        ASSERT(index < CAPACITY);
+        DEBUG_ASSERT(index < CAPACITY);
         return data[index];
     }
 
     [[nodiscard]] constexpr auto get_ptr(size_t index) -> T* {
-        ASSERT(index < CAPACITY);
+        DEBUG_ASSERT(index < CAPACITY);
         return data.data() + index;
     }
 
     [[nodiscard]] constexpr auto get_ptr(size_t index) const -> T const* {
-        ASSERT(index < CAPACITY);
+        DEBUG_ASSERT(index < CAPACITY);
         return data.data() + index;
     }
 
@@ -135,7 +135,7 @@ template <typename T, size_t N> struct SmallArray {
     }
 
     constexpr auto set(size_t index, T const& item) -> void {
-        ASSERT(index < CAPACITY);
+        DEBUG_ASSERT(index < CAPACITY);
         data[index] = item;
     }
 
@@ -166,14 +166,14 @@ template <typename T, size_t N> struct SmallArray {
     }
 
     [[nodiscard]] constexpr auto pop_back() -> T {
-        ASSERT(len > 0u);
+        DEBUG_ASSERT(len > 0u);
         T item = data[len - 1u];
         len -= 1u;
         return item;
     }
 
     [[nodiscard]] constexpr auto pop_front() -> T {
-        ASSERT(len > 0u);
+        DEBUG_ASSERT(len > 0u);
         T item = data[0u];
         for (size_t index = 1u; index < len; ++index) {
             data[index - 1u] = data[index];
@@ -197,12 +197,12 @@ template <typename T, size_t N> struct SmallArray {
     }
 
     constexpr auto consume(size_t count) -> void {
-        ASSERT(count <= len);
+        DEBUG_ASSERT(count <= len);
         len -= count;
     }
 
     constexpr auto ordered_remove(size_t index) -> void {
-        ASSERT(index < len);
+        DEBUG_ASSERT(index < len);
         for (size_t next = index + 1u; next < len; ++next) {
             data[next - 1u] = data[next];
         }
@@ -210,7 +210,7 @@ template <typename T, size_t N> struct SmallArray {
     }
 
     constexpr auto unordered_remove(size_t index) -> void {
-        ASSERT(index < len);
+        DEBUG_ASSERT(index < len);
         size_t const last = len - 1u;
         if (index != last) {
             data[index] = data[last];

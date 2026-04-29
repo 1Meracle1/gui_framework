@@ -48,17 +48,17 @@ template <typename T> class Slice final {
     }
 
     [[nodiscard]] constexpr auto operator[](size_t index) const -> T& {
-        ASSERT(index < m_size);
+        DEBUG_ASSERT(index < m_size);
         return m_data[index];
     }
 
     [[nodiscard]] constexpr auto front() const -> T& {
-        ASSERT(m_size > 0u);
+        DEBUG_ASSERT(m_size > 0u);
         return m_data[0u];
     }
 
     [[nodiscard]] constexpr auto back() const -> T& {
-        ASSERT(m_size > 0u);
+        DEBUG_ASSERT(m_size > 0u);
         return m_data[m_size - 1u];
     }
 
@@ -107,7 +107,7 @@ template <typename T> [[nodiscard]] constexpr auto slice(T* data, size_t size) -
 }
 
 template <typename T> [[nodiscard]] constexpr auto slice(T* begin, T* end) -> Slice<T> {
-    ASSERT(begin != nullptr && end != nullptr && begin <= end);
+    DEBUG_ASSERT(begin != nullptr && end != nullptr && begin <= end);
     return Slice<T>(begin, static_cast<size_t>(end - begin));
 }
 

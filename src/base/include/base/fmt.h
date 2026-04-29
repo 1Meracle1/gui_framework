@@ -425,8 +425,8 @@ namespace fmt {
     template <typename... Args>
     [[nodiscard]] auto
     bprintf(char* backing, size_t capacity, StrRef format_text, Args const&... args) -> StrRef {
-        ASSERT(backing != nullptr);
-        ASSERT(capacity > 0u);
+        DEBUG_ASSERT(backing != nullptr);
+        DEBUG_ASSERT(capacity > 0u);
         if (backing == nullptr || capacity == 0u) {
             return {};
         }

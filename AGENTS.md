@@ -98,8 +98,9 @@ do not prefix everything with
 - Avoid hidden allocation, hidden control flow, and implicit ownership transfer.
 - Validate external inputs at the public API boundary. Do not repeat the same
   null, handle, or range checks through every internal call after a caller has
-  already established the invariant; use `ASSERT` for internal invariants when a
-  check is still useful.
+  already established the invariant; use `DEBUG_ASSERT` for internal
+  invariants when a debug-only check is useful. Use release-active `ASSERT` only
+  for failures that must still crash in release builds.
 - Do not use C heap allocation or owning `new`/`delete` in production code.
   Functions that allocate framework-owned data must take an explicit `Arena&`
   or allocate from an arena already owned by the context they operate on. Use

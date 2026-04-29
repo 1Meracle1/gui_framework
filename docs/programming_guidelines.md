@@ -58,8 +58,9 @@ times.
 - Use `constexpr` and templates only when they pay for themselves.
 - Validate outside-world inputs once at the public API boundary. After a
   wrapper has checked a handle, pointer, size, or enum, private helpers should
-  assume that invariant and use `ASSERT` only where documenting or debugging the
-  contract is worthwhile.
+  assume that invariant and use `DEBUG_ASSERT` where documenting or debugging
+  the contract is worthwhile. Use release-active `ASSERT` only for failures that
+  must still crash in release builds.
 - Avoid forwarding parameters through layers that each repeat the same
   validity checks. Prefer one explicit boundary check and simple internal code.
 

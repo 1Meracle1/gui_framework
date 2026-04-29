@@ -232,7 +232,7 @@ template <typename T> class Vec final {
     }
 
     [[nodiscard]] auto pop() -> T {
-        ASSERT(m_len > 0u);
+        DEBUG_ASSERT(m_len > 0u);
         m_len -= 1u;
         T value = {};
         vec_detail::copy_value(&value, m_data + m_len);
@@ -247,7 +247,7 @@ template <typename T> class Vec final {
     }
 
     auto ordered_remove(size_t index) -> void {
-        ASSERT(index < m_len);
+        DEBUG_ASSERT(index < m_len);
         size_t const trailing_count = m_len - index - 1u;
         if (trailing_count != 0u) {
             std::memmove(m_data + index, m_data + index + 1u, trailing_count * sizeof(T));
@@ -256,7 +256,7 @@ template <typename T> class Vec final {
     }
 
     auto unordered_remove(size_t index) -> void {
-        ASSERT(index < m_len);
+        DEBUG_ASSERT(index < m_len);
         size_t const last = m_len - 1u;
         if (index != last) {
             vec_detail::copy_value(m_data + index, m_data + last);
@@ -265,7 +265,7 @@ template <typename T> class Vec final {
     }
 
     [[nodiscard]] auto get(size_t index) const -> T {
-        ASSERT(index < m_len);
+        DEBUG_ASSERT(index < m_len);
         T value = {};
         vec_detail::copy_value(&value, m_data + index);
         return value;
@@ -279,12 +279,12 @@ template <typename T> class Vec final {
     }
 
     [[nodiscard]] auto get_ptr(size_t index) -> T* {
-        ASSERT(index < m_len);
+        DEBUG_ASSERT(index < m_len);
         return m_data + index;
     }
 
     [[nodiscard]] auto get_ptr(size_t index) const -> T const* {
-        ASSERT(index < m_len);
+        DEBUG_ASSERT(index < m_len);
         return m_data + index;
     }
 
@@ -303,7 +303,7 @@ template <typename T> class Vec final {
     }
 
     auto set(size_t index, T const& value) -> void {
-        ASSERT(index < m_len);
+        DEBUG_ASSERT(index < m_len);
         vec_detail::copy_value(m_data + index, &value);
     }
 
@@ -364,12 +364,12 @@ template <typename T> class Vec final {
     }
 
     [[nodiscard]] auto operator[](size_t index) -> T& {
-        ASSERT(index < m_len);
+        DEBUG_ASSERT(index < m_len);
         return m_data[index];
     }
 
     [[nodiscard]] auto operator[](size_t index) const -> T const& {
-        ASSERT(index < m_len);
+        DEBUG_ASSERT(index < m_len);
         return m_data[index];
     }
 
@@ -399,7 +399,7 @@ template <typename T> class Vec final {
 
         T* new_data = nullptr;
         if (capacity != 0u) {
-            ASSERT(m_resource != nullptr);
+            DEBUG_ASSERT(m_resource != nullptr);
             new_data = static_cast<T*>(m_resource->allocate(new_size, alignof(T)));
             if (new_data == nullptr) {
                 return false;

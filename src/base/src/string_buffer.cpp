@@ -36,7 +36,7 @@ namespace {
     [[nodiscard]] auto dynamic_allocation_size(size_t capacity) -> size_t {
         size_t allocation_size = 0u;
         bool const overflowed = add_overflows(capacity, 1u, &allocation_size);
-        ASSERT(!overflowed);
+        DEBUG_ASSERT(!overflowed);
         return allocation_size;
     }
 
@@ -100,8 +100,8 @@ auto StringBuffer::init(size_t capacity, MemoryResource* resource) -> bool {
 }
 
 auto StringBuffer::init_with_backing(char* backing, size_t capacity) -> void {
-    ASSERT(backing != nullptr);
-    ASSERT(capacity > 0u);
+    DEBUG_ASSERT(backing != nullptr);
+    DEBUG_ASSERT(capacity > 0u);
 
     destroy();
 
@@ -231,7 +231,7 @@ auto StringBuffer::write_fill(char value, size_t count) -> size_t {
 }
 
 auto StringBuffer::pop_byte() -> char {
-    ASSERT(m_size > 0u);
+    DEBUG_ASSERT(m_size > 0u);
     m_size -= 1u;
     char const value = m_data[m_size];
     write_terminator();
@@ -310,7 +310,7 @@ auto StringBuffer::prepare_write(size_t size) -> size_t {
     }
 
     if (fixed_capacity()) {
-        ASSERT(m_size <= m_capacity);
+        DEBUG_ASSERT(m_size <= m_capacity);
         return m_capacity - m_size;
     }
 

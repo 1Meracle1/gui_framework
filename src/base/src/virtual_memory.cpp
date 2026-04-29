@@ -33,7 +33,7 @@ auto virtual_page_size() -> size_t {
 }
 
 auto virtual_reserve(size_t size) -> void* {
-    ASSERT(size != 0u);
+    DEBUG_ASSERT(size != 0u);
 
 #if BASE_PLATFORM_WINDOWS
     return VirtualAlloc(nullptr, size, MEM_RESERVE, PAGE_NOACCESS);
@@ -52,7 +52,7 @@ auto virtual_reserve(size_t size) -> void* {
 }
 
 auto virtual_commit(void* data, size_t size) -> bool {
-    ASSERT(data != nullptr && size != 0u);
+    DEBUG_ASSERT(data != nullptr && size != 0u);
 
 #if BASE_PLATFORM_WINDOWS
     return VirtualAlloc(data, size, MEM_COMMIT, PAGE_READWRITE) != nullptr;
@@ -66,7 +66,7 @@ auto virtual_commit(void* data, size_t size) -> bool {
 }
 
 auto virtual_decommit(void* data, size_t size) -> bool {
-    ASSERT(data != nullptr && size != 0u);
+    DEBUG_ASSERT(data != nullptr && size != 0u);
 
 #if BASE_PLATFORM_WINDOWS
     return VirtualFree(data, size, MEM_DECOMMIT) != FALSE;
@@ -89,7 +89,7 @@ auto virtual_decommit(void* data, size_t size) -> bool {
 }
 
 auto virtual_release(void* data, size_t size) -> bool {
-    ASSERT(data != nullptr && size != 0u);
+    DEBUG_ASSERT(data != nullptr && size != 0u);
 
 #if BASE_PLATFORM_WINDOWS
     BASE_UNUSED(size);

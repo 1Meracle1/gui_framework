@@ -107,8 +107,8 @@ auto reset_thread_temp_arenas() -> void;
 [[nodiscard]] auto begin_thread_temp_arena(uint32_t index = 0u) -> ArenaTemp;
 
 template <typename T> [[nodiscard]] auto arena_alloc(Arena& arena, size_t count = 1u) -> T* {
-    ASSERT(count > 0);
-    ASSERT(count <= (static_cast<size_t>(-1) / sizeof(T)));
+    DEBUG_ASSERT(count > 0);
+    DEBUG_ASSERT(count <= (static_cast<size_t>(-1) / sizeof(T)));
     return static_cast<T*>(arena.allocate_bytes(sizeof(T) * count, alignof(T)));
 }
 

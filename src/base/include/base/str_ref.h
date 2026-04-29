@@ -50,7 +50,7 @@ inline auto cstr_len(char const* s) -> size_t {
 }
 
 [[nodiscard]] constexpr auto pointer_range_size(char const* begin, char const* end) -> size_t {
-    ASSERT(begin != nullptr && end != nullptr && begin <= end);
+    DEBUG_ASSERT(begin != nullptr && end != nullptr && begin <= end);
     return static_cast<size_t>(end - begin);
 }
 
