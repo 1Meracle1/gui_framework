@@ -1022,6 +1022,66 @@ namespace {
         gui::destroy_context(gui_context);
     }
 
+    TEST_CASE(dense_controls_panel_renders_only_batchable_styled_rects_without_font) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::draw::Context draw_context = {};
+        gui::draw::create_context(arena, {}, draw_context);
+
+        bool checks[] = {true, false, true, false};
+        bool toggles[] = {false, true, false, true};
+        float values[] = {0.2f, 0.4f, 0.6f, 0.8f};
+        gui::BoxDesc const control_box = {
+            .layout = {.width = gui::px(200.0f), .height = gui::px(20.0f)}};
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {240.0f, 320.0f}});
+        {
+            auto panel = ui.column({.style = {.role = gui::StyleRole::PANEL}});
+            TEST_EXPECT(context, panel);
+            for (size_t index = 0u; index < 4u; ++index) {
+                ui.checkbox(gui::id(100u + index), "Check", checks + index, control_box);
+                ui.toggle(gui::id(200u + index), "Toggle", toggles + index, control_box);
+                ui.slider_float(
+                    gui::id(300u + index), "Slider", values + index, {.box = control_box});
+            }
+        }
+        gui::end_frame(ui);
+
+        gui::draw::begin_frame(draw_context);
+        gui::render_frame(ui, draw_context);
+
+        constexpr size_t expected_styled_rects = 39u;
+        TEST_EXPECT(context,
+                    gui::draw::styled_rect_command_count(draw_context) == expected_styled_rects);
+        TEST_EXPECT(context, gui::draw::text_command_count(draw_context) == 0u);
+        TEST_EXPECT(context, gui::draw::primitive_command_count(draw_context) == 0u);
+        TEST_EXPECT(context, gui::draw::layer_command_count(draw_context) == 0u);
+        TEST_EXPECT(context, gui::draw::command_count(draw_context) == expected_styled_rects);
+
+        for (size_t index = 0u; index < expected_styled_rects; ++index) {
+            gui::draw::Command const* draw_command = gui::draw::command(draw_context, index);
+            TEST_EXPECT(context, draw_command != nullptr);
+            TEST_EXPECT(context, draw_command != nullptr &&
+                                     draw_command->kind == gui::draw::CommandKind::STYLED_RECT);
+
+            gui::draw::StyledRectCommand const* styled =
+                gui::draw::styled_rect_command(draw_context, index);
+            TEST_EXPECT(context, styled != nullptr);
+            if (styled != nullptr) {
+                TEST_EXPECT(context, !gui::render::texture_valid(styled->style.texture));
+                TEST_EXPECT(context, styled->style.shadow.color.a == 0.0f);
+                TEST_EXPECT(context, styled->style.shadow.blur_radius == 0.0f);
+                TEST_EXPECT(context, styled->style.shadow.spread == 0.0f);
+            }
+        }
+
+        gui::draw::destroy_context(draw_context);
+        gui::destroy_context(gui_context);
+    }
+
     TEST_CASE(render_emits_styled_rects_for_visible_box_styles) {
         Arena arena = {};
         arena.init();

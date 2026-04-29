@@ -612,6 +612,7 @@ namespace gui::render {
     auto draw(Context context, DrawDesc const& desc) -> void {
         ASSERT(context_valid(context));
         ASSERT(desc.vertex_count != 0u);
+        ASSERT(desc.instance_count != 0u);
         ASSERT(desc.vertex_buffer_count == 0u || desc.vertex_buffers != nullptr);
 
         for (size_t index = 0u; index < desc.vertex_buffer_count; ++index) {

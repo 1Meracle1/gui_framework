@@ -1681,8 +1681,10 @@ namespace gui::render::d3d12 {
                 element.Format = d3d_format(attribute.format);
                 element.InputSlot = attribute.buffer_slot;
                 element.AlignedByteOffset = attribute.byte_offset;
-                element.InputSlotClass = D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA;
-                element.InstanceDataStepRate = 0u;
+                element.InputSlotClass = attribute.per_instance
+                                             ? D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA
+                                             : D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA;
+                element.InstanceDataStepRate = attribute.per_instance ? 1u : 0u;
             }
         }
 
@@ -1977,7 +1979,9 @@ namespace gui::render::d3d12 {
             context_impl->command_list->IASetVertexBuffers(binding.slot, 1u, &view);
         }
 
-        context_impl->command_list->DrawInstanced(desc.vertex_count, 1u, desc.first_vertex, 0u);
+        context_impl->command_list->DrawInstanced(
+            desc.vertex_count, desc.instance_count, desc.first_vertex, desc.first_instance
+        );
     }
 
     auto resize_window(Context context, Window window, SizeU32 size) -> Result {

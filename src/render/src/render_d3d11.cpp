@@ -976,8 +976,9 @@ namespace gui::render::d3d11 {
                 element.Format = d3d_format(attribute.format);
                 element.InputSlot = attribute.buffer_slot;
                 element.AlignedByteOffset = attribute.byte_offset;
-                element.InputSlotClass = D3D11_INPUT_PER_VERTEX_DATA;
-                element.InstanceDataStepRate = 0u;
+                element.InputSlotClass = attribute.per_instance ? D3D11_INPUT_PER_INSTANCE_DATA
+                                                                : D3D11_INPUT_PER_VERTEX_DATA;
+                element.InstanceDataStepRate = attribute.per_instance ? 1u : 0u;
             }
 
             HRESULT const hr = context_impl->device->CreateInputLayout(
@@ -1213,7 +1214,9 @@ namespace gui::render::d3d11 {
             device_context->IASetVertexBuffers(binding.slot, 1u, &buffer, &stride, &offset);
         }
 
-        device_context->Draw(desc.vertex_count, desc.first_vertex);
+        device_context->DrawInstanced(
+            desc.vertex_count, desc.instance_count, desc.first_vertex, desc.first_instance
+        );
     }
 
     auto resize_window(Context context, Window window, SizeU32 size) -> Result {

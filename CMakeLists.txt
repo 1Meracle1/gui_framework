@@ -42,6 +42,16 @@ add_executable(ui_api_testbed
 target_link_libraries(ui_api_testbed PRIVATE
     gui::gui
 )
+if(WIN32)
+    target_compile_definitions(ui_api_testbed PRIVATE
+        WIN32_LEAN_AND_MEAN
+        NOMINMAX
+    )
+    target_link_libraries(ui_api_testbed PRIVATE
+        draw::draw
+        render::render
+    )
+endif()
 cpp_configure_target(ui_api_testbed)
 
 if(WIN32)

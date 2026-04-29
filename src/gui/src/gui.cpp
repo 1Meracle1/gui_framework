@@ -248,6 +248,12 @@ namespace gui {
             return {static_cast<float>(box.text.size()) * font_size * 0.5f, font_size * 1.25f};
         }
 
+        [[nodiscard]] auto rendered_text_height(font_cache::Font font, float font_size) -> float {
+            font_provider::Metrics metrics = {};
+            font_cache::metrics_from_font(font, font_size, metrics);
+            return std::ceil(metrics.ascent + metrics.descent + 4.0f);
+        }
+
         [[nodiscard]] auto copy_frame_str(ContextImpl* impl, StrRef value) -> StrRef {
             if (value.empty()) {
                 return {};
@@ -1148,9 +1154,11 @@ namespace gui {
                               float opacity) -> void {
             draw::BoxStyle style = {};
             style.fill_color = to_draw_color(color_mul_alpha(fill, opacity));
+            style.texture = {};
             style.border_color = to_draw_color(color_mul_alpha(border, opacity));
             style.border_thickness = border_thickness;
             style.radius = radius;
+            style.shadow = {};
             draw::draw_rect_styled(draw_context, to_draw_rect(rect), style);
         }
 
@@ -1283,12 +1291,19 @@ namespace gui {
                                               : box.kind == BoxKind::TOGGLE       ? 44.0f
                                               : box.kind == BoxKind::SLIDER_FLOAT ? 0.0f
                                                                                   : 0.0f;
+                    float const content_width =
+                        std::max(0.0f, rect_width(box.rect) - inset_width(box.layout.padding));
+                    float const x_offset = box.kind == BoxKind::BUTTON
+                                               ? std::max(0.0f, content_width - text_dim.x) * 0.5f
+                                               : text_offset;
+                    float const text_height =
+                        rendered_text_height(text_style.font, text_style.size);
                     Vec2 const text_pos = {
-                        box.rect.min.x + box.layout.padding.left + text_offset,
+                        box.rect.min.x + box.layout.padding.left + x_offset,
                         box.rect.min.y + box.layout.padding.top +
                             std::max(0.0f,
                                      rect_height(box.rect) - inset_height(box.layout.padding) -
-                                         text_dim.y) *
+                                         text_height) *
                                 0.5f,
                     };
                     draw::draw_text(

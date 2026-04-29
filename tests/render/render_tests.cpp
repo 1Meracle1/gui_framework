@@ -221,6 +221,8 @@ namespace {
         TEST_EXPECT(context, desc.vertex_buffer_count == 0u);
         TEST_EXPECT(context, desc.vertex_count == 0u);
         TEST_EXPECT(context, desc.first_vertex == 0u);
+        TEST_EXPECT(context, desc.instance_count == 1u);
+        TEST_EXPECT(context, desc.first_instance == 0u);
     }
 
     TEST_CASE(render_vertex_attribute_defaults_describe_float2_attribute) {
@@ -231,6 +233,7 @@ namespace {
         TEST_EXPECT(context, desc.format == gui::render::VertexFormat::FLOAT32_2);
         TEST_EXPECT(context, desc.buffer_slot == 0u);
         TEST_EXPECT(context, desc.byte_offset == 0u);
+        TEST_EXPECT(context, !desc.per_instance);
     }
 
 } // namespace

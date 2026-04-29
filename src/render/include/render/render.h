@@ -211,6 +211,7 @@ namespace gui::render {
         VertexFormat format = VertexFormat::FLOAT32_2;
         uint32_t buffer_slot = 0u;
         uint32_t byte_offset = 0u;
+        bool per_instance = false;
     };
 
     struct PipelineDesc {
@@ -262,6 +263,8 @@ namespace gui::render {
         size_t vertex_buffer_count = 0u;
         uint32_t vertex_count = 0u;
         uint32_t first_vertex = 0u;
+        uint32_t instance_count = 1u;
+        uint32_t first_instance = 0u;
     };
 
     [[nodiscard]] auto result_succeeded(Result result) -> bool;

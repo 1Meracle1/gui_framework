@@ -1,8 +1,35 @@
+#if defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#endif
+
+#include <base/config.h>
 #include <base/crash.h>
 #include <base/fmt.h>
+#include <base/memory.h>
+#include <cstdint>
+#if defined(_WIN32)
+#include <draw/draw_renderer.h>
+#include <font_cache/font_cache.h>
+#include <font_provider/font_provider.h>
+#include <render/render.h>
+#include <windows.h>
+#endif
 #include <gui/gui.h>
 
 namespace {
+
+#if defined(_WIN32)
+    namespace draw = gui::draw;
+    namespace font_cache = gui::font_cache;
+    namespace font_provider = gui::font_provider;
+    namespace render = gui::render;
+#endif
 
     struct TestbedState {
         bool enabled = true;
@@ -14,61 +41,16 @@ namespace {
         gui::Signal selected_row_signal = {};
     };
 
-    auto bool_text(bool value) -> char const* {
-        return value ? "true" : "false";
-    }
-
-    auto kind_name(gui::BoxKind kind) -> char const* {
-        switch (kind) {
-        case gui::BoxKind::ROOT:
-            return "root";
-        case gui::BoxKind::ROW:
-            return "row";
-        case gui::BoxKind::COLUMN:
-            return "column";
-        case gui::BoxKind::OVERLAY:
-            return "overlay";
-        case gui::BoxKind::LABEL:
-            return "label";
-        case gui::BoxKind::BUTTON:
-            return "button";
-        case gui::BoxKind::CHECKBOX:
-            return "checkbox";
-        case gui::BoxKind::TOGGLE:
-            return "toggle";
-        case gui::BoxKind::SLIDER_FLOAT:
-            return "slider_float";
-        case gui::BoxKind::SPACER:
-            return "spacer";
-        case gui::BoxKind::SCROLL_PANEL:
-            return "scroll_panel";
-        case gui::BoxKind::LIST:
-            return "list";
-        case gui::BoxKind::COUNT:
-            return "count";
-        }
-        return "unknown";
-    }
-
-    auto source_name(gui::BoxIdSource source) -> char const* {
-        switch (source) {
-        case gui::BoxIdSource::STRUCTURAL:
-            return "structural";
-        case gui::BoxIdSource::TEXT:
-            return "text";
-        case gui::BoxIdSource::EXPLICIT:
-            return "explicit";
-        }
-        return "unknown";
-    }
-
     auto row_id(size_t index) -> gui::Id {
         return gui::id(0xA1100000ull + static_cast<uint64_t>(index));
     }
 
     auto draw_scroll_lines(gui::Frame& ui, StrRef prefix, size_t count) -> void {
         for (size_t index = 0u; index < count; ++index) {
-            ui.label(fmt::tprintf("%s %02zu", prefix, index));
+            ui.label(
+                fmt::tprintf("%s %02zu", prefix, index),
+                {.layout = {.width = gui::fill(), .height = gui::px(22.0f)}}
+            );
         }
     }
 
@@ -128,14 +110,19 @@ namespace {
                 state.header_signal = header.signal();
 
                 ui.label(
-                    "V2 UI API Testbed", {.layout = {.width = gui::text(), .height = gui::text()}}
+                    "V2 UI API Testbed", {.layout = {.width = gui::text(), .height = gui::fill()}}
                 );
                 ui.spacer({.layout = {.width = gui::fill(), .height = gui::px(1.0f)}});
                 if (ui.button(
                           gui::id("reset_scale"),
                           "Reset",
                           {
-                              .layout = {.width = gui::px(72.0f), .height = gui::px(24.0f)},
+                              .layout =
+                                  {
+                                      .width = gui::px(72.0f),
+                                      .height = gui::px(26.0f),
+                                      .padding = gui::insets(2.0f, 6.0f),
+                                  },
                               .style = {.role = gui::StyleRole::DANGER, .radius = 3.0f},
                               .debug_name = "reset_scale_button",
                           }
@@ -182,19 +169,19 @@ namespace {
 
                     ui.label(
                         "Virtualized Assets",
-                        {.layout = {.width = gui::text(), .height = gui::text()}}
+                        {.layout = {.width = gui::text(), .height = gui::px(24.0f)}}
                     );
 
                     auto rows = ui.list_fixed(
                         list_id,
                         {
                             .item_count = 48u,
-                            .item_height = 24.0f,
+                            .item_height = 26.0f,
                             .box = {
                                 .layout =
                                     {
                                         .width = gui::fill(),
-                                        .height = gui::px(198.0f),
+                                        .height = gui::px(226.0f),
                                         .clip = true,
                                     },
                                 .style =
@@ -213,7 +200,7 @@ namespace {
                             {
                                 .layout =
                                     {
-                                        .padding = gui::insets(2.0f, 6.0f),
+                                        .padding = gui::insets(0.0f, 6.0f),
                                         .gap = 6.0f,
                                         .align_y = gui::Align::CENTER,
                                     },
@@ -237,7 +224,7 @@ namespace {
                         }
                         ui.label(
                             fmt::tprintf("Asset %02zu", index),
-                            {.layout = {.width = gui::fill(), .height = gui::text()}}
+                            {.layout = {.width = gui::fill(), .height = gui::fill()}}
                         );
                     }
 
@@ -247,8 +234,8 @@ namespace {
                                 .layout =
                                     {
                                         .width = gui::fill(),
-                                        .height = gui::px(84.0f),
-                                        .padding = gui::insets(6.0f),
+                                        .height = gui::px(112.0f),
+                                        .padding = gui::insets(8.0f),
                                         .gap = 4.0f,
                                         .clip = true,
                                     },
@@ -286,7 +273,7 @@ namespace {
                                     {
                                         .width = gui::fill(),
                                         .height = gui::children(),
-                                        .padding = gui::insets(8.0f),
+                                        .padding = gui::insets(6.0f, 8.0f),
                                         .gap = 8.0f,
                                         .align_y = gui::Align::CENTER,
                                     },
@@ -303,32 +290,51 @@ namespace {
                             gui::id("enabled_checkbox"),
                             "Enabled",
                             &state.enabled,
-                            {.layout = {.width = gui::px(112.0f), .height = gui::px(24.0f)}}
+                            {.layout = {.width = gui::px(116.0f), .height = gui::px(30.0f)}}
                         );
                         ui.toggle(
                             gui::id("preview_toggle"),
                             "Preview",
                             &state.preview,
-                            {.layout = {.width = gui::px(120.0f), .height = gui::px(24.0f)}}
+                            {.layout = {.width = gui::px(126.0f), .height = gui::px(30.0f)}}
                         );
-                        ui.slider_float(
-                            gui::id("scale_slider"),
-                            "Scale",
-                            &state.scale,
-                            {
-                                .box =
-                                    {
-                                        .layout =
-                                            {
-                                                .width = gui::px(160.0f),
-                                                .height = gui::px(24.0f),
-                                            },
-                                    },
-                                .min = 0.5f,
-                                .max = 2.0f,
-                                .step = 0.05f,
-                            }
-                        );
+                        if (auto scale = ui.row(
+                                gui::id("scale_control"),
+                                {
+                                    .layout =
+                                        {
+                                            .width = gui::px(188.0f),
+                                            .height = gui::px(30.0f),
+                                            .gap = 6.0f,
+                                            .align_y = gui::Align::CENTER,
+                                        },
+                                    .debug_name = "scale_control",
+                                }
+                            )) {
+                            ui.label(
+                                "Scale",
+                                {.layout = {.width = gui::px(44.0f), .height = gui::fill()}}
+                            );
+                            ui.slider_float(
+                                gui::id("scale_slider"),
+                                " ",
+                                &state.scale,
+                                {
+                                    .box =
+                                        {
+                                            .layout =
+                                                {
+                                                    .width = gui::fill(),
+                                                    .height = gui::px(30.0f),
+                                                },
+                                            .style = {.foreground = gui::rgba(255, 255, 255, 0)},
+                                        },
+                                    .min = 0.5f,
+                                    .max = 2.0f,
+                                    .step = 0.05f,
+                                }
+                            );
+                        }
                         ui.checkbox(
                             gui::id("read_only_checkbox"),
                             "Read-only",
@@ -336,8 +342,8 @@ namespace {
                             {
                                 .layout =
                                     {
-                                        .width = gui::px(122.0f),
-                                        .height = gui::px(24.0f),
+                                        .width = gui::px(126.0f),
+                                        .height = gui::px(30.0f),
                                     },
                                 .flags = gui::BOX_FLAG_READ_ONLY,
                             }
@@ -348,8 +354,9 @@ namespace {
                             {
                                 .layout =
                                     {
-                                        .width = gui::px(92.0f),
-                                        .height = gui::px(24.0f),
+                                        .width = gui::px(96.0f),
+                                        .height = gui::px(30.0f),
+                                        .padding = gui::insets(3.0f, 6.0f),
                                     },
                                 .flags = gui::BOX_FLAG_DISABLED,
                             }
@@ -364,7 +371,7 @@ namespace {
                                         .width = gui::fill(),
                                         .height = gui::fill(),
                                         .padding = gui::insets(10.0f),
-                                        .align_x = gui::Align::END,
+                                        .align_x = gui::Align::START,
                                         .align_y = gui::Align::START,
                                         .clip = true,
                                     },
@@ -379,37 +386,50 @@ namespace {
                                 .debug_name = "preview_overlay",
                             }
                         )) {
-                        ui.label(
-                            "Preview fills the overlay",
-                            {
-                                .layout =
-                                    {
-                                        .width = gui::fill(),
-                                        .height = gui::fill(),
-                                        .padding = gui::insets(12.0f),
-                                    },
-                                .style = {.foreground = gui::rgb(175, 188, 204)},
-                            }
-                        );
-                        if (auto badge = ui.row(
-                                gui::id("overlay_badge"),
+                        if (auto top = ui.row(
+                                gui::id("preview_top"),
                                 {
                                     .layout =
                                         {
-                                            .width = gui::children(),
-                                            .height = gui::children(),
-                                            .margin = gui::insets(6.0f),
-                                            .padding = gui::insets(4.0f, 8.0f),
+                                            .width = gui::fill(),
+                                            .height = gui::px(28.0f),
+                                            .gap = 8.0f,
+                                            .align_y = gui::Align::CENTER,
                                         },
-                                    .style =
-                                        {
-                                            .role = gui::StyleRole::ACCENT,
-                                            .radius = 3.0f,
-                                        },
-                                    .debug_name = "overlay_badge",
+                                    .debug_name = "preview_top",
                                 }
                             )) {
-                            ui.label("Overlay");
+                            ui.label(
+                                "Preview fills the overlay",
+                                {
+                                    .layout = {.width = gui::text(), .height = gui::fill()},
+                                    .style = {.foreground = gui::rgb(175, 188, 204)},
+                                }
+                            );
+                            ui.spacer({.layout = {.width = gui::fill(), .height = gui::px(1.0f)}});
+                            if (auto badge = ui.row(
+                                    gui::id("overlay_badge"),
+                                    {
+                                        .layout =
+                                            {
+                                                .width = gui::children(),
+                                                .height = gui::px(28.0f),
+                                                .padding = gui::insets(3.0f, 8.0f),
+                                                .align_y = gui::Align::CENTER,
+                                            },
+                                        .style =
+                                            {
+                                                .role = gui::StyleRole::ACCENT,
+                                                .radius = 3.0f,
+                                            },
+                                        .debug_name = "overlay_badge",
+                                    }
+                                )) {
+                                ui.label(
+                                    "Overlay",
+                                    {.layout = {.width = gui::text(), .height = gui::fill()}}
+                                );
+                            }
                         }
                     }
 
@@ -419,9 +439,9 @@ namespace {
                                 .layout =
                                     {
                                         .width = gui::fill(),
-                                        .height = gui::px(74.0f),
-                                        .padding = gui::insets(6.0f),
-                                        .gap = 3.0f,
+                                        .height = gui::px(112.0f),
+                                        .padding = gui::insets(8.0f),
+                                        .gap = 4.0f,
                                         .clip = true,
                                     },
                                 .style =
@@ -440,167 +460,422 @@ namespace {
         }
     }
 
-    auto run_frame(gui::Context context, TestbedState& state, gui::InputState input) -> gui::Frame {
-        gui::Frame ui = gui::begin_frame(
-            context, {.size = {640.0f, 400.0f}, .delta_time = 1.0f / 60.0f, .input = input}
-        );
-        draw_ui(ui, state);
-        gui::end_frame(ui);
-        return ui;
+#if defined(_WIN32)
+    constexpr wchar_t WINDOW_CLASS_NAME[] = L"gui_framework_ui_api_testbed";
+    constexpr uint32_t INITIAL_WINDOW_WIDTH = 960u;
+    constexpr uint32_t INITIAL_WINDOW_HEIGHT = 600u;
+
+    struct UiRuntime {
+        font_provider::Context provider = {};
+        font_cache::Cache cache = {};
+        font_cache::Font font = {};
+        gui::Context ui_context = {};
+        draw::Context draw_context = {};
+        draw::Renderer draw_renderer = {};
+        TestbedState state = {};
+    };
+
+    struct AppState {
+        HWND hwnd = nullptr;
+        bool running = true;
+        bool resize_pending = false;
+        render::SizeU32 pending_size = {};
+        gui::InputState input = {};
+    };
+
+    AppState* global_app_state = nullptr;
+
+    [[nodiscard]] auto loword_u32(LPARAM value) -> uint32_t {
+        return static_cast<uint32_t>(static_cast<uint16_t>(value & 0xffff));
     }
 
-    auto print_scroll_state(StrRef name, gui::ScrollState state) -> void {
-        fmt::printf(
-            "%s: valid=%s y=%.1f max=%.1f viewport=%.1f content=%.1f\n",
-            name,
-            bool_text(state.valid),
-            state.y,
-            state.max_y,
-            state.viewport_height,
-            state.content_height
-        );
+    [[nodiscard]] auto hiword_u32(LPARAM value) -> uint32_t {
+        return static_cast<uint32_t>(static_cast<uint16_t>((value >> 16) & 0xffff));
     }
 
-    auto print_box(StrRef label, gui::BoxInfo const& box) -> void {
-        StrRef const text = box.text.empty() ? StrRef("-") : box.text;
-        StrRef const debug_name = box.debug_name.empty() ? StrRef("-") : box.debug_name;
-        fmt::printf(
-            "%s kind=%s text=%s debug=%s id=%llu authored=%llu source=%s stable=%s duplicate=%s "
-            "rect=(%.1f,%.1f)-(%.1f,%.1f)\n",
-            label,
-            kind_name(box.kind),
-            text,
-            debug_name,
-            static_cast<unsigned long long>(box.id.value),
-            static_cast<unsigned long long>(box.authored_id.value),
-            source_name(box.id_source),
-            bool_text(box.stable_id),
-            bool_text(box.duplicate_id),
-            box.rect.min.x,
-            box.rect.min.y,
-            box.rect.max.x,
-            box.rect.max.y
-        );
+    [[nodiscard]] auto lparam_x(LPARAM value) -> float {
+        return static_cast<float>(static_cast<int16_t>(value & 0xffff));
     }
 
-    auto find_authored_box(gui::Frame const& ui, gui::Id authored_id, gui::BoxKind kind)
-        -> gui::BoxInfo const* {
-        for (size_t index = 0u; index < ui.box_info_count(); ++index) {
-            gui::BoxInfo const* const box = ui.box_info(index);
-            if (box != nullptr && box->authored_id.value == authored_id.value &&
-                box->kind == kind) {
-                return box;
-            }
-        }
-        return nullptr;
+    [[nodiscard]] auto lparam_y(LPARAM value) -> float {
+        return static_cast<float>(static_cast<int16_t>((value >> 16) & 0xffff));
     }
 
-    auto print_lookup(StrRef label, gui::BoxInfo const* box) -> void {
-        if (box == nullptr) {
-            fmt::printf("%s: not found\n", label);
+    auto log_render_result(char const* operation, render::Result result) -> void {
+        fmt::eprintf("%s failed: %s\n", operation, render::result_name(result));
+    }
+
+    auto log_font_result(char const* operation, font_provider::Result result) -> void {
+        fmt::eprintf("%s failed: %s\n", operation, font_provider::result_name(result));
+    }
+
+    auto destroy_ui_runtime(render::Context render_context, UiRuntime* runtime) -> void {
+        if (runtime == nullptr) {
             return;
         }
-        print_box(label, *box);
+
+        if (draw::renderer_valid(runtime->draw_renderer)) {
+            draw::destroy_renderer(render_context, runtime->draw_renderer);
+        }
+        if (draw::context_valid(runtime->draw_context)) {
+            draw::destroy_context(runtime->draw_context);
+        }
+        if (gui::context_valid(runtime->ui_context)) {
+            gui::destroy_context(runtime->ui_context);
+        }
+        if (font_cache::cache_valid(runtime->cache)) {
+            font_cache::destroy_cache(runtime->cache);
+        }
+        if (font_provider::context_valid(runtime->provider)) {
+            font_provider::destroy_context(runtime->provider);
+        }
+        runtime->font = {};
     }
 
-    auto inspect_metadata(gui::Frame const& ui) -> void {
-        size_t duplicate_count = 0u;
-        fmt::printf("box_info_count=%zu\n", ui.box_info_count());
-        for (size_t index = 0u; index < ui.box_info_count(); ++index) {
-            gui::BoxInfo const* const box = ui.box_info(index);
-            if (box == nullptr) {
+    [[nodiscard]] auto
+    create_ui_runtime(Arena& arena, render::Context render_context, UiRuntime* runtime) -> bool {
+        render::Result render_result =
+            draw::create_renderer(arena, render_context, {}, runtime->draw_renderer);
+        if (render::result_failed(render_result)) {
+            log_render_result("draw::create_renderer", render_result);
+            return false;
+        }
+
+        font_provider::Result font_result =
+            font_provider::create_context(arena, {}, runtime->provider);
+        if (font_provider::result_failed(font_result)) {
+            log_font_result("font_provider::create_context", font_result);
+            return false;
+        }
+
+        font_cache::create_cache(arena, runtime->provider, {}, runtime->cache);
+        font_cache::open_system_font(runtime->cache, "Segoe UI", runtime->font);
+
+        draw::ContextDesc draw_desc = {};
+        draw_desc.font_cache = runtime->cache;
+        draw::create_context(arena, draw_desc, runtime->draw_context);
+
+        gui::ThemeDesc theme = gui::default_theme();
+        theme.root.font = runtime->font;
+        theme.root.font_size = 13.0f;
+        gui::theme_role(theme, gui::StyleRole::ACCENT).normal.background = gui::rgb(58, 108, 220);
+        gui::theme_role(theme, gui::StyleRole::DANGER).normal.background = gui::rgb(150, 54, 58);
+        gui::create_context(arena, {.theme = &theme}, runtime->ui_context);
+        return true;
+    }
+
+    auto build_ui_commands(
+        UiRuntime* runtime,
+        render::SizeU32 window_size,
+        gui::InputState const& input,
+        float delta_time
+    ) -> void {
+        gui::Frame ui = gui::begin_frame(
+            runtime->ui_context,
+            {
+                .size =
+                    {
+                        static_cast<float>(window_size.width),
+                        static_cast<float>(window_size.height),
+                    },
+                .delta_time = delta_time,
+                .input = input,
+            }
+        );
+        draw_ui(ui, runtime->state);
+        gui::end_frame(ui);
+
+        draw::begin_frame(runtime->draw_context);
+        gui::render_frame(ui, runtime->draw_context);
+        draw::end_frame(runtime->draw_context);
+    }
+
+    auto window_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) -> LRESULT {
+        switch (message) {
+        case WM_SIZE:
+            if (global_app_state != nullptr && wparam != SIZE_MINIMIZED) {
+                render::SizeU32 const size = {loword_u32(lparam), hiword_u32(lparam)};
+                if (size.width != 0u && size.height != 0u) {
+                    global_app_state->pending_size = size;
+                    global_app_state->resize_pending = true;
+                }
+            }
+            return 0;
+
+        case WM_MOUSEMOVE:
+            if (global_app_state != nullptr) {
+                global_app_state->input.mouse_pos = {lparam_x(lparam), lparam_y(lparam)};
+            }
+            return 0;
+
+        case WM_LBUTTONDOWN:
+            if (global_app_state != nullptr) {
+                global_app_state->input.mouse_down[0u] = true;
+                global_app_state->input.mouse_pos = {lparam_x(lparam), lparam_y(lparam)};
+            }
+            SetCapture(hwnd);
+            SetFocus(hwnd);
+            return 0;
+
+        case WM_LBUTTONUP:
+            if (global_app_state != nullptr) {
+                global_app_state->input.mouse_down[0u] = false;
+                global_app_state->input.mouse_pos = {lparam_x(lparam), lparam_y(lparam)};
+            }
+            if (GetCapture() == hwnd) {
+                ReleaseCapture();
+            }
+            return 0;
+
+        case WM_MOUSEWHEEL:
+            if (global_app_state != nullptr) {
+                global_app_state->input.scroll_delta_y +=
+                    static_cast<float>(GET_WHEEL_DELTA_WPARAM(wparam)) /
+                    static_cast<float>(WHEEL_DELTA) * 36.0f;
+            }
+            return 0;
+
+        case WM_CLOSE:
+            if (global_app_state != nullptr) {
+                global_app_state->running = false;
+            }
+            DestroyWindow(hwnd);
+            return 0;
+
+        case WM_DESTROY:
+            PostQuitMessage(0);
+            return 0;
+
+        default:
+            return DefWindowProcW(hwnd, message, wparam, lparam);
+        }
+    }
+
+    [[nodiscard]] auto create_testbed_window(AppState* app_state) -> bool {
+        HINSTANCE const instance = GetModuleHandleW(nullptr);
+
+        WNDCLASSEXW window_class = {};
+        window_class.cbSize = static_cast<UINT>(sizeof(window_class));
+        window_class.style = CS_HREDRAW | CS_VREDRAW;
+        window_class.lpfnWndProc = window_proc;
+        window_class.hInstance = instance;
+        window_class.hCursor = LoadCursorW(nullptr, MAKEINTRESOURCEW(32512));
+        window_class.lpszClassName = WINDOW_CLASS_NAME;
+
+        if (RegisterClassExW(&window_class) == 0u) {
+            fmt::eprintf("RegisterClassExW failed: %lu\n", GetLastError());
+            return false;
+        }
+
+        DWORD const style = WS_OVERLAPPEDWINDOW;
+        RECT rect = {};
+        rect.right = static_cast<LONG>(INITIAL_WINDOW_WIDTH);
+        rect.bottom = static_cast<LONG>(INITIAL_WINDOW_HEIGHT);
+        if (!AdjustWindowRect(&rect, style, FALSE)) {
+            fmt::eprintf("AdjustWindowRect failed: %lu\n", GetLastError());
+            return false;
+        }
+
+        HWND const hwnd = CreateWindowExW(
+            0u,
+            WINDOW_CLASS_NAME,
+            L"gui_framework UI API testbed",
+            style,
+            CW_USEDEFAULT,
+            CW_USEDEFAULT,
+            rect.right - rect.left,
+            rect.bottom - rect.top,
+            nullptr,
+            nullptr,
+            instance,
+            nullptr
+        );
+        if (hwnd == nullptr) {
+            fmt::eprintf("CreateWindowExW failed: %lu\n", GetLastError());
+            return false;
+        }
+
+        app_state->hwnd = hwnd;
+        ShowWindow(hwnd, SW_SHOW);
+        UpdateWindow(hwnd);
+        return true;
+    }
+
+    auto destroy_testbed_window(AppState* app_state) -> void {
+        if (app_state->hwnd != nullptr && IsWindow(app_state->hwnd)) {
+            DestroyWindow(app_state->hwnd);
+        }
+        app_state->hwnd = nullptr;
+        UnregisterClassW(WINDOW_CLASS_NAME, GetModuleHandleW(nullptr));
+    }
+
+    auto run_windowed() -> int {
+        AppState app_state = {};
+        global_app_state = &app_state;
+
+        if (!create_testbed_window(&app_state)) {
+            global_app_state = nullptr;
+            return 1;
+        }
+
+        Arena app_arena = {};
+        app_arena.init();
+
+        render::Context render_context = {};
+        render::ContextDesc context_desc = {};
+        context_desc.backend = render::Backend::D3D11;
+#if BASE_DEBUG
+        context_desc.enable_debug_layer = true;
+#endif
+
+        render::Result result = render::create_context(app_arena, context_desc, render_context);
+        if (render::result_failed(result)) {
+            log_render_result("render::create_context", result);
+            destroy_testbed_window(&app_state);
+            global_app_state = nullptr;
+            return 1;
+        }
+
+        render::Window render_window = {};
+        render::WindowDesc window_desc = {};
+        window_desc.native_window = app_state.hwnd;
+        window_desc.size = {INITIAL_WINDOW_WIDTH, INITIAL_WINDOW_HEIGHT};
+        window_desc.buffer_count = 2u;
+        window_desc.present_mode = render::PresentMode::VSYNC;
+
+        result = render::create_window(app_arena, render_context, window_desc, render_window);
+        if (render::result_failed(result)) {
+            log_render_result("render::create_window", result);
+            render::destroy_context(render_context);
+            destroy_testbed_window(&app_state);
+            global_app_state = nullptr;
+            return 1;
+        }
+
+        UiRuntime runtime = {};
+        if (!create_ui_runtime(app_arena, render_context, &runtime)) {
+            destroy_ui_runtime(render_context, &runtime);
+            render::destroy_window(render_window);
+            render::destroy_context(render_context);
+            destroy_testbed_window(&app_state);
+            global_app_state = nullptr;
+            return 1;
+        }
+
+        uint64_t previous_ticks = GetTickCount64();
+        while (app_state.running) {
+            MSG message = {};
+            while (PeekMessageW(&message, nullptr, 0u, 0u, PM_REMOVE)) {
+                if (message.message == WM_QUIT) {
+                    app_state.running = false;
+                    break;
+                }
+                TranslateMessage(&message);
+                DispatchMessageW(&message);
+            }
+
+            if (!app_state.running) {
+                break;
+            }
+
+            if (app_state.resize_pending) {
+                result =
+                    render::resize_window(render_context, render_window, app_state.pending_size);
+                if (render::result_failed(result)) {
+                    log_render_result("render::resize_window", result);
+                    break;
+                }
+                app_state.resize_pending = false;
+            }
+
+            uint64_t const ticks = GetTickCount64();
+            float const delta_time = static_cast<float>(ticks - previous_ticks) * 0.001f;
+            previous_ticks = ticks;
+
+            render::begin_frame(render_context);
+            build_ui_commands(
+                &runtime, render::window_size(render_window), app_state.input, delta_time
+            );
+
+            render::WindowRenderPassDesc pass_desc = {};
+            pass_desc.window = render_window;
+            pass_desc.clear_color = {0.025f, 0.030f, 0.038f, 1.0f};
+
+            result = draw::render_commands_to_window(
+                runtime.draw_renderer, render_context, pass_desc, runtime.draw_context
+            );
+            if (render::result_failed(result)) {
+                log_render_result("draw::render_commands_to_window", result);
+                break;
+            }
+
+            result = render::present_window(render_context, render_window);
+            app_state.input.scroll_delta_y = 0.0f;
+            if (result == render::Result::OCCLUDED) {
+                Sleep(16u);
                 continue;
             }
-            if (box->duplicate_id) {
-                duplicate_count += 1u;
-            }
-            if (!box->debug_name.empty() || box->duplicate_id) {
-                print_box(fmt::tprintf("box[%zu]", index), *box);
+            if (render::result_failed(result)) {
+                log_render_result("render::present_window", result);
+                break;
             }
         }
-        fmt::printf("duplicate_id boxes=%zu\n", duplicate_count);
 
-        gui::BoxInfo const* const controls =
-            find_authored_box(ui, gui::id("controls"), gui::BoxKind::ROW);
-        gui::BoxInfo const* const list =
-            find_authored_box(ui, gui::id("asset_list"), gui::BoxKind::LIST);
-        print_lookup(
-            "find_box(resolved controls)", controls != nullptr ? ui.find_box(controls->id) : nullptr
-        );
-        print_lookup(
-            "find_box(resolved list, kind)",
-            list != nullptr ? ui.find_box(list->id, gui::BoxKind::LIST) : nullptr
-        );
-        print_lookup("hit_test(30,178)", ui.hit_test({30.0f, 178.0f}));
+        destroy_ui_runtime(render_context, &runtime);
+        render::destroy_window(render_window);
+        render::destroy_context(render_context);
+        destroy_testbed_window(&app_state);
+        global_app_state = nullptr;
+        return 0;
     }
+#else
+    auto run_console_fallback() -> int {
+        Arena arena = {};
+        arena.init();
+
+        gui::ThemeDesc theme = gui::default_theme();
+        theme.root.font_size = 13.0f;
+        gui::theme_role(theme, gui::StyleRole::ACCENT).normal.background = gui::rgb(58, 108, 220);
+        gui::theme_role(theme, gui::StyleRole::DANGER).normal.background = gui::rgb(150, 54, 58);
+
+        gui::Context ui_context = {};
+        gui::create_context(arena, {.theme = &theme}, ui_context);
+
+        gui::draw::Context draw_context = {};
+        gui::draw::create_context(arena, {}, draw_context);
+
+        TestbedState state = {};
+        gui::Frame ui =
+            gui::begin_frame(ui_context, {.size = {640.0f, 400.0f}, .delta_time = 1.0f / 60.0f});
+        draw_ui(ui, state);
+        gui::end_frame(ui);
+
+        gui::draw::begin_frame(draw_context);
+        gui::render_frame(ui, draw_context);
+        gui::draw::end_frame(draw_context);
+
+        fmt::printf(
+            "ui_api_testbed: windowed D3D11 path is Windows-only; commands=%zu styled_rects=%zu "
+            "text=%zu\n",
+            gui::draw::command_count(draw_context),
+            gui::draw::styled_rect_command_count(draw_context),
+            gui::draw::text_command_count(draw_context)
+        );
+
+        gui::draw::destroy_context(draw_context);
+        gui::destroy_context(ui_context);
+        return 0;
+    }
+#endif
 
 } // namespace
 
 auto main() -> int {
     base::install_crash_handlers();
 
-    Arena arena = {};
-    arena.init();
-
-    gui::ThemeDesc theme = gui::default_theme();
-    gui::theme_role(theme, gui::StyleRole::ACCENT).normal.background = gui::rgb(58, 108, 220);
-    gui::theme_role(theme, gui::StyleRole::DANGER).normal.background = gui::rgb(150, 54, 58);
-
-    gui::Context ui_context = {};
-    gui::create_context(arena, {.theme = &theme}, ui_context);
-
-    gui::draw::Context draw_context = {};
-    gui::draw::create_context(arena, {}, draw_context);
-
-    TestbedState state = {};
-    gui::Frame ui = run_frame(ui_context, state, {});
-
-    gui::InputState input = {};
-    input.mouse_pos = {30.0f, 178.0f};
-    input.mouse_down[0u] = true;
-    ui = run_frame(ui_context, state, input);
-
-    input.mouse_down[0u] = false;
-    ui = run_frame(ui_context, state, input);
-
-    gui::draw::begin_frame(draw_context);
-    gui::render_frame(ui, draw_context);
-    gui::draw::end_frame(draw_context);
-
-    fmt::printf("ui_api_testbed\n");
-    fmt::printf(
-        "state: enabled=%s preview=%s read_only=%s scale=%.2f selected=%zu\n",
-        bool_text(state.enabled),
-        bool_text(state.preview),
-        bool_text(state.read_only_value),
-        state.scale,
-        state.selected_index
-    );
-    fmt::printf(
-        "header signal: hovered=%s active=%s activated=%s\n",
-        bool_text(state.header_signal.hovered),
-        bool_text(state.header_signal.active),
-        bool_text(state.header_signal.activated)
-    );
-    fmt::printf(
-        "selected row signal: hovered=%s active=%s activated=%s\n",
-        bool_text(state.selected_row_signal.hovered),
-        bool_text(state.selected_row_signal.active),
-        bool_text(state.selected_row_signal.activated)
-    );
-    fmt::printf(
-        "draw: commands=%zu styled_rects=%zu text=%zu\n",
-        gui::draw::command_count(draw_context),
-        gui::draw::styled_rect_command_count(draw_context),
-        gui::draw::text_command_count(draw_context)
-    );
-
-    print_scroll_state("notes_scroll", ui.scroll_state(gui::id("notes_scroll")));
-    print_scroll_state("log_scroll", ui.scroll_state(gui::id("log_scroll")));
-    print_scroll_state("asset_list", ui.scroll_state(gui::id("asset_list")));
-    inspect_metadata(ui);
-
-    gui::draw::destroy_context(draw_context);
-    gui::destroy_context(ui_context);
-    return 0;
+#if defined(_WIN32)
+    return run_windowed();
+#else
+    return run_console_fallback();
+#endif
 }
