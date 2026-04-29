@@ -1061,6 +1061,56 @@ namespace {
         gui::destroy_context(gui_context);
     }
 
+    TEST_CASE(selectable_label_double_click_selects_word) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::TextSelection selection = {};
+        gui::Id const label_id = gui::id("copyable");
+        gui::BoxDesc const box = {
+            .layout = {.width = gui::px(200.0f), .height = gui::px(20.0f)}};
+
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {220.0f, 40.0f}});
+        ui.selectable_label(label_id, "alpha beta", &selection, box);
+        gui::end_frame(ui);
+
+        gui::InputState input = {};
+        input.mouse_pos = {54.0f, 5.0f};
+        input.mouse_down[0u] = true;
+        input.mouse_double_clicked[0u] = true;
+        ui = gui::begin_frame(gui_context, {.size = {220.0f, 40.0f}, .input = input});
+        gui::Signal signal = ui.selectable_label(label_id, "alpha beta", &selection, box);
+        gui::end_frame(ui);
+
+        TEST_EXPECT(context, signal.hovered);
+        TEST_EXPECT(context, signal.changed);
+        TEST_EXPECT(context, selection.start == 6u);
+        TEST_EXPECT(context, selection.end == 10u);
+
+        input.mouse_double_clicked[0u] = false;
+        ui = gui::begin_frame(gui_context, {.size = {220.0f, 40.0f}, .input = input});
+        signal = ui.selectable_label(label_id, "alpha beta", &selection, box);
+        gui::end_frame(ui);
+
+        TEST_EXPECT(context, !signal.changed);
+        TEST_EXPECT(context, selection.start == 6u);
+        TEST_EXPECT(context, selection.end == 10u);
+
+        input.mouse_down[0u] = false;
+        ui = gui::begin_frame(gui_context, {.size = {220.0f, 40.0f}, .input = input});
+        signal = ui.selectable_label(label_id, "alpha beta", &selection, box);
+        gui::end_frame(ui);
+
+        TEST_EXPECT(context, !signal.changed);
+        TEST_EXPECT(context, selection.start == 6u);
+        TEST_EXPECT(context, selection.end == 10u);
+
+        gui::destroy_context(gui_context);
+    }
+
     TEST_CASE(selectable_label_renders_selection_highlight_without_font) {
         Arena arena = {};
         arena.init();

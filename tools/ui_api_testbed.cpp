@@ -628,6 +628,16 @@ namespace {
             }
             return 0;
 
+        case WM_LBUTTONDBLCLK:
+            if (global_app_state != nullptr) {
+                global_app_state->input.mouse_down[0u] = true;
+                global_app_state->input.mouse_double_clicked[0u] = true;
+                global_app_state->input.mouse_pos = {lparam_x(lparam), lparam_y(lparam)};
+            }
+            SetCapture(hwnd);
+            SetFocus(hwnd);
+            return 0;
+
         case WM_MOUSEWHEEL:
             if (global_app_state != nullptr) {
                 global_app_state->input.scroll_delta_y +=
@@ -657,7 +667,7 @@ namespace {
 
         WNDCLASSEXW window_class = {};
         window_class.cbSize = static_cast<UINT>(sizeof(window_class));
-        window_class.style = CS_HREDRAW | CS_VREDRAW;
+        window_class.style = CS_HREDRAW | CS_VREDRAW | CS_DBLCLKS;
         window_class.lpfnWndProc = window_proc;
         window_class.hInstance = instance;
         window_class.hCursor = LoadCursorW(nullptr, MAKEINTRESOURCEW(32512));
@@ -812,6 +822,7 @@ namespace {
 
             result = render::present_window(render_context, render_window);
             app_state.input.scroll_delta_y = 0.0f;
+            app_state.input.mouse_double_clicked[0u] = false;
             if (result == render::Result::OCCLUDED) {
                 Sleep(16u);
                 continue;

@@ -173,6 +173,7 @@ namespace gui {
     struct InputState {
         Vec2 mouse_pos = {};
         bool mouse_down[3] = {};
+        bool mouse_double_clicked[3] = {};
         float scroll_delta_y = 0.0f;
         KeyEvent const* key_events = nullptr;
         size_t key_event_count = 0u;

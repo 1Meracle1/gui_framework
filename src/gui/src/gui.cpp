@@ -25,6 +25,8 @@ namespace gui {
             float scroll_request_y = 0.0f;
             size_t scroll_request_index = 0u;
             size_t text_selection_anchor = 0u;
+            size_t text_selection_word_start = 0u;
+            size_t text_selection_word_end = 0u;
             font_cache::Font font = {};
             float font_size = 0.0f;
             ScrollReveal scroll_request_reveal = ScrollReveal::KEEP_VISIBLE;
@@ -32,6 +34,7 @@ namespace gui {
             bool scroll_request_end = false;
             bool scroll_request_index_set = false;
             bool scroll_valid = false;
+            bool text_selection_word_active = false;
             bool occupied = false;
         };
 
@@ -1158,6 +1161,56 @@ namespace gui {
             return offset;
         }
 
+        [[nodiscard]] auto previous_text_offset(StrRef text, size_t offset) -> size_t {
+            offset = std::min(offset, text.size());
+            if (offset == 0u) {
+                return 0u;
+            }
+            offset -= 1u;
+            while (offset > 0u && utf8_trailing_byte(text[offset])) {
+                offset -= 1u;
+            }
+            return offset;
+        }
+
+        [[nodiscard]] auto text_word_char(StrRef text, size_t offset) -> bool {
+            uint8_t const c = static_cast<uint8_t>(text[offset]);
+            return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                   (c >= '0' && c <= '9') || c == '_' || c >= 0x80u;
+        }
+
+        [[nodiscard]] auto text_word_selection(StrRef text, size_t cursor) -> TextSelection {
+            if (text.empty()) {
+                return {};
+            }
+
+            cursor = std::min(cursor, text.size());
+            size_t offset = cursor;
+            if (offset == text.size() ||
+                (offset > 0u && !text_word_char(text, offset) &&
+                 text_word_char(text, previous_text_offset(text, offset)))) {
+                offset = previous_text_offset(text, offset);
+            }
+            if (!text_word_char(text, offset)) {
+                return {cursor, cursor};
+            }
+
+            size_t start = offset;
+            while (start > 0u) {
+                size_t const previous = previous_text_offset(text, start);
+                if (!text_word_char(text, previous)) {
+                    break;
+                }
+                start = previous;
+            }
+
+            size_t end = next_text_offset(text, offset);
+            while (end < text.size() && text_word_char(text, end)) {
+                end = next_text_offset(text, end);
+            }
+            return {start, end};
+        }
+
         [[nodiscard]] auto text_index_from_mouse(BoxNode const& box, float mouse_x) -> size_t {
             if (box.text.empty()) {
                 return 0u;
@@ -1196,28 +1249,54 @@ namespace gui {
                 ordered_text_selection(clamp_text_selection(previous, box.text.size()));
             Signal signal = box.signal;
 
-            if (box.state != nullptr && signal.pressed_left) {
-                size_t const index = text_index_from_mouse(box, impl->frame_desc.input.mouse_pos.x);
-                box.state->text_selection_anchor = index;
-            }
-            if (box.state != nullptr &&
-                signal.active && impl->frame_desc.input.mouse_down[0u]) {
+            if (box.state != nullptr) {
                 size_t const cursor =
                     text_index_from_mouse(box, impl->frame_desc.input.mouse_pos.x);
-                size_t const anchor = box.state->text_selection_anchor;
-                if (cursor != anchor) {
-                    next = ordered_text_selection({anchor, cursor});
-                }
-            }
-            if (box.state != nullptr && signal.released_left) {
-                size_t const cursor =
-                    text_index_from_mouse(box, impl->frame_desc.input.mouse_pos.x);
-                size_t const anchor = box.state->text_selection_anchor;
-                bool const clicked_selected_text =
-                    cursor == anchor && previous.start < cursor && cursor < previous.end;
-                if (!clicked_selected_text) {
-                    next = cursor == anchor ? TextSelection{cursor, cursor}
-                                            : ordered_text_selection({anchor, cursor});
+                bool const double_clicked =
+                    signal.hovered && impl->frame_desc.input.mouse_double_clicked[0u];
+                if (double_clicked) {
+                    next = text_word_selection(box.text, cursor);
+                    box.state->text_selection_anchor = next.start;
+                    box.state->text_selection_word_start = next.start;
+                    box.state->text_selection_word_end = next.end;
+                    box.state->text_selection_word_active = next.start != next.end;
+                } else {
+                    if (signal.pressed_left) {
+                        box.state->text_selection_anchor = cursor;
+                        box.state->text_selection_word_active = false;
+                    }
+                    if (signal.active && impl->frame_desc.input.mouse_down[0u]) {
+                        if (box.state->text_selection_word_active) {
+                            size_t const start = box.state->text_selection_word_start;
+                            size_t const end = box.state->text_selection_word_end;
+                            if (cursor < start) {
+                                next = {cursor, end};
+                            } else if (cursor > end) {
+                                next = {start, cursor};
+                            } else {
+                                next = {start, end};
+                            }
+                        } else {
+                            size_t const anchor = box.state->text_selection_anchor;
+                            if (cursor != anchor) {
+                                next = ordered_text_selection({anchor, cursor});
+                            }
+                        }
+                    }
+                    if (signal.released_left) {
+                        if (box.state->text_selection_word_active) {
+                            box.state->text_selection_word_active = false;
+                        } else {
+                            size_t const anchor = box.state->text_selection_anchor;
+                            bool const clicked_selected_text =
+                                cursor == anchor && previous.start < cursor &&
+                                cursor < previous.end;
+                            if (!clicked_selected_text) {
+                                next = cursor == anchor ? TextSelection{cursor, cursor}
+                                                        : ordered_text_selection({anchor, cursor});
+                            }
+                        }
+                    }
                 }
             }
 
