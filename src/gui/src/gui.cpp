@@ -100,10 +100,12 @@ namespace gui {
             void* clipboard_user_data = nullptr;
             Id hot_id = {};
             Id active_id = {};
+            Id active_scroll_id = {};
             Id focused_id = {};
             Id frame_start_focus_id = {};
             Id focus_request_id = {};
             Id text_selection_owner_id = {};
+            float active_scroll_thumb_offset_y = 0.0f;
             uint64_t frame_index = 0u;
             bool building = false;
         };
@@ -230,6 +232,67 @@ namespace gui {
                    box.kind == BoxKind::SCROLL_PANEL || box.kind == BoxKind::LIST;
         }
 
+        [[nodiscard]] auto scrollbar_track_rect(Rect rect) -> Rect {
+            float const width = std::min(
+                SCROLLBAR_WIDTH, std::max(0.0f, rect_width(rect) - SCROLLBAR_MARGIN * 2.0f));
+            return {{rect.max.x - SCROLLBAR_MARGIN - width, rect.min.y + SCROLLBAR_MARGIN},
+                    {rect.max.x - SCROLLBAR_MARGIN, rect.max.y - SCROLLBAR_MARGIN}};
+        }
+
+        [[nodiscard]] auto scrollbar_track_valid(Rect track) -> bool {
+            return rect_width(track) > 0.0f && rect_height(track) > 0.0f;
+        }
+
+        [[nodiscard]] auto scrollbar_thumb_rect(Rect track,
+                                                float scroll_y,
+                                                float max_y,
+                                                float viewport_height,
+                                                float content_height) -> Rect {
+            float const height = rect_height(track);
+            float const min_thumb = std::min(SCROLLBAR_MIN_THUMB_HEIGHT, height);
+            float const thumb_height =
+                std::clamp(height * viewport_height / content_height, min_thumb, height);
+            float const thumb_y =
+                track.min.y + (height - thumb_height) * (scroll_y / max_y);
+            return {{track.min.x, thumb_y}, {track.max.x, thumb_y + thumb_height}};
+        }
+
+        [[nodiscard]] auto scrollbar_visible(StateEntry const* state) -> bool {
+            return state != nullptr && state->scroll_valid && state->scroll_max_y > 0.0f &&
+                   state->scroll_content_height > 0.0f;
+        }
+
+        [[nodiscard]] auto hit_passes_clips(ContextImpl const* impl, size_t index, Vec2 point)
+            -> bool {
+            for (size_t parent = impl->boxes[index].parent_index; parent != INVALID_INDEX;
+                 parent = impl->boxes[parent].parent_index) {
+                BoxNode const& box = impl->boxes[parent];
+                if (box_clips(box) && !rect_contains(box.rect, point)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        [[nodiscard]] auto scrollbar_hit(ContextImpl const* impl, size_t index, Vec2 point)
+            -> bool {
+            BoxNode const& box = impl->boxes[index];
+            if (!scrollbar_visible(box.scroll_state) || !hit_passes_clips(impl, index, point)) {
+                return false;
+            }
+            Rect const track = scrollbar_track_rect(box.rect);
+            return scrollbar_track_valid(track) && rect_contains(track, point);
+        }
+
+        [[nodiscard]] auto mouse_over_scrollbar(ContextImpl const* impl, Vec2 point) -> bool {
+            for (size_t index = impl->box_count; index > 0u; --index) {
+                if (scrollbar_hit(impl, index - 1u, point)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
         auto apply_scroll_delta(ContextImpl* impl, StateEntry* state, Rect rect) -> void {
             if (state == nullptr || impl->frame_desc.input.scroll_delta_y == 0.0f ||
                 !rect_contains(rect, impl->frame_desc.input.mouse_pos)) {
@@ -237,6 +300,58 @@ namespace gui {
             }
             state->scroll_y =
                 std::max(0.0f, state->scroll_y - impl->frame_desc.input.scroll_delta_y);
+        }
+
+        [[nodiscard]] auto scrollbar_scroll_y(Rect track,
+                                              float thumb_height,
+                                              float max_y,
+                                              float mouse_y,
+                                              float thumb_offset_y) -> float {
+            float const movable_height = rect_height(track) - thumb_height;
+            if (movable_height <= 0.0f) {
+                return 0.0f;
+            }
+
+            float const thumb_y = std::clamp(
+                mouse_y - thumb_offset_y, track.min.y, track.max.y - thumb_height);
+            return (thumb_y - track.min.y) * max_y / movable_height;
+        }
+
+        auto apply_scrollbar_input(ContextImpl* impl,
+                                   StateEntry* state,
+                                   Rect rect,
+                                   float viewport_height,
+                                   float content_height,
+                                   float max_y) -> void {
+            if (state == nullptr || max_y <= 0.0f || content_height <= 0.0f) {
+                return;
+            }
+
+            Rect const track = scrollbar_track_rect(rect);
+            if (!scrollbar_track_valid(track)) {
+                return;
+            }
+
+            InputState const& input = impl->frame_desc.input;
+            Rect const thumb =
+                scrollbar_thumb_rect(track, state->scroll_y, max_y, viewport_height, content_height);
+            bool const mouse_pressed = input.mouse_down[0u] && !impl->previous_input.mouse_down[0u];
+            if (mouse_pressed && impl->active_scroll_id.value == 0u &&
+                rect_contains(track, input.mouse_pos)) {
+                impl->active_scroll_id = state->id;
+                impl->active_scroll_thumb_offset_y =
+                    rect_contains(thumb, input.mouse_pos)
+                        ? input.mouse_pos.y - thumb.min.y
+                        : rect_height(thumb) * 0.5f;
+            }
+
+            if (impl->active_scroll_id.value == state->id.value && input.mouse_down[0u]) {
+                state->scroll_y = scrollbar_scroll_y(track,
+                                                     rect_height(thumb),
+                                                     max_y,
+                                                     input.mouse_pos.y,
+                                                     impl->active_scroll_thumb_offset_y);
+            }
         }
 
         [[nodiscard]] auto inset_width(Insets insets) -> float {
@@ -601,6 +716,9 @@ namespace gui {
 
         [[nodiscard]] auto compute_hot_id(ContextImpl const* impl) -> Id {
             Vec2 const mouse_pos = impl->frame_desc.input.mouse_pos;
+            if (mouse_over_scrollbar(impl, mouse_pos)) {
+                return {};
+            }
             for (size_t index = impl->box_count; index > 0u; --index) {
                 BoxNode const& box = impl->boxes[index - 1u];
                 if (box.interactive && !box_disabled(box) && box.state != nullptr &&
@@ -1012,6 +1130,8 @@ namespace gui {
             if (consume_request) {
                 consume_scroll_request(state, max_y);
             }
+            state->scroll_y = std::clamp(state->scroll_y, 0.0f, max_y);
+            apply_scrollbar_input(impl, state, rect, viewport_height, scroll_content_height, max_y);
             state->scroll_y = std::clamp(state->scroll_y, 0.0f, max_y);
             state->scroll_max_y = max_y;
             state->scroll_viewport_height = viewport_height;
@@ -1663,42 +1783,22 @@ namespace gui {
                 return;
             }
 
-            float const width = std::min(
-                SCROLLBAR_WIDTH, std::max(0.0f, rect_width(box.rect) - SCROLLBAR_MARGIN * 2.0f));
-            float const height = std::max(0.0f, rect_height(box.rect) - SCROLLBAR_MARGIN * 2.0f);
-            if (width <= 0.0f || height <= 0.0f) {
+            Rect const track = scrollbar_track_rect(box.rect);
+            if (!scrollbar_track_valid(track)) {
                 return;
             }
-
-            Rect const track = {
-                {box.rect.max.x - SCROLLBAR_MARGIN - width, box.rect.min.y + SCROLLBAR_MARGIN},
-                {box.rect.max.x - SCROLLBAR_MARGIN, box.rect.max.y - SCROLLBAR_MARGIN}};
-            float const min_thumb = std::min(SCROLLBAR_MIN_THUMB_HEIGHT, height);
-            float const thumb_height =
-                std::clamp(height * state->scroll_viewport_height / state->scroll_content_height,
-                           min_thumb,
-                           height);
-            float const thumb_y =
-                track.min.y + (height - thumb_height) * (state->scroll_y / state->scroll_max_y);
-            Rect const thumb = {{track.min.x, thumb_y}, {track.max.x, thumb_y + thumb_height}};
+            Rect const thumb = scrollbar_thumb_rect(track,
+                                                    state->scroll_y,
+                                                    state->scroll_max_y,
+                                                    state->scroll_viewport_height,
+                                                    state->scroll_content_height);
+            float const width = rect_width(track);
 
             ThemeTokens const& tokens = impl->theme.tokens;
             float const opacity = box.resolved_style.opacity;
             draw_widget_rect(draw_context, track, tokens.panel, {}, 0.0f, width * 0.5f, opacity);
             draw_widget_rect(
                 draw_context, thumb, tokens.text_muted, {}, 0.0f, width * 0.5f, opacity);
-        }
-
-        [[nodiscard]] auto hit_passes_clips(ContextImpl const* impl, size_t index, Vec2 point)
-            -> bool {
-            for (size_t parent = impl->boxes[index].parent_index; parent != INVALID_INDEX;
-                 parent = impl->boxes[parent].parent_index) {
-                BoxNode const& box = impl->boxes[parent];
-                if (box_clips(box) && !rect_contains(box.rect, point)) {
-                    return false;
-                }
-            }
-            return true;
         }
 
         auto render_box(ContextImpl const* impl, draw::Context draw_context, size_t index) -> void {
@@ -2364,6 +2464,15 @@ namespace gui {
         consume_list_scroll_request(
             list.scroll_state, desc.item_count, item_height, viewport_height, max_scroll);
         list.scroll_state->scroll_y = std::clamp(list.scroll_state->scroll_y, 0.0f, max_scroll);
+        if (list.scroll_state->last_frame != 0u) {
+            apply_scrollbar_input(impl,
+                                  list.scroll_state,
+                                  list.scroll_state->rect,
+                                  viewport_height,
+                                  content_height,
+                                  max_scroll);
+        }
+        list.scroll_state->scroll_y = std::clamp(list.scroll_state->scroll_y, 0.0f, max_scroll);
         list.scroll_state->scroll_max_y = max_scroll;
         list.scroll_state->scroll_viewport_height = viewport_height;
         list.scroll_state->scroll_content_height = content_height;
@@ -2542,6 +2651,7 @@ namespace gui {
         publish_infos(impl);
         if (!impl->frame_desc.input.mouse_down[0u]) {
             impl->active_id = {};
+            impl->active_scroll_id = {};
         }
         impl->previous_input = impl->frame_desc.input;
         impl->parent_stack_count = 1u;

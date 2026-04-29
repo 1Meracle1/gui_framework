@@ -33,6 +33,16 @@ namespace {
         capture->call_count += 1u;
     }
 
+    auto add_basic_scroll_panel(test::Context* context, gui::Frame& ui, gui::Id id_value)
+        -> void {
+        auto panel = ui.scroll_panel(
+            id_value, {.layout = {.width = gui::fill(), .height = gui::px(30.0f)}});
+        TEST_EXPECT(context, panel);
+        for (size_t index = 0u; index < 3u; ++index) {
+            ui.spacer({.layout = {.width = gui::fill(), .height = gui::px(20.0f)}});
+        }
+    }
+
     TEST_CASE(version_is_available) {
         gui::Version const gui_version = gui::version();
 
@@ -464,6 +474,58 @@ namespace {
         }
 
         gui::draw::destroy_context(draw_context);
+        gui::destroy_context(gui_context);
+    }
+
+    TEST_CASE(scroll_panel_scrollbar_click_and_drag_updates_scroll) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::Id const panel_id = gui::id("panel");
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {100.0f, 50.0f}});
+        add_basic_scroll_panel(context, ui, panel_id);
+        gui::end_frame(ui);
+
+        gui::InputState input = {};
+        input.mouse_pos = {95.0f, 21.5f};
+        input.mouse_down[0u] = true;
+        ui = gui::begin_frame(gui_context, {.size = {100.0f, 50.0f}, .input = input});
+        add_basic_scroll_panel(context, ui, panel_id);
+        gui::end_frame(ui);
+
+        gui::ScrollState state = ui.scroll_state(panel_id);
+        TEST_EXPECT(context, state.valid);
+        TEST_EXPECT(context, state.y == 30.0f);
+
+        input = {};
+        ui = gui::begin_frame(gui_context, {.size = {100.0f, 50.0f}, .input = input});
+        add_basic_scroll_panel(context, ui, panel_id);
+        gui::end_frame(ui);
+
+        ui = gui::begin_frame(gui_context, {.size = {100.0f, 50.0f}});
+        ui.set_scroll_y(panel_id, 15.0f);
+        add_basic_scroll_panel(context, ui, panel_id);
+        gui::end_frame(ui);
+
+        input = {};
+        input.mouse_pos = {95.0f, 10.5f};
+        input.mouse_down[0u] = true;
+        ui = gui::begin_frame(gui_context, {.size = {100.0f, 50.0f}, .input = input});
+        add_basic_scroll_panel(context, ui, panel_id);
+        gui::end_frame(ui);
+
+        input.mouse_pos = {95.0f, 17.0f};
+        ui = gui::begin_frame(gui_context, {.size = {100.0f, 50.0f}, .input = input});
+        add_basic_scroll_panel(context, ui, panel_id);
+        gui::end_frame(ui);
+
+        state = ui.scroll_state(panel_id);
+        TEST_EXPECT(context, state.valid);
+        TEST_EXPECT(context, state.y == 30.0f);
+
         gui::destroy_context(gui_context);
     }
 
@@ -1413,6 +1475,40 @@ namespace {
         }
 
         gui::draw::destroy_context(draw_context);
+        gui::destroy_context(gui_context);
+    }
+
+    TEST_CASE(selectable_label_scrollbar_click_scrolls_without_changing_selection) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::TextSelection selection = {1u, 2u};
+        gui::Id const label_id = gui::id("copyable");
+        gui::BoxDesc const box = {
+            .layout = {.width = gui::px(80.0f), .height = gui::px(20.0f)}};
+
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {100.0f, 40.0f}});
+        ui.selectable_label(label_id, "A\nB\nC", &selection, box);
+        gui::end_frame(ui);
+
+        gui::InputState input = {};
+        input.mouse_pos = {75.0f, 16.0f};
+        input.mouse_down[0u] = true;
+        ui = gui::begin_frame(gui_context, {.size = {100.0f, 40.0f}, .input = input});
+        gui::Signal const signal = ui.selectable_label(label_id, "A\nB\nC", &selection, box);
+        gui::end_frame(ui);
+
+        gui::ScrollState state = ui.scroll_state(label_id);
+        TEST_EXPECT(context, state.valid);
+        TEST_EXPECT(context, state.y == 40.0f);
+        TEST_EXPECT(context, selection.start == 1u);
+        TEST_EXPECT(context, selection.end == 2u);
+        TEST_EXPECT(context, !signal.pressed_left);
+        TEST_EXPECT(context, !signal.changed);
+
         gui::destroy_context(gui_context);
     }
 
