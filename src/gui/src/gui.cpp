@@ -640,7 +640,7 @@ namespace gui {
 
             for (size_t child = box.first_child; child != INVALID_INDEX;
                  child = impl->boxes[child].next_sibling) {
-                measure_node(impl, child);
+                BASE_UNUSED(measure_node(impl, child));
             }
 
             Vec2 size = {};
@@ -1339,7 +1339,6 @@ namespace gui {
         theme.root = {.foreground = tokens.text, .font_size = 16.0f};
         theme_role(theme, StyleRole::CANVAS).normal = {.background = tokens.canvas,
                                                        .foreground = tokens.text};
-        theme_role(theme, StyleRole::TEXT).normal = {.foreground = tokens.text};
         theme_role(theme, StyleRole::PANEL).normal = {
             .background = tokens.panel,
             .foreground = tokens.text,
@@ -1406,7 +1405,7 @@ namespace gui {
 
     auto create_context(Arena& arena, ContextDesc const& desc, Context& out_context) -> void {
         ContextImpl* const impl = arena_new<ContextImpl>(arena);
-        size_t const capacity = std::max(desc.initial_box_capacity, 16u);
+        size_t const capacity = std::max(desc.initial_box_capacity, size_t{16u});
         impl->box_capacity = capacity;
         impl->state_table_size = next_power_of_two(capacity * 4u);
         impl->boxes = arena_alloc<BoxNode>(arena, capacity);
@@ -1461,7 +1460,7 @@ namespace gui {
         return *this;
     }
 
-    auto Scope::operator bool() const -> bool {
+    Scope::operator bool() const {
         return m_frame != nullptr;
     }
 
@@ -2007,7 +2006,7 @@ namespace gui {
         root_style.opacity = 1.0f;
         root_style.font_size = 16.0f;
         resolve_styles(impl, 0u, root_style);
-        measure_node(impl, 0u);
+        BASE_UNUSED(measure_node(impl, 0u));
         layout_node(impl, 0u, {{0.0f, 0.0f}, {impl->frame_desc.size.x, impl->frame_desc.size.y}});
         publish_infos(impl);
         if (!impl->frame_desc.input.mouse_down[0u]) {
@@ -2018,7 +2017,7 @@ namespace gui {
         impl->building = false;
     }
 
-    auto render(Frame const& frame, draw::Context draw_context) -> void {
+    auto render_frame(Frame const& frame, draw::Context draw_context) -> void {
         ContextImpl const* const impl = impl_from_frame(frame);
         if (impl == nullptr || !draw::context_valid(draw_context) || impl->box_count == 0u) {
             return;

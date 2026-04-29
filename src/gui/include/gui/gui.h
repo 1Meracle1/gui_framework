@@ -393,7 +393,7 @@ namespace gui {
         auto operator=(Scope&& other) noexcept -> Scope&;
         auto operator=(Scope const&) -> Scope& = delete;
 
-        [[nodiscard]] explicit auto operator bool() const -> bool;
+        [[nodiscard]] explicit operator bool() const;
         [[nodiscard]] auto signal() const -> Signal;
 
       private:
@@ -446,20 +446,17 @@ namespace gui {
 
         auto spacer(BoxDesc const& desc) -> void;
         auto spacer(float size) -> void;
-        [[nodiscard]] auto label(StrRef text, BoxDesc const& desc = {}) -> Signal;
-        [[nodiscard]] auto label(Id id, StrRef text, BoxDesc const& desc = {}) -> Signal;
-        [[nodiscard]] auto button(StrRef text, BoxDesc const& desc = {}) -> Signal;
-        [[nodiscard]] auto button(Id id, StrRef text, BoxDesc const& desc = {}) -> Signal;
-        [[nodiscard]] auto checkbox(StrRef text, bool* value, BoxDesc const& desc = {}) -> Signal;
-        [[nodiscard]] auto checkbox(Id id, StrRef text, bool* value, BoxDesc const& desc = {})
+        auto label(StrRef text, BoxDesc const& desc = {}) -> Signal;
+        auto label(Id id, StrRef text, BoxDesc const& desc = {}) -> Signal;
+        auto button(StrRef text, BoxDesc const& desc = {}) -> Signal;
+        auto button(Id id, StrRef text, BoxDesc const& desc = {}) -> Signal;
+        auto checkbox(StrRef text, bool* value, BoxDesc const& desc = {}) -> Signal;
+        auto checkbox(Id id, StrRef text, bool* value, BoxDesc const& desc = {}) -> Signal;
+        auto toggle(StrRef text, bool* value, BoxDesc const& desc = {}) -> Signal;
+        auto toggle(Id id, StrRef text, bool* value, BoxDesc const& desc = {}) -> Signal;
+        auto slider_float(StrRef text, float* value, SliderFloatDesc const& desc = {}) -> Signal;
+        auto slider_float(Id id, StrRef text, float* value, SliderFloatDesc const& desc = {})
             -> Signal;
-        [[nodiscard]] auto toggle(StrRef text, bool* value, BoxDesc const& desc = {}) -> Signal;
-        [[nodiscard]] auto toggle(Id id, StrRef text, bool* value, BoxDesc const& desc = {})
-            -> Signal;
-        [[nodiscard]] auto slider_float(StrRef text, float* value, SliderFloatDesc const& desc = {})
-            -> Signal;
-        [[nodiscard]] auto
-        slider_float(Id id, StrRef text, float* value, SliderFloatDesc const& desc = {}) -> Signal;
         [[nodiscard]] auto list_fixed(Id id, ListFixedDesc const& desc) -> ListScope;
 
         [[nodiscard]] auto scroll_state(Id id) const -> ScrollState;
@@ -481,7 +478,7 @@ namespace gui {
         friend auto detail::frame_handle(Frame const& frame) -> void*;
         friend auto begin_frame(Context context, FrameDesc const& desc) -> Frame;
         friend auto end_frame(Frame& frame) -> void;
-        friend auto render(Frame const& frame, draw::Context draw_context) -> void;
+        friend auto render_frame(Frame const& frame, draw::Context draw_context) -> void;
 
         explicit Frame(void* handle);
 
@@ -490,6 +487,6 @@ namespace gui {
 
     [[nodiscard]] auto begin_frame(Context context, FrameDesc const& desc) -> Frame;
     auto end_frame(Frame& frame) -> void;
-    auto render(Frame const& frame, draw::Context draw_context) -> void;
+    auto render_frame(Frame const& frame, draw::Context draw_context) -> void;
 
 } // namespace gui

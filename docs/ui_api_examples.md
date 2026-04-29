@@ -21,7 +21,7 @@ gui::Frame ui = gui::begin_frame(ui_context,
 draw_app_ui(ui);
 
 gui::end_frame(ui);
-gui::render(ui, draw_context);
+gui::render_frame(ui, draw_context);
 ```
 
 ## Layout Nesting

@@ -36,6 +36,14 @@ add_executable(gui_framework_info
 target_link_libraries(gui_framework_info PRIVATE gui::gui)
 cpp_configure_target(gui_framework_info)
 
+add_executable(ui_api_testbed
+    tools/ui_api_testbed.cpp
+)
+target_link_libraries(ui_api_testbed PRIVATE
+    gui::gui
+)
+cpp_configure_target(ui_api_testbed)
+
 if(WIN32)
     add_executable(render_triangle_testbed
         tools/render_triangle_testbed.cpp

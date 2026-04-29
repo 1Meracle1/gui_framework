@@ -1015,7 +1015,7 @@ namespace {
         }
 
         gui::draw::begin_frame(draw_context);
-        gui::render(ui, draw_context);
+        gui::render_frame(ui, draw_context);
         TEST_EXPECT(context, gui::draw::styled_rect_command_count(draw_context) >= 4u);
 
         gui::draw::destroy_context(draw_context);
@@ -1041,7 +1041,7 @@ namespace {
         gui::end_frame(ui);
 
         gui::draw::begin_frame(draw_context);
-        gui::render(ui, draw_context);
+        gui::render_frame(ui, draw_context);
 
         TEST_EXPECT(context, gui::draw::styled_rect_command_count(draw_context) == 1u);
         gui::draw::StyledRectCommand const* command =
