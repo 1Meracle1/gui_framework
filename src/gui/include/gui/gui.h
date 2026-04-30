@@ -154,6 +154,7 @@ namespace gui {
         END,
         BACKSPACE,
         DELETE_KEY,
+        A,
         C,
         V,
         X,

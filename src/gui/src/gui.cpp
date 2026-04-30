@@ -1926,6 +1926,12 @@ namespace gui {
                             }
                             continue;
                         }
+                        if (shortcut_key_pressed(event, Key::A)) {
+                            state.text_cursor = text_size;
+                            selection = {0u, text_size};
+                            state.text_selection_word_active = false;
+                            continue;
+                        }
                         if (shortcut_key_pressed(event, Key::V)) {
                             if (writable && impl->get_clipboard_text != nullptr) {
                                 StrRef const text = impl->get_clipboard_text(

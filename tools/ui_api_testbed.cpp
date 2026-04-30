@@ -618,6 +618,8 @@ namespace {
             return gui::Key::BACKSPACE;
         case VK_DELETE:
             return gui::Key::DELETE_KEY;
+        case 'A':
+            return gui::Key::A;
         case 'C':
             return gui::Key::C;
         case 'V':

@@ -947,6 +947,39 @@ namespace {
         gui::destroy_context(gui_context);
     }
 
+    TEST_CASE(input_text_ctrl_a_selects_all_text) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::Id const field_id = gui::id("field");
+        char buffer[16] = "alpha";
+        gui::KeyEvent const events[] = {
+            {.key = gui::Key::A, .mods = gui::KEY_MOD_CTRL},
+            {.kind = gui::KeyEventKind::TEXT, .codepoint = 'X'},
+        };
+        gui::InputState input = {};
+        input.key_events = events;
+        input.key_event_count = 2u;
+
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {160.0f, 40.0f}, .input = input});
+        ui.request_focus(field_id);
+        gui::Signal const signal = ui.input_text(
+            field_id,
+            "Field",
+            buffer,
+            sizeof(buffer),
+            {.layout = {.width = gui::px(120.0f), .height = gui::px(20.0f)}});
+        gui::end_frame(ui);
+
+        TEST_EXPECT(context, signal.changed);
+        TEST_EXPECT(context, StrRef(buffer) == StrRef("X"));
+
+        gui::destroy_context(gui_context);
+    }
+
     TEST_CASE(input_text_cuts_selected_text_with_ctrl_x) {
         Arena arena = {};
         arena.init();
