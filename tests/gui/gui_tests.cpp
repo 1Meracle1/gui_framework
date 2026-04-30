@@ -947,6 +947,49 @@ namespace {
         gui::destroy_context(gui_context);
     }
 
+    TEST_CASE(input_text_cuts_selected_text_with_ctrl_x) {
+        Arena arena = {};
+        arena.init();
+
+        ClipboardCapture clipboard = {};
+        gui::Context gui_context = {};
+        gui::create_context(
+            arena,
+            {.set_clipboard_text = capture_clipboard_text, .clipboard_user_data = &clipboard},
+            gui_context
+        );
+
+        gui::Id const field_id = gui::id("field");
+        char buffer[16] = "alpha beta";
+        gui::KeyEvent const events[] = {
+            {.key = gui::Key::LEFT, .mods = gui::KEY_MOD_SHIFT},
+            {.key = gui::Key::LEFT, .mods = gui::KEY_MOD_SHIFT},
+            {.key = gui::Key::LEFT, .mods = gui::KEY_MOD_SHIFT},
+            {.key = gui::Key::LEFT, .mods = gui::KEY_MOD_SHIFT},
+            {.key = gui::Key::X, .mods = gui::KEY_MOD_CTRL},
+        };
+        gui::InputState input = {};
+        input.key_events = events;
+        input.key_event_count = 5u;
+
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {180.0f, 40.0f}, .input = input});
+        ui.request_focus(field_id);
+        gui::Signal const signal = ui.input_text(
+            field_id,
+            "Field",
+            buffer,
+            sizeof(buffer),
+            {.layout = {.width = gui::px(160.0f), .height = gui::px(20.0f)}});
+        gui::end_frame(ui);
+
+        TEST_EXPECT(context, signal.changed);
+        TEST_EXPECT(context, clipboard.call_count == 1u);
+        TEST_EXPECT(context, StrRef(clipboard.text, clipboard.text_size) == StrRef("beta"));
+        TEST_EXPECT(context, StrRef(buffer) == StrRef("alpha "));
+
+        gui::destroy_context(gui_context);
+    }
+
     TEST_CASE(input_text_ctrl_z_reverts_changes_one_at_a_time) {
         Arena arena = {};
         arena.init();

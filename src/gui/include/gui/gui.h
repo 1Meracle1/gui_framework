@@ -156,6 +156,7 @@ namespace gui {
         DELETE_KEY,
         C,
         V,
+        X,
         Z,
     };
 

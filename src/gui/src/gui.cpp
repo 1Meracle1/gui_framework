@@ -1470,14 +1470,13 @@ namespace gui {
         }
 
         auto
-        copy_selected_text(ContextImpl const* impl, BoxNode const& box, TextSelection selection)
-            -> void {
+        copy_selected_text(ContextImpl const* impl, StrRef text, TextSelection selection) -> void {
             if (impl->set_clipboard_text == nullptr || selection.start == selection.end) {
                 return;
             }
             impl->set_clipboard_text(
                 impl->clipboard_user_data,
-                box.text.substr(selection.start, selection.end - selection.start)
+                text.substr(selection.start, selection.end - selection.start)
             );
         }
 
@@ -1622,7 +1621,7 @@ namespace gui {
             }
             if (impl->text_selection_owner_id.value == box.id.value &&
                 copy_shortcut_pressed(impl)) {
-                copy_selected_text(impl, box, selection);
+                copy_selected_text(impl, box.text, selection);
             }
         }
 
@@ -1943,6 +1942,23 @@ namespace gui {
                                                                  text.size());
                                     selection = {state.text_cursor, state.text_cursor};
                                 }
+                            }
+                            continue;
+                        }
+                        if (shortcut_key_pressed(event, Key::X)) {
+                            if (writable && impl->set_clipboard_text != nullptr &&
+                                selection.start != selection.end) {
+                                save_text_undo(impl,
+                                               state,
+                                               buffer,
+                                               buffer_size,
+                                               state.text_cursor,
+                                               selection);
+                                copy_selected_text(impl, {buffer, text_size}, selection);
+                                changed |= erase_text_range(
+                                    buffer, buffer_size, selection.start, selection.end);
+                                state.text_cursor = selection.start;
+                                selection = {state.text_cursor, state.text_cursor};
                             }
                             continue;
                         }

@@ -622,6 +622,8 @@ namespace {
             return gui::Key::C;
         case 'V':
             return gui::Key::V;
+        case 'X':
+            return gui::Key::X;
         case 'Z':
             return gui::Key::Z;
         default:
