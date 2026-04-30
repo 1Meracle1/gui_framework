@@ -588,6 +588,74 @@ namespace {
         gui::destroy_context(gui_context);
     }
 
+    TEST_CASE(table_text_draw_positions_snap_after_fractional_column_expansion) {
+        Arena arena = {};
+        arena.init();
+
+        gui::font_provider::Context provider = {};
+        gui::font_provider::Result const provider_result =
+            gui::font_provider::create_context(arena, {}, provider);
+
+#if BASE_PLATFORM_WINDOWS
+        TEST_EXPECT(context, provider_result == gui::font_provider::Result::OK);
+
+        gui::font_cache::Cache cache = {};
+        gui::font_cache::create_cache(arena, provider, {}, cache);
+
+        gui::font_cache::Font font = {};
+        gui::font_cache::open_system_font(cache, "Segoe UI", font);
+
+        gui::ThemeDesc theme = gui::default_theme();
+        theme.root.font = font;
+        theme.root.font_size = 13.0f;
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {.theme = &theme}, gui_context);
+
+        gui::draw::Context draw_context = {};
+        gui::draw::create_context(arena, {.font_cache = cache}, draw_context);
+
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {60.0f, 30.0f}});
+        if (auto table =
+                ui.table({.layout = {.width = gui::px(44.0f),
+                                     .height = gui::children(),
+                                     .gap = 1.0f}})) {
+            if (auto row = table.row()) {
+                if (auto cell = row.cell(
+                        {.box = {.layout = {.width = gui::px(20.0f),
+                                            .height = gui::px(20.0f)}}})) {
+                    BASE_UNUSED(cell);
+                    ui.spacer({.layout = {.width = gui::fill(), .height = gui::fill()}});
+                }
+                if (auto cell = row.cell(
+                        {.box = {.layout = {.width = gui::px(20.0f),
+                                            .height = gui::px(20.0f)}}})) {
+                    BASE_UNUSED(cell);
+                    ui.label("X", {.layout = {.width = gui::fill(), .height = gui::fill()}});
+                }
+            }
+        }
+        gui::end_frame(ui);
+
+        gui::draw::begin_frame(draw_context);
+        gui::render_frame(ui, draw_context);
+
+        TEST_EXPECT(context, gui::draw::text_command_count(draw_context) == 1u);
+        gui::draw::TextCommand const* command = gui::draw::text_command(draw_context, 0u);
+        TEST_EXPECT(context, command != nullptr);
+        if (command != nullptr) {
+            TEST_EXPECT(context, command->position.x == 23.0f);
+        }
+
+        gui::draw::destroy_context(draw_context);
+        gui::destroy_context(gui_context);
+        gui::font_cache::destroy_cache(cache);
+        gui::font_provider::destroy_context(provider);
+#else
+        TEST_EXPECT(context, provider_result == gui::font_provider::Result::UNSUPPORTED_PLATFORM);
+#endif
+    }
+
     TEST_CASE(overlay_places_measured_and_fill_children) {
         Arena arena = {};
         arena.init();

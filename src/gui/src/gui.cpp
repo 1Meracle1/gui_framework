@@ -3000,6 +3000,10 @@ namespace gui {
             return std::round(line_y - TEXT_RASTER_PADDING);
         }
 
+        [[nodiscard]] auto text_draw_position(float x, float line_y) -> draw::Vec2 {
+            return {std::round(x), text_draw_y(line_y)};
+        }
+
         auto render_box(ContextImpl const* impl, draw::Context draw_context, size_t index) -> void {
             BoxNode const& box = impl->boxes[index];
             bool const clips = box_clips(box);
@@ -3057,7 +3061,7 @@ namespace gui {
                             float const line_y =
                                 text_pos.y + line_height * static_cast<float>(line_index);
                             draw::draw_text(draw_context,
-                                            {text_pos.x, text_draw_y(line_y)},
+                                            text_draw_position(text_pos.x, line_y),
                                             text_style,
                                             line.text,
                                             nullptr);
