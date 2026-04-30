@@ -25,12 +25,19 @@ namespace {
         char text[32] = {};
         size_t text_size = 0u;
         size_t call_count = 0u;
+        size_t read_count = 0u;
     };
 
     auto capture_clipboard_text(void* user_data, StrRef text) -> void {
         ClipboardCapture* const capture = static_cast<ClipboardCapture*>(user_data);
         capture->text_size = text.copy_to(capture->text, sizeof(capture->text));
         capture->call_count += 1u;
+    }
+
+    auto read_clipboard_text(void* user_data, Arena&) -> StrRef {
+        ClipboardCapture* const capture = static_cast<ClipboardCapture*>(user_data);
+        capture->read_count += 1u;
+        return {capture->text, capture->text_size};
     }
 
     auto add_basic_scroll_panel(test::Context* context, gui::Frame& ui, gui::Id id_value)
@@ -897,6 +904,98 @@ namespace {
         if (field != nullptr) {
             TEST_EXPECT(context, field->text == StrRef("Hi!"));
         }
+
+        gui::destroy_context(gui_context);
+    }
+
+    TEST_CASE(input_text_pastes_clipboard_text_with_ctrl_v) {
+        Arena arena = {};
+        arena.init();
+
+        ClipboardCapture clipboard = {};
+        clipboard.text_size = StrRef("there").copy_to(clipboard.text, sizeof(clipboard.text));
+
+        gui::Context gui_context = {};
+        gui::create_context(
+            arena,
+            {.get_clipboard_text = read_clipboard_text, .clipboard_user_data = &clipboard},
+            gui_context
+        );
+
+        gui::Id const field_id = gui::id("field");
+        char buffer[16] = "Hi ";
+        gui::KeyEvent const events[] = {{.key = gui::Key::V, .mods = gui::KEY_MOD_CTRL}};
+        gui::InputState input = {};
+        input.key_events = events;
+        input.key_event_count = 1u;
+
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {160.0f, 40.0f}, .input = input});
+        ui.request_focus(field_id);
+        gui::Signal const signal = ui.input_text(
+            field_id,
+            "Field",
+            buffer,
+            sizeof(buffer),
+            {.layout = {.width = gui::px(120.0f), .height = gui::px(20.0f)}});
+        gui::end_frame(ui);
+
+        TEST_EXPECT(context, signal.focused);
+        TEST_EXPECT(context, signal.changed);
+        TEST_EXPECT(context, clipboard.read_count == 1u);
+        TEST_EXPECT(context, StrRef(buffer) == StrRef("Hi there"));
+
+        gui::destroy_context(gui_context);
+    }
+
+    TEST_CASE(input_text_ctrl_z_reverts_changes_one_at_a_time) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::Id const field_id = gui::id("field");
+        gui::BoxDesc const box = {
+            .layout = {.width = gui::px(120.0f), .height = gui::px(20.0f)}};
+        char buffer[16] = "Hi";
+        gui::KeyEvent const text_events[] = {
+            {.kind = gui::KeyEventKind::TEXT, .codepoint = '!'},
+            {.kind = gui::KeyEventKind::TEXT, .codepoint = '?'},
+            {.kind = gui::KeyEventKind::TEXT, .codepoint = '*'},
+        };
+        gui::InputState input = {};
+        input.key_events = text_events;
+        input.key_event_count = 3u;
+
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {160.0f, 40.0f}, .input = input});
+        ui.request_focus(field_id);
+        gui::Signal signal = ui.input_text(field_id, "Field", buffer, sizeof(buffer), box);
+        gui::end_frame(ui);
+
+        TEST_EXPECT(context, signal.changed);
+        TEST_EXPECT(context, StrRef(buffer) == StrRef("Hi!?*"));
+
+        gui::KeyEvent const undo_events[] = {{.key = gui::Key::Z, .mods = gui::KEY_MOD_CTRL}};
+        input = {};
+        input.key_events = undo_events;
+        input.key_event_count = 1u;
+
+        char const* expected[] = {"Hi!?", "Hi!", "Hi"};
+        for (size_t index = 0u; index < 3u; ++index) {
+            ui = gui::begin_frame(gui_context, {.size = {160.0f, 40.0f}, .input = input});
+            signal = ui.input_text(field_id, "Field", buffer, sizeof(buffer), box);
+            gui::end_frame(ui);
+
+            TEST_EXPECT(context, signal.changed);
+            TEST_EXPECT(context, StrRef(buffer) == StrRef(expected[index]));
+        }
+
+        ui = gui::begin_frame(gui_context, {.size = {160.0f, 40.0f}, .input = input});
+        signal = ui.input_text(field_id, "Field", buffer, sizeof(buffer), box);
+        gui::end_frame(ui);
+
+        TEST_EXPECT(context, !signal.changed);
+        TEST_EXPECT(context, StrRef(buffer) == StrRef("Hi"));
 
         gui::destroy_context(gui_context);
     }

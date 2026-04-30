@@ -620,6 +620,10 @@ namespace {
             return gui::Key::DELETE_KEY;
         case 'C':
             return gui::Key::C;
+        case 'V':
+            return gui::Key::V;
+        case 'Z':
+            return gui::Key::Z;
         default:
             return gui::Key::UNKNOWN;
         }
@@ -742,6 +746,51 @@ namespace {
         CloseClipboard();
     }
 
+    auto get_windows_clipboard_text(void* user_data, Arena& arena) -> StrRef {
+        HWND const hwnd = static_cast<HWND>(user_data);
+        if (!OpenClipboard(hwnd)) {
+            fmt::eprintf("OpenClipboard failed: %lu\n", GetLastError());
+            return {};
+        }
+
+        HANDLE const handle = GetClipboardData(CF_UNICODETEXT);
+        if (handle == nullptr) {
+            CloseClipboard();
+            return {};
+        }
+
+        wchar_t const* const wide_text = static_cast<wchar_t const*>(GlobalLock(handle));
+        if (wide_text == nullptr) {
+            CloseClipboard();
+            fmt::eprintf("GlobalLock failed: %lu\n", GetLastError());
+            return {};
+        }
+
+        int const wide_count = lstrlenW(wide_text);
+        if (wide_count == 0) {
+            GlobalUnlock(handle);
+            CloseClipboard();
+            return {};
+        }
+
+        int const byte_count = WideCharToMultiByte(
+            CP_UTF8, WC_ERR_INVALID_CHARS, wide_text, wide_count, nullptr, 0, nullptr, nullptr
+        );
+        if (byte_count <= 0) {
+            GlobalUnlock(handle);
+            CloseClipboard();
+            return {};
+        }
+
+        char* const text = arena_alloc<char>(arena, static_cast<size_t>(byte_count));
+        WideCharToMultiByte(
+            CP_UTF8, WC_ERR_INVALID_CHARS, wide_text, wide_count, text, byte_count, nullptr, nullptr
+        );
+        GlobalUnlock(handle);
+        CloseClipboard();
+        return {text, static_cast<size_t>(byte_count)};
+    }
+
     auto destroy_ui_runtime(render::Context render_context, UiRuntime* runtime) -> void {
         if (runtime == nullptr) {
             return;
@@ -799,6 +848,7 @@ namespace {
             {
                 .theme = &theme,
                 .set_clipboard_text = set_windows_clipboard_text,
+                .get_clipboard_text = get_windows_clipboard_text,
                 .clipboard_user_data = hwnd,
             },
             runtime->ui_context

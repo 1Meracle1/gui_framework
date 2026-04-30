@@ -18,6 +18,14 @@ namespace gui {
         inline constexpr float SCROLLBAR_MIN_THUMB_HEIGHT = 12.0f;
         inline constexpr float TEXT_RASTER_PADDING = 2.0f;
 
+        struct TextUndoEntry {
+            TextUndoEntry* previous = nullptr;
+            char* text = nullptr;
+            size_t text_size = 0u;
+            size_t cursor = 0u;
+            TextSelection selection = {};
+        };
+
         struct StateEntry {
             Id id = {};
             Rect rect = {};
@@ -34,6 +42,7 @@ namespace gui {
             size_t text_selection_word_start = 0u;
             size_t text_selection_word_end = 0u;
             size_t text_cursor = 0u;
+            TextUndoEntry* text_undo_stack = nullptr;
             font_cache::Font font = {};
             float font_size = 0.0f;
             ScrollReveal scroll_request_reveal = ScrollReveal::KEEP_VISIBLE;
@@ -86,6 +95,7 @@ namespace gui {
         };
 
         struct ContextImpl {
+            Arena* context_arena = nullptr;
             Arena frame_arena = {};
             BoxNode* boxes = nullptr;
             BoxInfo* infos = nullptr;
@@ -101,6 +111,7 @@ namespace gui {
             InputState previous_input = {};
             ThemeDesc theme = {};
             SetClipboardTextFn set_clipboard_text = nullptr;
+            GetClipboardTextFn get_clipboard_text = nullptr;
             void* clipboard_user_data = nullptr;
             Id hot_id = {};
             Id active_id = {};
@@ -661,15 +672,18 @@ namespace gui {
             return false;
         }
 
+        [[nodiscard]] auto shortcut_key_pressed(KeyEvent const& event, Key key) -> bool {
+            return event.key == key && event.kind == KeyEventKind::PRESS &&
+                   (event.mods & KEY_MOD_CTRL) != 0u;
+        }
+
         [[nodiscard]] auto copy_shortcut_pressed(ContextImpl const* impl) -> bool {
             InputState const& input = impl->frame_desc.input;
             if (input.key_events == nullptr) {
                 return false;
             }
             for (size_t index = 0u; index < input.key_event_count; ++index) {
-                KeyEvent const& event = input.key_events[index];
-                if (event.key == Key::C && event.kind == KeyEventKind::PRESS &&
-                    (event.mods & KEY_MOD_CTRL) != 0u) {
+                if (shortcut_key_pressed(input.key_events[index], Key::C)) {
                     return true;
                 }
             }
@@ -1719,6 +1733,45 @@ namespace gui {
             return true;
         }
 
+        auto save_text_undo(ContextImpl* impl,
+                            StateEntry& state,
+                            char const* buffer,
+                            size_t buffer_size,
+                            size_t cursor,
+                            TextSelection selection) -> void {
+            ASSERT(impl->context_arena != nullptr);
+
+            size_t const size = text_buffer_size(buffer, buffer_size);
+            TextUndoEntry* const entry = arena_new<TextUndoEntry>(*impl->context_arena);
+            entry->text = arena_alloc<char>(*impl->context_arena, size + 1u);
+            std::memcpy(entry->text, buffer, size);
+            entry->text[size] = '\0';
+            entry->text_size = size;
+            entry->cursor = std::min(cursor, size);
+            entry->selection = ordered_text_selection(clamp_text_selection(selection, size));
+            entry->previous = state.text_undo_stack;
+            state.text_undo_stack = entry;
+        }
+
+        auto restore_text_undo(StateEntry& state,
+                               char* buffer,
+                               size_t buffer_size,
+                               TextSelection& selection) -> bool {
+            if (state.text_undo_stack == nullptr) {
+                return false;
+            }
+
+            TextUndoEntry const* const entry = state.text_undo_stack;
+            state.text_undo_stack = entry->previous;
+            size_t const size = std::min(entry->text_size, buffer_size - 1u);
+            std::memcpy(buffer, entry->text, size);
+            buffer[size] = '\0';
+            state.text_cursor = std::min(entry->cursor, size);
+            selection = ordered_text_selection(clamp_text_selection(entry->selection, size));
+            state.text_selection_word_active = false;
+            return true;
+        }
+
         auto apply_bool_widget(ContextImpl const* impl, BoxNode& box, bool* value) -> Signal {
             ASSERT(value != nullptr);
             Signal signal = box.signal;
@@ -1831,6 +1884,12 @@ namespace gui {
                                 size_t const available =
                                     buffer_size - 1u - (text_size - selected_size);
                                 if (insert_size != 0u && insert_size <= available) {
+                                    save_text_undo(impl,
+                                                   state,
+                                                   buffer,
+                                                   buffer_size,
+                                                   state.text_cursor,
+                                                   selection);
                                     if (selected_size != 0u) {
                                         changed |= erase_text_range(buffer,
                                                                     buffer_size,
@@ -1847,6 +1906,44 @@ namespace gui {
                         }
                         if (event.kind != KeyEventKind::PRESS &&
                             event.kind != KeyEventKind::REPEAT) {
+                            continue;
+                        }
+                        if (shortcut_key_pressed(event, Key::Z)) {
+                            if (writable &&
+                                restore_text_undo(state, buffer, buffer_size, selection)) {
+                                changed = true;
+                            }
+                            continue;
+                        }
+                        if (shortcut_key_pressed(event, Key::V)) {
+                            if (writable && impl->get_clipboard_text != nullptr) {
+                                StrRef const text = impl->get_clipboard_text(
+                                    impl->clipboard_user_data, impl->frame_arena);
+                                size_t const selected_size = selection.end - selection.start;
+                                size_t const available =
+                                    buffer_size - 1u - (text_size - selected_size);
+                                if (!text.empty() && text.size() <= available) {
+                                    save_text_undo(impl,
+                                                   state,
+                                                   buffer,
+                                                   buffer_size,
+                                                   state.text_cursor,
+                                                   selection);
+                                    if (selected_size != 0u) {
+                                        changed |= erase_text_range(buffer,
+                                                                    buffer_size,
+                                                                    selection.start,
+                                                                    selection.end);
+                                        state.text_cursor = selection.start;
+                                    }
+                                    changed |= insert_text_bytes(buffer,
+                                                                 buffer_size,
+                                                                 state.text_cursor,
+                                                                 text.data(),
+                                                                 text.size());
+                                    selection = {state.text_cursor, state.text_cursor};
+                                }
+                            }
                             continue;
                         }
                         if (text_selection_key_event(event)) {
@@ -1880,6 +1977,12 @@ namespace gui {
                             break;
                         case Key::BACKSPACE:
                             if (writable && selection.start != selection.end) {
+                                save_text_undo(impl,
+                                               state,
+                                               buffer,
+                                               buffer_size,
+                                               state.text_cursor,
+                                               selection);
                                 changed |= erase_text_range(
                                     buffer, buffer_size, selection.start, selection.end);
                                 state.text_cursor = selection.start;
@@ -1887,6 +1990,12 @@ namespace gui {
                             } else if (writable && state.text_cursor > 0u) {
                                 size_t const start =
                                     previous_text_offset({buffer, text_size}, state.text_cursor);
+                                save_text_undo(impl,
+                                               state,
+                                               buffer,
+                                               buffer_size,
+                                               state.text_cursor,
+                                               selection);
                                 changed |=
                                     erase_text_range(buffer, buffer_size, start, state.text_cursor);
                                 state.text_cursor = start;
@@ -1895,11 +2004,23 @@ namespace gui {
                             break;
                         case Key::DELETE_KEY:
                             if (writable && selection.start != selection.end) {
+                                save_text_undo(impl,
+                                               state,
+                                               buffer,
+                                               buffer_size,
+                                               state.text_cursor,
+                                               selection);
                                 changed |= erase_text_range(
                                     buffer, buffer_size, selection.start, selection.end);
                                 state.text_cursor = selection.start;
                                 selection = {state.text_cursor, state.text_cursor};
                             } else if (writable && state.text_cursor < text_size) {
+                                save_text_undo(impl,
+                                               state,
+                                               buffer,
+                                               buffer_size,
+                                               state.text_cursor,
+                                               selection);
                                 changed |= erase_text_range(
                                     buffer,
                                     buffer_size,
@@ -2309,6 +2430,7 @@ namespace gui {
     auto create_context(Arena& arena, ContextDesc const& desc, Context& out_context) -> void {
         ContextImpl* const impl = arena_new<ContextImpl>(arena);
         size_t const capacity = std::max(desc.initial_box_capacity, size_t{16u});
+        impl->context_arena = &arena;
         impl->box_capacity = capacity;
         impl->state_table_size = next_power_of_two(capacity * 4u);
         impl->boxes = arena_alloc<BoxNode>(arena, capacity);
@@ -2324,6 +2446,7 @@ namespace gui {
         impl->frame_arena.init({desc.frame_arena_reserve_size, desc.frame_arena_commit_size});
         impl->theme = desc.theme != nullptr ? *desc.theme : default_theme();
         impl->set_clipboard_text = desc.set_clipboard_text;
+        impl->get_clipboard_text = desc.get_clipboard_text;
         impl->clipboard_user_data = desc.clipboard_user_data;
         out_context.handle = impl;
     }
