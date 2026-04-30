@@ -1755,6 +1755,105 @@ namespace {
 #endif
     }
 
+    TEST_CASE(header_label_and_button_text_share_vertical_position) {
+        Arena arena = {};
+        arena.init();
+
+        gui::font_provider::Context provider = {};
+        gui::font_provider::Result const provider_result =
+            gui::font_provider::create_context(arena, {}, provider);
+
+#if BASE_PLATFORM_WINDOWS
+        TEST_EXPECT(context, provider_result == gui::font_provider::Result::OK);
+
+        gui::font_cache::Cache cache = {};
+        gui::font_cache::create_cache(arena, provider, {}, cache);
+
+        gui::font_cache::Font font = {};
+        gui::font_cache::open_system_font(cache, "Segoe UI", font);
+
+        gui::ThemeDesc theme = gui::default_theme();
+        theme.root.font = font;
+        theme.root.font_size = 13.0f;
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {.theme = &theme}, gui_context);
+
+        gui::draw::Context draw_context = {};
+        gui::draw::create_context(arena, {.font_cache = cache}, draw_context);
+
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {944.0f, 52.0f}});
+        if (auto root = ui.column(
+                gui::id("root"),
+                {.layout =
+                     {
+                         .width = gui::fill(),
+                         .height = gui::fill(),
+                         .padding = gui::insets(8.0f),
+                         .align_x = gui::Align::STRETCH,
+                     }})) {
+            if (auto header = ui.row(
+                    gui::id("header"),
+                    {.layout =
+                         {
+                             .width = gui::fill(),
+                             .height = gui::px(34.0f),
+                             .padding = gui::insets(6.0f, 8.0f),
+                             .gap = 8.0f,
+                             .align_y = gui::Align::CENTER,
+                         }})) {
+                BASE_UNUSED(header);
+                ui.label("V2 UI API Testbed",
+                         {.layout = {.width = gui::text(), .height = gui::fill()}});
+                ui.spacer({.layout = {.width = gui::fill(), .height = gui::px(1.0f)}});
+                ui.button(gui::id("reset"),
+                          "Reset",
+                          {
+                              .layout =
+                                  {
+                                      .width = gui::px(72.0f),
+                                      .height = gui::px(26.0f),
+                                      .padding = gui::insets(2.0f, 6.0f),
+                                  },
+                          });
+            }
+            BASE_UNUSED(root);
+        }
+        gui::end_frame(ui);
+
+        gui::draw::begin_frame(draw_context);
+        gui::render_frame(ui, draw_context);
+
+        TEST_EXPECT(context, gui::draw::text_command_count(draw_context) == 2u);
+        gui::draw::TextCommand const* title = gui::draw::text_command(draw_context, 0u);
+        gui::draw::TextCommand const* reset = gui::draw::text_command(draw_context, 1u);
+        gui::BoxInfo const* reset_box = ui.find_box(gui::id("reset"), gui::BoxKind::BUTTON);
+        TEST_EXPECT(context, title != nullptr);
+        TEST_EXPECT(context, reset != nullptr);
+        TEST_EXPECT(context, reset_box != nullptr);
+        if (title != nullptr && reset != nullptr && reset_box != nullptr) {
+            float const title_center =
+                title->position.y + title->run.offset_y + title->run.height * 0.5f;
+            float const reset_center =
+                reset->position.y + reset->run.offset_y + reset->run.height * 0.5f;
+            float const delta = title_center - reset_center;
+            TEST_EXPECT(context, delta >= -0.5f && delta <= 0.5f);
+            float const reset_box_center =
+                (reset_box->rect.min.y + reset_box->rect.max.y) * 0.5f;
+            float const reset_box_delta = reset_center - reset_box_center;
+            TEST_EXPECT(context, reset_box_delta >= -0.5f && reset_box_delta <= 0.5f);
+        }
+
+        gui::draw::end_frame(draw_context);
+        gui::draw::destroy_context(draw_context);
+        gui::destroy_context(gui_context);
+        gui::font_cache::destroy_cache(cache);
+        gui::font_provider::destroy_context(provider);
+#else
+        TEST_EXPECT(context, provider_result == gui::font_provider::Result::UNSUPPORTED_PLATFORM);
+#endif
+    }
+
     TEST_CASE(widget_metadata_and_draw_output_are_published) {
         Arena arena = {};
         arena.init();

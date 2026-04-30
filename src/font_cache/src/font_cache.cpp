@@ -246,6 +246,7 @@ namespace gui::font_cache {
         }
 
         entry->run.advance = raster.advance;
+        entry->run.offset_y = raster.offset_y;
         entry->run.height = raster.height;
         entry->next = impl->slots[slot_index];
         impl->slots[slot_index] = entry;

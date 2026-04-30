@@ -250,6 +250,10 @@ namespace gui::draw {
                    TextStyle const& style,
                    StrRef text,
                    float* out_advance) -> void;
+    auto measure_text(Context context,
+                      TextStyle const& style,
+                      StrRef text,
+                      font_cache::TextRun& out_run) -> void;
 
     [[nodiscard]] auto primitive_command_count(Context context) -> size_t;
     [[nodiscard]] auto primitive_command(Context context, size_t index) -> PrimitiveCommand const*;

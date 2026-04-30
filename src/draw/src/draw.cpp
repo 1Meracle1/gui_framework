@@ -1198,6 +1198,17 @@ namespace gui::draw {
         clear_path(impl);
     }
 
+    auto measure_text(Context context,
+                      TextStyle const& style,
+                      StrRef text,
+                      font_cache::TextRun& out_run) -> void {
+        ContextImpl* const impl = context_from_handle(context);
+        ASSERT(impl != nullptr);
+        ASSERT(font_cache::cache_valid(impl->font_cache));
+
+        font_cache::text_run(impl->font_cache, style.font, style.size, text, out_run);
+    }
+
     auto draw_text(Context context,
                    Vec2 position,
                    TextStyle const& style,
@@ -1205,10 +1216,9 @@ namespace gui::draw {
                    float* out_advance) -> void {
         ContextImpl* const impl = context_from_handle(context);
         ASSERT(impl != nullptr);
-        ASSERT(font_cache::cache_valid(impl->font_cache));
 
         font_cache::TextRun run = {};
-        font_cache::text_run(impl->font_cache, style.font, style.size, text, run);
+        measure_text(context, style, text, run);
 
         ASSERT(impl->text_command_count < impl->command_capacity);
 

@@ -16,6 +16,7 @@ namespace gui {
         inline constexpr float SCROLLBAR_MARGIN = 2.0f;
         inline constexpr float SCROLLBAR_WIDTH = 6.0f;
         inline constexpr float SCROLLBAR_MIN_THUMB_HEIGHT = 12.0f;
+        inline constexpr float TEXT_RASTER_PADDING = 2.0f;
 
         struct StateEntry {
             Id id = {};
@@ -410,7 +411,7 @@ namespace gui {
         [[nodiscard]] auto rendered_text_height(font_cache::Font font, float font_size) -> float {
             font_provider::Metrics metrics = {};
             font_cache::metrics_from_font(font, font_size, metrics);
-            return std::ceil(metrics.ascent + metrics.descent + 4.0f);
+            return std::ceil(metrics.ascent + metrics.descent + TEXT_RASTER_PADDING * 2.0f);
         }
 
         [[nodiscard]] auto text_line_height(BoxNode const& box) -> float {
@@ -481,16 +482,15 @@ namespace gui {
             float const content_width =
                 std::max(0.0f, rect_width(rect) - inset_width(box.layout.padding));
             float const x_offset = text_x_offset(box, content_width, text_dim.x);
-            float const scroll_y = box.layout.scroll_y && box.scroll_state != nullptr &&
-                                           text_multiline(box.text)
+            bool const multiline = text_multiline(box.text);
+            float const scroll_y = box.layout.scroll_y && box.scroll_state != nullptr && multiline
                                        ? box.scroll_state->scroll_y
                                        : 0.0f;
+            float const extra_y = rect_height(rect) - inset_height(box.layout.padding) - text_dim.y;
             return {
                 rect.min.x + box.layout.padding.left + x_offset,
                 rect.min.y + box.layout.padding.top - scroll_y +
-                    std::max(0.0f,
-                             rect_height(rect) - inset_height(box.layout.padding) - text_dim.y) *
-                        0.5f,
+                    (multiline ? std::max(0.0f, extra_y) : extra_y) * 0.5f,
             };
         }
 
@@ -1040,7 +1040,7 @@ namespace gui {
         }
 
         [[nodiscard]] auto align_offset(Align align, float available, float size) -> float {
-            float const free_space = std::max(0.0f, available - size);
+            float const free_space = available - size;
             switch (align) {
             case Align::CENTER:
                 return free_space * 0.5f;
@@ -1802,6 +1802,14 @@ namespace gui {
                 draw_context, thumb, tokens.text_muted, {}, 0.0f, width * 0.5f, opacity);
         }
 
+        [[nodiscard]] auto text_draw_y(float line_y, float line_height, font_cache::TextRun run)
+            -> float {
+            if (run.height <= 0.0f) {
+                return std::round(line_y);
+            }
+            return std::round(line_y + line_height * 0.5f - run.offset_y - run.height * 0.5f);
+        }
+
         auto render_box(ContextImpl const* impl, draw::Context draw_context, size_t index) -> void {
             BoxNode const& box = impl->boxes[index];
             bool const clips = box_clips(box);
@@ -1852,10 +1860,12 @@ namespace gui {
                     TextLine line = {};
                     while (next_text_line(box.text, offset, line)) {
                         if (!line.text.empty()) {
+                            font_cache::TextRun run = {};
+                            draw::measure_text(draw_context, text_style, line.text, run);
+                            float const line_y =
+                                text_pos.y + line_height * static_cast<float>(line_index);
                             draw::draw_text(draw_context,
-                                            {text_pos.x,
-                                             text_pos.y +
-                                                 line_height * static_cast<float>(line_index)},
+                                            {text_pos.x, text_draw_y(line_y, line_height, run)},
                                             text_style,
                                             line.text,
                                             nullptr);

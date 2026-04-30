@@ -27,6 +27,7 @@ namespace gui::font_cache {
         uint32_t stride = 0u;
         uint8_t const* rgba_pixels = nullptr;
         float advance = 0.0f;
+        float offset_y = 0.0f;
         float height = 0.0f;
     };
 

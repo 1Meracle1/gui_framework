@@ -567,6 +567,7 @@ namespace gui::font_provider::platform {
         out_raster.stride = out_pitch;
         out_raster.rgba_pixels = out_pixels;
         out_raster.advance = advance;
+        out_raster.offset_y = static_cast<float>(bounding_box.top);
         out_raster.height = static_cast<float>(bounding_box.bottom - bounding_box.top);
 
         release_com(render_target);

@@ -54,6 +54,7 @@ namespace gui::font_provider {
         uint32_t stride = 0u;
         uint8_t* rgba_pixels = nullptr;
         float advance = 0.0f;
+        float offset_y = 0.0f;
         float height = 0.0f;
     };
 
