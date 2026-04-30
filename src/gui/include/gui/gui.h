@@ -251,6 +251,7 @@ namespace gui {
         SPACER,
         SCROLL_PANEL,
         LIST,
+        INPUT_TEXT,
         COUNT,
     };
 
@@ -476,6 +477,13 @@ namespace gui {
         auto slider_float(StrRef text, float* value, SliderFloatDesc const& desc = {}) -> Signal;
         auto slider_float(Id id, StrRef text, float* value, SliderFloatDesc const& desc = {})
             -> Signal;
+        auto input_text(StrRef label, char* buffer, size_t buffer_size, BoxDesc const& desc = {})
+            -> Signal;
+        auto input_text(Id id,
+                        StrRef label,
+                        char* buffer,
+                        size_t buffer_size,
+                        BoxDesc const& desc = {}) -> Signal;
         [[nodiscard]] auto list_fixed(Id id, ListFixedDesc const& desc) -> ListScope;
 
         [[nodiscard]] auto scroll_state(Id id) const -> ScrollState;

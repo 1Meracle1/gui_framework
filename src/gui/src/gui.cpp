@@ -31,6 +31,7 @@ namespace gui {
             size_t text_selection_anchor = 0u;
             size_t text_selection_word_start = 0u;
             size_t text_selection_word_end = 0u;
+            size_t text_cursor = 0u;
             font_cache::Font font = {};
             float font_size = 0.0f;
             ScrollReveal scroll_request_reveal = ScrollReveal::KEEP_VISIBLE;
@@ -230,7 +231,8 @@ namespace gui {
 
         [[nodiscard]] auto box_clips(BoxNode const& box) -> bool {
             return box.layout.clip || box.layout.scroll_x || box.layout.scroll_y ||
-                   box.kind == BoxKind::SCROLL_PANEL || box.kind == BoxKind::LIST;
+                   box.kind == BoxKind::SCROLL_PANEL || box.kind == BoxKind::LIST ||
+                   box.kind == BoxKind::INPUT_TEXT;
         }
 
         [[nodiscard]] auto scrollbar_track_rect(Rect rect) -> Rect {
@@ -446,8 +448,7 @@ namespace gui {
 
         [[nodiscard]] auto text_size(BoxNode const& box) -> Vec2 {
             if (box.text.empty()) {
-                float const font_size = text_font_size(box);
-                return {0.0f, font_size * 1.25f};
+                return {0.0f, text_line_height(box)};
             }
 
             float const line_height = text_line_height(box);
@@ -923,10 +924,12 @@ namespace gui {
             float const widget_extra_x = box.kind == BoxKind::CHECKBOX       ? 24.0f
                                          : box.kind == BoxKind::TOGGLE       ? 44.0f
                                          : box.kind == BoxKind::SLIDER_FLOAT ? 160.0f
+                                         : box.kind == BoxKind::INPUT_TEXT   ? 160.0f
                                                                              : 0.0f;
             float const widget_min_y = box.kind == BoxKind::CHECKBOX ||
                                                box.kind == BoxKind::TOGGLE ||
-                                               box.kind == BoxKind::SLIDER_FLOAT
+                                               box.kind == BoxKind::SLIDER_FLOAT ||
+                                               box.kind == BoxKind::INPUT_TEXT
                                            ? 20.0f
                                            : 0.0f;
 
@@ -1569,6 +1572,88 @@ namespace gui {
                 (impl->frame_desc.input.mouse_pos.x - rect.min.x) / width, 0.0f, 1.0f);
         }
 
+        [[nodiscard]] auto text_buffer_size(char const* buffer, size_t buffer_size) -> size_t {
+            if (buffer == nullptr || buffer_size == 0u) {
+                return 0u;
+            }
+            size_t size = 0u;
+            while (size < buffer_size && buffer[size] != '\0') {
+                size += 1u;
+            }
+            return std::min(size, buffer_size - 1u);
+        }
+
+        [[nodiscard]] auto input_codepoint_allowed(uint32_t codepoint) -> bool {
+            return codepoint >= 0x20u && codepoint != 0x7fu && codepoint <= 0x10ffffu &&
+                   (codepoint < 0xd800u || codepoint > 0xdfffu);
+        }
+
+        [[nodiscard]] auto utf8_from_codepoint(uint32_t codepoint, char out[4]) -> size_t {
+            if (!input_codepoint_allowed(codepoint)) {
+                return 0u;
+            }
+            if (codepoint <= 0x7fu) {
+                out[0] = static_cast<char>(codepoint);
+                return 1u;
+            }
+            if (codepoint <= 0x7ffu) {
+                out[0] = static_cast<char>(0xc0u | (codepoint >> 6u));
+                out[1] = static_cast<char>(0x80u | (codepoint & 0x3fu));
+                return 2u;
+            }
+            if (codepoint <= 0xffffu) {
+                out[0] = static_cast<char>(0xe0u | (codepoint >> 12u));
+                out[1] = static_cast<char>(0x80u | ((codepoint >> 6u) & 0x3fu));
+                out[2] = static_cast<char>(0x80u | (codepoint & 0x3fu));
+                return 3u;
+            }
+            out[0] = static_cast<char>(0xf0u | (codepoint >> 18u));
+            out[1] = static_cast<char>(0x80u | ((codepoint >> 12u) & 0x3fu));
+            out[2] = static_cast<char>(0x80u | ((codepoint >> 6u) & 0x3fu));
+            out[3] = static_cast<char>(0x80u | (codepoint & 0x3fu));
+            return 4u;
+        }
+
+        auto erase_text_range(char* buffer, size_t buffer_size, size_t start, size_t end)
+            -> bool {
+            size_t size = text_buffer_size(buffer, buffer_size);
+            start = std::min(start, size);
+            end = std::min(end, size);
+            if (end <= start) {
+                return false;
+            }
+            std::memmove(buffer + start, buffer + end, size - end);
+            size -= end - start;
+            buffer[size] = '\0';
+            return true;
+        }
+
+        auto insert_text_bytes(char* buffer,
+                               size_t buffer_size,
+                               size_t& cursor,
+                               char const* text,
+                               size_t text_size) -> bool {
+            size_t const size = text_buffer_size(buffer, buffer_size);
+            cursor = std::min(cursor, size);
+            if (text_size == 0u || text_size > buffer_size - 1u - size) {
+                return false;
+            }
+            std::memmove(buffer + cursor + text_size, buffer + cursor, size - cursor);
+            std::memcpy(buffer + cursor, text, text_size);
+            cursor += text_size;
+            buffer[size + text_size] = '\0';
+            return true;
+        }
+
+        auto insert_text_codepoint(char* buffer,
+                                   size_t buffer_size,
+                                   size_t& cursor,
+                                   uint32_t codepoint) -> bool {
+            char text[4] = {};
+            size_t const size = utf8_from_codepoint(codepoint, text);
+            return insert_text_bytes(buffer, buffer_size, cursor, text, size);
+        }
+
         auto apply_bool_widget(ContextImpl const* impl, BoxNode& box, bool* value) -> Signal {
             ASSERT(value != nullptr);
             Signal signal = box.signal;
@@ -1627,6 +1712,92 @@ namespace gui {
                                    ? (std::clamp(*value, min_value, max_value) - min_value) /
                                          (max_value - min_value)
                                    : 0.0f;
+            box.signal = signal;
+            return signal;
+        }
+
+        auto apply_input_text_widget(ContextImpl* impl,
+                                     BoxNode& box,
+                                     char* buffer,
+                                     size_t buffer_size) -> Signal {
+            ASSERT(buffer != nullptr);
+            ASSERT(buffer_size > 0u);
+
+            Signal signal = box.signal;
+            size_t text_size = text_buffer_size(buffer, buffer_size);
+            if (box.state != nullptr) {
+                box.state->text_cursor = std::min(box.state->text_cursor, text_size);
+                if (signal.focus_gained) {
+                    box.state->text_cursor = text_size;
+                }
+                if (signal.pressed_left) {
+                    box.state->text_cursor =
+                        text_index_from_mouse(box, impl->frame_desc.input.mouse_pos);
+                }
+
+                bool changed = false;
+                InputState const& input = impl->frame_desc.input;
+                if (signal.focused && input.key_events != nullptr) {
+                    bool const writable = !box_read_only(box) && !box_disabled(box);
+                    for (size_t index = 0u; index < input.key_event_count; ++index) {
+                        KeyEvent const& event = input.key_events[index];
+                        text_size = text_buffer_size(buffer, buffer_size);
+                        box.state->text_cursor = std::min(box.state->text_cursor, text_size);
+                        if (event.kind == KeyEventKind::TEXT) {
+                            if (writable) {
+                                changed |= insert_text_codepoint(buffer,
+                                                                 buffer_size,
+                                                                 box.state->text_cursor,
+                                                                 event.codepoint);
+                            }
+                            continue;
+                        }
+                        if (event.kind != KeyEventKind::PRESS &&
+                            event.kind != KeyEventKind::REPEAT) {
+                            continue;
+                        }
+                        switch (event.key) {
+                        case Key::LEFT:
+                            box.state->text_cursor =
+                                previous_text_offset({buffer, text_size}, box.state->text_cursor);
+                            break;
+                        case Key::RIGHT:
+                            box.state->text_cursor =
+                                next_text_offset({buffer, text_size}, box.state->text_cursor);
+                            break;
+                        case Key::HOME:
+                            box.state->text_cursor = 0u;
+                            break;
+                        case Key::END:
+                            box.state->text_cursor = text_size;
+                            break;
+                        case Key::BACKSPACE:
+                            if (writable && box.state->text_cursor > 0u) {
+                                size_t const start = previous_text_offset(
+                                    {buffer, text_size}, box.state->text_cursor);
+                                changed |= erase_text_range(
+                                    buffer, buffer_size, start, box.state->text_cursor);
+                                box.state->text_cursor = start;
+                            }
+                            break;
+                        case Key::DELETE_KEY:
+                            if (writable && box.state->text_cursor < text_size) {
+                                changed |= erase_text_range(
+                                    buffer,
+                                    buffer_size,
+                                    box.state->text_cursor,
+                                    next_text_offset({buffer, text_size}, box.state->text_cursor));
+                            }
+                            break;
+                        default:
+                            break;
+                        }
+                    }
+                }
+                signal.changed = changed;
+            }
+            signal.activated = signal.focused && key_pressed(impl, Key::ENTER, false);
+            box.text = copy_frame_str(impl, {buffer, text_buffer_size(buffer, buffer_size)});
             box.signal = signal;
             return signal;
         }
@@ -1727,6 +1898,13 @@ namespace gui {
                                     {thumb_x + 4.0f, center_y + 8.0f}};
                 draw_widget_rect(
                     draw_context, thumb, tokens.text, tokens.canvas, 1.0f, 4.0f, opacity);
+            } else if (box.kind == BoxKind::INPUT_TEXT && box.signal.focused &&
+                       box.state != nullptr) {
+                size_t const cursor = std::min(box.state->text_cursor, box.text.size());
+                Vec2 const pos = text_position(box);
+                float const x = pos.x + text_advance(box, box.text.prefix(cursor));
+                Rect const caret = {{x, pos.y}, {x + 1.0f, pos.y + text_line_height(box)}};
+                draw_widget_rect(draw_context, caret, tokens.text, {}, 0.0f, 0.0f, opacity);
             }
         }
 
@@ -1802,12 +1980,8 @@ namespace gui {
                 draw_context, thumb, tokens.text_muted, {}, 0.0f, width * 0.5f, opacity);
         }
 
-        [[nodiscard]] auto text_draw_y(float line_y, float line_height, font_cache::TextRun run)
-            -> float {
-            if (run.height <= 0.0f) {
-                return std::round(line_y);
-            }
-            return std::round(line_y + line_height * 0.5f - run.offset_y - run.height * 0.5f);
+        [[nodiscard]] auto text_draw_y(float line_y) -> float {
+            return std::round(line_y);
         }
 
         auto render_box(ContextImpl const* impl, draw::Context draw_context, size_t index) -> void {
@@ -1846,7 +2020,8 @@ namespace gui {
                                        box.kind == BoxKind::BUTTON ||
                                        box.kind == BoxKind::CHECKBOX ||
                                        box.kind == BoxKind::TOGGLE ||
-                                       box.kind == BoxKind::SLIDER_FLOAT;
+                                       box.kind == BoxKind::SLIDER_FLOAT ||
+                                       box.kind == BoxKind::INPUT_TEXT;
                 if (text_kind && font_cache::font_valid(box.resolved_style.font)) {
                     draw::TextStyle text_style = {};
                     text_style.font = box.resolved_style.font;
@@ -1865,7 +2040,7 @@ namespace gui {
                             float const line_y =
                                 text_pos.y + line_height * static_cast<float>(line_index);
                             draw::draw_text(draw_context,
-                                            {text_pos.x, text_draw_y(line_y, line_height, run)},
+                                            {text_pos.x, text_draw_y(line_y)},
                                             text_style,
                                             line.text,
                                             nullptr);
@@ -1990,6 +2165,7 @@ namespace gui {
         theme_kind(theme, BoxKind::CHECKBOX).role = StyleRole::CONTROL;
         theme_kind(theme, BoxKind::TOGGLE).role = StyleRole::CONTROL;
         theme_kind(theme, BoxKind::SLIDER_FLOAT).role = StyleRole::CONTROL;
+        theme_kind(theme, BoxKind::INPUT_TEXT).role = StyleRole::CONTROL;
         return theme;
     }
 
@@ -2439,6 +2615,55 @@ namespace gui {
                                         true,
                                         true);
         return apply_slider_widget(impl, impl->boxes[index], value, desc);
+    }
+
+    auto Frame::input_text(StrRef label, char* buffer, size_t buffer_size, BoxDesc const& desc)
+        -> Signal {
+        ASSERT(buffer != nullptr);
+        ASSERT(buffer_size > 0u);
+
+        ContextImpl* const impl = impl_from_frame(*this);
+        size_t const parent = top_parent_index(impl);
+        BoxDesc box_desc = desc;
+        box_desc.layout.clip = true;
+        size_t const index =
+            append_box(impl,
+                       BoxKind::INPUT_TEXT,
+                       text_id(impl, parent, BoxKind::INPUT_TEXT, label),
+                       {},
+                       {buffer, text_buffer_size(buffer, buffer_size)},
+                       box_desc,
+                       true,
+                       true);
+        BoxNode& box = impl->boxes[index];
+        box.id_source = label.empty() ? BoxIdSource::STRUCTURAL : BoxIdSource::TEXT;
+        box.stable_id = false;
+        return apply_input_text_widget(impl, box, buffer, buffer_size);
+    }
+
+    auto Frame::input_text(Id id_value,
+                           StrRef label,
+                           char* buffer,
+                           size_t buffer_size,
+                           BoxDesc const& desc) -> Signal {
+        ASSERT(buffer != nullptr);
+        ASSERT(buffer_size > 0u);
+
+        ContextImpl* const impl = impl_from_frame(*this);
+        size_t const parent = top_parent_index(impl);
+        BoxDesc box_desc = desc;
+        box_desc.layout.clip = true;
+        size_t const index =
+            append_box(impl,
+                       BoxKind::INPUT_TEXT,
+                       explicit_id(impl, parent, BoxKind::INPUT_TEXT, id_value),
+                       id_value,
+                       {buffer, text_buffer_size(buffer, buffer_size)},
+                       box_desc,
+                       true,
+                       true);
+        BASE_UNUSED(label);
+        return apply_input_text_widget(impl, impl->boxes[index], buffer, buffer_size);
     }
 
     auto Frame::list_fixed(Id id_value, ListFixedDesc const& desc) -> ListScope {

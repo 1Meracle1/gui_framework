@@ -862,6 +862,218 @@ namespace {
         gui::destroy_context(gui_context);
     }
 
+    TEST_CASE(input_text_mutates_app_owned_buffer) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::Id const field_id = gui::id("name");
+        char buffer[16] = "Hi";
+        gui::KeyEvent const events[] = {
+            {.kind = gui::KeyEventKind::TEXT, .codepoint = '!'},
+        };
+        gui::InputState input = {};
+        input.key_events = events;
+        input.key_event_count = 1u;
+
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {160.0f, 40.0f}, .input = input});
+        ui.request_focus(field_id);
+        gui::Signal const signal = ui.input_text(
+            field_id,
+            "Name",
+            buffer,
+            sizeof(buffer),
+            {.layout = {.width = gui::px(120.0f), .height = gui::px(20.0f)}});
+        gui::end_frame(ui);
+
+        TEST_EXPECT(context, signal.focused);
+        TEST_EXPECT(context, signal.changed);
+        TEST_EXPECT(context, StrRef(buffer) == StrRef("Hi!"));
+
+        gui::BoxInfo const* field = ui.find_box(field_id, gui::BoxKind::INPUT_TEXT);
+        TEST_EXPECT(context, field != nullptr);
+        if (field != nullptr) {
+            TEST_EXPECT(context, field->text == StrRef("Hi!"));
+        }
+
+        gui::destroy_context(gui_context);
+    }
+
+    TEST_CASE(input_text_handles_cursor_keys_and_backspace) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::Id const field_id = gui::id("field");
+        char buffer[16] = "abc";
+        gui::KeyEvent const events[] = {
+            {.key = gui::Key::LEFT},
+            {.key = gui::Key::BACKSPACE},
+            {.kind = gui::KeyEventKind::TEXT, .codepoint = 'X'},
+        };
+        gui::InputState input = {};
+        input.key_events = events;
+        input.key_event_count = 3u;
+
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {160.0f, 40.0f}, .input = input});
+        ui.request_focus(field_id);
+        gui::Signal const signal = ui.input_text(
+            field_id,
+            "Field",
+            buffer,
+            sizeof(buffer),
+            {.layout = {.width = gui::px(120.0f), .height = gui::px(20.0f)}});
+        gui::end_frame(ui);
+
+        TEST_EXPECT(context, signal.changed);
+        TEST_EXPECT(context, StrRef(buffer) == StrRef("aXc"));
+
+        gui::destroy_context(gui_context);
+    }
+
+    TEST_CASE(input_text_uses_label_identity_across_value_changes) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        char buffer[16] = "first";
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {160.0f, 40.0f}});
+        ui.input_text(
+            "Name",
+            buffer,
+            sizeof(buffer),
+            {.layout = {.width = gui::px(120.0f), .height = gui::px(20.0f)}});
+        gui::end_frame(ui);
+
+        gui::BoxInfo const* first = ui.box_info(1u);
+        gui::Id const field_id = first != nullptr ? first->id : gui::Id{};
+        TEST_EXPECT(context, first != nullptr && first->text == StrRef("first"));
+
+        buffer[0] = 's';
+        buffer[1] = 'e';
+        buffer[2] = 'c';
+        buffer[3] = 'o';
+        buffer[4] = 'n';
+        buffer[5] = 'd';
+        buffer[6] = '\0';
+
+        ui = gui::begin_frame(gui_context, {.size = {160.0f, 40.0f}});
+        ui.input_text(
+            "Name",
+            buffer,
+            sizeof(buffer),
+            {.layout = {.width = gui::px(120.0f), .height = gui::px(20.0f)}});
+        gui::end_frame(ui);
+
+        gui::BoxInfo const* second = ui.box_info(1u);
+        TEST_EXPECT(context, second != nullptr && second->id.value == field_id.value);
+        TEST_EXPECT(context, second != nullptr && second->text == StrRef("second"));
+
+        gui::destroy_context(gui_context);
+    }
+
+    TEST_CASE(input_text_keeps_vertical_position_when_empty_and_text_changes) {
+        Arena arena = {};
+        arena.init();
+
+        gui::font_provider::Context provider = {};
+        gui::font_provider::Result const provider_result =
+            gui::font_provider::create_context(arena, {}, provider);
+
+#if BASE_PLATFORM_WINDOWS
+        TEST_EXPECT(context, provider_result == gui::font_provider::Result::OK);
+
+        gui::font_cache::Cache cache = {};
+        gui::font_cache::create_cache(arena, provider, {}, cache);
+
+        gui::font_cache::Font font = {};
+        gui::font_cache::open_system_font(cache, "Segoe UI", font);
+
+        gui::ThemeDesc theme = gui::default_theme();
+        theme.root.font = font;
+        theme.root.font_size = 13.0f;
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {.theme = &theme}, gui_context);
+
+        gui::draw::Context draw_context = {};
+        gui::draw::create_context(arena, {.font_cache = cache}, draw_context);
+
+        gui::Id const field_id = gui::id("field");
+        gui::BoxDesc const box = {
+            .layout =
+                {
+                    .width = gui::px(160.0f),
+                    .height = gui::px(30.0f),
+                    .padding = gui::insets(5.0f, 8.0f),
+                },
+        };
+
+        char empty[16] = "";
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {180.0f, 50.0f}});
+        ui.request_focus(field_id);
+        ui.input_text(field_id, "Field", empty, sizeof(empty), box);
+        gui::end_frame(ui);
+
+        gui::draw::begin_frame(draw_context);
+        gui::render_frame(ui, draw_context);
+        gui::draw::StyledRectCommand const* empty_caret =
+            gui::draw::styled_rect_command(draw_context, 1u);
+        TEST_EXPECT(context, empty_caret != nullptr);
+        bool const has_empty_caret = empty_caret != nullptr;
+        float const empty_caret_y = has_empty_caret ? empty_caret->rect.min.y : 0.0f;
+
+        char lower[16] = "a";
+        ui = gui::begin_frame(gui_context, {.size = {180.0f, 50.0f}});
+        ui.input_text(field_id, "Field", lower, sizeof(lower), box);
+        gui::end_frame(ui);
+
+        gui::draw::begin_frame(draw_context);
+        gui::render_frame(ui, draw_context);
+        gui::draw::StyledRectCommand const* lower_caret =
+            gui::draw::styled_rect_command(draw_context, 1u);
+        gui::draw::TextCommand const* lower_text = gui::draw::text_command(draw_context, 0u);
+        TEST_EXPECT(context, lower_caret != nullptr);
+        TEST_EXPECT(context, lower_text != nullptr);
+        bool const has_lower_caret = lower_caret != nullptr;
+        bool const has_lower_text = lower_text != nullptr;
+        float const lower_caret_y = has_lower_caret ? lower_caret->rect.min.y : 0.0f;
+        float const lower_text_y = has_lower_text ? lower_text->position.y : 0.0f;
+
+        char tall[16] = "ad";
+        ui = gui::begin_frame(gui_context, {.size = {180.0f, 50.0f}});
+        ui.input_text(field_id, "Field", tall, sizeof(tall), box);
+        gui::end_frame(ui);
+
+        gui::draw::begin_frame(draw_context);
+        gui::render_frame(ui, draw_context);
+        gui::draw::TextCommand const* tall_text = gui::draw::text_command(draw_context, 0u);
+        TEST_EXPECT(context, tall_text != nullptr);
+        bool const has_tall_text = tall_text != nullptr;
+        float const tall_text_y = has_tall_text ? tall_text->position.y : 0.0f;
+
+        if (has_empty_caret && has_lower_caret) {
+            TEST_EXPECT(context, empty_caret_y == lower_caret_y);
+        }
+        if (has_lower_text && has_tall_text) {
+            TEST_EXPECT(context, lower_text_y == tall_text_y);
+        }
+
+        gui::draw::destroy_context(draw_context);
+        gui::destroy_context(gui_context);
+        gui::font_cache::destroy_cache(cache);
+        gui::font_provider::destroy_context(provider);
+#else
+        TEST_EXPECT(context, provider_result == gui::font_provider::Result::UNSUPPORTED_PLATFORM);
+#endif
+    }
+
     TEST_CASE(explicit_ids_disambiguate_same_text_widgets) {
         Arena arena = {};
         arena.init();

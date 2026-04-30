@@ -117,6 +117,15 @@ if (ui.slider_float(gui::id("scale"),
         .changed) {
     settings.scale = scale;
 }
+
+if (ui.input_text(gui::id("name"),
+                  "Name",
+                  settings.name,
+                  sizeof(settings.name),
+                  {.layout = {.width = gui::px(220.0f), .height = gui::px(24.0f)}})
+        .changed) {
+    rename_item(settings.name);
+}
 ```
 
 ## List Virtualization

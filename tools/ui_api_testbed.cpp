@@ -39,6 +39,7 @@ namespace {
         bool reveal_log_scroll = true;
         float scale = 1.25f;
         size_t selected_index = 12u;
+        char name[64] = "Editable text";
         gui::TextSelection title_selection = {};
         gui::TextSelection body_selection = {};
         gui::Signal header_signal = {};
@@ -367,6 +368,21 @@ namespace {
                                 .flags = gui::BOX_FLAG_READ_ONLY,
                             }
                         );
+                        ui.input_text(
+                            gui::id("name_input"),
+                            "Name",
+                            state.name,
+                            sizeof(state.name),
+                            {
+                                .layout =
+                                    {
+                                        .width = gui::px(160.0f),
+                                        .height = gui::px(30.0f),
+                                        .padding = gui::insets(5.0f, 8.0f),
+                                    },
+                                .debug_name = "name_input",
+                            }
+                        );
                         ui.button(
                             gui::id("disabled_button"),
                             "Disabled",
@@ -512,8 +528,8 @@ namespace {
 
 #if defined(_WIN32)
     constexpr wchar_t WINDOW_CLASS_NAME[] = L"gui_framework_ui_api_testbed";
-    constexpr uint32_t INITIAL_WINDOW_WIDTH = 960u;
-    constexpr uint32_t INITIAL_WINDOW_HEIGHT = 600u;
+    constexpr uint32_t INITIAL_WINDOW_WIDTH = 1280u;
+    constexpr uint32_t INITIAL_WINDOW_HEIGHT = 800u;
     constexpr size_t MAX_KEY_EVENTS_PER_FRAME = 32u;
 
     struct UiRuntime {
@@ -577,11 +593,53 @@ namespace {
     }
 
     [[nodiscard]] auto key_from_virtual_key(WPARAM value) -> gui::Key {
-        return value == 'C' ? gui::Key::C : gui::Key::UNKNOWN;
+        switch (value) {
+        case VK_TAB:
+            return gui::Key::TAB;
+        case VK_RETURN:
+            return gui::Key::ENTER;
+        case VK_ESCAPE:
+            return gui::Key::ESCAPE;
+        case VK_SPACE:
+            return gui::Key::SPACE;
+        case VK_LEFT:
+            return gui::Key::LEFT;
+        case VK_RIGHT:
+            return gui::Key::RIGHT;
+        case VK_UP:
+            return gui::Key::UP;
+        case VK_DOWN:
+            return gui::Key::DOWN;
+        case VK_HOME:
+            return gui::Key::HOME;
+        case VK_END:
+            return gui::Key::END;
+        case VK_BACK:
+            return gui::Key::BACKSPACE;
+        case VK_DELETE:
+            return gui::Key::DELETE_KEY;
+        case 'C':
+            return gui::Key::C;
+        default:
+            return gui::Key::UNKNOWN;
+        }
     }
 
     [[nodiscard]] auto current_key_mods() -> gui::KeyMods {
-        return (GetKeyState(VK_CONTROL) & 0x8000) != 0 ? gui::KEY_MOD_CTRL : gui::KEY_MOD_NONE;
+        gui::KeyMods mods = gui::KEY_MOD_NONE;
+        if ((GetKeyState(VK_SHIFT) & 0x8000) != 0) {
+            mods |= gui::KEY_MOD_SHIFT;
+        }
+        if ((GetKeyState(VK_CONTROL) & 0x8000) != 0) {
+            mods |= gui::KEY_MOD_CTRL;
+        }
+        if ((GetKeyState(VK_MENU) & 0x8000) != 0) {
+            mods |= gui::KEY_MOD_ALT;
+        }
+        if ((GetKeyState(VK_LWIN) & 0x8000) != 0 || (GetKeyState(VK_RWIN) & 0x8000) != 0) {
+            mods |= gui::KEY_MOD_SUPER;
+        }
+        return mods;
     }
 
     auto push_key_event(AppState* state, gui::Key key, gui::KeyEventKind kind) -> void {
@@ -603,12 +661,26 @@ namespace {
 #if BASE_DEBUG
         if (kind == gui::KeyEventKind::PRESS || kind == gui::KeyEventKind::REPEAT) {
             fmt::printf(
-                "key %s: C mods=0x%02x\n",
+                "key %s: %u mods=0x%02x\n",
                 kind == gui::KeyEventKind::REPEAT ? "repeat" : "press",
+                static_cast<unsigned>(key),
                 static_cast<unsigned>(state->key_events[index].mods)
             );
         }
 #endif
+    }
+
+    auto push_text_event(AppState* state, uint32_t codepoint) -> void {
+        if (state == nullptr || state->input.key_event_count >= MAX_KEY_EVENTS_PER_FRAME) {
+            return;
+        }
+
+        size_t const index = state->input.key_event_count;
+        state->key_events[index] = {.kind = gui::KeyEventKind::TEXT,
+                                    .mods = current_key_mods(),
+                                    .codepoint = codepoint};
+        state->input.key_events = state->key_events;
+        state->input.key_event_count += 1u;
     }
 
     [[nodiscard]] auto key_down_kind(LPARAM lparam) -> gui::KeyEventKind {
@@ -832,6 +904,12 @@ namespace {
             }
             return DefWindowProcW(hwnd, message, wparam, lparam);
         }
+
+        case WM_CHAR:
+            if (global_app_state != nullptr) {
+                push_text_event(global_app_state, static_cast<uint32_t>(wparam));
+            }
+            return 0;
 
         case WM_CLOSE:
             if (global_app_state != nullptr) {
