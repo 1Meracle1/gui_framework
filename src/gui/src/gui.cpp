@@ -1399,6 +1399,24 @@ namespace gui {
             return selection;
         }
 
+        [[nodiscard]] auto apply_text_cursor_selection_key_event(
+            StrRef text, TextSelection selection, size_t& cursor, KeyEvent const& event
+        ) -> TextSelection {
+            selection = ordered_text_selection(clamp_text_selection(selection, text.size()));
+            cursor = std::min(cursor, text.size());
+            if (!text_selection_key_event(event)) {
+                return selection;
+            }
+
+            size_t const anchor = selection.start == selection.end
+                                      ? cursor
+                                      : (cursor == selection.start ? selection.end
+                                                                   : selection.start);
+            cursor = event.key == Key::RIGHT ? next_text_offset(text, cursor)
+                                             : previous_text_offset(text, cursor);
+            return ordered_text_selection({anchor, cursor});
+        }
+
         [[nodiscard]] auto text_word_char(StrRef text, size_t offset) -> bool {
             uint8_t const c = static_cast<uint8_t>(text[offset]);
             return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
@@ -1785,8 +1803,14 @@ namespace gui {
                     selection = {text_size, text_size};
                     state.text_selection_word_active = false;
                 }
-                selection = apply_pointer_text_selection(impl, box, selection);
-                state.text_cursor = selection.end;
+                TextSelection const pointer_selection =
+                    apply_pointer_text_selection(impl, box, selection);
+                if (signal.pressed_left || signal.active || signal.released_left) {
+                    state.text_cursor = state.text_selection_anchor == pointer_selection.end
+                                            ? pointer_selection.start
+                                            : pointer_selection.end;
+                }
+                selection = pointer_selection;
 
                 bool changed = false;
                 InputState const& input = impl->frame_desc.input;
@@ -1826,10 +1850,9 @@ namespace gui {
                             continue;
                         }
                         if (text_selection_key_event(event)) {
-                            selection = apply_text_selection_key_event(
-                                {buffer, text_size}, selection, event
+                            selection = apply_text_cursor_selection_key_event(
+                                {buffer, text_size}, selection, state.text_cursor, event
                             );
-                            state.text_cursor = selection.end;
                             continue;
                         }
                         switch (event.key) {
@@ -1892,7 +1915,7 @@ namespace gui {
                 }
                 text_size = text_buffer_size(buffer, buffer_size);
                 selection = ordered_text_selection(clamp_text_selection(selection, text_size));
-                state.text_cursor = selection.end;
+                state.text_cursor = std::min(state.text_cursor, text_size);
                 state.text_selection_start = selection.start;
                 state.text_selection_end = selection.end;
                 box.text_selection = selection;

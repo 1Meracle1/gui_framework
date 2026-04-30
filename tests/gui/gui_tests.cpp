@@ -1125,6 +1125,60 @@ namespace {
             gui::create_context(arena, {}, gui_context);
             char buffer[16] = "ABCDE";
 
+            gui::KeyEvent const events[] = {
+                {.key = gui::Key::LEFT},
+                {.key = gui::Key::LEFT},
+                {.key = gui::Key::LEFT, .mods = gui::KEY_MOD_SHIFT},
+                {.kind = gui::KeyEventKind::TEXT, .codepoint = 'X'},
+            };
+            gui::InputState input = {};
+            input.key_events = events;
+            input.key_event_count = 4u;
+            gui::Frame ui =
+                gui::begin_frame(gui_context, {.size = {160.0f, 40.0f}, .input = input});
+            ui.request_focus(field_id);
+            gui::Signal const signal =
+                ui.input_text(field_id, "Field", buffer, sizeof(buffer), box);
+            gui::end_frame(ui);
+
+            TEST_EXPECT(context, signal.changed);
+            TEST_EXPECT(context, StrRef(buffer) == StrRef("ABXDE"));
+
+            gui::destroy_context(gui_context);
+        }
+
+        {
+            gui::Context gui_context = {};
+            gui::create_context(arena, {}, gui_context);
+            char buffer[16] = "ABCDE";
+
+            gui::KeyEvent const events[] = {
+                {.key = gui::Key::LEFT},
+                {.key = gui::Key::LEFT},
+                {.key = gui::Key::RIGHT, .mods = gui::KEY_MOD_SHIFT},
+                {.kind = gui::KeyEventKind::TEXT, .codepoint = 'X'},
+            };
+            gui::InputState input = {};
+            input.key_events = events;
+            input.key_event_count = 4u;
+            gui::Frame ui =
+                gui::begin_frame(gui_context, {.size = {160.0f, 40.0f}, .input = input});
+            ui.request_focus(field_id);
+            gui::Signal const signal =
+                ui.input_text(field_id, "Field", buffer, sizeof(buffer), box);
+            gui::end_frame(ui);
+
+            TEST_EXPECT(context, signal.changed);
+            TEST_EXPECT(context, StrRef(buffer) == StrRef("ABCXE"));
+
+            gui::destroy_context(gui_context);
+        }
+
+        {
+            gui::Context gui_context = {};
+            gui::create_context(arena, {}, gui_context);
+            char buffer[16] = "ABCDE";
+
             select_bcd(gui_context, buffer, sizeof(buffer));
 
             gui::KeyEvent const events[] = {
