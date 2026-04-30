@@ -252,6 +252,8 @@ namespace gui {
         ROW,
         COLUMN,
         OVERLAY,
+        POPUP,
+        MODAL,
         LABEL,
         SELECTABLE_LABEL,
         BUTTON,
@@ -469,6 +471,8 @@ namespace gui {
         [[nodiscard]] auto column(Id id, BoxDesc const& desc = {}) -> Scope;
         [[nodiscard]] auto overlay(BoxDesc const& desc = {}) -> Scope;
         [[nodiscard]] auto overlay(Id id, BoxDesc const& desc = {}) -> Scope;
+        [[nodiscard]] auto popup(Id id, BoxDesc const& desc = {}) -> Scope;
+        [[nodiscard]] auto modal(Id id, BoxDesc const& desc = {}) -> Scope;
         [[nodiscard]] auto scroll_panel(Id id, BoxDesc const& desc = {}) -> Scope;
 
         auto spacer(BoxDesc const& desc) -> void;

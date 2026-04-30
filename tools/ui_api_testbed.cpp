@@ -37,6 +37,8 @@ namespace {
         bool read_only_value = false;
         bool reveal_asset_list = true;
         bool reveal_log_scroll = true;
+        bool popup_open = true;
+        bool modal_open = false;
         float scale = 1.25f;
         size_t selected_index = 12u;
         char name[64] = "Editable text";
@@ -397,6 +399,39 @@ namespace {
                                 .flags = gui::BOX_FLAG_DISABLED,
                             }
                         );
+                        if (ui.button(
+                                  gui::id("popup_button"),
+                                  "Popup",
+                                  {
+                                      .layout =
+                                          {
+                                              .width = gui::px(72.0f),
+                                              .height = gui::px(30.0f),
+                                              .padding = gui::insets(3.0f, 6.0f),
+                                          },
+                                      .debug_name = "popup_button",
+                                  }
+                            )
+                                .activated) {
+                            state.popup_open = !state.popup_open;
+                        }
+                        if (ui.button(
+                                  gui::id("modal_button"),
+                                  "Modal",
+                                  {
+                                      .layout =
+                                          {
+                                              .width = gui::px(72.0f),
+                                              .height = gui::px(30.0f),
+                                              .padding = gui::insets(3.0f, 6.0f),
+                                          },
+                                      .style = {.role = gui::StyleRole::ACCENT},
+                                      .debug_name = "modal_button",
+                                  }
+                            )
+                                .activated) {
+                            state.modal_open = true;
+                        }
                     }
 
                     if (auto body_text = ui.scroll_panel(
@@ -515,6 +550,47 @@ namespace {
                                 },
                             }
                         );
+                        if (state.popup_open) {
+                            if (auto popup = ui.popup(
+                                    gui::id("sample_popup"),
+                                    {
+                                        .layout =
+                                            {
+                                                .width = gui::px(224.0f),
+                                                .height = gui::children(),
+                                                .margin = gui::insets(58.0f, 0.0f, 0.0f, 18.0f),
+                                                .padding = gui::insets(8.0f),
+                                                .gap = 6.0f,
+                                                .align_x = gui::Align::STRETCH,
+                                            },
+                                        .debug_name = "sample_popup",
+                                    }
+                                )) {
+                                ui.label(
+                                    "Floating popup",
+                                    {
+                                        .layout = {.width = gui::fill(), .height = gui::px(22.0f)},
+                                        .style = {.foreground = gui::rgb(225, 232, 242)},
+                                    }
+                                );
+                                if (ui.button(
+                                          gui::id("popup_close"),
+                                          "Close",
+                                          {
+                                              .layout =
+                                                  {
+                                                      .width = gui::fill(),
+                                                      .height = gui::px(28.0f),
+                                                      .padding = gui::insets(3.0f, 6.0f),
+                                                  },
+                                              .style = {.role = gui::StyleRole::DANGER},
+                                          }
+                                    )
+                                        .activated) {
+                                    state.popup_open = false;
+                                }
+                            }
+                        }
                     }
 
                     if (auto log = ui.scroll_panel(
@@ -538,6 +614,69 @@ namespace {
                             }
                         )) {
                         draw_scroll_lines(ui, "Log entry", 8u);
+                    }
+                }
+            }
+
+            if (state.modal_open) {
+                if (auto modal = ui.modal(
+                        gui::id("sample_modal"),
+                        {
+                            .layout =
+                                {
+                                    .padding = gui::insets(12.0f),
+                                    .align_x = gui::Align::CENTER,
+                                    .align_y = gui::Align::CENTER,
+                                },
+                            .style = {.background = gui::rgba(0, 0, 0, 150)},
+                            .debug_name = "sample_modal",
+                        }
+                    )) {
+                    if (auto dialog = ui.column(
+                            gui::id("sample_modal_dialog"),
+                            {
+                                .layout =
+                                    {
+                                        .width = gui::px(360.0f),
+                                        .height = gui::children(),
+                                        .padding = gui::insets(12.0f),
+                                        .gap = 8.0f,
+                                        .align_x = gui::Align::STRETCH,
+                                    },
+                                .style = {.role = gui::StyleRole::PANEL},
+                                .debug_name = "sample_modal_dialog",
+                            }
+                        )) {
+                        ui.label(
+                            "Modal dialog",
+                            {
+                                .layout = {.width = gui::fill(), .height = gui::px(24.0f)},
+                                .style = {.foreground = gui::rgb(235, 240, 248)},
+                            }
+                        );
+                        ui.label(
+                            "Blocks the canvas behind it.",
+                            {
+                                .layout = {.width = gui::fill(), .height = gui::px(22.0f)},
+                                .style = {.foreground = gui::rgb(175, 188, 204)},
+                            }
+                        );
+                        if (ui.button(
+                                  gui::id("sample_modal_close"),
+                                  "Close",
+                                  {
+                                      .layout =
+                                          {
+                                              .width = gui::fill(),
+                                              .height = gui::px(30.0f),
+                                              .padding = gui::insets(3.0f, 6.0f),
+                                          },
+                                      .style = {.role = gui::StyleRole::ACCENT},
+                                  }
+                            )
+                                .activated) {
+                            state.modal_open = false;
+                        }
                     }
                 }
             }

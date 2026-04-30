@@ -386,6 +386,156 @@ namespace {
         gui::destroy_context(gui_context);
     }
 
+    TEST_CASE(popup_floats_over_stack_layout_and_hit_testing) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::Id const popup_id = gui::id("popup");
+        gui::Id const button_id = gui::id("behind");
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {100.0f, 80.0f}});
+        {
+            auto page = ui.column({.layout = {.width = gui::fill(), .height = gui::fill()}});
+            TEST_EXPECT(context, page);
+            {
+                auto popup = ui.popup(
+                    popup_id, {.layout = {.width = gui::px(40.0f), .height = gui::px(20.0f)}});
+                TEST_EXPECT(context, popup);
+            }
+            ui.button(button_id,
+                      "Behind",
+                      {.layout = {.width = gui::px(40.0f), .height = gui::px(20.0f)}});
+        }
+        gui::end_frame(ui);
+
+        gui::BoxInfo const* popup = ui.find_box(popup_id, gui::BoxKind::POPUP);
+        gui::BoxInfo const* button = ui.find_box(button_id, gui::BoxKind::BUTTON);
+        gui::BoxInfo const* hit = ui.hit_test({5.0f, 5.0f});
+        TEST_EXPECT(context, popup != nullptr && button != nullptr);
+        if (popup != nullptr && button != nullptr) {
+            expect_rect(context, popup->rect, {{0.0f, 0.0f}, {40.0f, 20.0f}});
+            expect_rect(context, button->rect, {{0.0f, 0.0f}, {40.0f, 20.0f}});
+            TEST_EXPECT(context, hit != nullptr && hit->id.value == popup->id.value);
+        }
+
+        gui::destroy_context(gui_context);
+    }
+
+    TEST_CASE(popup_drags_by_background_and_clamps_to_root) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::Id const popup_id = gui::id("popup");
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {100.0f, 80.0f}});
+        {
+            auto panel = ui.overlay(
+                gui::id("clipped_panel"),
+                {.layout = {.width = gui::px(50.0f), .height = gui::px(40.0f), .clip = true}});
+            TEST_EXPECT(context, panel);
+            {
+                auto popup =
+                    ui.popup(popup_id,
+                             {.layout = {.width = gui::px(40.0f), .height = gui::px(20.0f)}});
+                TEST_EXPECT(context, popup);
+            }
+        }
+        gui::end_frame(ui);
+
+        gui::InputState input = {};
+        input.mouse_pos = {5.0f, 5.0f};
+        input.mouse_down[0u] = true;
+        ui = gui::begin_frame(gui_context, {.size = {100.0f, 80.0f}, .input = input});
+        {
+            auto panel = ui.overlay(
+                gui::id("clipped_panel"),
+                {.layout = {.width = gui::px(50.0f), .height = gui::px(40.0f), .clip = true}});
+            TEST_EXPECT(context, panel);
+            {
+                auto popup =
+                    ui.popup(popup_id,
+                             {.layout = {.width = gui::px(40.0f), .height = gui::px(20.0f)}});
+                TEST_EXPECT(context, popup.signal().active);
+            }
+        }
+        gui::end_frame(ui);
+
+        input.mouse_pos = {95.0f, 75.0f};
+        ui = gui::begin_frame(gui_context, {.size = {100.0f, 80.0f}, .input = input});
+        {
+            auto panel = ui.overlay(
+                gui::id("clipped_panel"),
+                {.layout = {.width = gui::px(50.0f), .height = gui::px(40.0f), .clip = true}});
+            TEST_EXPECT(context, panel);
+            {
+                auto popup =
+                    ui.popup(popup_id,
+                             {.layout = {.width = gui::px(40.0f), .height = gui::px(20.0f)}});
+                TEST_EXPECT(context, popup.signal().active);
+            }
+        }
+        gui::end_frame(ui);
+
+        gui::BoxInfo const* popup = ui.find_box(popup_id, gui::BoxKind::POPUP);
+        gui::BoxInfo const* hit = ui.hit_test({95.0f, 75.0f});
+        TEST_EXPECT(context, popup != nullptr);
+        if (popup != nullptr) {
+            expect_rect(context, popup->rect, {{60.0f, 60.0f}, {100.0f, 80.0f}});
+            TEST_EXPECT(context, hit != nullptr && hit->id.value == popup->id.value);
+        }
+
+        gui::destroy_context(gui_context);
+    }
+
+    TEST_CASE(modal_fills_root_and_blocks_later_normal_hits) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::Id const modal_id = gui::id("modal");
+        gui::Id const ok_id = gui::id("ok");
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {100.0f, 80.0f}});
+        {
+            auto page = ui.column({.layout = {.width = gui::fill(), .height = gui::fill()}});
+            TEST_EXPECT(context, page);
+            {
+                auto modal = ui.modal(modal_id,
+                                      {.layout =
+                                           {
+                                               .align_x = gui::Align::CENTER,
+                                               .align_y = gui::Align::CENTER,
+                                           }});
+                TEST_EXPECT(context, modal);
+                ui.button(
+                    ok_id, "OK", {.layout = {.width = gui::px(20.0f), .height = gui::px(20.0f)}});
+            }
+            ui.button("Behind", {.layout = {.width = gui::px(100.0f), .height = gui::px(80.0f)}});
+        }
+        gui::end_frame(ui);
+
+        gui::BoxInfo const* modal = ui.find_box(modal_id, gui::BoxKind::MODAL);
+        gui::BoxInfo const* ok = ui.find_box(ok_id, gui::BoxKind::BUTTON);
+        TEST_EXPECT(context, modal != nullptr && ok != nullptr);
+        if (modal != nullptr && ok != nullptr) {
+            expect_rect(context, modal->rect, {{0.0f, 0.0f}, {100.0f, 80.0f}});
+            expect_rect(context, ok->rect, {{40.0f, 30.0f}, {60.0f, 50.0f}});
+
+            gui::BoxInfo const* backdrop_hit = ui.hit_test({5.0f, 5.0f});
+            gui::BoxInfo const* button_hit = ui.hit_test({45.0f, 35.0f});
+            TEST_EXPECT(context,
+                        backdrop_hit != nullptr && backdrop_hit->id.value == modal->id.value);
+            TEST_EXPECT(context, button_hit != nullptr && button_hit->id.value == ok->id.value);
+        }
+
+        gui::destroy_context(gui_context);
+    }
+
     TEST_CASE(scroll_panel_reports_metrics_and_applies_programmatic_scroll) {
         Arena arena = {};
         arena.init();
