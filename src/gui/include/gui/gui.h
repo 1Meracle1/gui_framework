@@ -247,6 +247,12 @@ namespace gui {
         BoxDesc box = {};
     };
 
+    struct TableCellDesc {
+        size_t column_span = 1u;
+        size_t row_span = 1u;
+        BoxDesc box = {};
+    };
+
     enum class BoxKind : uint8_t {
         ROOT,
         ROW,
@@ -265,6 +271,11 @@ namespace gui {
         LIST,
         INPUT_TEXT,
         INPUT_TEXT_MULTILINE,
+        TABLE,
+        TABLE_ROW,
+        TABLE_HEADER_ROW,
+        TABLE_CELL,
+        TABLE_HEADER_CELL,
         COUNT,
     };
 
@@ -407,6 +418,8 @@ namespace gui {
     auto set_theme(Context context, ThemeDesc const& theme) -> void;
 
     class Frame;
+    class TableScope;
+    class TableRowScope;
 
     namespace detail {
         [[nodiscard]] auto frame_handle(Frame const& frame) -> void*;
@@ -428,6 +441,8 @@ namespace gui {
       private:
         friend class Frame;
         friend class ListScope;
+        friend class TableScope;
+        friend class TableRowScope;
 
         Scope(Frame* frame, size_t box_index);
 
@@ -461,6 +476,52 @@ namespace gui {
         float m_item_height = 0.0f;
     };
 
+    class TableRowScope final {
+      public:
+        TableRowScope() = default;
+        ~TableRowScope() = default;
+
+        TableRowScope(TableRowScope&&) noexcept = default;
+        TableRowScope(TableRowScope const&) = delete;
+        auto operator=(TableRowScope&&) noexcept -> TableRowScope& = default;
+        auto operator=(TableRowScope const&) -> TableRowScope& = delete;
+
+        [[nodiscard]] explicit operator bool() const;
+        [[nodiscard]] auto cell(TableCellDesc const& desc = {}) -> Scope;
+        [[nodiscard]] auto cell(Id id, TableCellDesc const& desc = {}) -> Scope;
+
+      private:
+        friend class TableScope;
+
+        explicit TableRowScope(Scope&& scope);
+
+        Scope m_scope = {};
+    };
+
+    class TableScope final {
+      public:
+        TableScope() = default;
+        ~TableScope() = default;
+
+        TableScope(TableScope&&) noexcept = default;
+        TableScope(TableScope const&) = delete;
+        auto operator=(TableScope&&) noexcept -> TableScope& = default;
+        auto operator=(TableScope const&) -> TableScope& = delete;
+
+        [[nodiscard]] explicit operator bool() const;
+        [[nodiscard]] auto header_row(BoxDesc const& desc = {}) -> TableRowScope;
+        [[nodiscard]] auto header_row(Id id, BoxDesc const& desc = {}) -> TableRowScope;
+        [[nodiscard]] auto row(BoxDesc const& desc = {}) -> TableRowScope;
+        [[nodiscard]] auto row(Id id, BoxDesc const& desc = {}) -> TableRowScope;
+
+      private:
+        friend class Frame;
+
+        explicit TableScope(Scope&& scope);
+
+        Scope m_scope = {};
+    };
+
     class Frame final {
       public:
         Frame() = default;
@@ -474,6 +535,8 @@ namespace gui {
         [[nodiscard]] auto popup(Id id, BoxDesc const& desc = {}) -> Scope;
         [[nodiscard]] auto modal(Id id, BoxDesc const& desc = {}) -> Scope;
         [[nodiscard]] auto scroll_panel(Id id, BoxDesc const& desc = {}) -> Scope;
+        [[nodiscard]] auto table(BoxDesc const& desc = {}) -> TableScope;
+        [[nodiscard]] auto table(Id id, BoxDesc const& desc = {}) -> TableScope;
 
         auto spacer(BoxDesc const& desc) -> void;
         auto spacer(float size) -> void;

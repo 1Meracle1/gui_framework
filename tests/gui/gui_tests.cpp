@@ -353,6 +353,190 @@ namespace {
         gui::destroy_context(gui_context);
     }
 
+    TEST_CASE(empty_table_uses_authored_size) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::Id const table_id = gui::id("empty_table");
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {100.0f, 60.0f}});
+        {
+            auto table = ui.table(
+                table_id, {.layout = {.width = gui::px(80.0f), .height = gui::px(20.0f)}});
+            TEST_EXPECT(context, table);
+        }
+        gui::end_frame(ui);
+
+        TEST_EXPECT(context, ui.box_info_count() == 2u);
+        gui::BoxInfo const* table = ui.find_box(table_id, gui::BoxKind::TABLE);
+        TEST_EXPECT(context, table != nullptr);
+        if (table != nullptr) {
+            expect_rect(context, table->rect, {{0.0f, 0.0f}, {80.0f, 20.0f}});
+        }
+
+        gui::destroy_context(gui_context);
+    }
+
+    TEST_CASE(table_layout_supports_header_and_column_span) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::Id const table_id = gui::id("table");
+        gui::Id const header_left_id = gui::id("header_left");
+        gui::Id const header_right_id = gui::id("header_right");
+        gui::Id const cell_a_id = gui::id("cell_a");
+        gui::Id const cell_b_id = gui::id("cell_b");
+        gui::Id const cell_c_id = gui::id("cell_c");
+
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {120.0f, 80.0f}});
+        if (auto table = ui.table(table_id,
+                                  {.layout =
+                                       {
+                                           .width = gui::children(),
+                                           .height = gui::children(),
+                                           .gap = 2.0f,
+                                       }})) {
+            if (auto header = table.header_row()) {
+                {
+                    auto cell = header.cell(header_left_id,
+                                            {
+                                                .column_span = 2u,
+                                                .box =
+                                                    {.layout = {.width = gui::px(50.0f),
+                                                                .height = gui::px(10.0f)}},
+                                            });
+                    TEST_EXPECT(context, cell);
+                }
+                {
+                    auto cell = header.cell(
+                        header_right_id,
+                        {.box = {.layout = {.width = gui::px(20.0f),
+                                             .height = gui::px(10.0f)}}});
+                    TEST_EXPECT(context, cell);
+                }
+            }
+            if (auto row = table.row()) {
+                {
+                    auto cell =
+                        row.cell(cell_a_id,
+                                 {.box = {.layout = {.width = gui::px(10.0f),
+                                                      .height = gui::px(12.0f)}}});
+                    TEST_EXPECT(context, cell);
+                }
+                {
+                    auto cell =
+                        row.cell(cell_b_id,
+                                 {.box = {.layout = {.width = gui::px(30.0f),
+                                                      .height = gui::px(12.0f)}}});
+                    TEST_EXPECT(context, cell);
+                }
+                {
+                    auto cell =
+                        row.cell(cell_c_id,
+                                 {.box = {.layout = {.width = gui::px(20.0f),
+                                                      .height = gui::px(12.0f)}}});
+                    TEST_EXPECT(context, cell);
+                }
+            }
+        }
+        gui::end_frame(ui);
+
+        gui::BoxInfo const* table = ui.find_box(table_id, gui::BoxKind::TABLE);
+        gui::BoxInfo const* header_left =
+            ui.find_box(header_left_id, gui::BoxKind::TABLE_HEADER_CELL);
+        gui::BoxInfo const* header_right =
+            ui.find_box(header_right_id, gui::BoxKind::TABLE_HEADER_CELL);
+        gui::BoxInfo const* cell_a = ui.find_box(cell_a_id, gui::BoxKind::TABLE_CELL);
+        gui::BoxInfo const* cell_b = ui.find_box(cell_b_id, gui::BoxKind::TABLE_CELL);
+        gui::BoxInfo const* cell_c = ui.find_box(cell_c_id, gui::BoxKind::TABLE_CELL);
+
+        TEST_EXPECT(context, table != nullptr);
+        TEST_EXPECT(context, header_left != nullptr && header_right != nullptr);
+        TEST_EXPECT(context, cell_a != nullptr && cell_b != nullptr && cell_c != nullptr);
+        if (table != nullptr && header_left != nullptr && header_right != nullptr &&
+            cell_a != nullptr && cell_b != nullptr && cell_c != nullptr) {
+            expect_rect(context, table->rect, {{0.0f, 0.0f}, {78.0f, 24.0f}});
+            expect_rect(context, header_left->rect, {{0.0f, 0.0f}, {56.0f, 10.0f}});
+            expect_rect(context, header_right->rect, {{58.0f, 0.0f}, {78.0f, 10.0f}});
+            expect_rect(context, cell_a->rect, {{0.0f, 12.0f}, {24.0f, 24.0f}});
+            expect_rect(context, cell_b->rect, {{26.0f, 12.0f}, {56.0f, 24.0f}});
+            expect_rect(context, cell_c->rect, {{58.0f, 12.0f}, {78.0f, 24.0f}});
+        }
+
+        gui::destroy_context(gui_context);
+    }
+
+    TEST_CASE(table_layout_supports_row_span_without_header) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::Id const table_id = gui::id("table");
+        gui::Id const span_id = gui::id("span");
+        gui::Id const top_id = gui::id("top");
+        gui::Id const bottom_id = gui::id("bottom");
+
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {120.0f, 80.0f}});
+        if (auto table = ui.table(table_id,
+                                  {.layout =
+                                       {
+                                           .width = gui::children(),
+                                           .height = gui::children(),
+                                           .gap = 1.0f,
+                                       }})) {
+            if (auto row = table.row()) {
+                {
+                    auto cell = row.cell(span_id,
+                                         {
+                                             .row_span = 2u,
+                                             .box =
+                                                 {.layout = {.width = gui::px(10.0f),
+                                                             .height = gui::px(30.0f)}},
+                                         });
+                    TEST_EXPECT(context, cell);
+                }
+                {
+                    auto cell =
+                        row.cell(top_id,
+                                 {.box = {.layout = {.width = gui::px(20.0f),
+                                                      .height = gui::px(10.0f)}}});
+                    TEST_EXPECT(context, cell);
+                }
+            }
+            if (auto row = table.row()) {
+                auto cell =
+                    row.cell(bottom_id,
+                             {.box = {.layout = {.width = gui::px(20.0f),
+                                                  .height = gui::px(10.0f)}}});
+                TEST_EXPECT(context, cell);
+            }
+        }
+        gui::end_frame(ui);
+
+        gui::BoxInfo const* table = ui.find_box(table_id, gui::BoxKind::TABLE);
+        gui::BoxInfo const* span = ui.find_box(span_id, gui::BoxKind::TABLE_CELL);
+        gui::BoxInfo const* top = ui.find_box(top_id, gui::BoxKind::TABLE_CELL);
+        gui::BoxInfo const* bottom = ui.find_box(bottom_id, gui::BoxKind::TABLE_CELL);
+
+        TEST_EXPECT(context, table != nullptr);
+        TEST_EXPECT(context, span != nullptr && top != nullptr && bottom != nullptr);
+        if (table != nullptr && span != nullptr && top != nullptr && bottom != nullptr) {
+            expect_rect(context, table->rect, {{0.0f, 0.0f}, {31.0f, 30.0f}});
+            expect_rect(context, span->rect, {{0.0f, 0.0f}, {10.0f, 30.0f}});
+            expect_rect(context, top->rect, {{11.0f, 0.0f}, {31.0f, 14.5f}});
+            expect_rect(context, bottom->rect, {{11.0f, 15.5f}, {31.0f, 30.0f}});
+        }
+
+        gui::destroy_context(gui_context);
+    }
+
     TEST_CASE(overlay_places_measured_and_fill_children) {
         Arena arena = {};
         arena.init();

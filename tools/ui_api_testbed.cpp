@@ -550,6 +550,139 @@ namespace {
                                 },
                             }
                         );
+                        if (auto table = ui.table(
+                                gui::id("preview_table"),
+                                {
+                                    .layout =
+                                        {
+                                            .width = gui::px(420.0f),
+                                            .height = gui::children(),
+                                            .margin = gui::insets(154.0f, 0.0f, 0.0f, 0.0f),
+                                            .gap = 2.0f,
+                                        },
+                                    .style =
+                                        {
+                                            .background = gui::rgb(24, 27, 32),
+                                            .radius = 3.0f,
+                                        },
+                                    .debug_name = "preview_table",
+                                }
+                            )) {
+                            if (auto header = table.header_row()) {
+                                if (auto cell = header.cell(
+                                        gui::id("preview_table_header_plan"),
+                                        {
+                                            .column_span = 2u,
+                                            .box = {
+                                                .layout =
+                                                    {
+                                                        .height = gui::px(28.0f),
+                                                        .padding = gui::insets(5.0f, 8.0f),
+                                                    },
+                                            },
+                                        }
+                                    )) {
+                                    ui.label(
+                                        "Plan",
+                                        {.layout = {.width = gui::fill(), .height = gui::fill()}}
+                                    );
+                                }
+                                if (auto cell = header.cell(
+                                        gui::id("preview_table_header_status"),
+                                        {
+                                            .box = {
+                                                .layout =
+                                                    {
+                                                        .height = gui::px(28.0f),
+                                                        .padding = gui::insets(5.0f, 8.0f),
+                                                    },
+                                            },
+                                        }
+                                    )) {
+                                    ui.label(
+                                        "Status",
+                                        {.layout = {.width = gui::fill(), .height = gui::fill()}}
+                                    );
+                                }
+                            }
+                            if (auto row = table.row()) {
+                                if (auto cell = row.cell(
+                                        gui::id("preview_table_row_span"),
+                                        {
+                                            .row_span = 2u,
+                                            .box = {
+                                                .layout =
+                                                    {
+                                                        .width = gui::px(96.0f),
+                                                        .height = gui::px(58.0f),
+                                                        .padding = gui::insets(5.0f, 8.0f),
+                                                    },
+                                            },
+                                        }
+                                    )) {
+                                    ui.label(
+                                        "Joined rows",
+                                        {.layout = {.width = gui::fill(), .height = gui::fill()}}
+                                    );
+                                }
+                                if (auto cell = row.cell(
+                                        gui::id("preview_table_build_cell"),
+                                        {
+                                            .box = {
+                                                .layout =
+                                                    {
+                                                        .width = gui::px(196.0f),
+                                                        .height = gui::px(28.0f),
+                                                        .padding = gui::insets(5.0f, 8.0f),
+                                                    },
+                                            },
+                                        }
+                                    )) {
+                                    ui.label(
+                                        "Build table element",
+                                        {.layout = {.width = gui::fill(), .height = gui::fill()}}
+                                    );
+                                }
+                                if (auto cell = row.cell(
+                                        gui::id("preview_table_done_cell"),
+                                        {
+                                            .box = {
+                                                .layout =
+                                                    {
+                                                        .width = gui::px(120.0f),
+                                                        .height = gui::px(28.0f),
+                                                        .padding = gui::insets(5.0f, 8.0f),
+                                                    },
+                                            },
+                                        }
+                                    )) {
+                                    ui.label(
+                                        "Done",
+                                        {.layout = {.width = gui::fill(), .height = gui::fill()}}
+                                    );
+                                }
+                            }
+                            if (auto row = table.row()) {
+                                if (auto cell = row.cell(
+                                        gui::id("preview_table_span_cell"),
+                                        {
+                                            .column_span = 2u,
+                                            .box = {
+                                                .layout =
+                                                    {
+                                                        .height = gui::px(28.0f),
+                                                        .padding = gui::insets(5.0f, 8.0f),
+                                                    },
+                                            },
+                                        }
+                                    )) {
+                                    ui.label(
+                                        "Joined columns",
+                                        {.layout = {.width = gui::fill(), .height = gui::fill()}}
+                                    );
+                                }
+                            }
+                        }
                         if (state.popup_open) {
                             if (auto popup = ui.popup(
                                     gui::id("sample_popup"),

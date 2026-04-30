@@ -78,6 +78,8 @@ namespace gui {
             float scroll_offset_y = 0.0f;
             float widget_value = 0.0f;
             Signal signal = {};
+            size_t table_column_span = 1u;
+            size_t table_row_span = 1u;
             BoxFlags flags = BOX_FLAG_NONE;
             bool duplicate_id = false;
             bool interactive = false;
@@ -88,6 +90,25 @@ namespace gui {
             bool stable_id = false;
             StateEntry* state = nullptr;
             StateEntry* scroll_state = nullptr;
+        };
+
+        struct TableCellPlacement {
+            size_t box_index = INVALID_INDEX;
+            size_t row = 0u;
+            size_t column = 0u;
+            size_t row_span = 1u;
+            size_t column_span = 1u;
+        };
+
+        struct TableLayout {
+            float* columns = nullptr;
+            float* rows = nullptr;
+            bool* occupied = nullptr;
+            TableCellPlacement* cells = nullptr;
+            size_t row_count = 0u;
+            size_t column_capacity = 0u;
+            size_t column_count = 0u;
+            size_t cell_count = 0u;
         };
 
         struct TextLine {
@@ -193,6 +214,14 @@ namespace gui {
 
         [[nodiscard]] auto multiline_input_text_box(BoxKind kind) -> bool {
             return kind == BoxKind::INPUT_TEXT_MULTILINE;
+        }
+
+        [[nodiscard]] auto table_row_box(BoxKind kind) -> bool {
+            return kind == BoxKind::TABLE_ROW || kind == BoxKind::TABLE_HEADER_ROW;
+        }
+
+        [[nodiscard]] auto table_cell_box(BoxKind kind) -> bool {
+            return kind == BoxKind::TABLE_CELL || kind == BoxKind::TABLE_HEADER_CELL;
         }
 
         [[nodiscard]] auto role_styled(StyleRole role) -> bool {
@@ -1009,6 +1038,187 @@ namespace gui {
             }
         }
 
+        [[nodiscard]] auto table_span(size_t value) -> size_t {
+            return std::max(value, static_cast<size_t>(1u));
+        }
+
+        auto count_table(ContextImpl const* impl,
+                         size_t table_index,
+                         size_t& out_rows,
+                         size_t& out_cells,
+                         size_t& out_column_capacity) -> void {
+            out_rows = 0u;
+            out_cells = 0u;
+            out_column_capacity = 0u;
+            for (size_t row_index = impl->boxes[table_index].first_child;
+                 row_index != INVALID_INDEX;
+                 row_index = impl->boxes[row_index].next_sibling) {
+                BoxNode const& row = impl->boxes[row_index];
+                if (!table_row_box(row.kind)) {
+                    continue;
+                }
+                out_rows += 1u;
+                for (size_t cell_index = row.first_child; cell_index != INVALID_INDEX;
+                     cell_index = impl->boxes[cell_index].next_sibling) {
+                    BoxNode const& cell = impl->boxes[cell_index];
+                    if (table_cell_box(cell.kind)) {
+                        out_cells += 1u;
+                        out_column_capacity += table_span(cell.table_column_span);
+                    }
+                }
+            }
+        }
+
+        auto init_table_layout(Arena& arena,
+                               ContextImpl const* impl,
+                               size_t table_index,
+                               TableLayout& layout) -> void {
+            size_t rows = 0u;
+            size_t cells = 0u;
+            size_t columns = 0u;
+            count_table(impl, table_index, rows, cells, columns);
+            layout.row_count = rows;
+            layout.column_capacity = columns;
+            layout.cell_count = cells;
+            if (rows != 0u) {
+                layout.rows = arena_alloc<float>(arena, rows);
+                for (size_t index = 0u; index < rows; ++index) {
+                    layout.rows[index] = 0.0f;
+                }
+            }
+            if (columns != 0u) {
+                layout.columns = arena_alloc<float>(arena, columns);
+                for (size_t index = 0u; index < columns; ++index) {
+                    layout.columns[index] = 0.0f;
+                }
+            }
+            if (rows != 0u && columns != 0u) {
+                size_t const slot_count = rows * columns;
+                layout.occupied = arena_alloc<bool>(arena, slot_count);
+                for (size_t index = 0u; index < slot_count; ++index) {
+                    layout.occupied[index] = false;
+                }
+            }
+            if (cells != 0u) {
+                layout.cells = arena_alloc<TableCellPlacement>(arena, cells);
+            }
+        }
+
+        auto build_table_layout(ContextImpl const* impl, size_t table_index, TableLayout& layout)
+            -> void {
+            if (layout.row_count == 0u) {
+                return;
+            }
+
+            BoxNode const& table = impl->boxes[table_index];
+            float const gap = table.layout.gap;
+            size_t row = 0u;
+            size_t placement_count = 0u;
+
+            for (size_t row_index = table.first_child; row_index != INVALID_INDEX;
+                 row_index = impl->boxes[row_index].next_sibling) {
+                BoxNode const& row_box = impl->boxes[row_index];
+                if (!table_row_box(row_box.kind)) {
+                    continue;
+                }
+
+                if (row_box.layout.height.kind == SizeKind::PIXELS) {
+                    layout.rows[row] = std::max(layout.rows[row], row_box.layout.height.value);
+                } else if (row_box.first_child == INVALID_INDEX) {
+                    layout.rows[row] = std::max(layout.rows[row], row_box.measured_size.y);
+                }
+
+                size_t column = 0u;
+                for (size_t cell_index = row_box.first_child; cell_index != INVALID_INDEX;
+                     cell_index = impl->boxes[cell_index].next_sibling) {
+                    BoxNode const& cell = impl->boxes[cell_index];
+                    if (!table_cell_box(cell.kind) || layout.column_capacity == 0u) {
+                        continue;
+                    }
+
+                    while (column < layout.column_capacity &&
+                           layout.occupied[row * layout.column_capacity + column]) {
+                        column += 1u;
+                    }
+                    if (column >= layout.column_capacity) {
+                        break;
+                    }
+
+                    size_t const column_span = std::min(
+                        table_span(cell.table_column_span), layout.column_capacity - column);
+                    size_t const row_span =
+                        std::min(table_span(cell.table_row_span), layout.row_count - row);
+                    for (size_t y = row; y < row + row_span; ++y) {
+                        for (size_t x = column; x < column + column_span; ++x) {
+                            layout.occupied[y * layout.column_capacity + x] = true;
+                        }
+                    }
+
+                    float const outer_x =
+                        cell.measured_size.x + inset_width(cell.layout.margin);
+                    float const outer_y =
+                        cell.measured_size.y + inset_height(cell.layout.margin);
+                    float const column_width =
+                        std::max(0.0f,
+                                 outer_x - gap * static_cast<float>(column_span - 1u)) /
+                        static_cast<float>(column_span);
+                    float const row_height =
+                        std::max(0.0f, outer_y - gap * static_cast<float>(row_span - 1u)) /
+                        static_cast<float>(row_span);
+                    for (size_t x = column; x < column + column_span; ++x) {
+                        layout.columns[x] = std::max(layout.columns[x], column_width);
+                    }
+                    for (size_t y = row; y < row + row_span; ++y) {
+                        layout.rows[y] = std::max(layout.rows[y], row_height);
+                    }
+
+                    layout.column_count = std::max(layout.column_count, column + column_span);
+                    layout.cells[placement_count] = {cell_index, row, column, row_span, column_span};
+                    placement_count += 1u;
+                    column += column_span;
+                }
+                row += 1u;
+            }
+
+            layout.cell_count = placement_count;
+        }
+
+        [[nodiscard]] auto table_axis_size(float const* values, size_t count, float gap) -> float {
+            float total = 0.0f;
+            for (size_t index = 0u; index < count; ++index) {
+                total += values[index];
+            }
+            if (count > 1u) {
+                total += gap * static_cast<float>(count - 1u);
+            }
+            return total;
+        }
+
+        [[nodiscard]] auto measure_table(ContextImpl* impl, size_t index) -> Vec2 {
+            BoxNode const& box = impl->boxes[index];
+            ArenaTemp temp(impl->frame_arena);
+            Arena* const arena = temp.arena();
+            TableLayout table = {};
+            init_table_layout(*arena, impl, index, table);
+            build_table_layout(impl, index, table);
+
+            float const content_x =
+                table_axis_size(table.columns, table.column_count, box.layout.gap);
+            float const content_y = table_axis_size(table.rows, table.row_count, box.layout.gap);
+            Vec2 size = {};
+            if (box.layout.width.kind == SizeKind::PIXELS) {
+                size.x = box.layout.width.value;
+            } else if (box.layout.width.kind != SizeKind::FILL) {
+                size.x = content_x + inset_width(box.layout.padding);
+            }
+            if (box.layout.height.kind == SizeKind::PIXELS) {
+                size.y = box.layout.height.value;
+            } else if (box.layout.height.kind != SizeKind::FILL) {
+                size.y = content_y + inset_height(box.layout.padding);
+            }
+            return size;
+        }
+
         [[nodiscard]] auto measure_node(ContextImpl* impl, size_t index) -> Vec2 {
             BoxNode& box = impl->boxes[index];
 
@@ -1031,6 +1241,13 @@ namespace gui {
                                                input_text_box(box.kind)
                                            ? 20.0f
                                            : 0.0f;
+
+            if (box.kind == BoxKind::TABLE) {
+                size = measure_table(impl, index);
+                apply_min_max(box, size);
+                box.measured_size = size;
+                return size;
+            }
 
             if (box.layout.width.kind == SizeKind::PIXELS) {
                 size.x = box.layout.width.value;
@@ -1255,6 +1472,7 @@ namespace gui {
 
         auto layout_children(ContextImpl* impl, size_t index, Axis axis) -> void;
         auto layout_overlay(ContextImpl* impl, size_t index) -> void;
+        auto layout_table(ContextImpl* impl, size_t index) -> void;
         auto layout_floating_children(ContextImpl* impl, size_t index) -> void;
 
         auto layout_node(ContextImpl* impl, size_t index, Rect rect) -> void {
@@ -1298,7 +1516,9 @@ namespace gui {
                 return;
             }
 
-            if (box.kind == BoxKind::ROW) {
+            if (box.kind == BoxKind::TABLE) {
+                layout_table(impl, index);
+            } else if (box.kind == BoxKind::ROW) {
                 layout_children(impl, index, Axis::X);
             } else if (box.kind == BoxKind::COLUMN || box.kind == BoxKind::POPUP ||
                        box.kind == BoxKind::ROOT ||
@@ -1405,6 +1625,89 @@ namespace gui {
                     state.floating_offset_y = y - base_y;
                 }
                 layout_node(impl, child_index, {{x, y}, {x + child_size.x, y + child_size.y}});
+            }
+        }
+
+        auto expand_table_axis(float* values, size_t count, float available, float gap) -> void {
+            if (count == 0u) {
+                return;
+            }
+            float const current = table_axis_size(values, count, gap);
+            float const extra = std::max(0.0f, available - current) / static_cast<float>(count);
+            for (size_t index = 0u; index < count; ++index) {
+                values[index] += extra;
+            }
+        }
+
+        [[nodiscard]] auto table_axis_offset(float const* values, size_t index, float gap)
+            -> float {
+            float result = 0.0f;
+            for (size_t cursor = 0u; cursor < index; ++cursor) {
+                result += values[cursor] + gap;
+            }
+            return result;
+        }
+
+        [[nodiscard]] auto table_axis_span(float const* values,
+                                           size_t start,
+                                           size_t count,
+                                           float gap) -> float {
+            float result = 0.0f;
+            for (size_t index = 0u; index < count; ++index) {
+                result += values[start + index];
+            }
+            if (count > 1u) {
+                result += gap * static_cast<float>(count - 1u);
+            }
+            return result;
+        }
+
+        auto layout_table(ContextImpl* impl, size_t index) -> void {
+            BoxNode& box = impl->boxes[index];
+            ArenaTemp temp(impl->frame_arena);
+            Arena* const arena = temp.arena();
+            TableLayout table = {};
+            init_table_layout(*arena, impl, index, table);
+            build_table_layout(impl, index, table);
+
+            Rect const content = content_rect(box.rect, box.layout.padding);
+            float const gap = box.layout.gap;
+            expand_table_axis(table.columns, table.column_count, rect_width(content), gap);
+            expand_table_axis(table.rows, table.row_count, rect_height(content), gap);
+
+            size_t row = 0u;
+            for (size_t row_index = box.first_child; row_index != INVALID_INDEX;
+                 row_index = impl->boxes[row_index].next_sibling) {
+                BoxNode& row_box = impl->boxes[row_index];
+                if (!table_row_box(row_box.kind)) {
+                    continue;
+                }
+                float const y = content.min.y + table_axis_offset(table.rows, row, gap);
+                float const height = table.rows != nullptr ? table.rows[row] : 0.0f;
+                row_box.rect = {{content.min.x, y}, {content.max.x, y + height}};
+                row += 1u;
+            }
+
+            for (size_t placement_index = 0u; placement_index < table.cell_count;
+                 ++placement_index) {
+                TableCellPlacement const& cell = table.cells[placement_index];
+                BoxNode& box_cell = impl->boxes[cell.box_index];
+                float const x =
+                    content.min.x + table_axis_offset(table.columns, cell.column, gap);
+                float const y = content.min.y + table_axis_offset(table.rows, cell.row, gap);
+                float const width =
+                    table_axis_span(table.columns, cell.column, cell.column_span, gap);
+                float const height = table_axis_span(table.rows, cell.row, cell.row_span, gap);
+                Rect cell_rect = {{x + box_cell.layout.margin.left, y + box_cell.layout.margin.top},
+                                  {x + width - box_cell.layout.margin.right,
+                                   y + height - box_cell.layout.margin.bottom}};
+                if (cell_rect.max.x < cell_rect.min.x) {
+                    cell_rect.max.x = cell_rect.min.x;
+                }
+                if (cell_rect.max.y < cell_rect.min.y) {
+                    cell_rect.max.y = cell_rect.min.y;
+                }
+                layout_node(impl, cell.box_index, cell_rect);
             }
         }
 
@@ -2935,6 +3238,12 @@ namespace gui {
         theme_kind(theme, BoxKind::MODAL).style.normal.background = rgba(0, 0, 0, 150);
         theme_kind(theme, BoxKind::LABEL).role = StyleRole::TEXT;
         theme_kind(theme, BoxKind::SELECTABLE_LABEL).role = StyleRole::TEXT;
+        theme_kind(theme, BoxKind::TABLE).role = StyleRole::PANEL;
+        theme_kind(theme, BoxKind::TABLE_CELL).style.normal = {
+            .border = tokens.border,
+            .border_thickness = tokens.border_thickness,
+        };
+        theme_kind(theme, BoxKind::TABLE_HEADER_CELL).role = StyleRole::CONTROL;
         theme_kind(theme, BoxKind::BUTTON).role = StyleRole::CONTROL;
         theme_kind(theme, BoxKind::CHECKBOX).role = StyleRole::CONTROL;
         theme_kind(theme, BoxKind::TOGGLE).role = StyleRole::CONTROL;
@@ -3066,6 +3375,139 @@ namespace gui {
     ListScope::ListScope(Scope&& scope, size_t first_index, size_t end_index, float item_height)
         : first(first_index), end(end_index), m_scope(std::move(scope)),
           m_item_height(item_height) {}
+
+    TableRowScope::TableRowScope(Scope&& scope) : m_scope(std::move(scope)) {}
+
+    TableRowScope::operator bool() const {
+        return static_cast<bool>(m_scope);
+    }
+
+    auto TableRowScope::cell(TableCellDesc const& desc) -> Scope {
+        if (m_scope.m_frame == nullptr) {
+            return {};
+        }
+        ContextImpl* const impl = impl_from_frame(*m_scope.m_frame);
+        size_t const parent = top_parent_index(impl);
+        BoxKind const kind = impl->boxes[parent].kind == BoxKind::TABLE_HEADER_ROW
+                                 ? BoxKind::TABLE_HEADER_CELL
+                                 : BoxKind::TABLE_CELL;
+        size_t const index = append_box(impl,
+                                        kind,
+                                        structural_id(impl, parent, kind),
+                                        {},
+                                        {},
+                                        desc.box,
+                                        false,
+                                        false);
+        BoxNode& box = impl->boxes[index];
+        box.table_column_span = table_span(desc.column_span);
+        box.table_row_span = table_span(desc.row_span);
+        push_parent(impl, index);
+        return {m_scope.m_frame, index};
+    }
+
+    auto TableRowScope::cell(Id id_value, TableCellDesc const& desc) -> Scope {
+        if (m_scope.m_frame == nullptr) {
+            return {};
+        }
+        ContextImpl* const impl = impl_from_frame(*m_scope.m_frame);
+        size_t const parent = top_parent_index(impl);
+        BoxKind const kind = impl->boxes[parent].kind == BoxKind::TABLE_HEADER_ROW
+                                 ? BoxKind::TABLE_HEADER_CELL
+                                 : BoxKind::TABLE_CELL;
+        size_t const index = append_box(impl,
+                                        kind,
+                                        explicit_id(impl, parent, kind, id_value),
+                                        id_value,
+                                        {},
+                                        desc.box,
+                                        false,
+                                        false);
+        BoxNode& box = impl->boxes[index];
+        box.table_column_span = table_span(desc.column_span);
+        box.table_row_span = table_span(desc.row_span);
+        push_parent(impl, index);
+        return {m_scope.m_frame, index};
+    }
+
+    TableScope::TableScope(Scope&& scope) : m_scope(std::move(scope)) {}
+
+    TableScope::operator bool() const {
+        return static_cast<bool>(m_scope);
+    }
+
+    auto TableScope::header_row(BoxDesc const& desc) -> TableRowScope {
+        if (m_scope.m_frame == nullptr) {
+            return {};
+        }
+        ContextImpl* const impl = impl_from_frame(*m_scope.m_frame);
+        size_t const parent = top_parent_index(impl);
+        size_t const index = append_box(impl,
+                                        BoxKind::TABLE_HEADER_ROW,
+                                        structural_id(impl, parent, BoxKind::TABLE_HEADER_ROW),
+                                        {},
+                                        {},
+                                        desc,
+                                        false,
+                                        false);
+        push_parent(impl, index);
+        return TableRowScope(Scope(m_scope.m_frame, index));
+    }
+
+    auto TableScope::header_row(Id id_value, BoxDesc const& desc) -> TableRowScope {
+        if (m_scope.m_frame == nullptr) {
+            return {};
+        }
+        ContextImpl* const impl = impl_from_frame(*m_scope.m_frame);
+        size_t const parent = top_parent_index(impl);
+        size_t const index =
+            append_box(impl,
+                       BoxKind::TABLE_HEADER_ROW,
+                       explicit_id(impl, parent, BoxKind::TABLE_HEADER_ROW, id_value),
+                       id_value,
+                       {},
+                       desc,
+                       false,
+                       false);
+        push_parent(impl, index);
+        return TableRowScope(Scope(m_scope.m_frame, index));
+    }
+
+    auto TableScope::row(BoxDesc const& desc) -> TableRowScope {
+        if (m_scope.m_frame == nullptr) {
+            return {};
+        }
+        ContextImpl* const impl = impl_from_frame(*m_scope.m_frame);
+        size_t const parent = top_parent_index(impl);
+        size_t const index = append_box(impl,
+                                        BoxKind::TABLE_ROW,
+                                        structural_id(impl, parent, BoxKind::TABLE_ROW),
+                                        {},
+                                        {},
+                                        desc,
+                                        false,
+                                        false);
+        push_parent(impl, index);
+        return TableRowScope(Scope(m_scope.m_frame, index));
+    }
+
+    auto TableScope::row(Id id_value, BoxDesc const& desc) -> TableRowScope {
+        if (m_scope.m_frame == nullptr) {
+            return {};
+        }
+        ContextImpl* const impl = impl_from_frame(*m_scope.m_frame);
+        size_t const parent = top_parent_index(impl);
+        size_t const index = append_box(impl,
+                                        BoxKind::TABLE_ROW,
+                                        explicit_id(impl, parent, BoxKind::TABLE_ROW, id_value),
+                                        id_value,
+                                        {},
+                                        desc,
+                                        false,
+                                        false);
+        push_parent(impl, index);
+        return TableRowScope(Scope(m_scope.m_frame, index));
+    }
 
     Frame::Frame(void* handle) : m_handle(handle) {}
 
@@ -3216,6 +3658,36 @@ namespace gui {
         set_scroll_state(impl, panel, id_value);
         push_parent(impl, index);
         return {this, index};
+    }
+
+    auto Frame::table(BoxDesc const& desc) -> TableScope {
+        ContextImpl* const impl = impl_from_frame(*this);
+        size_t const parent = top_parent_index(impl);
+        size_t const index = append_box(impl,
+                                        BoxKind::TABLE,
+                                        structural_id(impl, parent, BoxKind::TABLE),
+                                        {},
+                                        {},
+                                        desc,
+                                        false,
+                                        false);
+        push_parent(impl, index);
+        return TableScope(Scope(this, index));
+    }
+
+    auto Frame::table(Id id_value, BoxDesc const& desc) -> TableScope {
+        ContextImpl* const impl = impl_from_frame(*this);
+        size_t const parent = top_parent_index(impl);
+        size_t const index = append_box(impl,
+                                        BoxKind::TABLE,
+                                        explicit_id(impl, parent, BoxKind::TABLE, id_value),
+                                        id_value,
+                                        {},
+                                        desc,
+                                        false,
+                                        false);
+        push_parent(impl, index);
+        return TableScope(Scope(this, index));
     }
 
     auto Frame::spacer(BoxDesc const& desc) -> void {
