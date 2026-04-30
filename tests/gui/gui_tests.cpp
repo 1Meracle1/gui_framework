@@ -947,6 +947,41 @@ namespace {
         gui::destroy_context(gui_context);
     }
 
+    TEST_CASE(input_text_activates_on_enter) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::Id const field_id = gui::id("field");
+        char buffer[16] = "Hi";
+        gui::KeyEvent const events[] = {
+            {.key = gui::Key::ENTER},
+            {.kind = gui::KeyEventKind::TEXT, .codepoint = '\r'},
+        };
+        gui::InputState input = {};
+        input.key_events = events;
+        input.key_event_count = 2u;
+
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {160.0f, 40.0f}, .input = input});
+        ui.request_focus(field_id);
+        gui::Signal const signal = ui.input_text(
+            field_id,
+            "Field",
+            buffer,
+            sizeof(buffer),
+            {.layout = {.width = gui::px(120.0f), .height = gui::px(20.0f)}});
+        gui::end_frame(ui);
+
+        TEST_EXPECT(context, signal.focused);
+        TEST_EXPECT(context, signal.activated);
+        TEST_EXPECT(context, !signal.changed);
+        TEST_EXPECT(context, StrRef(buffer) == StrRef("Hi"));
+
+        gui::destroy_context(gui_context);
+    }
+
     TEST_CASE(input_text_ctrl_a_selects_all_text) {
         Arena arena = {};
         arena.init();
