@@ -2514,7 +2514,7 @@ namespace gui {
         }
 
         [[nodiscard]] auto text_draw_y(float line_y) -> float {
-            return std::round(line_y);
+            return std::round(line_y - TEXT_RASTER_PADDING);
         }
 
         auto render_box(ContextImpl const* impl, draw::Context draw_context, size_t index) -> void {
