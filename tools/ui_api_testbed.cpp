@@ -44,6 +44,7 @@ namespace {
         gui::TextSelection body_selection = {};
         gui::Signal header_signal = {};
         gui::Signal selected_row_signal = {};
+        StringBuffer multiline_text_buffer;
     };
 
     auto row_id(size_t index) -> gui::Id {
@@ -497,6 +498,23 @@ namespace {
                                 );
                             }
                         }
+                        ui.input_text_multiline(
+                            gui::id("preview_multiline_input"),
+                            "Preview Notes",
+                            &state.multiline_text_buffer,
+                            {
+                                .box = {
+                                    .layout =
+                                        {
+                                            .width = gui::fill(),
+                                            .height = gui::px(108.0f),
+                                            .margin = gui::insets(36.0f, 0.0f, 0.0f, 0.0f),
+                                            .padding = gui::insets(6.0f, 8.0f),
+                                        },
+                                    .debug_name = "preview_multiline_input",
+                                },
+                            }
+                        );
                     }
 
                     if (auto log = ui.scroll_panel(
@@ -857,6 +875,9 @@ namespace {
             },
             runtime->ui_context
         );
+        BASE_UNUSED(runtime->state.multiline_text_buffer.write_string(
+            "Editable multiline text\nPress Enter for a new line\nTab inserts four spaces"
+        ));
         return true;
     }
 
@@ -1179,6 +1200,9 @@ namespace {
         gui::draw::create_context(arena, {}, draw_context);
 
         TestbedState state = {};
+        BASE_UNUSED(state.multiline_text_buffer.write_string(
+            "Editable multiline text\nPress Enter for a new line\nTab inserts four spaces"
+        ));
         gui::Frame ui =
             gui::begin_frame(ui_context, {.size = {640.0f, 400.0f}, .delta_time = 1.0f / 60.0f});
         draw_ui(ui, state);

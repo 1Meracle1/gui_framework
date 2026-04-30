@@ -94,6 +94,13 @@ namespace gui {
             size_t end = 0u;
         };
 
+        struct TextEditBuffer {
+            char* data = nullptr;
+            size_t size = 0u;
+            size_t capacity = 0u;
+            StringBuffer* string = nullptr;
+        };
+
         struct ContextImpl {
             Arena* context_arena = nullptr;
             Arena frame_arena = {};
@@ -174,6 +181,14 @@ namespace gui {
             return kind == BoxKind::CHECKBOX || kind == BoxKind::TOGGLE;
         }
 
+        [[nodiscard]] auto input_text_box(BoxKind kind) -> bool {
+            return kind == BoxKind::INPUT_TEXT || kind == BoxKind::INPUT_TEXT_MULTILINE;
+        }
+
+        [[nodiscard]] auto multiline_input_text_box(BoxKind kind) -> bool {
+            return kind == BoxKind::INPUT_TEXT_MULTILINE;
+        }
+
         [[nodiscard]] auto role_styled(StyleRole role) -> bool {
             return role != StyleRole::AUTO && role != StyleRole::NONE && role != StyleRole::COUNT;
         }
@@ -245,7 +260,7 @@ namespace gui {
         [[nodiscard]] auto box_clips(BoxNode const& box) -> bool {
             return box.layout.clip || box.layout.scroll_x || box.layout.scroll_y ||
                    box.kind == BoxKind::SCROLL_PANEL || box.kind == BoxKind::LIST ||
-                   box.kind == BoxKind::INPUT_TEXT;
+                   input_text_box(box.kind);
         }
 
         [[nodiscard]] auto scrollbar_track_rect(Rect rect) -> Rect {
@@ -443,7 +458,15 @@ namespace gui {
 
         [[nodiscard]] auto next_text_line(StrRef text, size_t& offset, TextLine& out_line)
             -> bool {
-            if (text.empty() || offset >= text.size()) {
+            if (text.empty() || offset > text.size()) {
+                return false;
+            }
+            if (offset == text.size()) {
+                if (offset > 0u && text[offset - 1u] == '\n') {
+                    out_line = {StrRef(text.data() + offset, size_t{0u}), offset, offset};
+                    offset += 1u;
+                    return true;
+                }
                 return false;
             }
 
@@ -507,7 +530,7 @@ namespace gui {
             float const content_width =
                 std::max(0.0f, rect_width(rect) - inset_width(box.layout.padding));
             float const x_offset = text_x_offset(box, content_width, text_dim.x);
-            bool const multiline = text_multiline(box.text);
+            bool const multiline = text_multiline(box.text) || multiline_input_text_box(box.kind);
             float const scroll_y = box.layout.scroll_y && box.scroll_state != nullptr && multiline
                                        ? box.scroll_state->scroll_y
                                        : 0.0f;
@@ -729,6 +752,21 @@ namespace gui {
             impl->focused_id = impl->focus_order[current];
         }
 
+        [[nodiscard]] auto focused_box_captures_tab(ContextImpl const* impl,
+                                                    KeyEvent const& event) -> bool {
+            if ((event.mods & (KEY_MOD_CTRL | KEY_MOD_ALT | KEY_MOD_SUPER)) != 0u) {
+                return false;
+            }
+            for (size_t index = 0u; index < impl->box_count; ++index) {
+                BoxNode const& box = impl->boxes[index];
+                if (box.id.value == impl->focused_id.value &&
+                    multiline_input_text_box(box.kind)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
         auto process_focus_keys(ContextImpl* impl) -> void {
             InputState const& input = impl->frame_desc.input;
             if (input.key_events == nullptr) {
@@ -738,7 +776,9 @@ namespace gui {
                 KeyEvent const& event = input.key_events[index];
                 if (event.key == Key::TAB &&
                     (event.kind == KeyEventKind::PRESS || event.kind == KeyEventKind::REPEAT)) {
-                    move_focus(impl, tab_reverse(event));
+                    if (!focused_box_captures_tab(impl, event)) {
+                        move_focus(impl, tab_reverse(event));
+                    }
                 }
             }
         }
@@ -952,12 +992,12 @@ namespace gui {
             float const widget_extra_x = box.kind == BoxKind::CHECKBOX       ? 24.0f
                                          : box.kind == BoxKind::TOGGLE       ? 44.0f
                                          : box.kind == BoxKind::SLIDER_FLOAT ? 160.0f
-                                         : box.kind == BoxKind::INPUT_TEXT   ? 160.0f
+                                         : input_text_box(box.kind)          ? 160.0f
                                                                              : 0.0f;
             float const widget_min_y = box.kind == BoxKind::CHECKBOX ||
                                                box.kind == BoxKind::TOGGLE ||
                                                box.kind == BoxKind::SLIDER_FLOAT ||
-                                               box.kind == BoxKind::INPUT_TEXT
+                                               input_text_box(box.kind)
                                            ? 20.0f
                                            : 0.0f;
 
@@ -1186,9 +1226,11 @@ namespace gui {
                 if (box.scroll_state != nullptr) {
                     box.scroll_offset_y = -box.scroll_state->scroll_y;
                 }
-            } else if (box.kind == BoxKind::SELECTABLE_LABEL && box.layout.scroll_y) {
+            } else if ((box.kind == BoxKind::SELECTABLE_LABEL ||
+                        multiline_input_text_box(box.kind)) &&
+                       box.layout.scroll_y) {
                 float content_height = rect_height(rect);
-                if (text_multiline(box.text)) {
+                if (text_multiline(box.text) || multiline_input_text_box(box.kind)) {
                     content_height = text_size(box).y + inset_height(box.layout.padding);
                 }
                 update_scroll_metrics(impl, box.scroll_state, rect, content_height, true, true);
@@ -1584,6 +1626,42 @@ namespace gui {
             return text_line_index_from_x(box, last_line, text_x);
         }
 
+        [[nodiscard]] auto text_cursor_line_index(StrRef text, size_t cursor) -> size_t {
+            cursor = std::min(cursor, text.size());
+            size_t line_index = 0u;
+            size_t offset = 0u;
+            TextLine line = {};
+            while (next_text_line(text, offset, line)) {
+                if (cursor <= line.end) {
+                    return line_index;
+                }
+                line_index += 1u;
+            }
+            return line_index;
+        }
+
+        [[nodiscard]] auto text_cursor_position(BoxNode const& box, size_t cursor) -> Vec2 {
+            Vec2 const pos = text_position(box);
+            if (box.text.empty()) {
+                return pos;
+            }
+
+            cursor = std::min(cursor, box.text.size());
+            float const line_height = text_line_height(box);
+            size_t line_index = 0u;
+            size_t offset = 0u;
+            TextLine line = {};
+            while (next_text_line(box.text, offset, line)) {
+                if (cursor <= line.end) {
+                    size_t const line_cursor = std::min(cursor, line.end) - line.start;
+                    return {pos.x + text_advance(box, line.text.prefix(line_cursor)),
+                            pos.y + line_height * static_cast<float>(line_index)};
+                }
+                line_index += 1u;
+            }
+            return pos;
+        }
+
         auto apply_pointer_text_selection(ContextImpl* impl, BoxNode& box, TextSelection selection)
             -> TextSelection {
             TextSelection next =
@@ -1751,74 +1829,146 @@ namespace gui {
             return 4u;
         }
 
-        auto erase_text_range(char* buffer, size_t buffer_size, size_t start, size_t end)
-            -> bool {
-            size_t size = text_buffer_size(buffer, buffer_size);
-            start = std::min(start, size);
-            end = std::min(end, size);
-            if (end <= start) {
+        [[nodiscard]] auto fixed_text_edit_buffer(char* buffer, size_t buffer_size)
+            -> TextEditBuffer {
+            return {buffer, text_buffer_size(buffer, buffer_size), buffer_size - 1u, nullptr};
+        }
+
+        [[nodiscard]] auto string_text_edit_buffer(StringBuffer* buffer) -> TextEditBuffer {
+            return {buffer->data(), buffer->size(), buffer->capacity(), buffer};
+        }
+
+        [[nodiscard]] auto text_edit_text(TextEditBuffer const& buffer) -> StrRef {
+            return {buffer.data, buffer.size};
+        }
+
+        auto text_edit_refresh(TextEditBuffer& buffer) -> void {
+            if (buffer.string != nullptr) {
+                buffer.data = buffer.string->data();
+                buffer.size = buffer.string->size();
+                buffer.capacity = buffer.string->capacity();
+            }
+        }
+
+        [[nodiscard]] auto text_edit_resize(TextEditBuffer& buffer, size_t size) -> bool {
+            if (buffer.string != nullptr) {
+                if (!buffer.string->resize(size)) {
+                    return false;
+                }
+                text_edit_refresh(buffer);
+                return true;
+            }
+            if (size > buffer.capacity) {
                 return false;
             }
-            std::memmove(buffer + start, buffer + end, size - end);
-            size -= end - start;
-            buffer[size] = '\0';
+            buffer.size = size;
+            buffer.data[size] = '\0';
             return true;
         }
 
-        auto insert_text_bytes(char* buffer,
-                               size_t buffer_size,
+        [[nodiscard]] auto text_edit_can_insert(TextEditBuffer const& buffer,
+                                                size_t selected_size,
+                                                size_t insert_size) -> bool {
+            if (buffer.string != nullptr) {
+                return true;
+            }
+            return insert_size <= buffer.capacity - (buffer.size - selected_size);
+        }
+
+        auto erase_text_range(TextEditBuffer& buffer, size_t start, size_t end) -> bool {
+            start = std::min(start, buffer.size);
+            end = std::min(end, buffer.size);
+            if (end <= start) {
+                return false;
+            }
+            size_t const size = buffer.size;
+            std::memmove(buffer.data + start, buffer.data + end, size - end);
+            return text_edit_resize(buffer, size - (end - start));
+        }
+
+        auto insert_text_bytes(TextEditBuffer& buffer,
                                size_t& cursor,
                                char const* text,
                                size_t text_size) -> bool {
-            size_t const size = text_buffer_size(buffer, buffer_size);
-            cursor = std::min(cursor, size);
-            if (text_size == 0u || text_size > buffer_size - 1u - size) {
+            cursor = std::min(cursor, buffer.size);
+            if (text_size == 0u) {
                 return false;
             }
-            std::memmove(buffer + cursor + text_size, buffer + cursor, size - cursor);
-            std::memcpy(buffer + cursor, text, text_size);
+            size_t const size = buffer.size;
+            if (!text_edit_resize(buffer, size + text_size)) {
+                return false;
+            }
+            std::memmove(buffer.data + cursor + text_size, buffer.data + cursor, size - cursor);
+            std::memcpy(buffer.data + cursor, text, text_size);
             cursor += text_size;
-            buffer[size + text_size] = '\0';
+            buffer.data[buffer.size] = '\0';
             return true;
         }
 
         auto save_text_undo(ContextImpl* impl,
                             StateEntry& state,
-                            char const* buffer,
-                            size_t buffer_size,
+                            StrRef text,
                             size_t cursor,
                             TextSelection selection) -> void {
             ASSERT(impl->context_arena != nullptr);
 
-            size_t const size = text_buffer_size(buffer, buffer_size);
             TextUndoEntry* const entry = arena_new<TextUndoEntry>(*impl->context_arena);
-            entry->text = arena_alloc<char>(*impl->context_arena, size + 1u);
-            std::memcpy(entry->text, buffer, size);
-            entry->text[size] = '\0';
-            entry->text_size = size;
-            entry->cursor = std::min(cursor, size);
-            entry->selection = ordered_text_selection(clamp_text_selection(selection, size));
+            entry->text = arena_alloc<char>(*impl->context_arena, text.size() + 1u);
+            std::memcpy(entry->text, text.data(), text.size());
+            entry->text[text.size()] = '\0';
+            entry->text_size = text.size();
+            entry->cursor = std::min(cursor, text.size());
+            entry->selection =
+                ordered_text_selection(clamp_text_selection(selection, text.size()));
             entry->previous = state.text_undo_stack;
             state.text_undo_stack = entry;
         }
 
-        auto restore_text_undo(StateEntry& state,
-                               char* buffer,
-                               size_t buffer_size,
-                               TextSelection& selection) -> bool {
+        auto restore_text_undo(StateEntry& state, TextEditBuffer& buffer, TextSelection& selection)
+            -> bool {
             if (state.text_undo_stack == nullptr) {
                 return false;
             }
 
             TextUndoEntry const* const entry = state.text_undo_stack;
             state.text_undo_stack = entry->previous;
-            size_t const size = std::min(entry->text_size, buffer_size - 1u);
-            std::memcpy(buffer, entry->text, size);
-            buffer[size] = '\0';
+            size_t const size =
+                buffer.string != nullptr ? entry->text_size : std::min(entry->text_size,
+                                                                        buffer.capacity);
+            if (!text_edit_resize(buffer, size)) {
+                return false;
+            }
+            std::memcpy(buffer.data, entry->text, size);
+            buffer.data[size] = '\0';
             state.text_cursor = std::min(entry->cursor, size);
             selection = ordered_text_selection(clamp_text_selection(entry->selection, size));
             state.text_selection_word_active = false;
             return true;
+        }
+
+        auto replace_text_selection_with_bytes(ContextImpl* impl,
+                                               StateEntry& state,
+                                               TextEditBuffer& buffer,
+                                               TextSelection& selection,
+                                               char const* text,
+                                               size_t text_size) -> bool {
+            size_t const selected_size = selection.end - selection.start;
+            if (text_size == 0u && selected_size == 0u) {
+                return false;
+            }
+            if (!text_edit_can_insert(buffer, selected_size, text_size)) {
+                return false;
+            }
+
+            save_text_undo(impl, state, text_edit_text(buffer), state.text_cursor, selection);
+            bool changed = false;
+            if (selected_size != 0u) {
+                changed |= erase_text_range(buffer, selection.start, selection.end);
+                state.text_cursor = selection.start;
+            }
+            changed |= insert_text_bytes(buffer, state.text_cursor, text, text_size);
+            selection = {state.text_cursor, state.text_cursor};
+            return changed;
         }
 
         auto apply_bool_widget(ContextImpl const* impl, BoxNode& box, bool* value) -> Signal {
@@ -1883,15 +2033,42 @@ namespace gui {
             return signal;
         }
 
+        auto request_multiline_cursor_visible(BoxNode const& box) -> void {
+            if (!multiline_input_text_box(box.kind) || box.scroll_state == nullptr ||
+                box.state == nullptr || box.scroll_state->last_frame == 0u) {
+                return;
+            }
+
+            float const viewport =
+                std::max(0.0f, rect_height(box.scroll_state->rect) -
+                                   inset_height(box.layout.padding));
+            if (viewport <= 0.0f) {
+                return;
+            }
+
+            float const line_height = text_line_height(box);
+            float const cursor_y =
+                line_height * static_cast<float>(text_cursor_line_index(
+                                  box.text, std::min(box.state->text_cursor, box.text.size())));
+            float const scroll_y = box.scroll_state->scroll_y;
+            if (cursor_y < scroll_y) {
+                box.scroll_state->scroll_request_y = cursor_y;
+                box.scroll_state->scroll_request_set = true;
+            } else if (cursor_y + line_height > scroll_y + viewport) {
+                box.scroll_state->scroll_request_y = cursor_y + line_height - viewport;
+                box.scroll_state->scroll_request_set = true;
+            }
+        }
+
         auto apply_input_text_widget(ContextImpl* impl,
                                      BoxNode& box,
-                                     char* buffer,
-                                     size_t buffer_size) -> Signal {
-            ASSERT(buffer != nullptr);
-            ASSERT(buffer_size > 0u);
+                                     TextEditBuffer& buffer,
+                                     StrRef tab_text = {}) -> Signal {
+            ASSERT(buffer.data != nullptr || buffer.size == 0u);
 
             Signal signal = box.signal;
-            size_t text_size = text_buffer_size(buffer, buffer_size);
+            bool const multiline = multiline_input_text_box(box.kind);
+            size_t text_size = buffer.size;
             if (box.state != nullptr) {
                 StateEntry& state = *box.state;
                 state.text_cursor = std::min(state.text_cursor, text_size);
@@ -1915,40 +2092,49 @@ namespace gui {
                 selection = pointer_selection;
 
                 bool changed = false;
+                size_t skip_text_newlines = 0u;
+                size_t skip_text_tabs = 0u;
                 InputState const& input = impl->frame_desc.input;
                 if (signal.focused && input.key_events != nullptr) {
                     bool const writable = !box_read_only(box) && !box_disabled(box);
                     for (size_t index = 0u; index < input.key_event_count; ++index) {
                         KeyEvent const& event = input.key_events[index];
-                        text_size = text_buffer_size(buffer, buffer_size);
+                        text_size = buffer.size;
                         state.text_cursor = std::min(state.text_cursor, text_size);
                         selection =
                             ordered_text_selection(clamp_text_selection(selection, text_size));
+                        StrRef const text = text_edit_text(buffer);
                         if (event.kind == KeyEventKind::TEXT) {
-                            if (writable) {
-                                char text[4] = {};
+                            if (writable && multiline &&
+                                (event.codepoint == '\n' || event.codepoint == '\r')) {
+                                if (skip_text_newlines != 0u) {
+                                    skip_text_newlines -= 1u;
+                                } else {
+                                    changed |= replace_text_selection_with_bytes(
+                                        impl, state, buffer, selection, "\n", 1u);
+                                }
+                            } else if (writable && multiline && event.codepoint == '\t') {
+                                if (skip_text_tabs != 0u) {
+                                    skip_text_tabs -= 1u;
+                                } else if (!tab_text.empty()) {
+                                    changed |= replace_text_selection_with_bytes(impl,
+                                                                                 state,
+                                                                                 buffer,
+                                                                                 selection,
+                                                                                 tab_text.data(),
+                                                                                 tab_text.size());
+                                }
+                            } else if (writable) {
+                                char insert_text[4] = {};
                                 size_t const insert_size =
-                                    utf8_from_codepoint(event.codepoint, text);
-                                size_t const selected_size = selection.end - selection.start;
-                                size_t const available =
-                                    buffer_size - 1u - (text_size - selected_size);
-                                if (insert_size != 0u && insert_size <= available) {
-                                    save_text_undo(impl,
-                                                   state,
-                                                   buffer,
-                                                   buffer_size,
-                                                   state.text_cursor,
-                                                   selection);
-                                    if (selected_size != 0u) {
-                                        changed |= erase_text_range(buffer,
-                                                                    buffer_size,
-                                                                    selection.start,
-                                                                    selection.end);
-                                        state.text_cursor = selection.start;
-                                    }
-                                    changed |= insert_text_bytes(
-                                        buffer, buffer_size, state.text_cursor, text, insert_size);
-                                    selection = {state.text_cursor, state.text_cursor};
+                                    utf8_from_codepoint(event.codepoint, insert_text);
+                                if (insert_size != 0u) {
+                                    changed |= replace_text_selection_with_bytes(impl,
+                                                                                 state,
+                                                                                 buffer,
+                                                                                 selection,
+                                                                                 insert_text,
+                                                                                 insert_size);
                                 }
                             }
                             continue;
@@ -1958,8 +2144,7 @@ namespace gui {
                             continue;
                         }
                         if (shortcut_key_pressed(event, Key::Z)) {
-                            if (writable &&
-                                restore_text_undo(state, buffer, buffer_size, selection)) {
+                            if (writable && restore_text_undo(state, buffer, selection)) {
                                 changed = true;
                             }
                             continue;
@@ -1972,31 +2157,15 @@ namespace gui {
                         }
                         if (shortcut_key_pressed(event, Key::V)) {
                             if (writable && impl->get_clipboard_text != nullptr) {
-                                StrRef const text = impl->get_clipboard_text(
+                                StrRef const paste = impl->get_clipboard_text(
                                     impl->clipboard_user_data, impl->frame_arena);
-                                size_t const selected_size = selection.end - selection.start;
-                                size_t const available =
-                                    buffer_size - 1u - (text_size - selected_size);
-                                if (!text.empty() && text.size() <= available) {
-                                    save_text_undo(impl,
-                                                   state,
-                                                   buffer,
-                                                   buffer_size,
-                                                   state.text_cursor,
-                                                   selection);
-                                    if (selected_size != 0u) {
-                                        changed |= erase_text_range(buffer,
-                                                                    buffer_size,
-                                                                    selection.start,
-                                                                    selection.end);
-                                        state.text_cursor = selection.start;
-                                    }
-                                    changed |= insert_text_bytes(buffer,
-                                                                 buffer_size,
-                                                                 state.text_cursor,
-                                                                 text.data(),
-                                                                 text.size());
-                                    selection = {state.text_cursor, state.text_cursor};
+                                if (!paste.empty()) {
+                                    changed |= replace_text_selection_with_bytes(impl,
+                                                                                 state,
+                                                                                 buffer,
+                                                                                 selection,
+                                                                                 paste.data(),
+                                                                                 paste.size());
                                 }
                             }
                             continue;
@@ -2004,24 +2173,41 @@ namespace gui {
                         if (shortcut_key_pressed(event, Key::X)) {
                             if (writable && impl->set_clipboard_text != nullptr &&
                                 selection.start != selection.end) {
-                                save_text_undo(impl,
-                                               state,
-                                               buffer,
-                                               buffer_size,
-                                               state.text_cursor,
-                                               selection);
-                                copy_selected_text(impl, {buffer, text_size}, selection);
-                                changed |= erase_text_range(
-                                    buffer, buffer_size, selection.start, selection.end);
+                                save_text_undo(
+                                    impl, state, text, state.text_cursor, selection);
+                                copy_selected_text(impl, text, selection);
+                                changed |=
+                                    erase_text_range(buffer, selection.start, selection.end);
                                 state.text_cursor = selection.start;
                                 selection = {state.text_cursor, state.text_cursor};
                             }
                             continue;
                         }
+                        if (multiline && event.key == Key::ENTER) {
+                            if (writable) {
+                                changed |= replace_text_selection_with_bytes(
+                                    impl, state, buffer, selection, "\n", 1u);
+                                skip_text_newlines += 1u;
+                            }
+                            continue;
+                        }
+                        if (multiline && event.key == Key::TAB &&
+                            (event.mods & (KEY_MOD_CTRL | KEY_MOD_ALT | KEY_MOD_SUPER)) == 0u) {
+                            if (writable && !tab_text.empty()) {
+                                changed |= replace_text_selection_with_bytes(impl,
+                                                                             state,
+                                                                             buffer,
+                                                                             selection,
+                                                                             tab_text.data(),
+                                                                             tab_text.size());
+                            }
+                            skip_text_tabs += 1u;
+                            continue;
+                        }
                         if (text_selection_key_event(event)) {
-                            selection = apply_text_cursor_selection_key_event(
-                                {buffer, text_size}, selection, state.text_cursor, event
-                            );
+                            selection =
+                                apply_text_cursor_selection_key_event(
+                                    text, selection, state.text_cursor, event);
                             continue;
                         }
                         switch (event.key) {
@@ -2029,16 +2215,14 @@ namespace gui {
                             state.text_cursor =
                                 selection.start != selection.end
                                     ? selection.start
-                                    : text_cursor_key_offset(
-                                          {buffer, text_size}, state.text_cursor, event);
+                                    : text_cursor_key_offset(text, state.text_cursor, event);
                             selection = {state.text_cursor, state.text_cursor};
                             break;
                         case Key::RIGHT:
                             state.text_cursor =
                                 selection.start != selection.end
                                     ? selection.end
-                                    : text_cursor_key_offset(
-                                          {buffer, text_size}, state.text_cursor, event);
+                                    : text_cursor_key_offset(text, state.text_cursor, event);
                             selection = {state.text_cursor, state.text_cursor};
                             break;
                         case Key::HOME:
@@ -2051,63 +2235,40 @@ namespace gui {
                             break;
                         case Key::BACKSPACE:
                             if (writable && selection.start != selection.end) {
-                                save_text_undo(impl,
-                                               state,
-                                               buffer,
-                                               buffer_size,
-                                               state.text_cursor,
-                                               selection);
-                                changed |= erase_text_range(
-                                    buffer, buffer_size, selection.start, selection.end);
+                                save_text_undo(
+                                    impl, state, text, state.text_cursor, selection);
+                                changed |=
+                                    erase_text_range(buffer, selection.start, selection.end);
                                 state.text_cursor = selection.start;
                                 selection = {state.text_cursor, state.text_cursor};
                             } else if (writable && state.text_cursor > 0u) {
                                 size_t const start = (event.mods & KEY_MOD_CTRL) != 0u
-                                                         ? previous_word_offset({buffer, text_size},
+                                                         ? previous_word_offset(text,
                                                                                 state.text_cursor)
-                                                         : previous_text_offset({buffer, text_size},
+                                                         : previous_text_offset(text,
                                                                                 state.text_cursor);
-                                save_text_undo(impl,
-                                               state,
-                                               buffer,
-                                               buffer_size,
-                                               state.text_cursor,
-                                               selection);
-                                changed |=
-                                    erase_text_range(buffer, buffer_size, start, state.text_cursor);
+                                save_text_undo(
+                                    impl, state, text, state.text_cursor, selection);
+                                changed |= erase_text_range(buffer, start, state.text_cursor);
                                 state.text_cursor = start;
                                 selection = {state.text_cursor, state.text_cursor};
                             }
                             break;
                         case Key::DELETE_KEY:
                             if (writable && selection.start != selection.end) {
-                                save_text_undo(impl,
-                                               state,
-                                               buffer,
-                                               buffer_size,
-                                               state.text_cursor,
-                                               selection);
-                                changed |= erase_text_range(
-                                    buffer, buffer_size, selection.start, selection.end);
+                                save_text_undo(
+                                    impl, state, text, state.text_cursor, selection);
+                                changed |=
+                                    erase_text_range(buffer, selection.start, selection.end);
                                 state.text_cursor = selection.start;
                                 selection = {state.text_cursor, state.text_cursor};
                             } else if (writable && state.text_cursor < text_size) {
                                 size_t const end = (event.mods & KEY_MOD_CTRL) != 0u
-                                                       ? next_word_offset({buffer, text_size},
-                                                                          state.text_cursor)
-                                                       : next_text_offset({buffer, text_size},
-                                                                          state.text_cursor);
-                                save_text_undo(impl,
-                                               state,
-                                               buffer,
-                                               buffer_size,
-                                               state.text_cursor,
-                                               selection);
-                                changed |= erase_text_range(
-                                    buffer,
-                                    buffer_size,
-                                    state.text_cursor,
-                                    end);
+                                                       ? next_word_offset(text, state.text_cursor)
+                                                       : next_text_offset(text, state.text_cursor);
+                                save_text_undo(
+                                    impl, state, text, state.text_cursor, selection);
+                                changed |= erase_text_range(buffer, state.text_cursor, end);
                                 selection = {state.text_cursor, state.text_cursor};
                             }
                             break;
@@ -2116,7 +2277,7 @@ namespace gui {
                         }
                     }
                 }
-                text_size = text_buffer_size(buffer, buffer_size);
+                text_size = buffer.size;
                 selection = ordered_text_selection(clamp_text_selection(selection, text_size));
                 state.text_cursor = std::min(state.text_cursor, text_size);
                 state.text_selection_start = selection.start;
@@ -2124,8 +2285,9 @@ namespace gui {
                 box.text_selection = selection;
                 signal.changed = changed;
             }
-            signal.activated = signal.focused && key_pressed(impl, Key::ENTER, false);
-            box.text = copy_frame_str(impl, {buffer, text_buffer_size(buffer, buffer_size)});
+            signal.activated = !multiline && signal.focused && key_pressed(impl, Key::ENTER, false);
+            box.text = copy_frame_str(impl, text_edit_text(buffer));
+            request_multiline_cursor_visible(box);
             apply_text_selection_owner(impl, box, box.text_selection);
             box.signal = signal;
             return signal;
@@ -2227,12 +2389,11 @@ namespace gui {
                                     {thumb_x + 4.0f, center_y + 8.0f}};
                 draw_widget_rect(
                     draw_context, thumb, tokens.text, tokens.canvas, 1.0f, 4.0f, opacity);
-            } else if (box.kind == BoxKind::INPUT_TEXT && box.signal.focused &&
-                       box.state != nullptr) {
+            } else if (input_text_box(box.kind) && box.signal.focused && box.state != nullptr) {
                 size_t const cursor = std::min(box.state->text_cursor, box.text.size());
-                Vec2 const pos = text_position(box);
-                float const x = pos.x + text_advance(box, box.text.prefix(cursor));
-                Rect const caret = {{x, pos.y}, {x + 1.0f, pos.y + text_line_height(box)}};
+                Vec2 const pos = text_cursor_position(box, cursor);
+                Rect const caret = {
+                    {pos.x, pos.y}, {pos.x + 1.0f, pos.y + text_line_height(box)}};
                 draw_widget_rect(draw_context, caret, tokens.text, {}, 0.0f, 0.0f, opacity);
             }
         }
@@ -2240,7 +2401,7 @@ namespace gui {
         auto render_text_selection(ContextImpl const* impl,
                                    BoxNode const& box,
                                    draw::Context draw_context) -> void {
-            if ((box.kind != BoxKind::SELECTABLE_LABEL && box.kind != BoxKind::INPUT_TEXT) ||
+            if ((box.kind != BoxKind::SELECTABLE_LABEL && !input_text_box(box.kind)) ||
                 box.text.empty()) {
                 return;
             }
@@ -2351,7 +2512,7 @@ namespace gui {
                                        box.kind == BoxKind::CHECKBOX ||
                                        box.kind == BoxKind::TOGGLE ||
                                        box.kind == BoxKind::SLIDER_FLOAT ||
-                                       box.kind == BoxKind::INPUT_TEXT;
+                                       input_text_box(box.kind);
                 if (text_kind && font_cache::font_valid(box.resolved_style.font)) {
                     draw::TextStyle text_style = {};
                     text_style.font = box.resolved_style.font;
@@ -2496,6 +2657,7 @@ namespace gui {
         theme_kind(theme, BoxKind::TOGGLE).role = StyleRole::CONTROL;
         theme_kind(theme, BoxKind::SLIDER_FLOAT).role = StyleRole::CONTROL;
         theme_kind(theme, BoxKind::INPUT_TEXT).role = StyleRole::CONTROL;
+        theme_kind(theme, BoxKind::INPUT_TEXT_MULTILINE).role = StyleRole::CONTROL;
         return theme;
     }
 
@@ -2970,7 +3132,8 @@ namespace gui {
         BoxNode& box = impl->boxes[index];
         box.id_source = label.empty() ? BoxIdSource::STRUCTURAL : BoxIdSource::TEXT;
         box.stable_id = false;
-        return apply_input_text_widget(impl, box, buffer, buffer_size);
+        TextEditBuffer edit = fixed_text_edit_buffer(buffer, buffer_size);
+        return apply_input_text_widget(impl, box, edit);
     }
 
     auto Frame::input_text(Id id_value,
@@ -2995,7 +3158,61 @@ namespace gui {
                        true,
                        true);
         BASE_UNUSED(label);
-        return apply_input_text_widget(impl, impl->boxes[index], buffer, buffer_size);
+        TextEditBuffer edit = fixed_text_edit_buffer(buffer, buffer_size);
+        return apply_input_text_widget(impl, impl->boxes[index], edit);
+    }
+
+    auto Frame::input_text_multiline(StrRef label,
+                                     StringBuffer* buffer,
+                                     InputTextMultilineDesc const& desc) -> Signal {
+        ASSERT(buffer != nullptr);
+
+        ContextImpl* const impl = impl_from_frame(*this);
+        size_t const parent = top_parent_index(impl);
+        BoxDesc box_desc = desc.box;
+        box_desc.layout.clip = true;
+        box_desc.layout.scroll_y = true;
+        size_t const index =
+            append_box(impl,
+                       BoxKind::INPUT_TEXT_MULTILINE,
+                       text_id(impl, parent, BoxKind::INPUT_TEXT_MULTILINE, label),
+                       {},
+                       buffer->str(),
+                       box_desc,
+                       true,
+                       true);
+        BoxNode& box = impl->boxes[index];
+        box.id_source = label.empty() ? BoxIdSource::STRUCTURAL : BoxIdSource::TEXT;
+        box.stable_id = false;
+        box.scroll_state = box.state;
+        TextEditBuffer edit = string_text_edit_buffer(buffer);
+        return apply_input_text_widget(impl, box, edit, desc.tab_text);
+    }
+
+    auto Frame::input_text_multiline(Id id_value,
+                                     StrRef label,
+                                     StringBuffer* buffer,
+                                     InputTextMultilineDesc const& desc) -> Signal {
+        ASSERT(buffer != nullptr);
+
+        ContextImpl* const impl = impl_from_frame(*this);
+        size_t const parent = top_parent_index(impl);
+        BoxDesc box_desc = desc.box;
+        box_desc.layout.clip = true;
+        box_desc.layout.scroll_y = true;
+        size_t const index =
+            append_box(impl,
+                       BoxKind::INPUT_TEXT_MULTILINE,
+                       explicit_id(impl, parent, BoxKind::INPUT_TEXT_MULTILINE, id_value),
+                       id_value,
+                       buffer->str(),
+                       box_desc,
+                       true,
+                       true);
+        set_scroll_state(impl, impl->boxes[index], id_value);
+        TextEditBuffer edit = string_text_edit_buffer(buffer);
+        BASE_UNUSED(label);
+        return apply_input_text_widget(impl, impl->boxes[index], edit, desc.tab_text);
     }
 
     auto Frame::list_fixed(Id id_value, ListFixedDesc const& desc) -> ListScope {
@@ -3146,6 +3363,11 @@ namespace gui {
         }
         for (size_t index = 0u; index < impl->box_count; ++index) {
             if (impl->infos[index].id.value == id_value.value) {
+                return impl->infos + index;
+            }
+        }
+        for (size_t index = 0u; index < impl->box_count; ++index) {
+            if (impl->infos[index].authored_id.value == id_value.value) {
                 return impl->infos + index;
             }
         }

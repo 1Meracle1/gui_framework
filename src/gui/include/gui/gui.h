@@ -2,6 +2,7 @@
 
 #include <base/memory.h>
 #include <base/str_ref.h>
+#include <base/string_buffer.h>
 #include <cstddef>
 #include <cstdint>
 #include <draw/draw.h>
@@ -220,6 +221,11 @@ namespace gui {
         float step = 0.0f;
     };
 
+    struct InputTextMultilineDesc {
+        BoxDesc box = {};
+        StrRef tab_text = "    ";
+    };
+
     struct ScrollState {
         float y = 0.0f;
         float max_y = 0.0f;
@@ -256,6 +262,7 @@ namespace gui {
         SCROLL_PANEL,
         LIST,
         INPUT_TEXT,
+        INPUT_TEXT_MULTILINE,
         COUNT,
     };
 
@@ -490,6 +497,13 @@ namespace gui {
                         char* buffer,
                         size_t buffer_size,
                         BoxDesc const& desc = {}) -> Signal;
+        auto input_text_multiline(StrRef label,
+                                  StringBuffer* buffer,
+                                  InputTextMultilineDesc const& desc = {}) -> Signal;
+        auto input_text_multiline(Id id,
+                                  StrRef label,
+                                  StringBuffer* buffer,
+                                  InputTextMultilineDesc const& desc = {}) -> Signal;
         [[nodiscard]] auto list_fixed(Id id, ListFixedDesc const& desc) -> ListScope;
 
         [[nodiscard]] auto scroll_state(Id id) const -> ScrollState;

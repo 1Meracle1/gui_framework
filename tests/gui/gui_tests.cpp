@@ -1691,6 +1691,133 @@ namespace {
         gui::destroy_context(gui_context);
     }
 
+    TEST_CASE(input_text_multiline_expands_and_inserts_newline_without_activation) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::Id const field_id = gui::id("field");
+        StringBuffer buffer;
+        TEST_EXPECT(context, buffer.init(2u));
+        TEST_EXPECT(context, buffer.write_string("Hi") == 2u);
+
+        gui::KeyEvent const events[] = {
+            {.kind = gui::KeyEventKind::TEXT, .codepoint = '!'},
+            {.key = gui::Key::ENTER},
+            {.kind = gui::KeyEventKind::TEXT, .codepoint = '\r'},
+            {.kind = gui::KeyEventKind::TEXT, .codepoint = 'X'},
+        };
+        gui::InputState input = {};
+        input.key_events = events;
+        input.key_event_count = 4u;
+
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {180.0f, 80.0f}, .input = input});
+        ui.request_focus(field_id);
+        gui::Signal const signal = ui.input_text_multiline(
+            field_id,
+            "Field",
+            &buffer,
+            {.box = {.layout = {.width = gui::px(140.0f), .height = gui::px(48.0f)}}});
+        gui::end_frame(ui);
+
+        TEST_EXPECT(context, signal.focused);
+        TEST_EXPECT(context, signal.changed);
+        TEST_EXPECT(context, !signal.activated);
+        TEST_EXPECT(context, buffer.capacity() > 2u);
+        TEST_EXPECT(context, buffer.str() == StrRef("Hi!\nX"));
+
+        gui::BoxInfo const* field = ui.find_box(field_id, gui::BoxKind::INPUT_TEXT_MULTILINE);
+        TEST_EXPECT(context, field != nullptr);
+        if (field != nullptr) {
+            TEST_EXPECT(context, field->text == StrRef("Hi!\nX"));
+        }
+
+        gui::destroy_context(gui_context);
+    }
+
+    TEST_CASE(input_text_multiline_tab_inserts_text_and_keeps_focus) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::Id const field_id = gui::id("field");
+        StringBuffer buffer;
+        TEST_EXPECT(context, buffer.write_string("a") == 1u);
+
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {220.0f, 80.0f}});
+        ui.request_focus(field_id);
+        ui.input_text_multiline(
+            field_id,
+            "Field",
+            &buffer,
+            {.box = {.layout = {.width = gui::px(140.0f), .height = gui::px(48.0f)}}});
+        ui.button(gui::id("next"), "Next", {.layout = {.width = gui::px(60.0f),
+                                                       .height = gui::px(24.0f)}});
+        gui::end_frame(ui);
+
+        gui::KeyEvent const events[] = {{.key = gui::Key::TAB}};
+        gui::InputState input = {};
+        input.key_events = events;
+        input.key_event_count = 1u;
+
+        ui = gui::begin_frame(gui_context, {.size = {220.0f, 80.0f}, .input = input});
+        gui::Signal const field = ui.input_text_multiline(
+            field_id,
+            "Field",
+            &buffer,
+            {.box = {.layout = {.width = gui::px(140.0f), .height = gui::px(48.0f)}}});
+        gui::Signal const next = ui.button(gui::id("next"),
+                                           "Next",
+                                           {.layout = {.width = gui::px(60.0f),
+                                                       .height = gui::px(24.0f)}});
+        gui::end_frame(ui);
+
+        TEST_EXPECT(context, field.focused);
+        TEST_EXPECT(context, !next.focused);
+        TEST_EXPECT(context, field.changed);
+        TEST_EXPECT(context, buffer.str() == StrRef("a    "));
+
+        gui::destroy_context(gui_context);
+    }
+
+    TEST_CASE(input_text_multiline_uses_configured_tab_text) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::Id const field_id = gui::id("field");
+        StringBuffer buffer;
+        TEST_EXPECT(context, buffer.write_string("a") == 1u);
+
+        gui::KeyEvent const events[] = {{.key = gui::Key::TAB}};
+        gui::InputState input = {};
+        input.key_events = events;
+        input.key_event_count = 1u;
+
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {180.0f, 80.0f}, .input = input});
+        ui.request_focus(field_id);
+        gui::Signal const signal = ui.input_text_multiline(
+            field_id,
+            "Field",
+            &buffer,
+            {
+                .box = {.layout = {.width = gui::px(140.0f), .height = gui::px(48.0f)}},
+                .tab_text = "\t",
+            });
+        gui::end_frame(ui);
+
+        TEST_EXPECT(context, signal.changed);
+        TEST_EXPECT(context, buffer.str() == StrRef("a\t"));
+
+        gui::destroy_context(gui_context);
+    }
+
     TEST_CASE(explicit_ids_disambiguate_same_text_widgets) {
         Arena arena = {};
         arena.init();
