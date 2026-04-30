@@ -39,9 +39,14 @@ namespace {
         bool reveal_log_scroll = true;
         bool popup_open = true;
         bool modal_open = false;
+        bool sample_enabled = true;
+        bool sample_preview = false;
         float scale = 1.25f;
+        float sample_value = 0.5f;
+        size_t selected_tab = 0u;
         size_t selected_index = 12u;
         char name[64] = "Editable text";
+        char sample_name[64] = "Second tab text";
         gui::TextSelection title_selection = {};
         gui::TextSelection body_selection = {};
         gui::Signal header_signal = {};
@@ -155,19 +160,131 @@ namespace {
                 }
             }
 
-            if (auto body = ui.row(
-                    gui::id("body"),
-                    {
-                        .layout =
+            gui::TabItem testbed_tabs[] = {
+                {gui::id("testbed_main_tab"), "Testbed"},
+                {gui::id("testbed_sample_tab"), "Samples"},
+            };
+            auto tab_view = ui.tab_view(
+                gui::id("testbed_tabs"),
+                {
+                    .tabs = slice(testbed_tabs),
+                    .selected_index = &state.selected_tab,
+                    .flags = 0u,
+                    .box = {.layout = {.width = gui::fill(), .height = gui::fill()}},
+                }
+            );
+
+            if (tab_view.selected_index() == 1u) {
+                if (auto samples = ui.column(
+                        gui::id("sample_tab_body"),
+                        {
+                            .layout =
+                                {
+                                    .width = gui::fill(),
+                                    .height = gui::fill(),
+                                    .padding = gui::insets(10.0f),
+                                    .gap = 8.0f,
+                                    .align_x = gui::Align::STRETCH,
+                                },
+                            .style =
+                                {
+                                    .role = gui::StyleRole::PANEL,
+                                    .background = gui::rgb(30, 34, 40),
+                                    .radius = 4.0f,
+                                },
+                            .debug_name = "sample_tab_body",
+                        }
+                    )) {
+                    ui.label(
+                        "Second tab",
+                        {
+                            .layout = {.width = gui::fill(), .height = gui::px(24.0f)},
+                            .style = {.foreground = gui::rgb(235, 238, 242)},
+                        }
+                    );
+                    if (auto row = ui.row(
+                            gui::id("sample_tab_controls"),
                             {
-                                .width = gui::fill(),
-                                .height = gui::fill(),
-                                .gap = 8.0f,
-                                .align_y = gui::Align::STRETCH,
-                            },
-                        .debug_name = "body_row",
+                                .layout =
+                                    {
+                                        .width = gui::fill(),
+                                        .height = gui::px(30.0f),
+                                        .gap = 8.0f,
+                                        .align_y = gui::Align::CENTER,
+                                    },
+                                .debug_name = "sample_tab_controls",
+                            }
+                        )) {
+                        ui.checkbox(
+                            gui::id("sample_enabled_checkbox"),
+                            "Enabled",
+                            &state.sample_enabled,
+                            {.layout = {.width = gui::px(116.0f), .height = gui::fill()}}
+                        );
+                        ui.toggle(
+                            gui::id("sample_preview_toggle"),
+                            "Preview",
+                            &state.sample_preview,
+                            {.layout = {.width = gui::px(126.0f), .height = gui::fill()}}
+                        );
+                        if (ui.button(
+                                  gui::id("sample_reset_button"),
+                                  "Reset",
+                                  {
+                                      .layout =
+                                          {
+                                              .width = gui::px(72.0f),
+                                              .height = gui::fill(),
+                                              .padding = gui::insets(3.0f, 6.0f),
+                                          },
+                                      .style = {.role = gui::StyleRole::ACCENT},
+                                  }
+                            )
+                                .activated) {
+                            state.sample_value = 0.5f;
+                        }
                     }
-                )) {
+                    ui.input_text(
+                        gui::id("sample_name_input"),
+                        "Name",
+                        state.sample_name,
+                        sizeof(state.sample_name),
+                        {
+                            .layout = {
+                                .width = gui::px(220.0f),
+                                .height = gui::px(30.0f),
+                                .padding = gui::insets(5.0f, 8.0f),
+                            },
+                        }
+                    );
+                    ui.slider_float(
+                        gui::id("sample_value_slider"),
+                        "Value",
+                        &state.sample_value,
+                        {
+                            .box =
+                                {
+                                    .layout = {.width = gui::px(260.0f), .height = gui::px(30.0f)},
+                                },
+                            .min = 0.0f,
+                            .max = 1.0f,
+                            .step = 0.05f,
+                        }
+                    );
+                }
+            } else if (auto body = ui.row(
+                           gui::id("body"),
+                           {
+                               .layout =
+                                   {
+                                       .width = gui::fill(),
+                                       .height = gui::fill(),
+                                       .gap = 8.0f,
+                                       .align_y = gui::Align::STRETCH,
+                                   },
+                               .debug_name = "body_row",
+                           }
+                       )) {
 
                 if (auto sidebar = ui.column(
                         gui::id("sidebar"),
@@ -574,11 +691,10 @@ namespace {
                                         {
                                             .column_span = 2u,
                                             .box = {
-                                                .layout =
-                                                    {
-                                                        .height = gui::px(28.0f),
-                                                        .padding = gui::insets(5.0f, 8.0f),
-                                                    },
+                                                .layout = {
+                                                    .height = gui::px(28.0f),
+                                                    .padding = gui::insets(5.0f, 8.0f),
+                                                },
                                             },
                                         }
                                     )) {
@@ -591,11 +707,10 @@ namespace {
                                         gui::id("preview_table_header_status"),
                                         {
                                             .box = {
-                                                .layout =
-                                                    {
-                                                        .height = gui::px(28.0f),
-                                                        .padding = gui::insets(5.0f, 8.0f),
-                                                    },
+                                                .layout = {
+                                                    .height = gui::px(28.0f),
+                                                    .padding = gui::insets(5.0f, 8.0f),
+                                                },
                                             },
                                         }
                                     )) {
@@ -611,12 +726,11 @@ namespace {
                                         {
                                             .row_span = 2u,
                                             .box = {
-                                                .layout =
-                                                    {
-                                                        .width = gui::px(96.0f),
-                                                        .height = gui::px(58.0f),
-                                                        .padding = gui::insets(5.0f, 8.0f),
-                                                    },
+                                                .layout = {
+                                                    .width = gui::px(96.0f),
+                                                    .height = gui::px(58.0f),
+                                                    .padding = gui::insets(5.0f, 8.0f),
+                                                },
                                             },
                                         }
                                     )) {
@@ -629,12 +743,11 @@ namespace {
                                         gui::id("preview_table_build_cell"),
                                         {
                                             .box = {
-                                                .layout =
-                                                    {
-                                                        .width = gui::px(196.0f),
-                                                        .height = gui::px(28.0f),
-                                                        .padding = gui::insets(5.0f, 8.0f),
-                                                    },
+                                                .layout = {
+                                                    .width = gui::px(196.0f),
+                                                    .height = gui::px(28.0f),
+                                                    .padding = gui::insets(5.0f, 8.0f),
+                                                },
                                             },
                                         }
                                     )) {
@@ -647,12 +760,11 @@ namespace {
                                         gui::id("preview_table_done_cell"),
                                         {
                                             .box = {
-                                                .layout =
-                                                    {
-                                                        .width = gui::px(120.0f),
-                                                        .height = gui::px(28.0f),
-                                                        .padding = gui::insets(5.0f, 8.0f),
-                                                    },
+                                                .layout = {
+                                                    .width = gui::px(120.0f),
+                                                    .height = gui::px(28.0f),
+                                                    .padding = gui::insets(5.0f, 8.0f),
+                                                },
                                             },
                                         }
                                     )) {
@@ -668,11 +780,10 @@ namespace {
                                         {
                                             .column_span = 2u,
                                             .box = {
-                                                .layout =
-                                                    {
-                                                        .height = gui::px(28.0f),
-                                                        .padding = gui::insets(5.0f, 8.0f),
-                                                    },
+                                                .layout = {
+                                                    .height = gui::px(28.0f),
+                                                    .padding = gui::insets(5.0f, 8.0f),
+                                                },
                                             },
                                         }
                                     )) {
@@ -751,7 +862,7 @@ namespace {
                 }
             }
 
-            if (state.modal_open) {
+            if (tab_view.selected_index() == 0u && state.modal_open) {
                 if (auto modal = ui.modal(
                         gui::id("sample_modal"),
                         {
@@ -974,9 +1085,9 @@ namespace {
         }
 
         size_t const index = state->input.key_event_count;
-        state->key_events[index] = {.kind = gui::KeyEventKind::TEXT,
-                                    .mods = current_key_mods(),
-                                    .codepoint = codepoint};
+        state->key_events[index] = {
+            .kind = gui::KeyEventKind::TEXT, .mods = current_key_mods(), .codepoint = codepoint
+        };
         state->input.key_events = state->key_events;
         state->input.key_event_count += 1u;
     }
