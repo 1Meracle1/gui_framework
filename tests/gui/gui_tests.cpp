@@ -1048,6 +1048,70 @@ namespace {
         gui::destroy_context(gui_context);
     }
 
+    TEST_CASE(input_hit_testing_honors_fixed_list_clip) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::Id const label_id = gui::id("title");
+        gui::Id const list_id = gui::id("files");
+        gui::TextSelection selection = {};
+
+        auto add_ui =
+            [&](gui::Frame& frame, gui::Signal* out_label, gui::Signal* out_first_row) -> void {
+            frame.set_scroll_y(list_id, 15.0f);
+            gui::Signal const label = frame.selectable_label(
+                label_id,
+                "Virtualized Assets",
+                &selection,
+                {.layout = {.width = gui::px(100.0f), .height = gui::px(20.0f)}}
+            );
+            if (out_label != nullptr) {
+                *out_label = label;
+            }
+
+            auto rows = frame.list_fixed(
+                list_id,
+                {
+                    .item_count = 8u,
+                    .item_height = 20.0f,
+                    .box = {.layout = {.width = gui::fill(), .height = gui::px(30.0f)}},
+                }
+            );
+            for (size_t index = rows.first; index < rows.end; ++index) {
+                auto row = rows.row(gui::id(static_cast<uint64_t>(index + 1u)));
+                TEST_EXPECT(context, row);
+                gui::Signal const signal = row.signal();
+                if (out_first_row != nullptr && index == rows.first) {
+                    *out_first_row = signal;
+                }
+                frame.label("Asset", {.layout = {.width = gui::fill(), .height = gui::fill()}});
+            }
+        };
+
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {100.0f, 60.0f}});
+        add_ui(ui, nullptr, nullptr);
+        gui::end_frame(ui);
+
+        gui::InputState input = {};
+        input.mouse_pos = {5.0f, 10.0f};
+        input.mouse_down[0u] = true;
+        ui = gui::begin_frame(gui_context, {.size = {100.0f, 60.0f}, .input = input});
+        gui::Signal label_signal = {};
+        gui::Signal first_row_signal = {};
+        add_ui(ui, &label_signal, &first_row_signal);
+        gui::end_frame(ui);
+
+        TEST_EXPECT(context, label_signal.hovered);
+        TEST_EXPECT(context, label_signal.pressed_left);
+        TEST_EXPECT(context, !first_row_signal.hovered);
+        TEST_EXPECT(context, !first_row_signal.pressed_left);
+
+        gui::destroy_context(gui_context);
+    }
+
     TEST_CASE(scroll_to_index_updates_fixed_list_range_for_each_reveal_mode) {
         Arena arena = {};
         arena.init();

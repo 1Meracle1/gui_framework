@@ -722,7 +722,8 @@ namespace gui {
             for (size_t index = impl->box_count; index > 0u; --index) {
                 BoxNode const& box = impl->boxes[index - 1u];
                 if (box.interactive && !box_disabled(box) && box.state != nullptr &&
-                    box.state->last_frame != 0u && rect_contains(box.state->rect, mouse_pos)) {
+                    box.state->last_frame != 0u && rect_contains(box.state->rect, mouse_pos) &&
+                    hit_passes_clips(impl, index - 1u, mouse_pos)) {
                     return box.id;
                 }
             }
