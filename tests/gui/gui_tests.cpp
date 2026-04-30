@@ -537,6 +537,57 @@ namespace {
         gui::destroy_context(gui_context);
     }
 
+    TEST_CASE(table_cells_clip_overflowing_children) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::draw::Context draw_context = {};
+        gui::draw::create_context(arena, {}, draw_context);
+
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {80.0f, 40.0f}});
+        if (auto table = ui.table(
+                {.layout = {.width = gui::children(), .height = gui::children()}})) {
+            if (auto row = table.row()) {
+                if (auto cell = row.cell(
+                        {.box = {.layout = {.width = gui::px(20.0f),
+                                            .height = gui::px(20.0f),
+                                            .padding = gui::insets(2.0f, 4.0f)}}})) {
+                    BASE_UNUSED(cell);
+                    ui.spacer({.layout = {.width = gui::px(40.0f), .height = gui::px(10.0f)},
+                               .style = {.background = gui::rgb(255, 0, 0)}});
+                }
+            }
+        }
+        gui::end_frame(ui);
+
+        gui::draw::begin_frame(draw_context);
+        gui::render_frame(ui, draw_context);
+
+        gui::draw::StyledRectCommand const* overflow = nullptr;
+        for (size_t index = 0u; index < gui::draw::styled_rect_command_count(draw_context);
+             ++index) {
+            gui::draw::StyledRectCommand const* command =
+                gui::draw::styled_rect_command(draw_context, index);
+            if (command != nullptr && command->rect.max.x - command->rect.min.x == 40.0f) {
+                overflow = command;
+            }
+        }
+
+        TEST_EXPECT(context, overflow != nullptr);
+        if (overflow != nullptr) {
+            TEST_EXPECT(context, overflow->clip_rect.min.x == 4.0f);
+            TEST_EXPECT(context, overflow->clip_rect.min.y == 2.0f);
+            TEST_EXPECT(context, overflow->clip_rect.max.x == 16.0f);
+            TEST_EXPECT(context, overflow->clip_rect.max.y == 18.0f);
+        }
+
+        gui::draw::destroy_context(draw_context);
+        gui::destroy_context(gui_context);
+    }
+
     TEST_CASE(overlay_places_measured_and_fill_children) {
         Arena arena = {};
         arena.init();

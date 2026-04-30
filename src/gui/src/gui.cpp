@@ -295,7 +295,7 @@ namespace gui {
         [[nodiscard]] auto box_clips(BoxNode const& box) -> bool {
             return box.layout.clip || box.layout.scroll_x || box.layout.scroll_y ||
                    box.kind == BoxKind::SCROLL_PANEL || box.kind == BoxKind::LIST ||
-                   input_text_box(box.kind);
+                   input_text_box(box.kind) || table_cell_box(box.kind);
         }
 
         [[nodiscard]] auto top_layer_box(ContextImpl const* impl, size_t index) -> bool {
@@ -3003,7 +3003,8 @@ namespace gui {
         auto render_box(ContextImpl const* impl, draw::Context draw_context, size_t index) -> void {
             BoxNode const& box = impl->boxes[index];
             bool const clips = box_clips(box);
-            if (clips) {
+            bool const clips_cell_content = table_cell_box(box.kind);
+            if (clips && !clips_cell_content) {
                 draw::push_clip_rect(draw_context, to_draw_rect(box.rect));
             }
 
@@ -3066,6 +3067,11 @@ namespace gui {
                 }
             }
 
+            if (clips_cell_content) {
+                draw::push_clip_rect(
+                    draw_context, to_draw_rect(content_rect(box.rect, box.layout.padding)));
+            }
+
             for (size_t child = box.first_child; child != INVALID_INDEX;
                  child = impl->boxes[child].next_sibling) {
                 if (floating_box(impl->boxes[child].kind)) {
@@ -3108,7 +3114,10 @@ namespace gui {
             BoxNode const& box = impl->boxes[index];
             bool const clips = box_clips(box);
             if (clips) {
-                draw::push_clip_rect(draw_context, to_draw_rect(box.rect));
+                Rect const clip = table_cell_box(box.kind)
+                                      ? content_rect(box.rect, box.layout.padding)
+                                      : box.rect;
+                draw::push_clip_rect(draw_context, to_draw_rect(clip));
             }
 
             for (size_t child = box.first_child; child != INVALID_INDEX;
