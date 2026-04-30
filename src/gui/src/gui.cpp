@@ -1292,7 +1292,8 @@ namespace gui {
 
                 float const gaps =
                     child_count > 1u ? box.layout.gap * static_cast<float>(child_count - 1u) : 0.0f;
-                if (box.kind == BoxKind::ROW) {
+                if (box.kind == BoxKind::ROW || box.kind == BoxKind::TAB_BAR ||
+                    box.kind == BoxKind::TAB) {
                     if (box.layout.width.kind == SizeKind::AUTO ||
                         box.layout.width.kind == SizeKind::CHILDREN) {
                         size.x = total_x + gaps + inset_width(box.layout.padding);
@@ -1303,6 +1304,7 @@ namespace gui {
                     }
                 } else if (box.kind == BoxKind::COLUMN || box.kind == BoxKind::POPUP ||
                            box.kind == BoxKind::LIST || box.kind == BoxKind::SCROLL_PANEL ||
+                           box.kind == BoxKind::TAB_VIEW || box.kind == BoxKind::TAB_BODY ||
                            box.kind == BoxKind::ROOT) {
                     if (box.layout.width.kind == SizeKind::AUTO ||
                         box.layout.width.kind == SizeKind::CHILDREN) {
@@ -1518,11 +1520,13 @@ namespace gui {
 
             if (box.kind == BoxKind::TABLE) {
                 layout_table(impl, index);
-            } else if (box.kind == BoxKind::ROW) {
+            } else if (box.kind == BoxKind::ROW || box.kind == BoxKind::TAB_BAR ||
+                       box.kind == BoxKind::TAB) {
                 layout_children(impl, index, Axis::X);
             } else if (box.kind == BoxKind::COLUMN || box.kind == BoxKind::POPUP ||
-                       box.kind == BoxKind::ROOT ||
-                       box.kind == BoxKind::SCROLL_PANEL || box.kind == BoxKind::LIST) {
+                       box.kind == BoxKind::TAB_VIEW || box.kind == BoxKind::TAB_BODY ||
+                       box.kind == BoxKind::ROOT || box.kind == BoxKind::SCROLL_PANEL ||
+                       box.kind == BoxKind::LIST) {
                 layout_children(impl, index, Axis::Y);
             } else {
                 layout_overlay(impl, index);
@@ -1837,6 +1841,138 @@ namespace gui {
                                                            key_pressed(impl, Key::SPACE, false)));
             box.signal = signal;
             return signal;
+        }
+
+        [[nodiscard]] auto tab_flag(TabFlags flags, TabFlags flag) -> bool {
+            return (flags & flag) != 0u;
+        }
+
+        [[nodiscard]] auto tab_count(TabViewDesc const& desc) -> size_t {
+            size_t const count = desc.tab_count != nullptr ? *desc.tab_count : desc.tabs.size();
+            return std::min(count, desc.tabs.size());
+        }
+
+        [[nodiscard]] auto clamp_tab_index(size_t index, size_t count) -> size_t {
+            return count == 0u ? TAB_INDEX_NONE : std::min(index, count - 1u);
+        }
+
+        [[nodiscard]] auto selected_tab_index(TabViewDesc const& desc, size_t count) -> size_t {
+            size_t const selected = desc.selected_index != nullptr ? *desc.selected_index : 0u;
+            return clamp_tab_index(selected, count);
+        }
+
+        [[nodiscard]] auto tab_child_id(Id parent, uint64_t salt) -> Id {
+            return {hash_combine(parent.value, salt)};
+        }
+
+        [[nodiscard]] auto ensure_tab_id(TabViewDesc const& desc, Id view_id, size_t index) -> Id {
+            TabItem& tab = desc.tabs[index];
+            if (tab.id.value == 0u) {
+                tab.id = tab_child_id(view_id, index + 1u);
+            }
+            return tab.id;
+        }
+
+        auto move_tab(Slice<TabItem> tabs, size_t from, size_t to) -> void {
+            if (from == to || from >= tabs.size() || to >= tabs.size()) {
+                return;
+            }
+
+            TabItem const item = tabs[from];
+            if (from < to) {
+                for (size_t index = from; index < to; ++index) {
+                    tabs[index] = tabs[index + 1u];
+                }
+            } else {
+                for (size_t index = from; index > to; --index) {
+                    tabs[index] = tabs[index - 1u];
+                }
+            }
+            tabs[to] = item;
+        }
+
+        auto close_tab(Slice<TabItem> tabs, size_t* count, size_t index) -> void {
+            if (count == nullptr || index >= *count || *count > tabs.size()) {
+                return;
+            }
+            for (size_t next = index + 1u; next < *count; ++next) {
+                tabs[next - 1u] = tabs[next];
+            }
+            *count -= 1u;
+            tabs[*count] = {};
+        }
+
+        [[nodiscard]] auto selected_after_close(size_t selected, size_t closed, size_t count)
+            -> size_t {
+            if (count == 0u) {
+                return TAB_INDEX_NONE;
+            }
+            if (selected == closed) {
+                return std::min(closed, count - 1u);
+            }
+            return selected > closed ? selected - 1u : selected;
+        }
+
+        [[nodiscard]] auto selected_after_move(size_t selected, size_t from, size_t to) -> size_t {
+            if (selected == from) {
+                return to;
+            }
+            if (from < to && selected > from && selected <= to) {
+                return selected - 1u;
+            }
+            if (to < from && selected >= to && selected < from) {
+                return selected + 1u;
+            }
+            return selected;
+        }
+
+        [[nodiscard]] auto drag_moves_tab(
+            ContextImpl const* impl,
+            Id view_id,
+            TabViewDesc const& desc,
+            size_t index,
+            size_t count,
+            size_t& out_to
+        ) -> bool {
+            if (!tab_flag(desc.flags, TAB_FLAG_MOVABLE) || !impl->frame_desc.input.mouse_down[0u] ||
+                !impl->previous_input.mouse_down[0u]) {
+                return false;
+            }
+
+            float const mouse_x = impl->frame_desc.input.mouse_pos.x;
+            if (index > 0u) {
+                StateEntry const* const state = find_state_entry(
+                    impl,
+                    explicit_id(
+                        impl,
+                        top_parent_index(impl),
+                        BoxKind::TAB,
+                        ensure_tab_id(desc, view_id, index - 1u)
+                    )
+                );
+                if (state != nullptr && state->last_frame != 0u &&
+                    mouse_x < (state->rect.min.x + state->rect.max.x) * 0.5f) {
+                    out_to = index - 1u;
+                    return true;
+                }
+            }
+            if (index + 1u < count) {
+                StateEntry const* const state = find_state_entry(
+                    impl,
+                    explicit_id(
+                        impl,
+                        top_parent_index(impl),
+                        BoxKind::TAB,
+                        ensure_tab_id(desc, view_id, index + 1u)
+                    )
+                );
+                if (state != nullptr && state->last_frame != 0u &&
+                    mouse_x > (state->rect.min.x + state->rect.max.x) * 0.5f) {
+                    out_to = index + 1u;
+                    return true;
+                }
+            }
+            return false;
         }
 
         [[nodiscard]] auto clamp_text_selection(TextSelection selection, size_t text_size)
@@ -3257,6 +3393,9 @@ namespace gui {
             .border_thickness = tokens.border_thickness,
         };
         theme_kind(theme, BoxKind::TABLE_HEADER_CELL).role = StyleRole::CONTROL;
+        theme_kind(theme, BoxKind::TAB_VIEW).role = StyleRole::PANEL;
+        theme_kind(theme, BoxKind::TAB).role = StyleRole::CONTROL;
+        theme_kind(theme, BoxKind::TAB_BODY).role = StyleRole::PANEL;
         theme_kind(theme, BoxKind::BUTTON).role = StyleRole::CONTROL;
         theme_kind(theme, BoxKind::CHECKBOX).role = StyleRole::CONTROL;
         theme_kind(theme, BoxKind::TOGGLE).role = StyleRole::CONTROL;
@@ -3522,6 +3661,32 @@ namespace gui {
         return TableRowScope(Scope(m_scope.m_frame, index));
     }
 
+    TabViewScope::TabViewScope(Scope&& root, Scope&& body, TabViewResult result)
+        : m_root(std::move(root)), m_body(std::move(body)), m_result(result) {}
+
+    auto TabViewScope::operator=(TabViewScope&& other) noexcept -> TabViewScope& {
+        if (this != &other) {
+            m_body = {};
+            m_root = {};
+            m_root = std::move(other.m_root);
+            m_body = std::move(other.m_body);
+            m_result = other.m_result;
+        }
+        return *this;
+    }
+
+    TabViewScope::operator bool() const {
+        return static_cast<bool>(m_body) && m_result.selected_index != TAB_INDEX_NONE;
+    }
+
+    auto TabViewScope::result() const -> TabViewResult {
+        return m_result;
+    }
+
+    auto TabViewScope::selected_index() const -> size_t {
+        return m_result.selected_index;
+    }
+
     Frame::Frame(void* handle) : m_handle(handle) {}
 
     namespace detail {
@@ -3701,6 +3866,209 @@ namespace gui {
                                         false);
         push_parent(impl, index);
         return TableScope(Scope(this, index));
+    }
+
+    auto Frame::tab_view(Id id_value, TabViewDesc const& desc) -> TabViewScope {
+        ContextImpl* const impl = impl_from_frame(*this);
+        size_t const parent = top_parent_index(impl);
+
+        BoxDesc view_desc = desc.box;
+        if (view_desc.layout.width.kind == SizeKind::AUTO) {
+            view_desc.layout.width = fill();
+        }
+        if (view_desc.layout.height.kind == SizeKind::AUTO) {
+            view_desc.layout.height = fill();
+        }
+        if (view_desc.layout.align_x == Align::START) {
+            view_desc.layout.align_x = Align::STRETCH;
+        }
+
+        size_t const view_index = append_box(
+            impl,
+            BoxKind::TAB_VIEW,
+            explicit_id(impl, parent, BoxKind::TAB_VIEW, id_value),
+            id_value,
+            {},
+            view_desc,
+            false,
+            false
+        );
+        push_parent(impl, view_index);
+
+        Id const view_id = impl->boxes[view_index].id;
+        Id const bar_id = tab_child_id(view_id, 0x7ab0u);
+        BoxDesc bar_desc = desc.tab_bar_box;
+        if (bar_desc.layout.width.kind == SizeKind::AUTO) {
+            bar_desc.layout.width = fill();
+        }
+        if (bar_desc.layout.height.kind == SizeKind::AUTO) {
+            bar_desc.layout.height = px(std::max(desc.tab_bar_height, 1.0f));
+        }
+        if (bar_desc.layout.gap == 0.0f) {
+            bar_desc.layout.gap = 2.0f;
+        }
+        bar_desc.layout.align_y = Align::CENTER;
+        bar_desc.layout.clip = true;
+        size_t const bar_index = append_box(
+            impl,
+            BoxKind::TAB_BAR,
+            explicit_id(impl, view_index, BoxKind::TAB_BAR, bar_id),
+            bar_id,
+            {},
+            bar_desc,
+            false,
+            false
+        );
+        push_parent(impl, bar_index);
+
+        size_t count = tab_count(desc);
+        size_t selected = selected_tab_index(desc, count);
+        TabViewResult result = {.selected_index = selected};
+
+        for (size_t index = 0u; index < count; ++index) {
+            Id const tab_id = ensure_tab_id(desc, view_id, index);
+            bool const active = index == selected;
+            BoxDesc tab_desc = desc.tab_box;
+            if (tab_desc.layout.width.kind == SizeKind::AUTO) {
+                tab_desc.layout.width = children();
+            }
+            if (tab_desc.layout.height.kind == SizeKind::AUTO) {
+                tab_desc.layout.height = fill();
+            }
+            if (tab_desc.layout.min_width.kind == SizeKind::AUTO && desc.tab_min_width > 0.0f) {
+                tab_desc.layout.min_width = px(desc.tab_min_width);
+            }
+            if (tab_desc.layout.padding.left == 0.0f && tab_desc.layout.padding.right == 0.0f) {
+                tab_desc.layout.padding = insets(0.0f, 8.0f);
+            }
+            if (tab_desc.layout.gap == 0.0f) {
+                tab_desc.layout.gap = 4.0f;
+            }
+            tab_desc.layout.align_y = Align::CENTER;
+            if (tab_desc.style.role == StyleRole::AUTO) {
+                tab_desc.style.role = active ? StyleRole::ACCENT : StyleRole::CONTROL;
+            }
+
+            size_t const tab_index = append_box(
+                impl,
+                BoxKind::TAB,
+                explicit_id(impl, bar_index, BoxKind::TAB, tab_id),
+                tab_id,
+                {},
+                tab_desc,
+                true,
+                true
+            );
+            BoxNode& tab = impl->boxes[tab_index];
+            Signal const tab_signal = apply_button_activation(impl, tab);
+            if (tab_signal.activated) {
+                selected = index;
+                result.selected_index = selected;
+            }
+            if (!result.moved && tab_signal.active) {
+                size_t to = index;
+                if (drag_moves_tab(impl, view_id, desc, index, count, to)) {
+                    result.moved = true;
+                    result.moved_from = index;
+                    result.moved_to = to;
+                }
+            }
+
+            push_parent(impl, tab_index);
+            label(desc.tabs[index].title, {.layout = {.width = text(), .height = fill()}});
+            spacer({.layout = {.width = fill(), .height = px(1.0f)}});
+            if (tab_flag(desc.flags, TAB_FLAG_CLOSABLE)) {
+                Id const close_id = tab_child_id(tab_id, 0xc105e0u);
+                Signal const close_signal = button(
+                    close_id,
+                    "x",
+                    {.layout = {
+                         .width = px(20.0f),
+                         .height = fill(),
+                         .padding = insets(0.0f),
+                     }}
+                );
+                if (close_signal.activated && !result.closed) {
+                    result.closed = true;
+                    result.closed_index = index;
+                }
+            }
+            pop_parent_to(impl, tab_index);
+        }
+
+        if (tab_flag(desc.flags, TAB_FLAG_ADDABLE)) {
+            Id const add_id = tab_child_id(view_id, 0xadd0u);
+            Signal const add_signal = button(
+                add_id,
+                "+",
+                {.layout = {
+                     .width = px(std::max(desc.tab_bar_height, 1.0f)),
+                     .height = fill(),
+                     .padding = insets(0.0f),
+                 }}
+            );
+            if (add_signal.activated) {
+                result.added = true;
+                result.added_index = count;
+            }
+        }
+
+        if (result.closed && result.closed_index < count) {
+            size_t const next_count = count - 1u;
+            selected = selected_after_close(selected, result.closed_index, next_count);
+            close_tab(desc.tabs, desc.tab_count, result.closed_index);
+            count = desc.tab_count != nullptr ? tab_count(desc) : next_count;
+        } else if (result.moved) {
+            selected = selected_after_move(selected, result.moved_from, result.moved_to);
+            move_tab(desc.tabs, result.moved_from, result.moved_to);
+        } else if (result.added && desc.tab_count != nullptr &&
+                   *desc.tab_count < desc.tabs.size()) {
+            size_t const index = *desc.tab_count;
+            TabItem item = desc.new_tab;
+            if (item.id.value == 0u) {
+                item.id = tab_child_id(view_id, index + 1u);
+            }
+            if (item.title.empty()) {
+                item.title = "New Tab";
+            }
+            desc.tabs[index] = item;
+            *desc.tab_count += 1u;
+            count = *desc.tab_count;
+            selected = index;
+        }
+
+        selected = clamp_tab_index(selected, count);
+        result.selected_index = selected;
+        if (desc.selected_index != nullptr) {
+            *desc.selected_index = selected;
+        }
+
+        pop_parent_to(impl, bar_index);
+
+        Id const body_id = tab_child_id(view_id, 0xb0d7u);
+        BoxDesc body_desc = desc.body_box;
+        if (body_desc.layout.width.kind == SizeKind::AUTO) {
+            body_desc.layout.width = fill();
+        }
+        if (body_desc.layout.height.kind == SizeKind::AUTO) {
+            body_desc.layout.height = fill();
+        }
+        if (body_desc.layout.align_x == Align::START) {
+            body_desc.layout.align_x = Align::STRETCH;
+        }
+        body_desc.layout.clip = true;
+        size_t const body_index = append_box(
+            impl,
+            BoxKind::TAB_BODY,
+            explicit_id(impl, view_index, BoxKind::TAB_BODY, body_id),
+            body_id,
+            {},
+            body_desc,
+            false,
+            false
+        );
+        push_parent(impl, body_index);
+        return TabViewScope(Scope(this, view_index), Scope(this, body_index), result);
     }
 
     auto Frame::spacer(BoxDesc const& desc) -> void {

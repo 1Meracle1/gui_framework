@@ -155,6 +155,37 @@ for (size_t index = rows.first; index < rows.end; ++index) {
 gui::ScrollState const scroll = ui.scroll_state(files_id);
 ```
 
+## Tabs
+
+```cpp
+gui::TabItem tabs[8] = {
+    {gui::id("scene"), "Scene"},
+    {gui::id("console"), "Console"},
+};
+size_t tab_count = 2u;
+size_t selected_tab = 0u;
+
+if (auto tabs_view = ui.tab_view(gui::id("workspace_tabs"),
+                                 {
+                                     .tabs = slice(tabs),
+                                     .tab_count = &tab_count,
+                                     .selected_index = &selected_tab,
+                                     .new_tab = {gui::id("new_tab"), "New Tab"},
+                                 })) {
+    switch (tabs_view.selected_index()) {
+    case 0u:
+        draw_scene(ui);
+        break;
+    case 1u:
+        draw_console(ui);
+        break;
+    default:
+        draw_document(ui, tabs[tabs_view.selected_index()].id);
+        break;
+    }
+}
+```
+
 ## Metadata And Editor Inspection
 
 ```cpp

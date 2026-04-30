@@ -1,6 +1,7 @@
 #pragma once
 
 #include <base/memory.h>
+#include <base/slice.h>
 #include <base/str_ref.h>
 #include <base/string_buffer.h>
 #include <cstddef>
@@ -253,6 +254,42 @@ namespace gui {
         BoxDesc box = {};
     };
 
+    struct TabItem {
+        Id id = {};
+        StrRef title = {};
+    };
+
+    using TabFlags = uint32_t;
+    inline constexpr TabFlags TAB_FLAG_ADDABLE = 1u << 0u;
+    inline constexpr TabFlags TAB_FLAG_CLOSABLE = 1u << 1u;
+    inline constexpr TabFlags TAB_FLAG_MOVABLE = 1u << 2u;
+    inline constexpr size_t TAB_INDEX_NONE = static_cast<size_t>(-1);
+
+    struct TabViewDesc {
+        Slice<TabItem> tabs = {};
+        size_t* tab_count = nullptr;
+        size_t* selected_index = nullptr;
+        TabItem new_tab = {};
+        TabFlags flags = TAB_FLAG_ADDABLE | TAB_FLAG_CLOSABLE | TAB_FLAG_MOVABLE;
+        BoxDesc box = {};
+        BoxDesc tab_bar_box = {};
+        BoxDesc tab_box = {};
+        BoxDesc body_box = {};
+        float tab_bar_height = 28.0f;
+        float tab_min_width = 84.0f;
+    };
+
+    struct TabViewResult {
+        bool added = false;
+        bool closed = false;
+        bool moved = false;
+        size_t added_index = TAB_INDEX_NONE;
+        size_t closed_index = TAB_INDEX_NONE;
+        size_t moved_from = TAB_INDEX_NONE;
+        size_t moved_to = TAB_INDEX_NONE;
+        size_t selected_index = TAB_INDEX_NONE;
+    };
+
     enum class BoxKind : uint8_t {
         ROOT,
         ROW,
@@ -276,6 +313,10 @@ namespace gui {
         TABLE_HEADER_ROW,
         TABLE_CELL,
         TABLE_HEADER_CELL,
+        TAB_VIEW,
+        TAB_BAR,
+        TAB,
+        TAB_BODY,
         COUNT,
     };
 
@@ -420,6 +461,7 @@ namespace gui {
     class Frame;
     class TableScope;
     class TableRowScope;
+    class TabViewScope;
 
     namespace detail {
         [[nodiscard]] auto frame_handle(Frame const& frame) -> void*;
@@ -522,6 +564,30 @@ namespace gui {
         Scope m_scope = {};
     };
 
+    class TabViewScope final {
+      public:
+        TabViewScope() = default;
+        ~TabViewScope() = default;
+
+        TabViewScope(TabViewScope&&) noexcept = default;
+        TabViewScope(TabViewScope const&) = delete;
+        auto operator=(TabViewScope&& other) noexcept -> TabViewScope&;
+        auto operator=(TabViewScope const&) -> TabViewScope& = delete;
+
+        [[nodiscard]] explicit operator bool() const;
+        [[nodiscard]] auto result() const -> TabViewResult;
+        [[nodiscard]] auto selected_index() const -> size_t;
+
+      private:
+        friend class Frame;
+
+        TabViewScope(Scope&& root, Scope&& body, TabViewResult result);
+
+        Scope m_root = {};
+        Scope m_body = {};
+        TabViewResult m_result = {};
+    };
+
     class Frame final {
       public:
         Frame() = default;
@@ -537,6 +603,7 @@ namespace gui {
         [[nodiscard]] auto scroll_panel(Id id, BoxDesc const& desc = {}) -> Scope;
         [[nodiscard]] auto table(BoxDesc const& desc = {}) -> TableScope;
         [[nodiscard]] auto table(Id id, BoxDesc const& desc = {}) -> TableScope;
+        [[nodiscard]] auto tab_view(Id id, TabViewDesc const& desc) -> TabViewScope;
 
         auto spacer(BoxDesc const& desc) -> void;
         auto spacer(float size) -> void;

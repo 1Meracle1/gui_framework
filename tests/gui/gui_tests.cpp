@@ -50,6 +50,38 @@ namespace {
         }
     }
 
+    auto box_center(gui::BoxInfo const* box) -> gui::Vec2 {
+        if (box == nullptr) {
+            return {};
+        }
+        return {
+            (box->rect.min.x + box->rect.max.x) * 0.5f, (box->rect.min.y + box->rect.max.y) * 0.5f
+        };
+    }
+
+    auto find_box_text(gui::Frame const& ui, gui::BoxKind kind, StrRef text)
+        -> gui::BoxInfo const* {
+        for (size_t index = 0u; index < ui.box_info_count(); ++index) {
+            gui::BoxInfo const* const box = ui.box_info(index);
+            if (box != nullptr && box->kind == kind && box->text == text) {
+                return box;
+            }
+        }
+        return nullptr;
+    }
+
+    auto find_child_text(gui::Frame const& ui, gui::Id parent_id, gui::BoxKind kind, StrRef text)
+        -> gui::BoxInfo const* {
+        for (size_t index = 0u; index < ui.box_info_count(); ++index) {
+            gui::BoxInfo const* const box = ui.box_info(index);
+            if (box != nullptr && box->parent_id.value == parent_id.value && box->kind == kind &&
+                box->text == text) {
+                return box;
+            }
+        }
+        return nullptr;
+    }
+
     TEST_CASE(version_is_available) {
         gui::Version const gui_version = gui::version();
 
@@ -375,6 +407,171 @@ namespace {
         if (table != nullptr) {
             expect_rect(context, table->rect, {{0.0f, 0.0f}, {80.0f, 20.0f}});
         }
+
+        gui::destroy_context(gui_context);
+    }
+
+    TEST_CASE(tab_view_switches_selected_body_content) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::TabItem tabs[] = {
+            {gui::id("tab_a"), "A"},
+            {gui::id("tab_b"), "B"},
+        };
+        size_t tab_count = 2u;
+        size_t selected = 0u;
+
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {240.0f, 100.0f}});
+        if (auto tab_view = ui.tab_view(
+                gui::id("tabs"),
+                {.tabs = slice(tabs),
+                 .tab_count = &tab_count,
+                 .selected_index = &selected,
+                 .box = {.layout = {.width = gui::px(220.0f), .height = gui::px(90.0f)}}}
+            )) {
+            ui.label(selected == 0u ? "Alpha" : "Beta");
+            TEST_EXPECT(context, tab_view.selected_index() == 0u);
+        }
+        gui::end_frame(ui);
+
+        gui::BoxInfo const* second_tab = ui.find_box(tabs[1].id, gui::BoxKind::TAB);
+        TEST_EXPECT(context, second_tab != nullptr);
+        TEST_EXPECT(context, find_box_text(ui, gui::BoxKind::LABEL, "Alpha") != nullptr);
+
+        gui::InputState input = {};
+        input.mouse_pos = box_center(second_tab);
+        input.mouse_down[0u] = true;
+        ui = gui::begin_frame(gui_context, {.size = {240.0f, 100.0f}, .input = input});
+        ui.tab_view(
+            gui::id("tabs"),
+            {.tabs = slice(tabs),
+             .tab_count = &tab_count,
+             .selected_index = &selected,
+             .box = {.layout = {.width = gui::px(220.0f), .height = gui::px(90.0f)}}}
+        );
+        gui::end_frame(ui);
+
+        input.mouse_down[0u] = false;
+        ui = gui::begin_frame(gui_context, {.size = {240.0f, 100.0f}, .input = input});
+        if (auto tab_view = ui.tab_view(
+                gui::id("tabs"),
+                {.tabs = slice(tabs),
+                 .tab_count = &tab_count,
+                 .selected_index = &selected,
+                 .box = {.layout = {.width = gui::px(220.0f), .height = gui::px(90.0f)}}}
+            )) {
+            ui.label(selected == 0u ? "Alpha" : "Beta");
+            TEST_EXPECT(context, tab_view.result().selected_index == 1u);
+        }
+        gui::end_frame(ui);
+
+        TEST_EXPECT(context, selected == 1u);
+        TEST_EXPECT(context, find_box_text(ui, gui::BoxKind::LABEL, "Beta") != nullptr);
+
+        gui::destroy_context(gui_context);
+    }
+
+    TEST_CASE(tab_view_adds_closes_and_moves_app_owned_tabs) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::TabItem tabs[4] = {
+            {gui::id("tab_a"), "A"},
+            {gui::id("tab_b"), "B"},
+        };
+        size_t tab_count = 2u;
+        size_t selected = 0u;
+        gui::TabViewDesc desc = {
+            .tabs = slice(tabs),
+            .tab_count = &tab_count,
+            .selected_index = &selected,
+            .new_tab = {gui::id("tab_new"), "New"},
+            .box = {.layout = {.width = gui::px(260.0f), .height = gui::px(100.0f)}},
+        };
+
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {280.0f, 120.0f}});
+        ui.tab_view(gui::id("tabs"), desc);
+        gui::end_frame(ui);
+
+        gui::BoxInfo const* add = find_box_text(ui, gui::BoxKind::BUTTON, "+");
+        TEST_EXPECT(context, add != nullptr);
+
+        gui::InputState input = {};
+        input.mouse_pos = box_center(add);
+        input.mouse_down[0u] = true;
+        ui = gui::begin_frame(gui_context, {.size = {280.0f, 120.0f}, .input = input});
+        ui.tab_view(gui::id("tabs"), desc);
+        gui::end_frame(ui);
+
+        input.mouse_down[0u] = false;
+        gui::TabViewResult result = {};
+        ui = gui::begin_frame(gui_context, {.size = {280.0f, 120.0f}, .input = input});
+        if (auto tab_view = ui.tab_view(gui::id("tabs"), desc)) {
+            result = tab_view.result();
+        }
+        gui::end_frame(ui);
+
+        TEST_EXPECT(context, result.added);
+        TEST_EXPECT(context, tab_count == 3u);
+        TEST_EXPECT(context, selected == 2u);
+        TEST_EXPECT(context, tabs[2u].title == StrRef("New"));
+
+        gui::BoxInfo const* new_tab = ui.find_box(tabs[2u].id, gui::BoxKind::TAB);
+        TEST_EXPECT(context, new_tab != nullptr);
+        gui::BoxInfo const* close =
+            new_tab != nullptr ? find_child_text(ui, new_tab->id, gui::BoxKind::BUTTON, "x")
+                               : nullptr;
+        TEST_EXPECT(context, close != nullptr);
+
+        input.mouse_pos = box_center(close);
+        input.mouse_down[0u] = true;
+        ui = gui::begin_frame(gui_context, {.size = {280.0f, 120.0f}, .input = input});
+        ui.tab_view(gui::id("tabs"), desc);
+        gui::end_frame(ui);
+
+        input.mouse_down[0u] = false;
+        result = {};
+        ui = gui::begin_frame(gui_context, {.size = {280.0f, 120.0f}, .input = input});
+        if (auto tab_view = ui.tab_view(gui::id("tabs"), desc)) {
+            result = tab_view.result();
+        }
+        gui::end_frame(ui);
+
+        TEST_EXPECT(context, result.closed);
+        TEST_EXPECT(context, result.closed_index == 2u);
+        TEST_EXPECT(context, tab_count == 2u);
+        TEST_EXPECT(context, selected == 1u);
+
+        gui::BoxInfo const* first_tab = ui.find_box(tabs[0u].id, gui::BoxKind::TAB);
+        gui::BoxInfo const* second_tab = ui.find_box(tabs[1u].id, gui::BoxKind::TAB);
+        TEST_EXPECT(context, first_tab != nullptr && second_tab != nullptr);
+
+        input.mouse_pos = box_center(first_tab);
+        input.mouse_down[0u] = true;
+        ui = gui::begin_frame(gui_context, {.size = {280.0f, 120.0f}, .input = input});
+        ui.tab_view(gui::id("tabs"), desc);
+        gui::end_frame(ui);
+
+        input.mouse_pos.x = second_tab != nullptr ? second_tab->rect.max.x + 2.0f : 0.0f;
+        result = {};
+        ui = gui::begin_frame(gui_context, {.size = {280.0f, 120.0f}, .input = input});
+        if (auto tab_view = ui.tab_view(gui::id("tabs"), desc)) {
+            result = tab_view.result();
+        }
+        gui::end_frame(ui);
+
+        TEST_EXPECT(context, result.moved);
+        TEST_EXPECT(context, result.moved_from == 0u);
+        TEST_EXPECT(context, result.moved_to == 1u);
+        TEST_EXPECT(context, tabs[0u].title == StrRef("B"));
+        TEST_EXPECT(context, tabs[1u].title == StrRef("A"));
 
         gui::destroy_context(gui_context);
     }
