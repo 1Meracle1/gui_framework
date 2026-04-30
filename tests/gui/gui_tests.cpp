@@ -209,6 +209,21 @@ namespace {
         gui::destroy_context(gui_context);
     }
 
+    TEST_CASE(input_text_theme_defaults_keep_background_on_actions) {
+        gui::ThemeDesc theme = gui::default_theme();
+        gui::Color const background =
+            gui::theme_role(theme, gui::StyleRole::CONTROL).normal.background;
+
+        gui::ThemeStyle const& single = gui::theme_kind(theme, gui::BoxKind::INPUT_TEXT).style;
+        expect_color(context, single.hovered.background, background);
+        expect_color(context, single.active.background, background);
+
+        gui::ThemeStyle const& multiline =
+            gui::theme_kind(theme, gui::BoxKind::INPUT_TEXT_MULTILINE).style;
+        expect_color(context, multiline.hovered.background, background);
+        expect_color(context, multiline.active.background, background);
+    }
+
     TEST_CASE(boxdesc_style_overrides_theme_role_and_kind_defaults) {
         Arena arena = {};
         arena.init();

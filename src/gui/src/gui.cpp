@@ -2658,6 +2658,10 @@ namespace gui {
         theme_kind(theme, BoxKind::SLIDER_FLOAT).role = StyleRole::CONTROL;
         theme_kind(theme, BoxKind::INPUT_TEXT).role = StyleRole::CONTROL;
         theme_kind(theme, BoxKind::INPUT_TEXT_MULTILINE).role = StyleRole::CONTROL;
+        theme_kind(theme, BoxKind::INPUT_TEXT).style.hovered.background = tokens.control;
+        theme_kind(theme, BoxKind::INPUT_TEXT).style.active.background = tokens.control;
+        theme_kind(theme, BoxKind::INPUT_TEXT_MULTILINE).style.hovered.background = tokens.control;
+        theme_kind(theme, BoxKind::INPUT_TEXT_MULTILINE).style.active.background = tokens.control;
         return theme;
     }
 
