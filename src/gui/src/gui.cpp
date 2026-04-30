@@ -1376,6 +1376,29 @@ namespace gui {
             return offset;
         }
 
+        [[nodiscard]] auto text_selection_key_event(KeyEvent const& event) -> bool {
+            return (event.mods & KEY_MOD_SHIFT) != 0u &&
+                   (event.kind == KeyEventKind::PRESS || event.kind == KeyEventKind::REPEAT) &&
+                   (event.key == Key::LEFT || event.key == Key::RIGHT);
+        }
+
+        [[nodiscard]] auto
+        apply_text_selection_key_event(StrRef text, TextSelection selection, KeyEvent const& event)
+            -> TextSelection {
+            selection = ordered_text_selection(clamp_text_selection(selection, text.size()));
+            if (!text_selection_key_event(event)) {
+                return selection;
+            }
+
+            if (event.key == Key::RIGHT) {
+                selection.end = next_text_offset(text, selection.end);
+            } else if (selection.start != selection.end) {
+                selection.end =
+                    std::max(previous_text_offset(text, selection.end), selection.start);
+            }
+            return selection;
+        }
+
         [[nodiscard]] auto text_word_char(StrRef text, size_t offset) -> bool {
             uint8_t const c = static_cast<uint8_t>(text[offset]);
             return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
@@ -1540,6 +1563,22 @@ namespace gui {
             return ordered_text_selection(clamp_text_selection(next, box.text.size()));
         }
 
+        [[nodiscard]] auto apply_keyboard_text_selection(
+            ContextImpl const* impl, BoxNode const& box, TextSelection selection
+        ) -> TextSelection {
+            InputState const& input = impl->frame_desc.input;
+            if (input.key_events == nullptr ||
+                (impl->text_selection_owner_id.value != box.id.value && !box.signal.focused)) {
+                return ordered_text_selection(clamp_text_selection(selection, box.text.size()));
+            }
+
+            TextSelection next = selection;
+            for (size_t index = 0u; index < input.key_event_count; ++index) {
+                next = apply_text_selection_key_event(box.text, next, input.key_events[index]);
+            }
+            return ordered_text_selection(clamp_text_selection(next, box.text.size()));
+        }
+
         auto
         apply_text_selection_owner(ContextImpl* impl, BoxNode const& box, TextSelection selection)
             -> void {
@@ -1560,7 +1599,11 @@ namespace gui {
             ASSERT(selection != nullptr);
 
             TextSelection const previous = *selection;
-            TextSelection const next = apply_pointer_text_selection(impl, box, previous);
+            TextSelection next = apply_pointer_text_selection(impl, box, previous);
+            if (next.start != next.end && impl->text_selection_owner_id.value == 0u) {
+                impl->text_selection_owner_id = box.id;
+            }
+            next = apply_keyboard_text_selection(impl, box, next);
             Signal signal = box.signal;
             signal.changed = previous.start != next.start || previous.end != next.end;
             apply_text_selection_owner(impl, box, next);
@@ -1780,6 +1823,13 @@ namespace gui {
                         }
                         if (event.kind != KeyEventKind::PRESS &&
                             event.kind != KeyEventKind::REPEAT) {
+                            continue;
+                        }
+                        if (text_selection_key_event(event)) {
+                            selection = apply_text_selection_key_event(
+                                {buffer, text_size}, selection, event
+                            );
+                            state.text_cursor = selection.end;
                             continue;
                         }
                         switch (event.key) {

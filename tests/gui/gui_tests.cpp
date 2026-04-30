@@ -1089,6 +1089,92 @@ namespace {
         gui::destroy_context(gui_context);
     }
 
+    TEST_CASE(input_text_shift_arrows_expand_and_shrink_selection) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Id const field_id = gui::id("field");
+        gui::BoxDesc const box = {.layout = {.width = gui::px(120.0f), .height = gui::px(20.0f)}};
+        auto select_bcd = [&](gui::Context current_context,
+                              char* buffer,
+                              size_t buffer_size) -> void {
+            gui::Frame ui = gui::begin_frame(current_context, {.size = {160.0f, 40.0f}});
+            ui.input_text(field_id, "Field", buffer, buffer_size, box);
+            gui::end_frame(ui);
+
+            gui::InputState input = {};
+            input.mouse_pos = {9.0f, 5.0f};
+            input.mouse_down[0u] = true;
+            ui = gui::begin_frame(current_context, {.size = {160.0f, 40.0f}, .input = input});
+            ui.input_text(field_id, "Field", buffer, buffer_size, box);
+            gui::end_frame(ui);
+
+            input.mouse_pos = {34.0f, 5.0f};
+            ui = gui::begin_frame(current_context, {.size = {160.0f, 40.0f}, .input = input});
+            ui.input_text(field_id, "Field", buffer, buffer_size, box);
+            gui::end_frame(ui);
+
+            input.mouse_down[0u] = false;
+            ui = gui::begin_frame(current_context, {.size = {160.0f, 40.0f}, .input = input});
+            ui.input_text(field_id, "Field", buffer, buffer_size, box);
+            gui::end_frame(ui);
+        };
+
+        {
+            gui::Context gui_context = {};
+            gui::create_context(arena, {}, gui_context);
+            char buffer[16] = "ABCDE";
+
+            select_bcd(gui_context, buffer, sizeof(buffer));
+
+            gui::KeyEvent const events[] = {
+                {.key = gui::Key::RIGHT, .mods = gui::KEY_MOD_SHIFT},
+                {.kind = gui::KeyEventKind::TEXT, .codepoint = 'X'},
+            };
+            gui::InputState input = {};
+            input.key_events = events;
+            input.key_event_count = 2u;
+            gui::Frame ui =
+                gui::begin_frame(gui_context, {.size = {160.0f, 40.0f}, .input = input});
+            gui::Signal const signal =
+                ui.input_text(field_id, "Field", buffer, sizeof(buffer), box);
+            gui::end_frame(ui);
+
+            TEST_EXPECT(context, signal.changed);
+            TEST_EXPECT(context, StrRef(buffer) == StrRef("AX"));
+
+            gui::destroy_context(gui_context);
+        }
+
+        {
+            gui::Context gui_context = {};
+            gui::create_context(arena, {}, gui_context);
+            char buffer[16] = "ABCDE";
+
+            select_bcd(gui_context, buffer, sizeof(buffer));
+
+            gui::KeyEvent const events[] = {
+                {.key = gui::Key::LEFT, .mods = gui::KEY_MOD_SHIFT},
+                {.key = gui::Key::LEFT, .mods = gui::KEY_MOD_SHIFT},
+                {.key = gui::Key::LEFT, .mods = gui::KEY_MOD_SHIFT},
+                {.kind = gui::KeyEventKind::TEXT, .codepoint = 'X'},
+            };
+            gui::InputState input = {};
+            input.key_events = events;
+            input.key_event_count = 4u;
+            gui::Frame ui =
+                gui::begin_frame(gui_context, {.size = {160.0f, 40.0f}, .input = input});
+            gui::Signal const signal =
+                ui.input_text(field_id, "Field", buffer, sizeof(buffer), box);
+            gui::end_frame(ui);
+
+            TEST_EXPECT(context, signal.changed);
+            TEST_EXPECT(context, StrRef(buffer) == StrRef("AXBCDE"));
+
+            gui::destroy_context(gui_context);
+        }
+    }
+
     TEST_CASE(input_text_uses_label_identity_across_value_changes) {
         Arena arena = {};
         arena.init();
@@ -1782,6 +1868,55 @@ namespace {
         TEST_EXPECT(context, selection.end == 4u);
         TEST_EXPECT(context, clipboard.call_count == 1u);
         TEST_EXPECT(context, StrRef(clipboard.text, clipboard.text_size) == StrRef("BCD"));
+
+        gui::destroy_context(gui_context);
+    }
+
+    TEST_CASE(selectable_label_shift_arrows_expand_and_shrink_selection) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::TextSelection selection = {1u, 3u};
+        gui::Id const label_id = gui::id("copyable");
+        gui::BoxDesc const box = {.layout = {.width = gui::px(100.0f), .height = gui::px(20.0f)}};
+
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {120.0f, 40.0f}});
+        ui.selectable_label(label_id, "ABCDE", &selection, box);
+        gui::end_frame(ui);
+
+        gui::KeyEvent const expand_events[] = {
+            {.key = gui::Key::RIGHT, .mods = gui::KEY_MOD_SHIFT},
+        };
+        gui::InputState input = {};
+        input.key_events = expand_events;
+        input.key_event_count = 1u;
+        ui = gui::begin_frame(gui_context, {.size = {120.0f, 40.0f}, .input = input});
+        gui::Signal signal = ui.selectable_label(label_id, "ABCDE", &selection, box);
+        gui::end_frame(ui);
+
+        TEST_EXPECT(context, signal.changed);
+        TEST_EXPECT(context, selection.start == 1u);
+        TEST_EXPECT(context, selection.end == 4u);
+
+        gui::KeyEvent const shrink_events[] = {
+            {.key = gui::Key::LEFT, .mods = gui::KEY_MOD_SHIFT},
+            {.key = gui::Key::LEFT, .mods = gui::KEY_MOD_SHIFT},
+            {.key = gui::Key::LEFT, .mods = gui::KEY_MOD_SHIFT},
+            {.key = gui::Key::LEFT, .mods = gui::KEY_MOD_SHIFT},
+        };
+        input = {};
+        input.key_events = shrink_events;
+        input.key_event_count = 4u;
+        ui = gui::begin_frame(gui_context, {.size = {120.0f, 40.0f}, .input = input});
+        signal = ui.selectable_label(label_id, "ABCDE", &selection, box);
+        gui::end_frame(ui);
+
+        TEST_EXPECT(context, signal.changed);
+        TEST_EXPECT(context, selection.start == 1u);
+        TEST_EXPECT(context, selection.end == 1u);
 
         gui::destroy_context(gui_context);
     }
