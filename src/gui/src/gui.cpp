@@ -1183,6 +1183,8 @@ namespace gui {
             }
         }
 
+        auto clamp_multiline_cursor_to_scroll(BoxNode& box) -> void;
+
         auto update_scroll_metrics(ContextImpl* impl,
                                    StateEntry* state,
                                    Rect rect,
@@ -1233,7 +1235,22 @@ namespace gui {
                 if (text_multiline(box.text) || multiline_input_text_box(box.kind)) {
                     content_height = text_size(box).y + inset_height(box.layout.padding);
                 }
+                InputState const& input = impl->frame_desc.input;
+                bool const wheel_scroll =
+                    input.scroll_delta_y != 0.0f && rect_contains(rect, input.mouse_pos);
+                float const scroll_y_before =
+                    box.scroll_state != nullptr ? box.scroll_state->scroll_y : 0.0f;
                 update_scroll_metrics(impl, box.scroll_state, rect, content_height, true, true);
+                bool const scrollbar_scroll =
+                    box.scroll_state != nullptr &&
+                    impl->active_scroll_id.value == box.scroll_state->id.value &&
+                    input.mouse_down[0u];
+                bool const input_scroll = wheel_scroll || scrollbar_scroll;
+                if (input_scroll && box.scroll_state != nullptr &&
+                    box.scroll_state->scroll_y != scroll_y_before &&
+                    multiline_input_text_box(box.kind)) {
+                    clamp_multiline_cursor_to_scroll(box);
+                }
             } else if (box.kind == BoxKind::LIST) {
                 update_scroll_metrics(
                     impl, box.scroll_state, rect, box.scroll_content_height, false, false);
@@ -2061,6 +2078,58 @@ namespace gui {
                                    : 0.0f;
             box.signal = signal;
             return signal;
+        }
+
+        auto clamp_multiline_cursor_to_scroll(BoxNode& box) -> void {
+            if (box.state == nullptr || box.scroll_state == nullptr || box.text.empty()) {
+                return;
+            }
+
+            TextSelection const selection = ordered_text_selection(clamp_text_selection(
+                {box.state->text_selection_start, box.state->text_selection_end}, box.text.size()
+            ));
+            if (selection.start != selection.end) {
+                return;
+            }
+
+            float const viewport = std::max(
+                0.0f, rect_height(box.scroll_state->rect) - inset_height(box.layout.padding)
+            );
+            if (viewport <= 0.0f) {
+                return;
+            }
+
+            float const line_height = text_line_height(box);
+            float const scroll_y = box.scroll_state->scroll_y;
+            bool moved = false;
+            for (;;) {
+                size_t const cursor = std::min(box.state->text_cursor, box.text.size());
+                float const cursor_y =
+                    line_height * static_cast<float>(text_cursor_line_index(box.text, cursor));
+                Key const key =
+                    cursor_y < scroll_y
+                        ? Key::DOWN
+                        : (cursor_y + line_height > scroll_y + viewport ? Key::UP : Key::UNKNOWN);
+                if (key == Key::UNKNOWN) {
+                    break;
+                }
+
+                size_t const next = vertical_text_cursor_offset(box, box.text, cursor, key);
+                if (next == cursor) {
+                    break;
+                }
+                box.state->text_cursor = next;
+                moved = true;
+            }
+            if (!moved) {
+                return;
+            }
+
+            box.state->text_selection_anchor = box.state->text_cursor;
+            box.state->text_selection_start = box.state->text_cursor;
+            box.state->text_selection_end = box.state->text_cursor;
+            box.state->text_selection_word_active = false;
+            box.text_selection = {box.state->text_cursor, box.state->text_cursor};
         }
 
         auto request_multiline_cursor_visible(BoxNode const& box) -> void {

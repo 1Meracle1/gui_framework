@@ -1869,6 +1869,57 @@ namespace {
         gui::destroy_context(gui_context);
     }
 
+    TEST_CASE(input_text_multiline_scroll_moves_hidden_cursor_to_visible_line) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::Id const field_id = gui::id("field");
+        gui::BoxDesc const box = {.layout = {.width = gui::px(80.0f), .height = gui::px(40.0f)}};
+        StringBuffer buffer;
+        TEST_EXPECT(context, buffer.write_string("A\nB\nC\nD\nE") == 9u);
+
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {100.0f, 60.0f}});
+        ui.request_focus(field_id);
+        ui.input_text_multiline(field_id, "Field", &buffer, {.box = box});
+        gui::end_frame(ui);
+
+        ui = gui::begin_frame(gui_context, {.size = {100.0f, 60.0f}});
+        ui.input_text_multiline(field_id, "Field", &buffer, {.box = box});
+        gui::end_frame(ui);
+
+        gui::ScrollState state = ui.scroll_state(field_id);
+        TEST_EXPECT(context, state.valid);
+        TEST_EXPECT(context, state.y == 60.0f);
+
+        gui::InputState scroll = {};
+        scroll.mouse_pos = {5.0f, 5.0f};
+        scroll.scroll_delta_y = 20.0f;
+
+        ui = gui::begin_frame(gui_context, {.size = {100.0f, 60.0f}, .input = scroll});
+        ui.input_text_multiline(field_id, "Field", &buffer, {.box = box});
+        gui::end_frame(ui);
+
+        state = ui.scroll_state(field_id);
+        TEST_EXPECT(context, state.valid);
+        TEST_EXPECT(context, state.y == 40.0f);
+
+        gui::KeyEvent const events[] = {{.kind = gui::KeyEventKind::TEXT, .codepoint = 'X'}};
+        gui::InputState input = {};
+        input.key_events = events;
+        input.key_event_count = 1u;
+
+        ui = gui::begin_frame(gui_context, {.size = {100.0f, 60.0f}, .input = input});
+        ui.input_text_multiline(field_id, "Field", &buffer, {.box = box});
+        gui::end_frame(ui);
+
+        TEST_EXPECT(context, buffer.str() == StrRef("A\nB\nC\nDX\nE"));
+
+        gui::destroy_context(gui_context);
+    }
+
     TEST_CASE(explicit_ids_disambiguate_same_text_widgets) {
         Arena arena = {};
         arena.init();
