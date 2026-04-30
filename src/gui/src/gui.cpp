@@ -1402,6 +1402,51 @@ namespace gui {
             return offset;
         }
 
+        [[nodiscard]] auto text_word_char(StrRef text, size_t offset) -> bool {
+            uint8_t const c = static_cast<uint8_t>(text[offset]);
+            return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                   (c >= '0' && c <= '9') || c == '_' || c >= 0x80u;
+        }
+
+        [[nodiscard]] auto previous_word_offset(StrRef text, size_t offset) -> size_t {
+            offset = std::min(offset, text.size());
+            while (offset > 0u) {
+                size_t const previous = previous_text_offset(text, offset);
+                if (text_word_char(text, previous)) {
+                    break;
+                }
+                offset = previous;
+            }
+            while (offset > 0u) {
+                size_t const previous = previous_text_offset(text, offset);
+                if (!text_word_char(text, previous)) {
+                    break;
+                }
+                offset = previous;
+            }
+            return offset;
+        }
+
+        [[nodiscard]] auto next_word_offset(StrRef text, size_t offset) -> size_t {
+            offset = std::min(offset, text.size());
+            while (offset < text.size() && text_word_char(text, offset)) {
+                offset = next_text_offset(text, offset);
+            }
+            while (offset < text.size() && !text_word_char(text, offset)) {
+                offset = next_text_offset(text, offset);
+            }
+            return offset;
+        }
+
+        [[nodiscard]] auto text_cursor_key_offset(StrRef text, size_t cursor, KeyEvent const& event)
+            -> size_t {
+            bool const word = (event.mods & KEY_MOD_CTRL) != 0u;
+            if (event.key == Key::RIGHT) {
+                return word ? next_word_offset(text, cursor) : next_text_offset(text, cursor);
+            }
+            return word ? previous_word_offset(text, cursor) : previous_text_offset(text, cursor);
+        }
+
         [[nodiscard]] auto text_selection_key_event(KeyEvent const& event) -> bool {
             return (event.mods & KEY_MOD_SHIFT) != 0u &&
                    (event.kind == KeyEventKind::PRESS || event.kind == KeyEventKind::REPEAT) &&
@@ -1417,10 +1462,10 @@ namespace gui {
             }
 
             if (event.key == Key::RIGHT) {
-                selection.end = next_text_offset(text, selection.end);
+                selection.end = text_cursor_key_offset(text, selection.end, event);
             } else if (selection.start != selection.end) {
                 selection.end =
-                    std::max(previous_text_offset(text, selection.end), selection.start);
+                    std::max(text_cursor_key_offset(text, selection.end, event), selection.start);
             }
             return selection;
         }
@@ -1438,15 +1483,8 @@ namespace gui {
                                       ? cursor
                                       : (cursor == selection.start ? selection.end
                                                                    : selection.start);
-            cursor = event.key == Key::RIGHT ? next_text_offset(text, cursor)
-                                             : previous_text_offset(text, cursor);
+            cursor = text_cursor_key_offset(text, cursor, event);
             return ordered_text_selection({anchor, cursor});
-        }
-
-        [[nodiscard]] auto text_word_char(StrRef text, size_t offset) -> bool {
-            uint8_t const c = static_cast<uint8_t>(text[offset]);
-            return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
-                   (c >= '0' && c <= '9') || c == '_' || c >= 0x80u;
         }
 
         [[nodiscard]] auto text_word_selection(StrRef text, size_t cursor) -> TextSelection {
@@ -1991,14 +2029,16 @@ namespace gui {
                             state.text_cursor =
                                 selection.start != selection.end
                                     ? selection.start
-                                    : previous_text_offset({buffer, text_size}, state.text_cursor);
+                                    : text_cursor_key_offset(
+                                          {buffer, text_size}, state.text_cursor, event);
                             selection = {state.text_cursor, state.text_cursor};
                             break;
                         case Key::RIGHT:
                             state.text_cursor =
                                 selection.start != selection.end
                                     ? selection.end
-                                    : next_text_offset({buffer, text_size}, state.text_cursor);
+                                    : text_cursor_key_offset(
+                                          {buffer, text_size}, state.text_cursor, event);
                             selection = {state.text_cursor, state.text_cursor};
                             break;
                         case Key::HOME:
@@ -2022,8 +2062,11 @@ namespace gui {
                                 state.text_cursor = selection.start;
                                 selection = {state.text_cursor, state.text_cursor};
                             } else if (writable && state.text_cursor > 0u) {
-                                size_t const start =
-                                    previous_text_offset({buffer, text_size}, state.text_cursor);
+                                size_t const start = (event.mods & KEY_MOD_CTRL) != 0u
+                                                         ? previous_word_offset({buffer, text_size},
+                                                                                state.text_cursor)
+                                                         : previous_text_offset({buffer, text_size},
+                                                                                state.text_cursor);
                                 save_text_undo(impl,
                                                state,
                                                buffer,
@@ -2049,6 +2092,11 @@ namespace gui {
                                 state.text_cursor = selection.start;
                                 selection = {state.text_cursor, state.text_cursor};
                             } else if (writable && state.text_cursor < text_size) {
+                                size_t const end = (event.mods & KEY_MOD_CTRL) != 0u
+                                                       ? next_word_offset({buffer, text_size},
+                                                                          state.text_cursor)
+                                                       : next_text_offset({buffer, text_size},
+                                                                          state.text_cursor);
                                 save_text_undo(impl,
                                                state,
                                                buffer,
@@ -2059,7 +2107,7 @@ namespace gui {
                                     buffer,
                                     buffer_size,
                                     state.text_cursor,
-                                    next_text_offset({buffer, text_size}, state.text_cursor));
+                                    end);
                                 selection = {state.text_cursor, state.text_cursor};
                             }
                             break;

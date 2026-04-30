@@ -1110,6 +1110,85 @@ namespace {
         gui::destroy_context(gui_context);
     }
 
+    TEST_CASE(input_text_ctrl_word_navigation_and_editing) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Id const field_id = gui::id("field");
+        gui::BoxDesc const box = {
+            .layout = {.width = gui::px(160.0f), .height = gui::px(20.0f)}};
+
+        auto expect_edit = [&](char* buffer,
+                               size_t buffer_size,
+                               gui::KeyEvent const* events,
+                               size_t event_count,
+                               StrRef expected) -> void {
+            gui::Context gui_context = {};
+            gui::create_context(arena, {}, gui_context);
+
+            gui::InputState input = {};
+            input.key_events = events;
+            input.key_event_count = event_count;
+
+            gui::Frame ui =
+                gui::begin_frame(gui_context, {.size = {180.0f, 40.0f}, .input = input});
+            ui.request_focus(field_id);
+            gui::Signal const signal =
+                ui.input_text(field_id, "Field", buffer, buffer_size, box);
+            gui::end_frame(ui);
+
+            TEST_EXPECT(context, signal.changed);
+            TEST_EXPECT(context, StrRef(buffer) == expected);
+
+            gui::destroy_context(gui_context);
+        };
+
+        {
+            char buffer[32] = "alpha beta gamma";
+            gui::KeyEvent const events[] = {
+                {.key = gui::Key::LEFT, .mods = gui::KEY_MOD_CTRL},
+                {.kind = gui::KeyEventKind::TEXT, .codepoint = 'X'},
+            };
+            expect_edit(buffer, sizeof(buffer), events, 2u, "alpha beta Xgamma");
+        }
+
+        {
+            char buffer[32] = "alpha beta gamma";
+            gui::KeyEvent const events[] = {
+                {.key = gui::Key::HOME},
+                {.key = gui::Key::RIGHT, .mods = gui::KEY_MOD_CTRL},
+                {.kind = gui::KeyEventKind::TEXT, .codepoint = 'X'},
+            };
+            expect_edit(buffer, sizeof(buffer), events, 3u, "alpha Xbeta gamma");
+        }
+
+        {
+            char buffer[32] = "alpha beta gamma";
+            gui::KeyEvent const events[] = {
+                {.key = gui::Key::LEFT, .mods = gui::KEY_MOD_CTRL | gui::KEY_MOD_SHIFT},
+                {.kind = gui::KeyEventKind::TEXT, .codepoint = 'X'},
+            };
+            expect_edit(buffer, sizeof(buffer), events, 2u, "alpha beta X");
+        }
+
+        {
+            char buffer[32] = "alpha beta gamma";
+            gui::KeyEvent const events[] = {
+                {.key = gui::Key::BACKSPACE, .mods = gui::KEY_MOD_CTRL},
+            };
+            expect_edit(buffer, sizeof(buffer), events, 1u, "alpha beta ");
+        }
+
+        {
+            char buffer[32] = "alpha beta gamma";
+            gui::KeyEvent const events[] = {
+                {.key = gui::Key::HOME},
+                {.key = gui::Key::DELETE_KEY, .mods = gui::KEY_MOD_CTRL},
+            };
+            expect_edit(buffer, sizeof(buffer), events, 2u, "beta gamma");
+        }
+    }
+
     TEST_CASE(input_text_drag_selection_replaces_selected_text) {
         Arena arena = {};
         arena.init();
