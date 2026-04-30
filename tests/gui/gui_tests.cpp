@@ -1833,6 +1833,42 @@ namespace {
         gui::destroy_context(gui_context);
     }
 
+    TEST_CASE(input_text_multiline_up_down_moves_cursor_by_line) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::Id const field_id = gui::id("field");
+        StringBuffer buffer;
+        TEST_EXPECT(context, buffer.write_string("abc\nde\nghi") == 10u);
+
+        gui::KeyEvent const events[] = {
+            {.key = gui::Key::UP},
+            {.kind = gui::KeyEventKind::TEXT, .codepoint = 'X'},
+            {.key = gui::Key::DOWN},
+            {.kind = gui::KeyEventKind::TEXT, .codepoint = 'Y'},
+        };
+        gui::InputState input = {};
+        input.key_events = events;
+        input.key_event_count = 4u;
+
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {180.0f, 80.0f}, .input = input});
+        ui.request_focus(field_id);
+        gui::Signal const signal = ui.input_text_multiline(
+            field_id,
+            "Field",
+            &buffer,
+            {.box = {.layout = {.width = gui::px(140.0f), .height = gui::px(48.0f)}}});
+        gui::end_frame(ui);
+
+        TEST_EXPECT(context, signal.changed);
+        TEST_EXPECT(context, buffer.str() == StrRef("abc\ndeX\nghiY"));
+
+        gui::destroy_context(gui_context);
+    }
+
     TEST_CASE(explicit_ids_disambiguate_same_text_widgets) {
         Arena arena = {};
         arena.init();

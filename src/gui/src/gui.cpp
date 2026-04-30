@@ -1599,6 +1599,36 @@ namespace gui {
             return line.end;
         }
 
+        [[nodiscard]] auto vertical_text_cursor_offset(BoxNode const& box,
+                                                       StrRef text,
+                                                       size_t cursor,
+                                                       Key key) -> size_t {
+            cursor = std::min(cursor, text.size());
+            size_t offset = 0u;
+            TextLine previous = {};
+            bool has_previous = false;
+            TextLine line = {};
+            while (next_text_line(text, offset, line)) {
+                if (cursor <= line.end) {
+                    TextLine target = {};
+                    if (key == Key::UP) {
+                        if (!has_previous) {
+                            return cursor;
+                        }
+                        target = previous;
+                    } else if (!next_text_line(text, offset, target)) {
+                        return cursor;
+                    }
+                    size_t const line_cursor = std::min(cursor, line.end) - line.start;
+                    float const x = text_advance(box, line.text.prefix(line_cursor));
+                    return text_line_index_from_x(box, target, x);
+                }
+                previous = line;
+                has_previous = true;
+            }
+            return cursor;
+        }
+
         [[nodiscard]] auto text_index_from_mouse(BoxNode const& box, Vec2 mouse_pos) -> size_t {
             if (box.text.empty()) {
                 return 0u;
@@ -2224,6 +2254,18 @@ namespace gui {
                                     ? selection.end
                                     : text_cursor_key_offset(text, state.text_cursor, event);
                             selection = {state.text_cursor, state.text_cursor};
+                            break;
+                        case Key::UP:
+                        case Key::DOWN:
+                            if ((event.mods & KEY_MOD_SHIFT) == 0u) {
+                                state.text_cursor =
+                                    selection.start != selection.end
+                                        ? (event.key == Key::UP ? selection.start
+                                                                : selection.end)
+                                        : vertical_text_cursor_offset(
+                                              box, text, state.text_cursor, event.key);
+                                selection = {state.text_cursor, state.text_cursor};
+                            }
                             break;
                         case Key::HOME:
                             state.text_cursor = 0u;
