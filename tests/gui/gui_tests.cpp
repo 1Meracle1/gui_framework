@@ -935,6 +935,160 @@ namespace {
         gui::destroy_context(gui_context);
     }
 
+    TEST_CASE(input_text_drag_selection_replaces_selected_text) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::Id const field_id = gui::id("field");
+        gui::BoxDesc const box = {
+            .layout = {.width = gui::px(120.0f), .height = gui::px(20.0f)}};
+        char buffer[16] = "ABCDE";
+
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {160.0f, 40.0f}});
+        ui.input_text(field_id, "Field", buffer, sizeof(buffer), box);
+        gui::end_frame(ui);
+
+        gui::InputState input = {};
+        input.mouse_pos = {9.0f, 5.0f};
+        input.mouse_down[0u] = true;
+        ui = gui::begin_frame(gui_context, {.size = {160.0f, 40.0f}, .input = input});
+        gui::Signal signal = ui.input_text(field_id, "Field", buffer, sizeof(buffer), box);
+        gui::end_frame(ui);
+
+        TEST_EXPECT(context, signal.pressed_left);
+        TEST_EXPECT(context, !signal.changed);
+        TEST_EXPECT(context, StrRef(buffer) == StrRef("ABCDE"));
+
+        input.mouse_pos = {34.0f, 5.0f};
+        ui = gui::begin_frame(gui_context, {.size = {160.0f, 40.0f}, .input = input});
+        signal = ui.input_text(field_id, "Field", buffer, sizeof(buffer), box);
+        gui::end_frame(ui);
+
+        TEST_EXPECT(context, signal.active);
+        TEST_EXPECT(context, !signal.changed);
+        TEST_EXPECT(context, StrRef(buffer) == StrRef("ABCDE"));
+
+        input.mouse_down[0u] = false;
+        ui = gui::begin_frame(gui_context, {.size = {160.0f, 40.0f}, .input = input});
+        ui.input_text(field_id, "Field", buffer, sizeof(buffer), box);
+        gui::end_frame(ui);
+
+        gui::KeyEvent const events[] = {
+            {.kind = gui::KeyEventKind::TEXT, .codepoint = 'X'},
+        };
+        input = {};
+        input.key_events = events;
+        input.key_event_count = 1u;
+        ui = gui::begin_frame(gui_context, {.size = {160.0f, 40.0f}, .input = input});
+        signal = ui.input_text(field_id, "Field", buffer, sizeof(buffer), box);
+        gui::end_frame(ui);
+
+        TEST_EXPECT(context, signal.changed);
+        TEST_EXPECT(context, StrRef(buffer) == StrRef("AXE"));
+
+        gui::destroy_context(gui_context);
+    }
+
+    TEST_CASE(input_text_double_click_selects_word_for_copy_and_replace) {
+        Arena arena = {};
+        arena.init();
+
+        ClipboardCapture clipboard = {};
+        gui::Context gui_context = {};
+        gui::create_context(
+            arena,
+            {.set_clipboard_text = capture_clipboard_text, .clipboard_user_data = &clipboard},
+            gui_context
+        );
+
+        gui::Id const field_id = gui::id("field");
+        gui::BoxDesc const box = {
+            .layout = {.width = gui::px(160.0f), .height = gui::px(20.0f)}};
+        char buffer[16] = "alpha beta";
+
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {180.0f, 40.0f}});
+        ui.input_text(field_id, "Field", buffer, sizeof(buffer), box);
+        gui::end_frame(ui);
+
+        gui::InputState input = {};
+        input.mouse_pos = {54.0f, 5.0f};
+        input.mouse_down[0u] = true;
+        input.mouse_double_clicked[0u] = true;
+        ui = gui::begin_frame(gui_context, {.size = {180.0f, 40.0f}, .input = input});
+        ui.input_text(field_id, "Field", buffer, sizeof(buffer), box);
+        gui::end_frame(ui);
+
+        gui::KeyEvent const copy_events[] = {{.key = gui::Key::C, .mods = gui::KEY_MOD_CTRL}};
+        input = {};
+        input.key_events = copy_events;
+        input.key_event_count = 1u;
+        ui = gui::begin_frame(gui_context, {.size = {180.0f, 40.0f}, .input = input});
+        gui::Signal signal = ui.input_text(field_id, "Field", buffer, sizeof(buffer), box);
+        gui::end_frame(ui);
+
+        TEST_EXPECT(context, !signal.changed);
+        TEST_EXPECT(context, clipboard.call_count == 1u);
+        TEST_EXPECT(context, StrRef(clipboard.text, clipboard.text_size) == StrRef("beta"));
+
+        gui::KeyEvent const text_events[] = {
+            {.kind = gui::KeyEventKind::TEXT, .codepoint = 'X'},
+        };
+        input = {};
+        input.key_events = text_events;
+        input.key_event_count = 1u;
+        ui = gui::begin_frame(gui_context, {.size = {180.0f, 40.0f}, .input = input});
+        signal = ui.input_text(field_id, "Field", buffer, sizeof(buffer), box);
+        gui::end_frame(ui);
+
+        TEST_EXPECT(context, signal.changed);
+        TEST_EXPECT(context, StrRef(buffer) == StrRef("alpha X"));
+
+        gui::destroy_context(gui_context);
+    }
+
+    TEST_CASE(input_text_triple_click_selects_all_for_delete) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::Id const field_id = gui::id("field");
+        gui::BoxDesc const box = {
+            .layout = {.width = gui::px(160.0f), .height = gui::px(20.0f)}};
+        char buffer[16] = "alpha beta";
+
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {180.0f, 40.0f}});
+        ui.input_text(field_id, "Field", buffer, sizeof(buffer), box);
+        gui::end_frame(ui);
+
+        gui::InputState input = {};
+        input.mouse_pos = {54.0f, 5.0f};
+        input.mouse_down[0u] = true;
+        input.mouse_double_clicked[0u] = true;
+        input.mouse_triple_clicked[0u] = true;
+        ui = gui::begin_frame(gui_context, {.size = {180.0f, 40.0f}, .input = input});
+        ui.input_text(field_id, "Field", buffer, sizeof(buffer), box);
+        gui::end_frame(ui);
+
+        gui::KeyEvent const events[] = {{.key = gui::Key::BACKSPACE}};
+        input = {};
+        input.key_events = events;
+        input.key_event_count = 1u;
+        ui = gui::begin_frame(gui_context, {.size = {180.0f, 40.0f}, .input = input});
+        gui::Signal const signal =
+            ui.input_text(field_id, "Field", buffer, sizeof(buffer), box);
+        gui::end_frame(ui);
+
+        TEST_EXPECT(context, signal.changed);
+        TEST_EXPECT(context, StrRef(buffer) == StrRef(""));
+
+        gui::destroy_context(gui_context);
+    }
+
     TEST_CASE(input_text_uses_label_identity_across_value_changes) {
         Arena arena = {};
         arena.init();

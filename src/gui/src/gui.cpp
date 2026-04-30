@@ -29,6 +29,8 @@ namespace gui {
             float scroll_request_y = 0.0f;
             size_t scroll_request_index = 0u;
             size_t text_selection_anchor = 0u;
+            size_t text_selection_start = 0u;
+            size_t text_selection_end = 0u;
             size_t text_selection_word_start = 0u;
             size_t text_selection_word_end = 0u;
             size_t text_cursor = 0u;
@@ -1478,16 +1480,12 @@ namespace gui {
             return text_line_index_from_x(box, last_line, text_x);
         }
 
-        auto apply_selectable_label(ContextImpl* impl, BoxNode& box, TextSelection* selection)
-            -> Signal {
-            ASSERT(selection != nullptr);
-
-            TextSelection const previous = *selection;
+        auto apply_pointer_text_selection(ContextImpl* impl, BoxNode& box, TextSelection selection)
+            -> TextSelection {
             TextSelection next =
-                ordered_text_selection(clamp_text_selection(previous, box.text.size()));
-            Signal signal = box.signal;
-
+                ordered_text_selection(clamp_text_selection(selection, box.text.size()));
             if (box.state != nullptr) {
+                Signal const signal = box.signal;
                 size_t const cursor =
                     text_index_from_mouse(box, impl->frame_desc.input.mouse_pos);
                 bool const triple_clicked =
@@ -1539,18 +1537,33 @@ namespace gui {
                 }
             }
 
-            next = ordered_text_selection(clamp_text_selection(next, box.text.size()));
-            signal.changed = previous.start != next.start || previous.end != next.end;
-            if (next.start != next.end && impl->text_selection_owner_id.value == 0u) {
+            return ordered_text_selection(clamp_text_selection(next, box.text.size()));
+        }
+
+        auto
+        apply_text_selection_owner(ContextImpl* impl, BoxNode const& box, TextSelection selection)
+            -> void {
+            if (selection.start != selection.end && impl->text_selection_owner_id.value == 0u) {
                 impl->text_selection_owner_id = box.id;
-            } else if (next.start == next.end &&
+            } else if (selection.start == selection.end &&
                        impl->text_selection_owner_id.value == box.id.value) {
                 impl->text_selection_owner_id = {};
             }
             if (impl->text_selection_owner_id.value == box.id.value &&
                 copy_shortcut_pressed(impl)) {
-                copy_selected_text(impl, box, next);
+                copy_selected_text(impl, box, selection);
             }
+        }
+
+        auto apply_selectable_label(ContextImpl* impl, BoxNode& box, TextSelection* selection)
+            -> Signal {
+            ASSERT(selection != nullptr);
+
+            TextSelection const previous = *selection;
+            TextSelection const next = apply_pointer_text_selection(impl, box, previous);
+            Signal signal = box.signal;
+            signal.changed = previous.start != next.start || previous.end != next.end;
+            apply_text_selection_owner(impl, box, next);
             *selection = next;
             box.text_selection = next;
             box.signal = signal;
@@ -1645,15 +1658,6 @@ namespace gui {
             return true;
         }
 
-        auto insert_text_codepoint(char* buffer,
-                                   size_t buffer_size,
-                                   size_t& cursor,
-                                   uint32_t codepoint) -> bool {
-            char text[4] = {};
-            size_t const size = utf8_from_codepoint(codepoint, text);
-            return insert_text_bytes(buffer, buffer_size, cursor, text, size);
-        }
-
         auto apply_bool_widget(ContextImpl const* impl, BoxNode& box, bool* value) -> Signal {
             ASSERT(value != nullptr);
             Signal signal = box.signal;
@@ -1726,14 +1730,20 @@ namespace gui {
             Signal signal = box.signal;
             size_t text_size = text_buffer_size(buffer, buffer_size);
             if (box.state != nullptr) {
-                box.state->text_cursor = std::min(box.state->text_cursor, text_size);
+                StateEntry& state = *box.state;
+                state.text_cursor = std::min(state.text_cursor, text_size);
+                TextSelection selection = ordered_text_selection(clamp_text_selection(
+                    {state.text_selection_start, state.text_selection_end}, text_size));
+                if (selection.start == selection.end) {
+                    selection = {state.text_cursor, state.text_cursor};
+                }
                 if (signal.focus_gained) {
-                    box.state->text_cursor = text_size;
+                    state.text_cursor = text_size;
+                    selection = {text_size, text_size};
+                    state.text_selection_word_active = false;
                 }
-                if (signal.pressed_left) {
-                    box.state->text_cursor =
-                        text_index_from_mouse(box, impl->frame_desc.input.mouse_pos);
-                }
+                selection = apply_pointer_text_selection(impl, box, selection);
+                state.text_cursor = selection.end;
 
                 bool changed = false;
                 InputState const& input = impl->frame_desc.input;
@@ -1742,13 +1752,29 @@ namespace gui {
                     for (size_t index = 0u; index < input.key_event_count; ++index) {
                         KeyEvent const& event = input.key_events[index];
                         text_size = text_buffer_size(buffer, buffer_size);
-                        box.state->text_cursor = std::min(box.state->text_cursor, text_size);
+                        state.text_cursor = std::min(state.text_cursor, text_size);
+                        selection =
+                            ordered_text_selection(clamp_text_selection(selection, text_size));
                         if (event.kind == KeyEventKind::TEXT) {
                             if (writable) {
-                                changed |= insert_text_codepoint(buffer,
-                                                                 buffer_size,
-                                                                 box.state->text_cursor,
-                                                                 event.codepoint);
+                                char text[4] = {};
+                                size_t const insert_size =
+                                    utf8_from_codepoint(event.codepoint, text);
+                                size_t const selected_size = selection.end - selection.start;
+                                size_t const available =
+                                    buffer_size - 1u - (text_size - selected_size);
+                                if (insert_size != 0u && insert_size <= available) {
+                                    if (selected_size != 0u) {
+                                        changed |= erase_text_range(buffer,
+                                                                    buffer_size,
+                                                                    selection.start,
+                                                                    selection.end);
+                                        state.text_cursor = selection.start;
+                                    }
+                                    changed |= insert_text_bytes(
+                                        buffer, buffer_size, state.text_cursor, text, insert_size);
+                                    selection = {state.text_cursor, state.text_cursor};
+                                }
                             }
                             continue;
                         }
@@ -1758,35 +1784,55 @@ namespace gui {
                         }
                         switch (event.key) {
                         case Key::LEFT:
-                            box.state->text_cursor =
-                                previous_text_offset({buffer, text_size}, box.state->text_cursor);
+                            state.text_cursor =
+                                selection.start != selection.end
+                                    ? selection.start
+                                    : previous_text_offset({buffer, text_size}, state.text_cursor);
+                            selection = {state.text_cursor, state.text_cursor};
                             break;
                         case Key::RIGHT:
-                            box.state->text_cursor =
-                                next_text_offset({buffer, text_size}, box.state->text_cursor);
+                            state.text_cursor =
+                                selection.start != selection.end
+                                    ? selection.end
+                                    : next_text_offset({buffer, text_size}, state.text_cursor);
+                            selection = {state.text_cursor, state.text_cursor};
                             break;
                         case Key::HOME:
-                            box.state->text_cursor = 0u;
+                            state.text_cursor = 0u;
+                            selection = {};
                             break;
                         case Key::END:
-                            box.state->text_cursor = text_size;
+                            state.text_cursor = text_size;
+                            selection = {text_size, text_size};
                             break;
                         case Key::BACKSPACE:
-                            if (writable && box.state->text_cursor > 0u) {
-                                size_t const start = previous_text_offset(
-                                    {buffer, text_size}, box.state->text_cursor);
+                            if (writable && selection.start != selection.end) {
                                 changed |= erase_text_range(
-                                    buffer, buffer_size, start, box.state->text_cursor);
-                                box.state->text_cursor = start;
+                                    buffer, buffer_size, selection.start, selection.end);
+                                state.text_cursor = selection.start;
+                                selection = {state.text_cursor, state.text_cursor};
+                            } else if (writable && state.text_cursor > 0u) {
+                                size_t const start =
+                                    previous_text_offset({buffer, text_size}, state.text_cursor);
+                                changed |=
+                                    erase_text_range(buffer, buffer_size, start, state.text_cursor);
+                                state.text_cursor = start;
+                                selection = {state.text_cursor, state.text_cursor};
                             }
                             break;
                         case Key::DELETE_KEY:
-                            if (writable && box.state->text_cursor < text_size) {
+                            if (writable && selection.start != selection.end) {
+                                changed |= erase_text_range(
+                                    buffer, buffer_size, selection.start, selection.end);
+                                state.text_cursor = selection.start;
+                                selection = {state.text_cursor, state.text_cursor};
+                            } else if (writable && state.text_cursor < text_size) {
                                 changed |= erase_text_range(
                                     buffer,
                                     buffer_size,
-                                    box.state->text_cursor,
-                                    next_text_offset({buffer, text_size}, box.state->text_cursor));
+                                    state.text_cursor,
+                                    next_text_offset({buffer, text_size}, state.text_cursor));
+                                selection = {state.text_cursor, state.text_cursor};
                             }
                             break;
                         default:
@@ -1794,10 +1840,17 @@ namespace gui {
                         }
                     }
                 }
+                text_size = text_buffer_size(buffer, buffer_size);
+                selection = ordered_text_selection(clamp_text_selection(selection, text_size));
+                state.text_cursor = selection.end;
+                state.text_selection_start = selection.start;
+                state.text_selection_end = selection.end;
+                box.text_selection = selection;
                 signal.changed = changed;
             }
             signal.activated = signal.focused && key_pressed(impl, Key::ENTER, false);
             box.text = copy_frame_str(impl, {buffer, text_buffer_size(buffer, buffer_size)});
+            apply_text_selection_owner(impl, box, box.text_selection);
             box.signal = signal;
             return signal;
         }
@@ -1911,7 +1964,8 @@ namespace gui {
         auto render_text_selection(ContextImpl const* impl,
                                    BoxNode const& box,
                                    draw::Context draw_context) -> void {
-            if (box.kind != BoxKind::SELECTABLE_LABEL || box.text.empty()) {
+            if ((box.kind != BoxKind::SELECTABLE_LABEL && box.kind != BoxKind::INPUT_TEXT) ||
+                box.text.empty()) {
                 return;
             }
 
