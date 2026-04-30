@@ -1510,6 +1510,40 @@ namespace {
 #endif
     }
 
+    TEST_CASE(input_text_scrolls_horizontally_to_keep_caret_visible) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::draw::Context draw_context = {};
+        gui::draw::create_context(arena, {}, draw_context);
+
+        gui::Id const field_id = gui::id("field");
+        gui::BoxDesc const box = {.layout = {.width = gui::px(40.0f), .height = gui::px(20.0f)}};
+        char buffer[32] = "abcdefghi";
+
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {80.0f, 40.0f}});
+        ui.request_focus(field_id);
+        ui.input_text(field_id, "Field", buffer, sizeof(buffer), box);
+        gui::end_frame(ui);
+
+        gui::draw::begin_frame(draw_context);
+        gui::render_frame(ui, draw_context);
+
+        gui::draw::StyledRectCommand const* caret =
+            gui::draw::styled_rect_command(draw_context, 1u);
+        TEST_EXPECT(context, caret != nullptr);
+        if (caret != nullptr) {
+            TEST_EXPECT(context, caret->rect.min.x >= 0.0f);
+            TEST_EXPECT(context, caret->rect.max.x <= 40.0f);
+        }
+
+        gui::draw::destroy_context(draw_context);
+        gui::destroy_context(gui_context);
+    }
+
     TEST_CASE(explicit_ids_disambiguate_same_text_widgets) {
         Arena arena = {};
         arena.init();

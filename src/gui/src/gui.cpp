@@ -491,6 +491,17 @@ namespace gui {
             return 0.0f;
         }
 
+        [[nodiscard]] auto input_text_scroll_x(BoxNode const& box, float content_width) -> float {
+            if (box.kind != BoxKind::INPUT_TEXT || box.state == nullptr) {
+                return 0.0f;
+            }
+
+            size_t const cursor = std::min(box.state->text_cursor, box.text.size());
+            float const visible_width = std::max(0.0f, content_width - 1.0f);
+            float const cursor_x = text_advance(box, box.text.prefix(cursor));
+            return std::max(0.0f, cursor_x - visible_width);
+        }
+
         [[nodiscard]] auto text_position(BoxNode const& box, Rect rect) -> Vec2 {
             Vec2 const text_dim = text_size(box);
             float const content_width =
@@ -502,7 +513,8 @@ namespace gui {
                                        : 0.0f;
             float const extra_y = rect_height(rect) - inset_height(box.layout.padding) - text_dim.y;
             return {
-                rect.min.x + box.layout.padding.left + x_offset,
+                rect.min.x + box.layout.padding.left + x_offset -
+                    input_text_scroll_x(box, content_width),
                 rect.min.y + box.layout.padding.top - scroll_y +
                     (multiline ? std::max(0.0f, extra_y) : extra_y) * 0.5f,
             };
