@@ -18,7 +18,10 @@
 #include <draw/draw_renderer.h>
 #include <font_cache/font_cache.h>
 #include <font_provider/font_provider.h>
+#include <objbase.h>
 #include <render/render.h>
+#include <ui_api_testbed_embedded_texture.h>
+#include <wincodec.h>
 #include <windows.h>
 #endif
 #include <gui/gui.h>
@@ -84,6 +87,16 @@ namespace {
         gui::Signal header_signal = {};
         gui::Signal selected_row_signal = {};
         StringBuffer multiline_text_buffer;
+    };
+
+    struct TextureSample {
+        gui::render::Texture texture = {};
+        gui::Vec2 size = {};
+    };
+
+    struct TestbedTextures {
+        TextureSample disk = {};
+        TextureSample embedded = {};
     };
 
     auto row_id(size_t index) -> gui::Id {
@@ -523,11 +536,69 @@ namespace {
         }
     }
 
+    auto draw_texture_sample(
+        gui::Frame& ui,
+        gui::Id id,
+        StrRef title,
+        TextureSample const& sample,
+        LiquidGlassSpec const& spec
+    ) -> void {
+        if (auto card = ui.column(
+                id,
+                {
+                    .layout =
+                        {
+                            .width = gui::px(220.0f),
+                            .height = gui::children(),
+                            .padding = gui::insets(8.0f),
+                            .gap = 6.0f,
+                            .align_x = gui::Align::STRETCH,
+                        },
+                    .style = {.role = gui::StyleRole::CONTROL},
+                }
+            )) {
+            ui.label(
+                title,
+                {
+                    .layout = {.width = gui::fill(), .height = gui::px(20.0f)},
+                    .style = {.foreground = spec.tokens.text_muted},
+                }
+            );
+            ui.image(
+                sample.texture,
+                {
+                    .box =
+                        {
+                            .layout = {.width = gui::fill(), .height = gui::px(108.0f)},
+                            .style =
+                                {
+                                    .background = gui::rgba(0, 0, 0, 38),
+                                    .radius = 10.0f,
+                                },
+                        },
+                    .size = sample.size,
+                    .fit = gui::ImageFit::CONTAIN,
+                }
+            );
+            ui.label(
+                fmt::tprintf(
+                    "%ux%u",
+                    static_cast<uint32_t>(sample.size.x),
+                    static_cast<uint32_t>(sample.size.y)
+                ),
+                {
+                    .layout = {.width = gui::fill(), .height = gui::px(18.0f)},
+                    .style = {.foreground = spec.tokens.text_muted, .font_size = 11.0f},
+                }
+            );
+        }
+    }
+
     auto draw_ui(
         gui::Frame& ui,
         TestbedState& state,
         LiquidGlassSpec const& spec,
-        gui::render::Texture sample_texture
+        TestbedTextures const& textures
     ) -> void {
         gui::Id const list_id = gui::id("asset_list");
         gui::Id const notes_id = gui::id("notes_scroll");
@@ -818,6 +889,33 @@ namespace {
                                 state.sample_value = 0.5f;
                             }
                         }
+                    }
+                    if (auto texture_row = ui.row(
+                            gui::id("sample_texture_row"),
+                            {
+                                .layout =
+                                    {
+                                        .width = gui::children(),
+                                        .height = gui::children(),
+                                        .gap = 10.0f,
+                                    },
+                                .debug_name = "sample_texture_row",
+                            }
+                        )) {
+                        draw_texture_sample(
+                            ui,
+                            gui::id("sample_disk_texture"),
+                            "Loaded from disk",
+                            textures.disk,
+                            spec
+                        );
+                        draw_texture_sample(
+                            ui,
+                            gui::id("sample_embedded_texture"),
+                            "Embedded in exe",
+                            textures.embedded,
+                            spec
+                        );
                     }
                     gui::TableSortDesc const sample_table_sort_desc = {
                         .columns = slice(state.sample_table_sort_columns),
@@ -1166,7 +1264,8 @@ namespace {
                                                   .height = gui::fill(),
                                                   .padding = gui::insets(3.0f, 6.0f),
                                               },
-                                          .icon = {.texture = sample_texture, .size = 14.0f},
+                                          .icon =
+                                              {.texture = textures.embedded.texture, .size = 14.0f},
                                           .debug_name = "popup_button",
                                       }
                                 )
@@ -1261,7 +1360,7 @@ namespace {
                             )) {
                             ui.icon(
                                 gui::id("sample_icon"),
-                                sample_texture,
+                                textures.embedded.texture,
                                 {
                                     .style = {.foreground = tokens.text_muted},
                                     .icon = {.size = 18.0f},
@@ -1277,7 +1376,7 @@ namespace {
                             ui.spacer({.layout = {.width = gui::fill(), .height = gui::px(1.0f)}});
                             ui.image(
                                 gui::id("sample_image"),
-                                sample_texture,
+                                textures.disk.texture,
                                 {
                                     .box = {
                                         .layout = {
@@ -1706,7 +1805,7 @@ namespace {
         font_provider::Context provider = {};
         font_cache::Cache cache = {};
         font_cache::Font font = {};
-        render::Texture sample_texture = {};
+        TestbedTextures textures = {};
         gui::Context ui_context = {};
         draw::Context draw_context = {};
         draw::Renderer draw_renderer = {};
@@ -1842,38 +1941,254 @@ namespace {
         fmt::eprintf("%s failed: %s\n", operation, font_provider::result_name(result));
     }
 
-    [[nodiscard]] auto create_ui_sample_texture(render::Context context, render::Texture& texture)
+    auto log_hresult(char const* operation, HRESULT result) -> void {
+        fmt::eprintf("%s failed: 0x%x\n", operation, static_cast<uint32_t>(result));
+    }
+
+    template <typename T> auto release_com(T*& value) -> void {
+        if (value != nullptr) {
+            value->Release();
+            value = nullptr;
+        }
+    }
+
+    class ComApartment final {
+      public:
+        auto init() -> bool {
+            HRESULT const result = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+            if (result == RPC_E_CHANGED_MODE) {
+                return true;
+            }
+            if (FAILED(result)) {
+                log_hresult("CoInitializeEx", result);
+                return false;
+            }
+            m_initialized = true;
+            return true;
+        }
+
+        ~ComApartment() {
+            if (m_initialized) {
+                CoUninitialize();
+            }
+        }
+
+        ComApartment() = default;
+        ComApartment(ComApartment&&) = delete;
+        ComApartment(ComApartment const&) = delete;
+        auto operator=(ComApartment&&) -> ComApartment& = delete;
+        auto operator=(ComApartment const&) -> ComApartment& = delete;
+
+      private:
+        bool m_initialized = false;
+    };
+
+    [[nodiscard]] auto texture_sample_size(render::SizeU32 size) -> gui::Vec2 {
+        return {static_cast<float>(size.width), static_cast<float>(size.height)};
+    }
+
+    [[nodiscard]] auto testbed_asset_path(wchar_t* path, size_t capacity, wchar_t const* file_name)
         -> bool {
-        uint8_t const pixels[] = {
-            61,
-            151,
-            255,
-            255,
-            255,
-            216,
-            112,
-            255,
-            130,
-            86,
-            198,
-            255,
-            255,
-            118,
-            139,
-            255,
-        };
-
-        render::TextureDesc desc = {};
-        desc.size = {2u, 2u};
-        desc.bytes_per_row = 8u;
-        desc.rgba_pixels = pixels;
-
-        render::Result const result = render::create_texture(context, desc, texture);
-        if (render::result_failed(result)) {
-            log_render_result("render::create_texture", result);
+        DWORD const length = GetModuleFileNameW(nullptr, path, static_cast<DWORD>(capacity));
+        if (length == 0u || static_cast<size_t>(length) >= capacity) {
             return false;
         }
+
+        size_t dir_length = static_cast<size_t>(length);
+        while (dir_length != 0u && path[dir_length - 1u] != L'\\' &&
+               path[dir_length - 1u] != L'/') {
+            --dir_length;
+        }
+
+        size_t const file_length = static_cast<size_t>(lstrlenW(file_name));
+        if (dir_length + file_length >= capacity) {
+            return false;
+        }
+
+        for (size_t index = 0u; index <= file_length; ++index) {
+            path[dir_length + index] = file_name[index];
+        }
         return true;
+    }
+
+    [[nodiscard]] auto create_texture_from_wic_frame(
+        render::Context context,
+        IWICImagingFactory* factory,
+        IWICBitmapFrameDecode* frame,
+        TextureSample& out_sample
+    ) -> bool {
+        UINT width = 0u;
+        UINT height = 0u;
+        HRESULT result = frame->GetSize(&width, &height);
+        if (FAILED(result)) {
+            log_hresult("IWICBitmapFrameDecode::GetSize", result);
+            return false;
+        }
+        if (width == 0u || height == 0u) {
+            fmt::eprintf("image decode failed: empty image\n");
+            return false;
+        }
+
+        uint64_t const bytes_per_row64 = static_cast<uint64_t>(width) * 4u;
+        uint64_t const byte_size64 = bytes_per_row64 * static_cast<uint64_t>(height);
+        if (bytes_per_row64 > 0xffffffffu || byte_size64 > 0xffffffffu) {
+            fmt::eprintf("image decode failed: image is too large\n");
+            return false;
+        }
+
+        IWICFormatConverter* converter = nullptr;
+        result = factory->CreateFormatConverter(&converter);
+        if (FAILED(result) || converter == nullptr) {
+            log_hresult("IWICImagingFactory::CreateFormatConverter", result);
+            return false;
+        }
+
+        result = converter->Initialize(
+            frame,
+            GUID_WICPixelFormat32bppRGBA,
+            WICBitmapDitherTypeNone,
+            nullptr,
+            0.0,
+            WICBitmapPaletteTypeCustom
+        );
+        if (FAILED(result)) {
+            log_hresult("IWICFormatConverter::Initialize", result);
+            release_com(converter);
+            return false;
+        }
+
+        ArenaTemp temp = begin_thread_temp_arena();
+        uint32_t const bytes_per_row = static_cast<uint32_t>(bytes_per_row64);
+        uint32_t const byte_size = static_cast<uint32_t>(byte_size64);
+        uint8_t* const pixels = arena_alloc<uint8_t>(*temp.arena(), byte_size);
+        result = converter->CopyPixels(nullptr, bytes_per_row, byte_size, pixels);
+        release_com(converter);
+        if (FAILED(result)) {
+            log_hresult("IWICFormatConverter::CopyPixels", result);
+            return false;
+        }
+
+        render::TextureDesc desc = {};
+        desc.size = {width, height};
+        desc.bytes_per_row = bytes_per_row;
+        desc.rgba_pixels = pixels;
+        render::Result const texture_result =
+            render::create_texture(context, desc, out_sample.texture);
+        if (render::result_failed(texture_result)) {
+            log_render_result("render::create_texture", texture_result);
+            return false;
+        }
+
+        out_sample.size = texture_sample_size(desc.size);
+        return true;
+    }
+
+    [[nodiscard]] auto
+    load_texture_from_file(render::Context context, wchar_t const* path, TextureSample& out_sample)
+        -> bool {
+        IWICImagingFactory* factory = nullptr;
+        HRESULT result = CoCreateInstance(
+            CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory)
+        );
+        if (FAILED(result) || factory == nullptr) {
+            log_hresult("CoCreateInstance(CLSID_WICImagingFactory)", result);
+            return false;
+        }
+
+        IWICBitmapDecoder* decoder = nullptr;
+        result = factory->CreateDecoderFromFilename(
+            path, nullptr, GENERIC_READ, WICDecodeMetadataCacheOnLoad, &decoder
+        );
+        if (FAILED(result) || decoder == nullptr) {
+            log_hresult("IWICImagingFactory::CreateDecoderFromFilename", result);
+            release_com(factory);
+            return false;
+        }
+
+        IWICBitmapFrameDecode* frame = nullptr;
+        result = decoder->GetFrame(0u, &frame);
+        if (FAILED(result) || frame == nullptr) {
+            log_hresult("IWICBitmapDecoder::GetFrame", result);
+            release_com(decoder);
+            release_com(factory);
+            return false;
+        }
+
+        bool const loaded = create_texture_from_wic_frame(context, factory, frame, out_sample);
+        release_com(frame);
+        release_com(decoder);
+        release_com(factory);
+        return loaded;
+    }
+
+    [[nodiscard]] auto load_texture_from_memory(
+        render::Context context, uint8_t const* bytes, size_t byte_count, TextureSample& out_sample
+    ) -> bool {
+        if (bytes == nullptr || byte_count == 0u || byte_count > 0xffffffffu) {
+            return false;
+        }
+
+        IWICImagingFactory* factory = nullptr;
+        HRESULT result = CoCreateInstance(
+            CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory)
+        );
+        if (FAILED(result) || factory == nullptr) {
+            log_hresult("CoCreateInstance(CLSID_WICImagingFactory)", result);
+            return false;
+        }
+
+        IWICStream* stream = nullptr;
+        result = factory->CreateStream(&stream);
+        if (FAILED(result) || stream == nullptr) {
+            log_hresult("IWICImagingFactory::CreateStream", result);
+            release_com(factory);
+            return false;
+        }
+
+        result = stream->InitializeFromMemory(
+            const_cast<uint8_t*>(bytes), static_cast<DWORD>(byte_count)
+        );
+        if (FAILED(result)) {
+            log_hresult("IWICStream::InitializeFromMemory", result);
+            release_com(stream);
+            release_com(factory);
+            return false;
+        }
+
+        IWICBitmapDecoder* decoder = nullptr;
+        result = factory->CreateDecoderFromStream(
+            stream, nullptr, WICDecodeMetadataCacheOnLoad, &decoder
+        );
+        if (FAILED(result) || decoder == nullptr) {
+            log_hresult("IWICImagingFactory::CreateDecoderFromStream", result);
+            release_com(stream);
+            release_com(factory);
+            return false;
+        }
+
+        IWICBitmapFrameDecode* frame = nullptr;
+        result = decoder->GetFrame(0u, &frame);
+        if (FAILED(result) || frame == nullptr) {
+            log_hresult("IWICBitmapDecoder::GetFrame", result);
+            release_com(decoder);
+            release_com(stream);
+            release_com(factory);
+            return false;
+        }
+
+        bool const loaded = create_texture_from_wic_frame(context, factory, frame, out_sample);
+        release_com(frame);
+        release_com(decoder);
+        release_com(stream);
+        release_com(factory);
+        return loaded;
+    }
+
+    auto destroy_texture_sample(render::Context context, TextureSample& sample) -> void {
+        if (render::texture_valid(sample.texture)) {
+            render::destroy_texture(context, sample.texture);
+        }
+        sample.size = {};
     }
 
     [[nodiscard]] auto key_from_virtual_key(WPARAM value) -> gui::Key {
@@ -2096,9 +2411,8 @@ namespace {
         if (font_cache::cache_valid(runtime->cache)) {
             font_cache::destroy_cache(runtime->cache);
         }
-        if (render::texture_valid(runtime->sample_texture)) {
-            render::destroy_texture(render_context, runtime->sample_texture);
-        }
+        destroy_texture_sample(render_context, runtime->textures.disk);
+        destroy_texture_sample(render_context, runtime->textures.embedded);
         if (font_provider::context_valid(runtime->provider)) {
             font_provider::destroy_context(runtime->provider);
         }
@@ -2124,7 +2438,20 @@ namespace {
 
         font_cache::create_cache(arena, runtime->provider, {}, runtime->cache);
         font_cache::open_system_font(runtime->cache, "Segoe UI", runtime->font);
-        if (!create_ui_sample_texture(render_context, runtime->sample_texture)) {
+        wchar_t disk_texture_path[MAX_PATH] = {};
+        if (!testbed_asset_path(disk_texture_path, MAX_PATH, L"ui_api_testbed_texture.png")) {
+            fmt::eprintf("ui_api_testbed_texture.png path is too long\n");
+            return false;
+        }
+        if (!load_texture_from_file(render_context, disk_texture_path, runtime->textures.disk)) {
+            return false;
+        }
+        if (!load_texture_from_memory(
+                render_context,
+                ui_api_testbed_assets::texture_png,
+                ui_api_testbed_assets::texture_png_size,
+                runtime->textures.embedded
+            )) {
             return false;
         }
 
@@ -2174,7 +2501,7 @@ namespace {
                 .input = input,
             }
         );
-        draw_ui(ui, runtime->state, style, runtime->sample_texture);
+        draw_ui(ui, runtime->state, style, runtime->textures);
         gui::end_frame(ui);
 
         draw::begin_frame(runtime->draw_context);
@@ -2340,6 +2667,12 @@ namespace {
         AppState app_state = {};
         global_app_state = &app_state;
 
+        ComApartment com;
+        if (!com.init()) {
+            global_app_state = nullptr;
+            return 1;
+        }
+
         if (!create_testbed_window(&app_state)) {
             global_app_state = nullptr;
             return 1;
@@ -2479,11 +2812,13 @@ namespace {
         BASE_UNUSED(state.multiline_text_buffer.write_string(
             "Editable multiline text\nPress Enter for a new line\nTab inserts four spaces"
         ));
-        int sample_texture_storage = 0;
-        gui::render::Texture sample_texture = {&sample_texture_storage};
+        int texture_storage = 0;
+        TestbedTextures textures = {};
+        textures.disk = {{&texture_storage}, {2.0f, 2.0f}};
+        textures.embedded = textures.disk;
         gui::Frame ui =
             gui::begin_frame(ui_context, {.size = {640.0f, 400.0f}, .delta_time = 1.0f / 60.0f});
-        draw_ui(ui, state, style, sample_texture);
+        draw_ui(ui, state, style, textures);
         gui::end_frame(ui);
 
         gui::draw::begin_frame(draw_context);

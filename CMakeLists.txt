@@ -39,6 +39,30 @@ cpp_configure_target(gui_framework_info)
 add_executable(ui_api_testbed
     tools/ui_api_testbed.cpp
 )
+set(UI_API_TESTBED_TEXTURE "${PROJECT_SOURCE_DIR}/tools/assets/ui_api_testbed_texture.png")
+set(UI_API_TESTBED_GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
+set(UI_API_TESTBED_EMBEDDED_TEXTURE
+    "${UI_API_TESTBED_GENERATED_DIR}/ui_api_testbed_embedded_texture.h"
+)
+add_custom_command(
+    OUTPUT "${UI_API_TESTBED_EMBEDDED_TEXTURE}"
+    COMMAND "${CMAKE_COMMAND}"
+        -DINPUT=${UI_API_TESTBED_TEXTURE}
+        -DOUTPUT=${UI_API_TESTBED_EMBEDDED_TEXTURE}
+        -DNAMESPACE=ui_api_testbed_assets
+        -DSYMBOL=texture_png
+        -P "${PROJECT_SOURCE_DIR}/cmake/embed_binary.cmake"
+    DEPENDS
+        "${UI_API_TESTBED_TEXTURE}"
+        "${PROJECT_SOURCE_DIR}/cmake/embed_binary.cmake"
+    VERBATIM
+)
+target_sources(ui_api_testbed PRIVATE
+    "${UI_API_TESTBED_EMBEDDED_TEXTURE}"
+)
+target_include_directories(ui_api_testbed PRIVATE
+    "${UI_API_TESTBED_GENERATED_DIR}"
+)
 target_link_libraries(ui_api_testbed PRIVATE
     gui::gui
 )
@@ -50,6 +74,15 @@ if(WIN32)
     target_link_libraries(ui_api_testbed PRIVATE
         draw::draw
         render::render
+        ole32
+        windowscodecs
+    )
+    add_custom_command(
+        TARGET ui_api_testbed POST_BUILD
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+            "${UI_API_TESTBED_TEXTURE}"
+            "$<TARGET_FILE_DIR:ui_api_testbed>/ui_api_testbed_texture.png"
+        VERBATIM
     )
 endif()
 cpp_configure_target(ui_api_testbed)
