@@ -4,6 +4,36 @@
 
 namespace {
 
+    constexpr char SORT_ICON_TEXT[] = "";
+
+    [[nodiscard]] auto parse_test_int(StrRef text) -> int {
+        int value = 0;
+        for (char ch : text) {
+            if (ch >= '0' && ch <= '9') {
+                value = value * 10 + ch - '0';
+            }
+        }
+        return value;
+    }
+
+    [[nodiscard]] auto compare_test_ints(void*, size_t, StrRef lhs, StrRef rhs) -> int {
+        int const lhs_value = parse_test_int(lhs);
+        int const rhs_value = parse_test_int(rhs);
+        return lhs_value < rhs_value ? -1 : (lhs_value > rhs_value ? 1 : 0);
+    }
+
+    auto add_table_text_row(
+        gui::Frame& ui, gui::TableScope& table, gui::Id row_id, StrRef text, float width
+    ) -> void {
+        if (auto row = table.row(row_id)) {
+            if (auto cell = row.cell(
+                    {.box = {.layout = {.width = gui::px(width), .height = gui::px(20.0f)}}}
+                )) {
+                ui.label(text, {.layout = {.width = gui::fill(), .height = gui::fill()}});
+            }
+        }
+    }
+
     auto expect_vec(test::Context* context, gui::Vec2 value, float x, float y) -> void {
         TEST_EXPECT(context, value.x == x);
         TEST_EXPECT(context, value.y == y);
@@ -40,10 +70,9 @@ namespace {
         return {capture->text, capture->text_size};
     }
 
-    auto add_basic_scroll_panel(test::Context* context, gui::Frame& ui, gui::Id id_value)
-        -> void {
-        auto panel = ui.scroll_panel(
-            id_value, {.layout = {.width = gui::fill(), .height = gui::px(30.0f)}});
+    auto add_basic_scroll_panel(test::Context* context, gui::Frame& ui, gui::Id id_value) -> void {
+        auto panel =
+            ui.scroll_panel(id_value, {.layout = {.width = gui::fill(), .height = gui::px(30.0f)}});
         TEST_EXPECT(context, panel);
         for (size_t index = 0u; index < 3u; ++index) {
             ui.spacer({.layout = {.width = gui::fill(), .height = gui::px(20.0f)}});
@@ -172,11 +201,10 @@ namespace {
         gui::Frame ui = gui::begin_frame(gui_context, {.size = {100.0f, 40.0f}});
         {
             auto panel = ui.column({
-                .style =
-                    {
-                        .background = gui::rgb(10, 20, 30),
-                        .foreground = gui::rgb(210, 220, 230),
-                    },
+                .style = {
+                    .background = gui::rgb(10, 20, 30),
+                    .foreground = gui::rgb(210, 220, 230),
+                },
             });
             TEST_EXPECT(context, panel);
             ui.label("Child");
@@ -218,9 +246,11 @@ namespace {
         TEST_EXPECT(context, signal.hovered);
         TEST_EXPECT(context, button != nullptr);
         if (button != nullptr) {
-            expect_color(context,
-                         button->style.background,
-                         gui::theme_role(theme, gui::StyleRole::CONTROL).hovered.background);
+            expect_color(
+                context,
+                button->style.background,
+                gui::theme_role(theme, gui::StyleRole::CONTROL).hovered.background
+            );
         }
 
         input.mouse_down[0u] = true;
@@ -233,9 +263,11 @@ namespace {
         TEST_EXPECT(context, signal.active);
         TEST_EXPECT(context, button != nullptr);
         if (button != nullptr) {
-            expect_color(context,
-                         button->style.background,
-                         gui::theme_role(theme, gui::StyleRole::CONTROL).active.background);
+            expect_color(
+                context,
+                button->style.background,
+                gui::theme_role(theme, gui::StyleRole::CONTROL).active.background
+            );
         }
 
         gui::destroy_context(gui_context);
@@ -275,17 +307,18 @@ namespace {
         gui::create_context(arena, {.theme = &theme}, gui_context);
 
         gui::Frame ui = gui::begin_frame(gui_context, {.size = {100.0f, 40.0f}});
-        ui.button("Delete",
-                  {
-                      .layout = {.width = gui::px(80.0f), .height = gui::px(20.0f)},
-                      .style =
-                          {
-                              .role = gui::StyleRole::DANGER,
-                              .background = gui::rgb(1, 2, 3),
-                              .border = gui::rgba(0, 0, 0, 0),
-                              .radius = 2.0f,
-                          },
-                  });
+        ui.button(
+            "Delete",
+            {
+                .layout = {.width = gui::px(80.0f), .height = gui::px(20.0f)},
+                .style = {
+                    .role = gui::StyleRole::DANGER,
+                    .background = gui::rgb(1, 2, 3),
+                    .border = gui::rgba(0, 0, 0, 0),
+                    .radius = 2.0f,
+                },
+            }
+        );
         gui::end_frame(ui);
 
         gui::BoxInfo const* button = ui.box_info(1u);
@@ -309,13 +342,12 @@ namespace {
 
         gui::Frame ui = gui::begin_frame(gui_context, {.size = {100.0f, 20.0f}});
         auto row = ui.row({
-            .layout =
-                {
-                    .width = gui::fill(),
-                    .height = gui::fill(),
-                    .gap = 4.0f,
-                    .align_y = gui::Align::STRETCH,
-                },
+            .layout = {
+                .width = gui::fill(),
+                .height = gui::fill(),
+                .gap = 4.0f,
+                .align_y = gui::Align::STRETCH,
+            },
         });
         TEST_EXPECT(context, row);
         ui.spacer({.layout = {.width = gui::px(20.0f), .height = gui::fill()}});
@@ -362,13 +394,12 @@ namespace {
 
         gui::Frame ui = gui::begin_frame(gui_context, {.size = {100.0f, 20.0f}});
         auto row = ui.row({
-            .layout =
-                {
-                    .width = gui::fill(),
-                    .height = gui::fill(),
-                    .gap = 4.0f,
-                    .align_x = gui::Align::CENTER,
-                },
+            .layout = {
+                .width = gui::fill(),
+                .height = gui::fill(),
+                .gap = 4.0f,
+                .align_x = gui::Align::CENTER,
+            },
         });
         TEST_EXPECT(context, row);
         ui.spacer({.layout = {.width = gui::px(10.0f), .height = gui::px(10.0f)}});
@@ -395,8 +426,8 @@ namespace {
         gui::Id const table_id = gui::id("empty_table");
         gui::Frame ui = gui::begin_frame(gui_context, {.size = {100.0f, 60.0f}});
         {
-            auto table = ui.table(
-                table_id, {.layout = {.width = gui::px(80.0f), .height = gui::px(20.0f)}});
+            auto table =
+                ui.table(table_id, {.layout = {.width = gui::px(80.0f), .height = gui::px(20.0f)}});
             TEST_EXPECT(context, table);
         }
         gui::end_frame(ui);
@@ -591,52 +622,53 @@ namespace {
         gui::Id const cell_c_id = gui::id("cell_c");
 
         gui::Frame ui = gui::begin_frame(gui_context, {.size = {120.0f, 80.0f}});
-        if (auto table = ui.table(table_id,
-                                  {.layout =
-                                       {
-                                           .width = gui::children(),
-                                           .height = gui::children(),
-                                           .gap = 2.0f,
-                                       }})) {
+        if (auto table = ui.table(
+                table_id,
+                {.layout = {
+                     .width = gui::children(),
+                     .height = gui::children(),
+                     .gap = 2.0f,
+                 }}
+            )) {
             if (auto header = table.header_row()) {
                 {
-                    auto cell = header.cell(header_left_id,
-                                            {
-                                                .column_span = 2u,
-                                                .box =
-                                                    {.layout = {.width = gui::px(50.0f),
-                                                                .height = gui::px(10.0f)}},
-                                            });
+                    auto cell = header.cell(
+                        header_left_id,
+                        {
+                            .column_span = 2u,
+                            .box = {.layout = {.width = gui::px(50.0f), .height = gui::px(10.0f)}},
+                        }
+                    );
                     TEST_EXPECT(context, cell);
                 }
                 {
                     auto cell = header.cell(
                         header_right_id,
-                        {.box = {.layout = {.width = gui::px(20.0f),
-                                             .height = gui::px(10.0f)}}});
+                        {.box = {.layout = {.width = gui::px(20.0f), .height = gui::px(10.0f)}}}
+                    );
                     TEST_EXPECT(context, cell);
                 }
             }
             if (auto row = table.row()) {
                 {
-                    auto cell =
-                        row.cell(cell_a_id,
-                                 {.box = {.layout = {.width = gui::px(10.0f),
-                                                      .height = gui::px(12.0f)}}});
+                    auto cell = row.cell(
+                        cell_a_id,
+                        {.box = {.layout = {.width = gui::px(10.0f), .height = gui::px(12.0f)}}}
+                    );
                     TEST_EXPECT(context, cell);
                 }
                 {
-                    auto cell =
-                        row.cell(cell_b_id,
-                                 {.box = {.layout = {.width = gui::px(30.0f),
-                                                      .height = gui::px(12.0f)}}});
+                    auto cell = row.cell(
+                        cell_b_id,
+                        {.box = {.layout = {.width = gui::px(30.0f), .height = gui::px(12.0f)}}}
+                    );
                     TEST_EXPECT(context, cell);
                 }
                 {
-                    auto cell =
-                        row.cell(cell_c_id,
-                                 {.box = {.layout = {.width = gui::px(20.0f),
-                                                      .height = gui::px(12.0f)}}});
+                    auto cell = row.cell(
+                        cell_c_id,
+                        {.box = {.layout = {.width = gui::px(20.0f), .height = gui::px(12.0f)}}}
+                    );
                     TEST_EXPECT(context, cell);
                 }
             }
@@ -668,6 +700,345 @@ namespace {
         gui::destroy_context(gui_context);
     }
 
+    TEST_CASE(table_sort_button_updates_multi_column_sort_state) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+        gui::draw::Context draw_context = {};
+        gui::draw::create_context(arena, {}, draw_context);
+
+        gui::Id const table_id = gui::id("table");
+        gui::Id const header_a_id = gui::id("header_a");
+        gui::Id const header_b_id = gui::id("header_b");
+        gui::Id const header_c_id = gui::id("header_c");
+        gui::TableSortColumn sort_columns[3] = {};
+        size_t sort_count = 0u;
+        bool selected[3] = {true, false, true};
+        gui::Signal sort_signals[3] = {};
+
+        auto add_sort_table = [&](gui::Frame& ui) -> void {
+            sort_signals[0u] = {};
+            sort_signals[1u] = {};
+            sort_signals[2u] = {};
+            gui::TableSortDesc const sort_desc = {
+                .columns = slice(sort_columns),
+                .column_count = &sort_count,
+                .selected_columns = slice(selected),
+            };
+            if (auto table = ui.table(
+                    table_id, {.layout = {.width = gui::children(), .height = gui::children()}}
+                )) {
+                if (auto header = table.header_row()) {
+                    if (auto cell = header.cell(header_a_id)) {
+                        BASE_UNUSED(cell);
+                        sort_signals[0u] = table.sort_button(0u, sort_desc);
+                    }
+                    if (auto cell = header.cell(header_b_id)) {
+                        BASE_UNUSED(cell);
+                        sort_signals[1u] = table.sort_button(1u, sort_desc);
+                    }
+                    if (auto cell = header.cell(header_c_id)) {
+                        BASE_UNUSED(cell);
+                        sort_signals[2u] = table.sort_button(2u, sort_desc);
+                    }
+                }
+            }
+        };
+
+        gui::InputState input = {};
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {160.0f, 40.0f}});
+        add_sort_table(ui);
+        gui::end_frame(ui);
+
+        gui::draw::begin_frame(draw_context);
+        gui::render_frame(ui, draw_context);
+        TEST_EXPECT(context, gui::draw::primitive_command_count(draw_context) != 0u);
+
+        gui::BoxInfo const* header_a = ui.find_box(header_a_id, gui::BoxKind::TABLE_HEADER_CELL);
+        gui::BoxInfo const* header_c = ui.find_box(header_c_id, gui::BoxKind::TABLE_HEADER_CELL);
+        gui::BoxInfo const* sort_a =
+            header_a != nullptr
+                ? find_child_text(ui, header_a->id, gui::BoxKind::BUTTON, SORT_ICON_TEXT)
+                : nullptr;
+        gui::BoxInfo const* sort_c =
+            header_c != nullptr
+                ? find_child_text(ui, header_c->id, gui::BoxKind::BUTTON, SORT_ICON_TEXT)
+                : nullptr;
+        TEST_EXPECT(context, sort_a != nullptr);
+        TEST_EXPECT(context, sort_c != nullptr);
+
+        input.mouse_pos = box_center(sort_c);
+        input.mouse_down[0u] = true;
+        ui = gui::begin_frame(gui_context, {.size = {160.0f, 40.0f}, .input = input});
+        add_sort_table(ui);
+        gui::end_frame(ui);
+
+        input.mouse_down[0u] = false;
+        ui = gui::begin_frame(gui_context, {.size = {160.0f, 40.0f}, .input = input});
+        add_sort_table(ui);
+        gui::end_frame(ui);
+
+        TEST_EXPECT(context, sort_signals[2u].changed);
+        TEST_EXPECT(context, sort_count == 2u);
+        TEST_EXPECT(context, sort_columns[0u].column == 2u);
+        TEST_EXPECT(context, sort_columns[0u].direction == gui::TableSortDirection::ASCENDING);
+        TEST_EXPECT(context, sort_columns[1u].column == 0u);
+        TEST_EXPECT(context, sort_columns[1u].direction == gui::TableSortDirection::ASCENDING);
+
+        header_a = ui.find_box(header_a_id, gui::BoxKind::TABLE_HEADER_CELL);
+        header_c = ui.find_box(header_c_id, gui::BoxKind::TABLE_HEADER_CELL);
+        sort_a = header_a != nullptr
+                     ? find_child_text(ui, header_a->id, gui::BoxKind::BUTTON, SORT_ICON_TEXT)
+                     : nullptr;
+        sort_c = header_c != nullptr
+                     ? find_child_text(ui, header_c->id, gui::BoxKind::BUTTON, SORT_ICON_TEXT)
+                     : nullptr;
+        TEST_EXPECT(context, sort_a != nullptr);
+        TEST_EXPECT(context, sort_c != nullptr);
+
+        input.mouse_pos = box_center(sort_c);
+        input.mouse_down[0u] = true;
+        ui = gui::begin_frame(gui_context, {.size = {160.0f, 40.0f}, .input = input});
+        add_sort_table(ui);
+        gui::end_frame(ui);
+
+        input.mouse_down[0u] = false;
+        ui = gui::begin_frame(gui_context, {.size = {160.0f, 40.0f}, .input = input});
+        add_sort_table(ui);
+        gui::end_frame(ui);
+
+        TEST_EXPECT(context, sort_signals[2u].changed);
+        TEST_EXPECT(context, sort_count == 2u);
+        TEST_EXPECT(context, sort_columns[0u].column == 2u);
+        TEST_EXPECT(context, sort_columns[0u].direction == gui::TableSortDirection::DESCENDING);
+        TEST_EXPECT(context, sort_columns[1u].column == 0u);
+        TEST_EXPECT(context, sort_columns[1u].direction == gui::TableSortDirection::DESCENDING);
+
+        header_a = ui.find_box(header_a_id, gui::BoxKind::TABLE_HEADER_CELL);
+        header_c = ui.find_box(header_c_id, gui::BoxKind::TABLE_HEADER_CELL);
+        sort_a = header_a != nullptr
+                     ? find_child_text(ui, header_a->id, gui::BoxKind::BUTTON, SORT_ICON_TEXT)
+                     : nullptr;
+        sort_c = header_c != nullptr
+                     ? find_child_text(ui, header_c->id, gui::BoxKind::BUTTON, SORT_ICON_TEXT)
+                     : nullptr;
+        TEST_EXPECT(context, sort_a != nullptr);
+        TEST_EXPECT(context, sort_c != nullptr);
+
+        gui::draw::destroy_context(draw_context);
+        gui::destroy_context(gui_context);
+    }
+
+    TEST_CASE(table_desc_sorts_rows_by_cell_text) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::Id const table_id = gui::id("table");
+        gui::Id const header_name_id = gui::id("header_name");
+        gui::Id const row_beta_id = gui::id("row_beta");
+        gui::Id const row_gamma_id = gui::id("row_gamma");
+        gui::Id const row_alpha_id = gui::id("row_alpha");
+        gui::TableSortColumn sort_columns[1] = {};
+        size_t sort_count = 0u;
+        bool selected[1] = {true};
+
+        auto add_table = [&](gui::Frame& ui) -> void {
+            gui::TableSortDesc const sort_desc = {
+                .columns = slice(sort_columns),
+                .column_count = &sort_count,
+                .selected_columns = slice(selected),
+            };
+            if (auto table = ui.table(
+                    table_id,
+                    {
+                        .box =
+                            {
+                                .layout =
+                                    {
+                                        .width = gui::children(),
+                                        .height = gui::children(),
+                                        .gap = 2.0f,
+                                    },
+                            },
+                        .sort = sort_desc,
+                    }
+                )) {
+                if (auto header = table.header_row()) {
+                    BASE_UNUSED(header);
+                    table.sortable_header_cell(
+                        header_name_id,
+                        0u,
+                        "Name",
+                        {.box = {.layout = {.width = gui::px(80.0f), .height = gui::px(20.0f)}}}
+                    );
+                }
+                add_table_text_row(ui, table, row_beta_id, "Beta", 80.0f);
+                add_table_text_row(ui, table, row_gamma_id, "Gamma", 80.0f);
+                add_table_text_row(ui, table, row_alpha_id, "Alpha", 80.0f);
+            }
+        };
+
+        gui::InputState input = {};
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {120.0f, 120.0f}});
+        add_table(ui);
+        gui::end_frame(ui);
+
+        gui::BoxInfo const* header = ui.find_box(header_name_id, gui::BoxKind::TABLE_HEADER_CELL);
+        gui::BoxInfo const* sort =
+            header != nullptr
+                ? find_child_text(ui, header->id, gui::BoxKind::BUTTON, SORT_ICON_TEXT)
+                : nullptr;
+        TEST_EXPECT(context, sort != nullptr);
+
+        input.mouse_pos = box_center(sort);
+        input.mouse_down[0u] = true;
+        ui = gui::begin_frame(gui_context, {.size = {120.0f, 120.0f}, .input = input});
+        add_table(ui);
+        gui::end_frame(ui);
+
+        input.mouse_down[0u] = false;
+        ui = gui::begin_frame(gui_context, {.size = {120.0f, 120.0f}, .input = input});
+        add_table(ui);
+        gui::end_frame(ui);
+
+        gui::BoxInfo const* row_beta = ui.find_box(row_beta_id, gui::BoxKind::TABLE_ROW);
+        gui::BoxInfo const* row_gamma = ui.find_box(row_gamma_id, gui::BoxKind::TABLE_ROW);
+        gui::BoxInfo const* row_alpha = ui.find_box(row_alpha_id, gui::BoxKind::TABLE_ROW);
+        TEST_EXPECT(context, sort_count == 1u);
+        TEST_EXPECT(context, sort_columns[0u].direction == gui::TableSortDirection::ASCENDING);
+        TEST_EXPECT(context, row_beta != nullptr);
+        TEST_EXPECT(context, row_gamma != nullptr);
+        TEST_EXPECT(context, row_alpha != nullptr);
+        if (row_beta != nullptr && row_gamma != nullptr && row_alpha != nullptr) {
+            TEST_EXPECT(context, row_alpha->rect.min.y < row_beta->rect.min.y);
+            TEST_EXPECT(context, row_beta->rect.min.y < row_gamma->rect.min.y);
+        }
+
+        gui::destroy_context(gui_context);
+    }
+
+    TEST_CASE(sortable_header_cell_uses_selected_column_checkbox) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::Id const table_id = gui::id("table");
+        gui::Id const header_id = gui::id("header");
+        gui::TableSortColumn sort_columns[1] = {};
+        size_t sort_count = 0u;
+        bool selected[1] = {};
+        gui::Signal header_signal = {};
+
+        auto add_table = [&](gui::Frame& ui) -> void {
+            header_signal = {};
+            gui::TableSortDesc const sort_desc = {
+                .columns = slice(sort_columns),
+                .column_count = &sort_count,
+                .selected_columns = slice(selected),
+            };
+            if (auto table = ui.table(table_id, {.sort = sort_desc})) {
+                if (auto header = table.header_row()) {
+                    BASE_UNUSED(header);
+                    header_signal = table.sortable_header_cell(
+                        header_id,
+                        0u,
+                        "Name",
+                        {.box = {.layout = {.width = gui::px(120.0f), .height = gui::px(28.0f)}}}
+                    );
+                }
+            }
+        };
+
+        gui::InputState input = {};
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {160.0f, 60.0f}});
+        add_table(ui);
+        gui::end_frame(ui);
+
+        gui::BoxInfo const* header = ui.find_box(header_id, gui::BoxKind::TABLE_HEADER_CELL);
+        gui::BoxInfo const* sort = find_box_text(ui, gui::BoxKind::BUTTON, SORT_ICON_TEXT);
+        gui::BoxInfo const* checkbox = find_box_text(ui, gui::BoxKind::CHECKBOX, "Name");
+        TEST_EXPECT(context, header != nullptr);
+        TEST_EXPECT(context, sort != nullptr);
+        TEST_EXPECT(context, checkbox != nullptr);
+        TEST_EXPECT(context, !selected[0u]);
+        if (header != nullptr && sort != nullptr) {
+            TEST_EXPECT(context, sort->rect.min.x == header->rect.min.x + 10.0f);
+        }
+
+        input.mouse_pos = box_center(checkbox);
+        input.mouse_down[0u] = true;
+        ui = gui::begin_frame(gui_context, {.size = {160.0f, 60.0f}, .input = input});
+        add_table(ui);
+        gui::end_frame(ui);
+
+        input.mouse_down[0u] = false;
+        ui = gui::begin_frame(gui_context, {.size = {160.0f, 60.0f}, .input = input});
+        add_table(ui);
+        gui::end_frame(ui);
+
+        TEST_EXPECT(context, selected[0u]);
+        TEST_EXPECT(context, header_signal.changed);
+
+        gui::destroy_context(gui_context);
+    }
+
+    TEST_CASE(table_desc_accepts_custom_string_compare) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::Id const table_id = gui::id("table");
+        gui::Id const row_ten_id = gui::id("row_ten");
+        gui::Id const row_two_id = gui::id("row_two");
+        gui::TableSortColumn sort_columns[1] = {{0u, gui::TableSortDirection::ASCENDING}};
+        size_t sort_count = 1u;
+        gui::TableSortDesc const sort_desc = {
+            .columns = slice(sort_columns),
+            .column_count = &sort_count,
+            .compare = compare_test_ints,
+        };
+
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {120.0f, 80.0f}});
+        if (auto table = ui.table(
+                table_id,
+                {
+                    .box =
+                        {
+                            .layout =
+                                {
+                                    .width = gui::children(),
+                                    .height = gui::children(),
+                                    .gap = 2.0f,
+                                },
+                        },
+                    .sort = sort_desc,
+                }
+            )) {
+            add_table_text_row(ui, table, row_ten_id, "10", 40.0f);
+            add_table_text_row(ui, table, row_two_id, "2", 40.0f);
+        }
+        gui::end_frame(ui);
+
+        gui::BoxInfo const* row_ten = ui.find_box(row_ten_id, gui::BoxKind::TABLE_ROW);
+        gui::BoxInfo const* row_two = ui.find_box(row_two_id, gui::BoxKind::TABLE_ROW);
+        TEST_EXPECT(context, row_ten != nullptr);
+        TEST_EXPECT(context, row_two != nullptr);
+        if (row_ten != nullptr && row_two != nullptr) {
+            TEST_EXPECT(context, row_two->rect.min.y < row_ten->rect.min.y);
+        }
+
+        gui::destroy_context(gui_context);
+    }
+
     TEST_CASE(table_layout_supports_row_span_without_header) {
         Arena arena = {};
         arena.init();
@@ -681,37 +1052,38 @@ namespace {
         gui::Id const bottom_id = gui::id("bottom");
 
         gui::Frame ui = gui::begin_frame(gui_context, {.size = {120.0f, 80.0f}});
-        if (auto table = ui.table(table_id,
-                                  {.layout =
-                                       {
-                                           .width = gui::children(),
-                                           .height = gui::children(),
-                                           .gap = 1.0f,
-                                       }})) {
+        if (auto table = ui.table(
+                table_id,
+                {.layout = {
+                     .width = gui::children(),
+                     .height = gui::children(),
+                     .gap = 1.0f,
+                 }}
+            )) {
             if (auto row = table.row()) {
                 {
-                    auto cell = row.cell(span_id,
-                                         {
-                                             .row_span = 2u,
-                                             .box =
-                                                 {.layout = {.width = gui::px(10.0f),
-                                                             .height = gui::px(30.0f)}},
-                                         });
+                    auto cell = row.cell(
+                        span_id,
+                        {
+                            .row_span = 2u,
+                            .box = {.layout = {.width = gui::px(10.0f), .height = gui::px(30.0f)}},
+                        }
+                    );
                     TEST_EXPECT(context, cell);
                 }
                 {
-                    auto cell =
-                        row.cell(top_id,
-                                 {.box = {.layout = {.width = gui::px(20.0f),
-                                                      .height = gui::px(10.0f)}}});
+                    auto cell = row.cell(
+                        top_id,
+                        {.box = {.layout = {.width = gui::px(20.0f), .height = gui::px(10.0f)}}}
+                    );
                     TEST_EXPECT(context, cell);
                 }
             }
             if (auto row = table.row()) {
-                auto cell =
-                    row.cell(bottom_id,
-                             {.box = {.layout = {.width = gui::px(20.0f),
-                                                  .height = gui::px(10.0f)}}});
+                auto cell = row.cell(
+                    bottom_id,
+                    {.box = {.layout = {.width = gui::px(20.0f), .height = gui::px(10.0f)}}}
+                );
                 TEST_EXPECT(context, cell);
             }
         }
@@ -745,16 +1117,23 @@ namespace {
         gui::draw::create_context(arena, {}, draw_context);
 
         gui::Frame ui = gui::begin_frame(gui_context, {.size = {80.0f, 40.0f}});
-        if (auto table = ui.table(
-                {.layout = {.width = gui::children(), .height = gui::children()}})) {
+        if (auto table =
+                ui.table({.layout = {.width = gui::children(), .height = gui::children()}})) {
             if (auto row = table.row()) {
                 if (auto cell = row.cell(
-                        {.box = {.layout = {.width = gui::px(20.0f),
-                                            .height = gui::px(20.0f),
-                                            .padding = gui::insets(2.0f, 4.0f)}}})) {
+                        {.box = {
+                             .layout = {
+                                 .width = gui::px(20.0f),
+                                 .height = gui::px(20.0f),
+                                 .padding = gui::insets(2.0f, 4.0f)
+                             }
+                         }}
+                    )) {
                     BASE_UNUSED(cell);
-                    ui.spacer({.layout = {.width = gui::px(40.0f), .height = gui::px(10.0f)},
-                               .style = {.background = gui::rgb(255, 0, 0)}});
+                    ui.spacer(
+                        {.layout = {.width = gui::px(40.0f), .height = gui::px(10.0f)},
+                         .style = {.background = gui::rgb(255, 0, 0)}}
+                    );
                 }
             }
         }
@@ -813,20 +1192,19 @@ namespace {
         gui::draw::create_context(arena, {.font_cache = cache}, draw_context);
 
         gui::Frame ui = gui::begin_frame(gui_context, {.size = {60.0f, 30.0f}});
-        if (auto table =
-                ui.table({.layout = {.width = gui::px(44.0f),
-                                     .height = gui::children(),
-                                     .gap = 1.0f}})) {
+        if (auto table = ui.table(
+                {.layout = {.width = gui::px(44.0f), .height = gui::children(), .gap = 1.0f}}
+            )) {
             if (auto row = table.row()) {
                 if (auto cell = row.cell(
-                        {.box = {.layout = {.width = gui::px(20.0f),
-                                            .height = gui::px(20.0f)}}})) {
+                        {.box = {.layout = {.width = gui::px(20.0f), .height = gui::px(20.0f)}}}
+                    )) {
                     BASE_UNUSED(cell);
                     ui.spacer({.layout = {.width = gui::fill(), .height = gui::fill()}});
                 }
                 if (auto cell = row.cell(
-                        {.box = {.layout = {.width = gui::px(20.0f),
-                                            .height = gui::px(20.0f)}}})) {
+                        {.box = {.layout = {.width = gui::px(20.0f), .height = gui::px(20.0f)}}}
+                    )) {
                     BASE_UNUSED(cell);
                     ui.label("X", {.layout = {.width = gui::fill(), .height = gui::fill()}});
                 }
@@ -862,14 +1240,13 @@ namespace {
 
         gui::Frame ui = gui::begin_frame(gui_context, {.size = {100.0f, 60.0f}});
         auto overlay = ui.overlay({
-            .layout =
-                {
-                    .width = gui::fill(),
-                    .height = gui::fill(),
-                    .padding = gui::insets(10.0f),
-                    .align_x = gui::Align::END,
-                    .align_y = gui::Align::CENTER,
-                },
+            .layout = {
+                .width = gui::fill(),
+                .height = gui::fill(),
+                .padding = gui::insets(10.0f),
+                .align_x = gui::Align::END,
+                .align_y = gui::Align::CENTER,
+            },
         });
         TEST_EXPECT(context, overlay);
         ui.spacer({.layout = {.width = gui::fill(), .height = gui::fill()}});
@@ -901,12 +1278,13 @@ namespace {
             TEST_EXPECT(context, page);
             {
                 auto popup = ui.popup(
-                    popup_id, {.layout = {.width = gui::px(40.0f), .height = gui::px(20.0f)}});
+                    popup_id, {.layout = {.width = gui::px(40.0f), .height = gui::px(20.0f)}}
+                );
                 TEST_EXPECT(context, popup);
             }
-            ui.button(button_id,
-                      "Behind",
-                      {.layout = {.width = gui::px(40.0f), .height = gui::px(20.0f)}});
+            ui.button(
+                button_id, "Behind", {.layout = {.width = gui::px(40.0f), .height = gui::px(20.0f)}}
+            );
         }
         gui::end_frame(ui);
 
@@ -935,12 +1313,13 @@ namespace {
         {
             auto panel = ui.overlay(
                 gui::id("clipped_panel"),
-                {.layout = {.width = gui::px(50.0f), .height = gui::px(40.0f), .clip = true}});
+                {.layout = {.width = gui::px(50.0f), .height = gui::px(40.0f), .clip = true}}
+            );
             TEST_EXPECT(context, panel);
             {
-                auto popup =
-                    ui.popup(popup_id,
-                             {.layout = {.width = gui::px(40.0f), .height = gui::px(20.0f)}});
+                auto popup = ui.popup(
+                    popup_id, {.layout = {.width = gui::px(40.0f), .height = gui::px(20.0f)}}
+                );
                 TEST_EXPECT(context, popup);
             }
         }
@@ -953,12 +1332,13 @@ namespace {
         {
             auto panel = ui.overlay(
                 gui::id("clipped_panel"),
-                {.layout = {.width = gui::px(50.0f), .height = gui::px(40.0f), .clip = true}});
+                {.layout = {.width = gui::px(50.0f), .height = gui::px(40.0f), .clip = true}}
+            );
             TEST_EXPECT(context, panel);
             {
-                auto popup =
-                    ui.popup(popup_id,
-                             {.layout = {.width = gui::px(40.0f), .height = gui::px(20.0f)}});
+                auto popup = ui.popup(
+                    popup_id, {.layout = {.width = gui::px(40.0f), .height = gui::px(20.0f)}}
+                );
                 TEST_EXPECT(context, popup.signal().active);
             }
         }
@@ -969,12 +1349,13 @@ namespace {
         {
             auto panel = ui.overlay(
                 gui::id("clipped_panel"),
-                {.layout = {.width = gui::px(50.0f), .height = gui::px(40.0f), .clip = true}});
+                {.layout = {.width = gui::px(50.0f), .height = gui::px(40.0f), .clip = true}}
+            );
             TEST_EXPECT(context, panel);
             {
-                auto popup =
-                    ui.popup(popup_id,
-                             {.layout = {.width = gui::px(40.0f), .height = gui::px(20.0f)}});
+                auto popup = ui.popup(
+                    popup_id, {.layout = {.width = gui::px(40.0f), .height = gui::px(20.0f)}}
+                );
                 TEST_EXPECT(context, popup.signal().active);
             }
         }
@@ -1005,15 +1386,17 @@ namespace {
             auto page = ui.column({.layout = {.width = gui::fill(), .height = gui::fill()}});
             TEST_EXPECT(context, page);
             {
-                auto modal = ui.modal(modal_id,
-                                      {.layout =
-                                           {
-                                               .align_x = gui::Align::CENTER,
-                                               .align_y = gui::Align::CENTER,
-                                           }});
+                auto modal = ui.modal(
+                    modal_id,
+                    {.layout = {
+                         .align_x = gui::Align::CENTER,
+                         .align_y = gui::Align::CENTER,
+                     }}
+                );
                 TEST_EXPECT(context, modal);
                 ui.button(
-                    ok_id, "OK", {.layout = {.width = gui::px(20.0f), .height = gui::px(20.0f)}});
+                    ok_id, "OK", {.layout = {.width = gui::px(20.0f), .height = gui::px(20.0f)}}
+                );
             }
             ui.button("Behind", {.layout = {.width = gui::px(100.0f), .height = gui::px(80.0f)}});
         }
@@ -1028,8 +1411,9 @@ namespace {
 
             gui::BoxInfo const* backdrop_hit = ui.hit_test({5.0f, 5.0f});
             gui::BoxInfo const* button_hit = ui.hit_test({45.0f, 35.0f});
-            TEST_EXPECT(context,
-                        backdrop_hit != nullptr && backdrop_hit->id.value == modal->id.value);
+            TEST_EXPECT(
+                context, backdrop_hit != nullptr && backdrop_hit->id.value == modal->id.value
+            );
             TEST_EXPECT(context, button_hit != nullptr && button_hit->id.value == ok->id.value);
         }
 
@@ -1048,7 +1432,8 @@ namespace {
         ui.set_scroll_y(thread_id, 22.0f);
         {
             auto panel = ui.scroll_panel(
-                thread_id, {.layout = {.width = gui::fill(), .height = gui::px(30.0f)}});
+                thread_id, {.layout = {.width = gui::fill(), .height = gui::px(30.0f)}}
+            );
             TEST_EXPECT(context, panel);
             ui.spacer({.layout = {.width = gui::fill(), .height = gui::px(20.0f)}});
             ui.spacer({.layout = {.width = gui::fill(), .height = gui::px(20.0f)}});
@@ -1072,7 +1457,8 @@ namespace {
         ui.scroll_to_end(thread_id);
         {
             auto panel = ui.scroll_panel(
-                thread_id, {.layout = {.width = gui::fill(), .height = gui::px(30.0f)}});
+                thread_id, {.layout = {.width = gui::fill(), .height = gui::px(30.0f)}}
+            );
             TEST_EXPECT(context, panel);
             ui.spacer({.layout = {.width = gui::fill(), .height = gui::px(20.0f)}});
             ui.spacer({.layout = {.width = gui::fill(), .height = gui::px(20.0f)}});
@@ -1102,10 +1488,13 @@ namespace {
         ui.set_scroll_y(panel_id, 15.0f);
         {
             auto panel = ui.scroll_panel(
-                panel_id, {.layout = {.width = gui::fill(), .height = gui::px(30.0f)}});
+                panel_id, {.layout = {.width = gui::fill(), .height = gui::px(30.0f)}}
+            );
             TEST_EXPECT(context, panel);
-            ui.spacer({.layout = {.width = gui::fill(), .height = gui::px(20.0f)},
-                       .style = {.background = gui::rgb(1, 2, 3)}});
+            ui.spacer(
+                {.layout = {.width = gui::fill(), .height = gui::px(20.0f)},
+                 .style = {.background = gui::rgb(1, 2, 3)}}
+            );
             ui.spacer({.layout = {.width = gui::fill(), .height = gui::px(20.0f)}});
             ui.spacer({.layout = {.width = gui::fill(), .height = gui::px(20.0f)}});
         }
@@ -1119,15 +1508,19 @@ namespace {
         gui::draw::Command const* content_command = gui::draw::command(draw_context, 0u);
         gui::draw::Command const* track_command = gui::draw::command(draw_context, 1u);
         gui::draw::Command const* thumb_command = gui::draw::command(draw_context, 2u);
-        TEST_EXPECT(context,
-                    content_command != nullptr &&
-                        content_command->kind == gui::draw::CommandKind::STYLED_RECT);
-        TEST_EXPECT(context,
-                    track_command != nullptr &&
-                        track_command->kind == gui::draw::CommandKind::STYLED_RECT);
-        TEST_EXPECT(context,
-                    thumb_command != nullptr &&
-                        thumb_command->kind == gui::draw::CommandKind::STYLED_RECT);
+        TEST_EXPECT(
+            context,
+            content_command != nullptr &&
+                content_command->kind == gui::draw::CommandKind::STYLED_RECT
+        );
+        TEST_EXPECT(
+            context,
+            track_command != nullptr && track_command->kind == gui::draw::CommandKind::STYLED_RECT
+        );
+        TEST_EXPECT(
+            context,
+            thumb_command != nullptr && thumb_command->kind == gui::draw::CommandKind::STYLED_RECT
+        );
         gui::draw::StyledRectCommand const* track =
             gui::draw::styled_rect_command(draw_context, 1u);
         gui::draw::StyledRectCommand const* thumb =
@@ -1256,30 +1649,35 @@ namespace {
 
         gui::Frame ui = gui::begin_frame(gui_context, {.size = {100.0f, 80.0f}});
         {
-            auto page = ui.column(gui::id("page"),
-                                  {
-                                      .layout =
-                                          {
-                                              .width = gui::fill(),
-                                              .height = gui::fill(),
-                                              .padding = gui::insets(10.0f),
-                                          },
-                                  });
+            auto page = ui.column(
+                gui::id("page"),
+                {
+                    .layout = {
+                        .width = gui::fill(),
+                        .height = gui::fill(),
+                        .padding = gui::insets(10.0f),
+                    },
+                }
+            );
             TEST_EXPECT(context, page);
-            auto toolbar = ui.row(gui::id("toolbar"),
-                                  {.layout = {.width = gui::px(80.0f), .height = gui::px(30.0f)}});
+            auto toolbar = ui.row(
+                gui::id("toolbar"), {.layout = {.width = gui::px(80.0f), .height = gui::px(30.0f)}}
+            );
             TEST_EXPECT(context, toolbar);
-            ui.button(gui::id("run"),
-                      "Run",
-                      {.layout = {.width = gui::px(40.0f), .height = gui::px(20.0f)}});
+            ui.button(
+                gui::id("run"),
+                "Run",
+                {.layout = {.width = gui::px(40.0f), .height = gui::px(20.0f)}}
+            );
         }
         gui::end_frame(ui);
 
         gui::BoxInfo const* button = ui.box_info(3u);
         gui::BoxInfo const* hit = ui.hit_test({15.0f, 15.0f});
         TEST_EXPECT(context, button != nullptr && button->kind == gui::BoxKind::BUTTON);
-        TEST_EXPECT(context,
-                    hit != nullptr && button != nullptr && hit->id.value == button->id.value);
+        TEST_EXPECT(
+            context, hit != nullptr && button != nullptr && hit->id.value == button->id.value
+        );
 
         gui::destroy_context(gui_context);
     }
@@ -1296,17 +1694,24 @@ namespace {
         ui.set_scroll_y(panel_id, 15.0f);
         {
             auto panel = ui.scroll_panel(
-                panel_id, {.layout = {.width = gui::fill(), .height = gui::px(30.0f)}});
+                panel_id, {.layout = {.width = gui::fill(), .height = gui::px(30.0f)}}
+            );
             TEST_EXPECT(context, panel);
-            ui.label(gui::id("first"),
-                     "First",
-                     {.layout = {.width = gui::fill(), .height = gui::px(20.0f)}});
-            ui.label(gui::id("second"),
-                     "Second",
-                     {.layout = {.width = gui::fill(), .height = gui::px(20.0f)}});
-            ui.label(gui::id("third"),
-                     "Third",
-                     {.layout = {.width = gui::fill(), .height = gui::px(20.0f)}});
+            ui.label(
+                gui::id("first"),
+                "First",
+                {.layout = {.width = gui::fill(), .height = gui::px(20.0f)}}
+            );
+            ui.label(
+                gui::id("second"),
+                "Second",
+                {.layout = {.width = gui::fill(), .height = gui::px(20.0f)}}
+            );
+            ui.label(
+                gui::id("third"),
+                "Third",
+                {.layout = {.width = gui::fill(), .height = gui::px(20.0f)}}
+            );
         }
         gui::end_frame(ui);
 
@@ -1316,9 +1721,10 @@ namespace {
         gui::BoxInfo const* clipped_hit = ui.hit_test({5.0f, 40.0f});
         TEST_EXPECT(context, first != nullptr && first->kind == gui::BoxKind::LABEL);
         TEST_EXPECT(context, second != nullptr && second->kind == gui::BoxKind::LABEL);
-        TEST_EXPECT(context,
-                    visible_hit != nullptr && second != nullptr &&
-                        visible_hit->id.value == second->id.value);
+        TEST_EXPECT(
+            context,
+            visible_hit != nullptr && second != nullptr && visible_hit->id.value == second->id.value
+        );
         TEST_EXPECT(context, clipped_hit != nullptr && clipped_hit->kind == gui::BoxKind::ROOT);
 
         gui::destroy_context(gui_context);
@@ -1337,7 +1743,8 @@ namespace {
             auto page = ui.column(gui::id("page"));
             TEST_EXPECT(context, page);
             ui.button(
-                run_id, "Run", {.layout = {.width = gui::px(50.0f), .height = gui::px(20.0f)}});
+                run_id, "Run", {.layout = {.width = gui::px(50.0f), .height = gui::px(20.0f)}}
+            );
         }
         gui::end_frame(ui);
 
@@ -1358,7 +1765,8 @@ namespace {
             TEST_EXPECT(context, page);
             ui.label("Intro", {.layout = {.height = gui::px(10.0f)}});
             ui.button(
-                run_id, "Run", {.layout = {.width = gui::px(50.0f), .height = gui::px(20.0f)}});
+                run_id, "Run", {.layout = {.width = gui::px(50.0f), .height = gui::px(20.0f)}}
+            );
         }
         gui::end_frame(ui);
 
@@ -1490,7 +1898,8 @@ namespace {
         bool enabled = false;
         gui::Frame ui = gui::begin_frame(gui_context, {.size = {120.0f, 40.0f}});
         ui.checkbox(
-            "Enabled", &enabled, {.layout = {.width = gui::px(100.0f), .height = gui::px(20.0f)}});
+            "Enabled", &enabled, {.layout = {.width = gui::px(100.0f), .height = gui::px(20.0f)}}
+        );
         gui::end_frame(ui);
 
         gui::InputState input = {};
@@ -1498,7 +1907,8 @@ namespace {
         input.mouse_down[0u] = true;
         ui = gui::begin_frame(gui_context, {.size = {120.0f, 40.0f}, .input = input});
         gui::Signal signal = ui.checkbox(
-            "Enabled", &enabled, {.layout = {.width = gui::px(100.0f), .height = gui::px(20.0f)}});
+            "Enabled", &enabled, {.layout = {.width = gui::px(100.0f), .height = gui::px(20.0f)}}
+        );
         TEST_EXPECT(context, signal.pressed_left);
         TEST_EXPECT(context, !signal.changed);
         TEST_EXPECT(context, !enabled);
@@ -1507,7 +1917,8 @@ namespace {
         input.mouse_down[0u] = false;
         ui = gui::begin_frame(gui_context, {.size = {120.0f, 40.0f}, .input = input});
         signal = ui.checkbox(
-            "Enabled", &enabled, {.layout = {.width = gui::px(100.0f), .height = gui::px(20.0f)}});
+            "Enabled", &enabled, {.layout = {.width = gui::px(100.0f), .height = gui::px(20.0f)}}
+        );
         TEST_EXPECT(context, signal.clicked_left);
         TEST_EXPECT(context, signal.activated);
         TEST_EXPECT(context, signal.changed);
@@ -1516,9 +1927,11 @@ namespace {
 
         float value = 0.0f;
         ui = gui::begin_frame(gui_context, {.size = {120.0f, 40.0f}});
-        ui.slider_float("Scale",
-                        &value,
-                        {.box = {.layout = {.width = gui::px(100.0f), .height = gui::px(20.0f)}}});
+        ui.slider_float(
+            "Scale",
+            &value,
+            {.box = {.layout = {.width = gui::px(100.0f), .height = gui::px(20.0f)}}}
+        );
         gui::end_frame(ui);
 
         input = {};
@@ -1528,7 +1941,8 @@ namespace {
         signal = ui.slider_float(
             "Scale",
             &value,
-            {.box = {.layout = {.width = gui::px(100.0f), .height = gui::px(20.0f)}}});
+            {.box = {.layout = {.width = gui::px(100.0f), .height = gui::px(20.0f)}}}
+        );
         TEST_EXPECT(context, signal.active);
         TEST_EXPECT(context, signal.changed);
         TEST_EXPECT(context, value == 0.5f);
@@ -1547,13 +1961,15 @@ namespace {
         gui::Id const scale_id = gui::id("scale");
         float value = 0.5f;
         gui::Frame ui = gui::begin_frame(gui_context, {.size = {120.0f, 40.0f}});
-        ui.slider_float(scale_id,
-                        "Scale",
-                        &value,
-                        {
-                            .box = {.layout = {.width = gui::px(100.0f), .height = gui::px(20.0f)}},
-                            .step = 0.25f,
-                        });
+        ui.slider_float(
+            scale_id,
+            "Scale",
+            &value,
+            {
+                .box = {.layout = {.width = gui::px(100.0f), .height = gui::px(20.0f)}},
+                .step = 0.25f,
+            }
+        );
         gui::end_frame(ui);
 
         gui::KeyEvent const events[] = {{.key = gui::Key::RIGHT}};
@@ -1569,7 +1985,8 @@ namespace {
             {
                 .box = {.layout = {.width = gui::px(100.0f), .height = gui::px(20.0f)}},
                 .step = 0.25f,
-            });
+            }
+        );
         gui::end_frame(ui);
 
         TEST_EXPECT(context, signal.focused);
@@ -1603,7 +2020,8 @@ namespace {
             "Name",
             buffer,
             sizeof(buffer),
-            {.layout = {.width = gui::px(120.0f), .height = gui::px(20.0f)}});
+            {.layout = {.width = gui::px(120.0f), .height = gui::px(20.0f)}}
+        );
         gui::end_frame(ui);
 
         TEST_EXPECT(context, signal.focused);
@@ -1647,7 +2065,8 @@ namespace {
             "Field",
             buffer,
             sizeof(buffer),
-            {.layout = {.width = gui::px(120.0f), .height = gui::px(20.0f)}});
+            {.layout = {.width = gui::px(120.0f), .height = gui::px(20.0f)}}
+        );
         gui::end_frame(ui);
 
         TEST_EXPECT(context, signal.focused);
@@ -1682,7 +2101,8 @@ namespace {
             "Field",
             buffer,
             sizeof(buffer),
-            {.layout = {.width = gui::px(120.0f), .height = gui::px(20.0f)}});
+            {.layout = {.width = gui::px(120.0f), .height = gui::px(20.0f)}}
+        );
         gui::end_frame(ui);
 
         TEST_EXPECT(context, signal.focused);
@@ -1717,7 +2137,8 @@ namespace {
             "Field",
             buffer,
             sizeof(buffer),
-            {.layout = {.width = gui::px(120.0f), .height = gui::px(20.0f)}});
+            {.layout = {.width = gui::px(120.0f), .height = gui::px(20.0f)}}
+        );
         gui::end_frame(ui);
 
         TEST_EXPECT(context, signal.changed);
@@ -1758,7 +2179,8 @@ namespace {
             "Field",
             buffer,
             sizeof(buffer),
-            {.layout = {.width = gui::px(160.0f), .height = gui::px(20.0f)}});
+            {.layout = {.width = gui::px(160.0f), .height = gui::px(20.0f)}}
+        );
         gui::end_frame(ui);
 
         TEST_EXPECT(context, signal.changed);
@@ -1777,8 +2199,7 @@ namespace {
         gui::create_context(arena, {}, gui_context);
 
         gui::Id const field_id = gui::id("field");
-        gui::BoxDesc const box = {
-            .layout = {.width = gui::px(120.0f), .height = gui::px(20.0f)}};
+        gui::BoxDesc const box = {.layout = {.width = gui::px(120.0f), .height = gui::px(20.0f)}};
         char buffer[16] = "Hi";
         gui::KeyEvent const text_events[] = {
             {.kind = gui::KeyEventKind::TEXT, .codepoint = '!'},
@@ -1847,7 +2268,8 @@ namespace {
             "Field",
             buffer,
             sizeof(buffer),
-            {.layout = {.width = gui::px(120.0f), .height = gui::px(20.0f)}});
+            {.layout = {.width = gui::px(120.0f), .height = gui::px(20.0f)}}
+        );
         gui::end_frame(ui);
 
         TEST_EXPECT(context, signal.changed);
@@ -1861,8 +2283,7 @@ namespace {
         arena.init();
 
         gui::Id const field_id = gui::id("field");
-        gui::BoxDesc const box = {
-            .layout = {.width = gui::px(160.0f), .height = gui::px(20.0f)}};
+        gui::BoxDesc const box = {.layout = {.width = gui::px(160.0f), .height = gui::px(20.0f)}};
 
         auto expect_edit = [&](char* buffer,
                                size_t buffer_size,
@@ -1879,8 +2300,7 @@ namespace {
             gui::Frame ui =
                 gui::begin_frame(gui_context, {.size = {180.0f, 40.0f}, .input = input});
             ui.request_focus(field_id);
-            gui::Signal const signal =
-                ui.input_text(field_id, "Field", buffer, buffer_size, box);
+            gui::Signal const signal = ui.input_text(field_id, "Field", buffer, buffer_size, box);
             gui::end_frame(ui);
 
             TEST_EXPECT(context, signal.changed);
@@ -1943,8 +2363,7 @@ namespace {
         gui::create_context(arena, {}, gui_context);
 
         gui::Id const field_id = gui::id("field");
-        gui::BoxDesc const box = {
-            .layout = {.width = gui::px(120.0f), .height = gui::px(20.0f)}};
+        gui::BoxDesc const box = {.layout = {.width = gui::px(120.0f), .height = gui::px(20.0f)}};
         char buffer[16] = "ABCDE";
 
         gui::Frame ui = gui::begin_frame(gui_context, {.size = {160.0f, 40.0f}});
@@ -2005,8 +2424,7 @@ namespace {
         );
 
         gui::Id const field_id = gui::id("field");
-        gui::BoxDesc const box = {
-            .layout = {.width = gui::px(160.0f), .height = gui::px(20.0f)}};
+        gui::BoxDesc const box = {.layout = {.width = gui::px(160.0f), .height = gui::px(20.0f)}};
         char buffer[16] = "alpha beta";
 
         gui::Frame ui = gui::begin_frame(gui_context, {.size = {180.0f, 40.0f}});
@@ -2057,8 +2475,7 @@ namespace {
         gui::create_context(arena, {}, gui_context);
 
         gui::Id const field_id = gui::id("field");
-        gui::BoxDesc const box = {
-            .layout = {.width = gui::px(160.0f), .height = gui::px(20.0f)}};
+        gui::BoxDesc const box = {.layout = {.width = gui::px(160.0f), .height = gui::px(20.0f)}};
         char buffer[16] = "alpha beta";
 
         gui::Frame ui = gui::begin_frame(gui_context, {.size = {180.0f, 40.0f}});
@@ -2079,8 +2496,7 @@ namespace {
         input.key_events = events;
         input.key_event_count = 1u;
         ui = gui::begin_frame(gui_context, {.size = {180.0f, 40.0f}, .input = input});
-        gui::Signal const signal =
-            ui.input_text(field_id, "Field", buffer, sizeof(buffer), box);
+        gui::Signal const signal = ui.input_text(field_id, "Field", buffer, sizeof(buffer), box);
         gui::end_frame(ui);
 
         TEST_EXPECT(context, signal.changed);
@@ -2095,9 +2511,8 @@ namespace {
 
         gui::Id const field_id = gui::id("field");
         gui::BoxDesc const box = {.layout = {.width = gui::px(120.0f), .height = gui::px(20.0f)}};
-        auto select_bcd = [&](gui::Context current_context,
-                              char* buffer,
-                              size_t buffer_size) -> void {
+        auto select_bcd =
+            [&](gui::Context current_context, char* buffer, size_t buffer_size) -> void {
             gui::Frame ui = gui::begin_frame(current_context, {.size = {160.0f, 40.0f}});
             ui.input_text(field_id, "Field", buffer, buffer_size, box);
             gui::end_frame(ui);
@@ -2242,7 +2657,8 @@ namespace {
             "Name",
             buffer,
             sizeof(buffer),
-            {.layout = {.width = gui::px(120.0f), .height = gui::px(20.0f)}});
+            {.layout = {.width = gui::px(120.0f), .height = gui::px(20.0f)}}
+        );
         gui::end_frame(ui);
 
         gui::BoxInfo const* first = ui.box_info(1u);
@@ -2262,7 +2678,8 @@ namespace {
             "Name",
             buffer,
             sizeof(buffer),
-            {.layout = {.width = gui::px(120.0f), .height = gui::px(20.0f)}});
+            {.layout = {.width = gui::px(120.0f), .height = gui::px(20.0f)}}
+        );
         gui::end_frame(ui);
 
         gui::BoxInfo const* second = ui.box_info(1u);
@@ -2301,12 +2718,11 @@ namespace {
 
         gui::Id const field_id = gui::id("field");
         gui::BoxDesc const box = {
-            .layout =
-                {
-                    .width = gui::px(160.0f),
-                    .height = gui::px(30.0f),
-                    .padding = gui::insets(5.0f, 8.0f),
-                },
+            .layout = {
+                .width = gui::px(160.0f),
+                .height = gui::px(30.0f),
+                .padding = gui::insets(5.0f, 8.0f),
+            },
         };
 
         char empty[16] = "";
@@ -2430,7 +2846,8 @@ namespace {
             field_id,
             "Field",
             &buffer,
-            {.box = {.layout = {.width = gui::px(140.0f), .height = gui::px(48.0f)}}});
+            {.box = {.layout = {.width = gui::px(140.0f), .height = gui::px(48.0f)}}}
+        );
         gui::end_frame(ui);
 
         TEST_EXPECT(context, signal.focused);
@@ -2465,9 +2882,11 @@ namespace {
             field_id,
             "Field",
             &buffer,
-            {.box = {.layout = {.width = gui::px(140.0f), .height = gui::px(48.0f)}}});
-        ui.button(gui::id("next"), "Next", {.layout = {.width = gui::px(60.0f),
-                                                       .height = gui::px(24.0f)}});
+            {.box = {.layout = {.width = gui::px(140.0f), .height = gui::px(48.0f)}}}
+        );
+        ui.button(
+            gui::id("next"), "Next", {.layout = {.width = gui::px(60.0f), .height = gui::px(24.0f)}}
+        );
         gui::end_frame(ui);
 
         gui::KeyEvent const events[] = {{.key = gui::Key::TAB}};
@@ -2480,11 +2899,11 @@ namespace {
             field_id,
             "Field",
             &buffer,
-            {.box = {.layout = {.width = gui::px(140.0f), .height = gui::px(48.0f)}}});
-        gui::Signal const next = ui.button(gui::id("next"),
-                                           "Next",
-                                           {.layout = {.width = gui::px(60.0f),
-                                                       .height = gui::px(24.0f)}});
+            {.box = {.layout = {.width = gui::px(140.0f), .height = gui::px(48.0f)}}}
+        );
+        gui::Signal const next = ui.button(
+            gui::id("next"), "Next", {.layout = {.width = gui::px(60.0f), .height = gui::px(24.0f)}}
+        );
         gui::end_frame(ui);
 
         TEST_EXPECT(context, field.focused);
@@ -2520,7 +2939,8 @@ namespace {
             {
                 .box = {.layout = {.width = gui::px(140.0f), .height = gui::px(48.0f)}},
                 .tab_text = "\t",
-            });
+            }
+        );
         gui::end_frame(ui);
 
         TEST_EXPECT(context, signal.changed);
@@ -2556,7 +2976,8 @@ namespace {
             field_id,
             "Field",
             &buffer,
-            {.box = {.layout = {.width = gui::px(140.0f), .height = gui::px(48.0f)}}});
+            {.box = {.layout = {.width = gui::px(140.0f), .height = gui::px(48.0f)}}}
+        );
         gui::end_frame(ui);
 
         TEST_EXPECT(context, signal.changed);
@@ -2664,9 +3085,11 @@ namespace {
         {
             auto group = ui.column({.flags = gui::BOX_FLAG_DISABLED});
             TEST_EXPECT(context, group);
-            ui.checkbox("Enabled",
-                        &enabled,
-                        {.layout = {.width = gui::px(100.0f), .height = gui::px(20.0f)}});
+            ui.checkbox(
+                "Enabled",
+                &enabled,
+                {.layout = {.width = gui::px(100.0f), .height = gui::px(20.0f)}}
+            );
         }
         gui::end_frame(ui);
 
@@ -2677,10 +3100,11 @@ namespace {
         {
             auto group = ui.column({.flags = gui::BOX_FLAG_DISABLED});
             TEST_EXPECT(context, group);
-            gui::Signal const signal =
-                ui.checkbox("Enabled",
-                            &enabled,
-                            {.layout = {.width = gui::px(100.0f), .height = gui::px(20.0f)}});
+            gui::Signal const signal = ui.checkbox(
+                "Enabled",
+                &enabled,
+                {.layout = {.width = gui::px(100.0f), .height = gui::px(20.0f)}}
+            );
             TEST_EXPECT(context, !signal.hovered);
             TEST_EXPECT(context, !signal.pressed_left);
             TEST_EXPECT(context, !signal.focused);
@@ -2706,13 +3130,14 @@ namespace {
         gui::create_context(arena, {}, gui_context);
 
         gui::Frame ui = gui::begin_frame(gui_context, {.size = {100.0f, 100.0f}});
-        auto rows =
-            ui.list_fixed(gui::id("files"),
-                          {
-                              .item_count = 100u,
-                              .item_height = 10.0f,
-                              .box = {.layout = {.width = gui::fill(), .height = gui::px(30.0f)}},
-                          });
+        auto rows = ui.list_fixed(
+            gui::id("files"),
+            {
+                .item_count = 100u,
+                .item_height = 10.0f,
+                .box = {.layout = {.width = gui::fill(), .height = gui::px(30.0f)}},
+            }
+        );
         TEST_EXPECT(context, rows.first == 0u);
         TEST_EXPECT(context, rows.end == 4u);
         for (size_t row_index = rows.first; row_index < rows.end; ++row_index) {
@@ -2749,13 +3174,14 @@ namespace {
         input.mouse_pos = {5.0f, 5.0f};
         input.scroll_delta_y = -15.0f;
         ui = gui::begin_frame(gui_context, {.size = {100.0f, 100.0f}, .input = input});
-        auto scrolled_rows =
-            ui.list_fixed(gui::id("files"),
-                          {
-                              .item_count = 100u,
-                              .item_height = 10.0f,
-                              .box = {.layout = {.width = gui::fill(), .height = gui::px(30.0f)}},
-                          });
+        auto scrolled_rows = ui.list_fixed(
+            gui::id("files"),
+            {
+                .item_count = 100u,
+                .item_height = 10.0f,
+                .box = {.layout = {.width = gui::fill(), .height = gui::px(30.0f)}},
+            }
+        );
         TEST_EXPECT(context, scrolled_rows.first == 1u);
         TEST_EXPECT(context, scrolled_rows.end == 5u);
         for (size_t row_index = scrolled_rows.first; row_index < scrolled_rows.end; ++row_index) {
@@ -2779,13 +3205,14 @@ namespace {
 
         ui = gui::begin_frame(gui_context, {.size = {100.0f, 100.0f}});
         ui.set_scroll_y(gui::id("files"), 25.0f);
-        auto requested_rows =
-            ui.list_fixed(gui::id("files"),
-                          {
-                              .item_count = 100u,
-                              .item_height = 10.0f,
-                              .box = {.layout = {.width = gui::fill(), .height = gui::px(30.0f)}},
-                          });
+        auto requested_rows = ui.list_fixed(
+            gui::id("files"),
+            {
+                .item_count = 100u,
+                .item_height = 10.0f,
+                .box = {.layout = {.width = gui::fill(), .height = gui::px(30.0f)}},
+            }
+        );
         TEST_EXPECT(context, requested_rows.first == 2u);
         TEST_EXPECT(context, requested_rows.end == 6u);
         for (size_t row_index = requested_rows.first; row_index < requested_rows.end; ++row_index) {
@@ -2877,13 +3304,14 @@ namespace {
 
         gui::Frame ui = gui::begin_frame(gui_context, {.size = {100.0f, 100.0f}});
         ui.scroll_to_index(files_id, 20u, gui::ScrollReveal::START);
-        auto rows =
-            ui.list_fixed(files_id,
-                          {
-                              .item_count = 100u,
-                              .item_height = 10.0f,
-                              .box = {.layout = {.width = gui::fill(), .height = gui::px(30.0f)}},
-                          });
+        auto rows = ui.list_fixed(
+            files_id,
+            {
+                .item_count = 100u,
+                .item_height = 10.0f,
+                .box = {.layout = {.width = gui::fill(), .height = gui::px(30.0f)}},
+            }
+        );
         TEST_EXPECT(context, rows.first == 20u);
         TEST_EXPECT(context, rows.end == 24u);
         for (size_t row_index = rows.first; row_index < rows.end; ++row_index) {
@@ -2897,13 +3325,14 @@ namespace {
 
         ui = gui::begin_frame(gui_context, {.size = {100.0f, 100.0f}});
         ui.scroll_to_index(files_id, 20u, gui::ScrollReveal::CENTER);
-        rows =
-            ui.list_fixed(files_id,
-                          {
-                              .item_count = 100u,
-                              .item_height = 10.0f,
-                              .box = {.layout = {.width = gui::fill(), .height = gui::px(30.0f)}},
-                          });
+        rows = ui.list_fixed(
+            files_id,
+            {
+                .item_count = 100u,
+                .item_height = 10.0f,
+                .box = {.layout = {.width = gui::fill(), .height = gui::px(30.0f)}},
+            }
+        );
         TEST_EXPECT(context, rows.first == 19u);
         TEST_EXPECT(context, rows.end == 23u);
         for (size_t row_index = rows.first; row_index < rows.end; ++row_index) {
@@ -2917,13 +3346,14 @@ namespace {
 
         ui = gui::begin_frame(gui_context, {.size = {100.0f, 100.0f}});
         ui.scroll_to_index(files_id, 20u, gui::ScrollReveal::END);
-        rows =
-            ui.list_fixed(files_id,
-                          {
-                              .item_count = 100u,
-                              .item_height = 10.0f,
-                              .box = {.layout = {.width = gui::fill(), .height = gui::px(30.0f)}},
-                          });
+        rows = ui.list_fixed(
+            files_id,
+            {
+                .item_count = 100u,
+                .item_height = 10.0f,
+                .box = {.layout = {.width = gui::fill(), .height = gui::px(30.0f)}},
+            }
+        );
         TEST_EXPECT(context, rows.first == 18u);
         TEST_EXPECT(context, rows.end == 22u);
         for (size_t row_index = rows.first; row_index < rows.end; ++row_index) {
@@ -2937,13 +3367,14 @@ namespace {
 
         ui = gui::begin_frame(gui_context, {.size = {100.0f, 100.0f}});
         ui.scroll_to_index(files_id, 22u);
-        rows =
-            ui.list_fixed(files_id,
-                          {
-                              .item_count = 100u,
-                              .item_height = 10.0f,
-                              .box = {.layout = {.width = gui::fill(), .height = gui::px(30.0f)}},
-                          });
+        rows = ui.list_fixed(
+            files_id,
+            {
+                .item_count = 100u,
+                .item_height = 10.0f,
+                .box = {.layout = {.width = gui::fill(), .height = gui::px(30.0f)}},
+            }
+        );
         TEST_EXPECT(context, rows.first == 20u);
         TEST_EXPECT(context, rows.end == 24u);
         for (size_t row_index = rows.first; row_index < rows.end; ++row_index) {
@@ -2967,8 +3398,7 @@ namespace {
 
         gui::TextSelection selection = {1u, 4u};
         gui::Id const label_id = gui::id("copyable");
-        gui::BoxDesc const box = {
-            .layout = {.width = gui::px(100.0f), .height = gui::px(20.0f)}};
+        gui::BoxDesc const box = {.layout = {.width = gui::px(100.0f), .height = gui::px(20.0f)}};
 
         gui::Frame ui = gui::begin_frame(gui_context, {.size = {120.0f, 40.0f}});
         ui.selectable_label(label_id, "ABCDE", &selection, box);
@@ -3044,8 +3474,7 @@ namespace {
 
         gui::TextSelection selection = {};
         gui::Id const label_id = gui::id("copyable");
-        gui::BoxDesc const box = {
-            .layout = {.width = gui::px(200.0f), .height = gui::px(20.0f)}};
+        gui::BoxDesc const box = {.layout = {.width = gui::px(200.0f), .height = gui::px(20.0f)}};
 
         gui::Frame ui = gui::begin_frame(gui_context, {.size = {220.0f, 40.0f}});
         ui.selectable_label(label_id, "alpha beta", &selection, box);
@@ -3094,8 +3523,7 @@ namespace {
 
         gui::TextSelection selection = {};
         gui::Id const label_id = gui::id("copyable");
-        gui::BoxDesc const box = {
-            .layout = {.width = gui::px(200.0f), .height = gui::px(20.0f)}};
+        gui::BoxDesc const box = {.layout = {.width = gui::px(200.0f), .height = gui::px(20.0f)}};
 
         gui::Frame ui = gui::begin_frame(gui_context, {.size = {220.0f, 40.0f}});
         ui.selectable_label(label_id, "alpha beta", &selection, box);
@@ -3235,10 +3663,12 @@ namespace {
 
         gui::TextSelection selection = {1u, 4u};
         gui::Frame ui = gui::begin_frame(gui_context, {.size = {120.0f, 40.0f}});
-        ui.selectable_label(gui::id("copyable"),
-                            "ABCDE",
-                            &selection,
-                            {.layout = {.width = gui::px(100.0f), .height = gui::px(20.0f)}});
+        ui.selectable_label(
+            gui::id("copyable"),
+            "ABCDE",
+            &selection,
+            {.layout = {.width = gui::px(100.0f), .height = gui::px(20.0f)}}
+        );
         gui::end_frame(ui);
 
         gui::draw::begin_frame(draw_context);
@@ -3274,10 +3704,12 @@ namespace {
         gui::Id const label_id = gui::id("title");
         gui::Frame ui = gui::begin_frame(gui_context, {.size = {100.0f, 40.0f}});
         ui.set_scroll_y(label_id, 20.0f);
-        ui.selectable_label(label_id,
-                            "Virtualized Assets",
-                            &selection,
-                            {.layout = {.width = gui::px(80.0f), .height = gui::px(10.0f)}});
+        ui.selectable_label(
+            label_id,
+            "Virtualized Assets",
+            &selection,
+            {.layout = {.width = gui::px(80.0f), .height = gui::px(10.0f)}}
+        );
         gui::end_frame(ui);
 
         gui::ScrollState state = ui.scroll_state(label_id);
@@ -3307,10 +3739,12 @@ namespace {
         gui::Id const label_id = gui::id("copyable");
         gui::Frame ui = gui::begin_frame(gui_context, {.size = {100.0f, 40.0f}});
         ui.set_scroll_y(label_id, 20.0f);
-        ui.selectable_label(label_id,
-                            "A\nB\nC",
-                            &selection,
-                            {.layout = {.width = gui::px(80.0f), .height = gui::px(20.0f)}});
+        ui.selectable_label(
+            label_id,
+            "A\nB\nC",
+            &selection,
+            {.layout = {.width = gui::px(80.0f), .height = gui::px(20.0f)}}
+        );
         gui::end_frame(ui);
 
         gui::ScrollState state = ui.scroll_state(label_id);
@@ -3354,8 +3788,7 @@ namespace {
 
         gui::TextSelection selection = {1u, 2u};
         gui::Id const label_id = gui::id("copyable");
-        gui::BoxDesc const box = {
-            .layout = {.width = gui::px(80.0f), .height = gui::px(20.0f)}};
+        gui::BoxDesc const box = {.layout = {.width = gui::px(80.0f), .height = gui::px(20.0f)}};
 
         gui::Frame ui = gui::begin_frame(gui_context, {.size = {100.0f, 40.0f}});
         ui.selectable_label(label_id, "A\nB\nC", &selection, box);
@@ -3388,8 +3821,7 @@ namespace {
 
         gui::TextSelection selection = {};
         gui::Id const label_id = gui::id("copyable");
-        gui::BoxDesc const box = {
-            .layout = {.width = gui::px(100.0f), .height = gui::px(40.0f)}};
+        gui::BoxDesc const box = {.layout = {.width = gui::px(100.0f), .height = gui::px(40.0f)}};
 
         gui::Frame ui = gui::begin_frame(gui_context, {.size = {120.0f, 60.0f}});
         ui.selectable_label(label_id, "AB\nCDE", &selection, box);
@@ -3423,8 +3855,7 @@ namespace {
 
         gui::TextSelection selection = {3u, 5u};
         gui::Id const label_id = gui::id("copyable");
-        gui::BoxDesc const box = {
-            .layout = {.width = gui::px(100.0f), .height = gui::px(40.0f)}};
+        gui::BoxDesc const box = {.layout = {.width = gui::px(100.0f), .height = gui::px(40.0f)}};
 
         gui::Frame ui = gui::begin_frame(gui_context, {.size = {120.0f, 60.0f}});
         ui.selectable_label(label_id, "AB\nCDE", &selection, box);
@@ -3467,10 +3898,12 @@ namespace {
 
         gui::TextSelection selection = {1u, 5u};
         gui::Frame ui = gui::begin_frame(gui_context, {.size = {120.0f, 60.0f}});
-        ui.selectable_label(gui::id("copyable"),
-                            "ABC\nDE",
-                            &selection,
-                            {.layout = {.width = gui::px(100.0f), .height = gui::px(40.0f)}});
+        ui.selectable_label(
+            gui::id("copyable"),
+            "ABC\nDE",
+            &selection,
+            {.layout = {.width = gui::px(100.0f), .height = gui::px(40.0f)}}
+        );
         gui::end_frame(ui);
 
         gui::draw::begin_frame(draw_context);
@@ -3528,8 +3961,7 @@ namespace {
 
         gui::TextSelection selection = {};
         gui::Id const label_id = gui::id("variable_width");
-        gui::BoxDesc const box = {
-            .layout = {.width = gui::px(200.0f), .height = gui::px(28.0f)}};
+        gui::BoxDesc const box = {.layout = {.width = gui::px(200.0f), .height = gui::px(28.0f)}};
 
         gui::Frame ui = gui::begin_frame(gui_context, {.size = {220.0f, 60.0f}});
         ui.selectable_label(label_id, "iW", &selection, box);
@@ -3588,37 +4020,39 @@ namespace {
         gui::Frame ui = gui::begin_frame(gui_context, {.size = {944.0f, 52.0f}});
         if (auto root = ui.column(
                 gui::id("root"),
-                {.layout =
-                     {
-                         .width = gui::fill(),
-                         .height = gui::fill(),
-                         .padding = gui::insets(8.0f),
-                         .align_x = gui::Align::STRETCH,
-                     }})) {
+                {.layout = {
+                     .width = gui::fill(),
+                     .height = gui::fill(),
+                     .padding = gui::insets(8.0f),
+                     .align_x = gui::Align::STRETCH,
+                 }}
+            )) {
             if (auto header = ui.row(
                     gui::id("header"),
-                    {.layout =
-                         {
-                             .width = gui::fill(),
-                             .height = gui::px(34.0f),
-                             .padding = gui::insets(6.0f, 8.0f),
-                             .gap = 8.0f,
-                             .align_y = gui::Align::CENTER,
-                         }})) {
+                    {.layout = {
+                         .width = gui::fill(),
+                         .height = gui::px(34.0f),
+                         .padding = gui::insets(6.0f, 8.0f),
+                         .gap = 8.0f,
+                         .align_y = gui::Align::CENTER,
+                     }}
+                )) {
                 BASE_UNUSED(header);
-                ui.label("V2 UI API Testbed",
-                         {.layout = {.width = gui::text(), .height = gui::fill()}});
+                ui.label(
+                    "V2 UI API Testbed", {.layout = {.width = gui::text(), .height = gui::fill()}}
+                );
                 ui.spacer({.layout = {.width = gui::fill(), .height = gui::px(1.0f)}});
-                ui.button(gui::id("reset"),
-                          "Reset",
-                          {
-                              .layout =
-                                  {
-                                      .width = gui::px(72.0f),
-                                      .height = gui::px(26.0f),
-                                      .padding = gui::insets(2.0f, 6.0f),
-                                  },
-                          });
+                ui.button(
+                    gui::id("reset"),
+                    "Reset",
+                    {
+                        .layout = {
+                            .width = gui::px(72.0f),
+                            .height = gui::px(26.0f),
+                            .padding = gui::insets(2.0f, 6.0f),
+                        },
+                    }
+                );
             }
             BASE_UNUSED(root);
         }
@@ -3641,8 +4075,7 @@ namespace {
                 reset->position.y + reset->run.offset_y + reset->run.height * 0.5f;
             float const delta = title_center - reset_center;
             TEST_EXPECT(context, delta >= -0.5f && delta <= 0.5f);
-            float const reset_box_center =
-                (reset_box->rect.min.y + reset_box->rect.max.y) * 0.5f;
+            float const reset_box_center = (reset_box->rect.min.y + reset_box->rect.max.y) * 0.5f;
             float const reset_box_delta = reset_center - reset_box_center;
             TEST_EXPECT(context, reset_box_delta >= -0.5f && reset_box_delta <= 0.5f);
         }
@@ -3671,10 +4104,13 @@ namespace {
         float scale = 0.25f;
         gui::Frame ui = gui::begin_frame(gui_context, {.size = {140.0f, 50.0f}});
         ui.checkbox(
-            "Enabled", &enabled, {.layout = {.width = gui::px(100.0f), .height = gui::px(20.0f)}});
-        ui.slider_float("Scale",
-                        &scale,
-                        {.box = {.layout = {.width = gui::px(100.0f), .height = gui::px(20.0f)}}});
+            "Enabled", &enabled, {.layout = {.width = gui::px(100.0f), .height = gui::px(20.0f)}}
+        );
+        ui.slider_float(
+            "Scale",
+            &scale,
+            {.box = {.layout = {.width = gui::px(100.0f), .height = gui::px(20.0f)}}}
+        );
         gui::end_frame(ui);
 
         gui::BoxInfo const* checkbox = ui.box_info(1u);
@@ -3710,7 +4146,8 @@ namespace {
         bool toggles[] = {false, true, false, true};
         float values[] = {0.2f, 0.4f, 0.6f, 0.8f};
         gui::BoxDesc const control_box = {
-            .layout = {.width = gui::px(200.0f), .height = gui::px(20.0f)}};
+            .layout = {.width = gui::px(200.0f), .height = gui::px(20.0f)}
+        };
         gui::Frame ui = gui::begin_frame(gui_context, {.size = {240.0f, 320.0f}});
         {
             auto panel = ui.column({.style = {.role = gui::StyleRole::PANEL}});
@@ -3719,7 +4156,8 @@ namespace {
                 ui.checkbox(gui::id(100u + index), "Check", checks + index, control_box);
                 ui.toggle(gui::id(200u + index), "Toggle", toggles + index, control_box);
                 ui.slider_float(
-                    gui::id(300u + index), "Slider", values + index, {.box = control_box});
+                    gui::id(300u + index), "Slider", values + index, {.box = control_box}
+                );
             }
         }
         gui::end_frame(ui);
@@ -3728,8 +4166,9 @@ namespace {
         gui::render_frame(ui, draw_context);
 
         constexpr size_t expected_styled_rects = 39u;
-        TEST_EXPECT(context,
-                    gui::draw::styled_rect_command_count(draw_context) == expected_styled_rects);
+        TEST_EXPECT(
+            context, gui::draw::styled_rect_command_count(draw_context) == expected_styled_rects
+        );
         TEST_EXPECT(context, gui::draw::text_command_count(draw_context) == 0u);
         TEST_EXPECT(context, gui::draw::primitive_command_count(draw_context) == 0u);
         TEST_EXPECT(context, gui::draw::layer_command_count(draw_context) == 0u);
@@ -3738,8 +4177,10 @@ namespace {
         for (size_t index = 0u; index < expected_styled_rects; ++index) {
             gui::draw::Command const* draw_command = gui::draw::command(draw_context, index);
             TEST_EXPECT(context, draw_command != nullptr);
-            TEST_EXPECT(context, draw_command != nullptr &&
-                                     draw_command->kind == gui::draw::CommandKind::STYLED_RECT);
+            TEST_EXPECT(
+                context,
+                draw_command != nullptr && draw_command->kind == gui::draw::CommandKind::STYLED_RECT
+            );
 
             gui::draw::StyledRectCommand const* styled =
                 gui::draw::styled_rect_command(draw_context, index);
@@ -3767,11 +4208,13 @@ namespace {
         gui::draw::create_context(arena, {}, draw_context);
 
         gui::Frame ui = gui::begin_frame(gui_context, {.size = {100.0f, 40.0f}});
-        ui.button("Paint",
-                  {
-                      .layout = {.width = gui::px(80.0f), .height = gui::px(20.0f)},
-                      .style = {.background = gui::rgb(80, 90, 100), .radius = 3.0f},
-                  });
+        ui.button(
+            "Paint",
+            {
+                .layout = {.width = gui::px(80.0f), .height = gui::px(20.0f)},
+                .style = {.background = gui::rgb(80, 90, 100), .radius = 3.0f},
+            }
+        );
         gui::end_frame(ui);
 
         gui::draw::begin_frame(draw_context);

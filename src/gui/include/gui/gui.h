@@ -251,7 +251,36 @@ namespace gui {
     struct TableCellDesc {
         size_t column_span = 1u;
         size_t row_span = 1u;
+        StrRef sort_text = {};
         BoxDesc box = {};
+    };
+
+    enum class TableSortDirection : uint8_t {
+        NONE,
+        ASCENDING,
+        DESCENDING,
+    };
+
+    struct TableSortColumn {
+        size_t column = 0u;
+        TableSortDirection direction = TableSortDirection::ASCENDING;
+    };
+
+    using TableSortCompareFn = auto (*)(void* user_data, size_t column, StrRef lhs, StrRef rhs)
+        -> int;
+
+    struct TableSortDesc {
+        Slice<TableSortColumn> columns = {};
+        size_t* column_count = nullptr;
+        Slice<bool> selected_columns = {};
+        TableSortCompareFn compare = nullptr;
+        void* compare_user_data = nullptr;
+        BoxDesc box = {};
+    };
+
+    struct TableDesc {
+        BoxDesc box = {};
+        TableSortDesc sort = {};
     };
 
     struct TabItem {
@@ -408,10 +437,12 @@ namespace gui {
     }
 
     [[nodiscard]] constexpr auto rgba(int32_t r, int32_t g, int32_t b, int32_t a) -> Color {
-        return {static_cast<float>(r) / 255.0f,
-                static_cast<float>(g) / 255.0f,
-                static_cast<float>(b) / 255.0f,
-                static_cast<float>(a) / 255.0f};
+        return {
+            static_cast<float>(r) / 255.0f,
+            static_cast<float>(g) / 255.0f,
+            static_cast<float>(b) / 255.0f,
+            static_cast<float>(a) / 255.0f
+        };
     }
 
     [[nodiscard]] constexpr auto rgb(int32_t r, int32_t g, int32_t b) -> Color {
@@ -555,6 +586,12 @@ namespace gui {
         [[nodiscard]] auto header_row(Id id, BoxDesc const& desc = {}) -> TableRowScope;
         [[nodiscard]] auto row(BoxDesc const& desc = {}) -> TableRowScope;
         [[nodiscard]] auto row(Id id, BoxDesc const& desc = {}) -> TableRowScope;
+        [[nodiscard]] auto
+        sortable_header_cell(size_t column, StrRef label, TableCellDesc const& desc = {}) -> Signal;
+        [[nodiscard]] auto
+        sortable_header_cell(Id id, size_t column, StrRef label, TableCellDesc const& desc = {})
+            -> Signal;
+        [[nodiscard]] auto sort_button(size_t column, TableSortDesc const& desc) -> Signal;
 
       private:
         friend class Frame;
@@ -603,6 +640,8 @@ namespace gui {
         [[nodiscard]] auto scroll_panel(Id id, BoxDesc const& desc = {}) -> Scope;
         [[nodiscard]] auto table(BoxDesc const& desc = {}) -> TableScope;
         [[nodiscard]] auto table(Id id, BoxDesc const& desc = {}) -> TableScope;
+        [[nodiscard]] auto table(TableDesc const& desc) -> TableScope;
+        [[nodiscard]] auto table(Id id, TableDesc const& desc) -> TableScope;
         [[nodiscard]] auto tab_view(Id id, TabViewDesc const& desc) -> TabViewScope;
 
         auto spacer(BoxDesc const& desc) -> void;
@@ -611,10 +650,9 @@ namespace gui {
         auto label(Id id, StrRef text, BoxDesc const& desc = {}) -> Signal;
         auto selectable_label(StrRef text, TextSelection* selection, BoxDesc const& desc = {})
             -> Signal;
-        auto selectable_label(Id id,
-                              StrRef text,
-                              TextSelection* selection,
-                              BoxDesc const& desc = {}) -> Signal;
+        auto
+        selectable_label(Id id, StrRef text, TextSelection* selection, BoxDesc const& desc = {})
+            -> Signal;
         auto button(StrRef text, BoxDesc const& desc = {}) -> Signal;
         auto button(Id id, StrRef text, BoxDesc const& desc = {}) -> Signal;
         auto checkbox(StrRef text, bool* value, BoxDesc const& desc = {}) -> Signal;
@@ -626,18 +664,15 @@ namespace gui {
             -> Signal;
         auto input_text(StrRef label, char* buffer, size_t buffer_size, BoxDesc const& desc = {})
             -> Signal;
-        auto input_text(Id id,
-                        StrRef label,
-                        char* buffer,
-                        size_t buffer_size,
-                        BoxDesc const& desc = {}) -> Signal;
-        auto input_text_multiline(StrRef label,
-                                  StringBuffer* buffer,
-                                  InputTextMultilineDesc const& desc = {}) -> Signal;
-        auto input_text_multiline(Id id,
-                                  StrRef label,
-                                  StringBuffer* buffer,
-                                  InputTextMultilineDesc const& desc = {}) -> Signal;
+        auto
+        input_text(Id id, StrRef label, char* buffer, size_t buffer_size, BoxDesc const& desc = {})
+            -> Signal;
+        auto input_text_multiline(
+            StrRef label, StringBuffer* buffer, InputTextMultilineDesc const& desc = {}
+        ) -> Signal;
+        auto input_text_multiline(
+            Id id, StrRef label, StringBuffer* buffer, InputTextMultilineDesc const& desc = {}
+        ) -> Signal;
         [[nodiscard]] auto list_fixed(Id id, ListFixedDesc const& desc) -> ListScope;
 
         [[nodiscard]] auto scroll_state(Id id) const -> ScrollState;

@@ -80,11 +80,16 @@ namespace gui {
             Signal signal = {};
             size_t table_column_span = 1u;
             size_t table_row_span = 1u;
+            TableSortDirection table_sort_direction = TableSortDirection::NONE;
+            TableSortDesc table_sort = {};
+            StrRef table_sort_text = {};
             BoxFlags flags = BOX_FLAG_NONE;
             bool duplicate_id = false;
             bool interactive = false;
             bool focusable = false;
             bool focus_ordered = false;
+            bool table_sort_button = false;
+            bool table_sort_enabled = false;
             Id authored_id = {};
             BoxIdSource id_source = BoxIdSource::STRUCTURAL;
             bool stable_id = false;
@@ -334,17 +339,14 @@ namespace gui {
             return rect_width(track) > 0.0f && rect_height(track) > 0.0f;
         }
 
-        [[nodiscard]] auto scrollbar_thumb_rect(Rect track,
-                                                float scroll_y,
-                                                float max_y,
-                                                float viewport_height,
-                                                float content_height) -> Rect {
+        [[nodiscard]] auto scrollbar_thumb_rect(
+            Rect track, float scroll_y, float max_y, float viewport_height, float content_height
+        ) -> Rect {
             float const height = rect_height(track);
             float const min_thumb = std::min(SCROLLBAR_MIN_THUMB_HEIGHT, height);
             float const thumb_height =
                 std::clamp(height * viewport_height / content_height, min_thumb, height);
-            float const thumb_y =
-                track.min.y + (height - thumb_height) * (scroll_y / max_y);
+            float const thumb_y = track.min.y + (height - thumb_height) * (scroll_y / max_y);
             return {{track.min.x, thumb_y}, {track.max.x, thumb_y + thumb_height}};
         }
 
@@ -379,9 +381,8 @@ namespace gui {
             return scrollbar_track_valid(track) && rect_contains(track, point);
         }
 
-        [[nodiscard]] auto mouse_over_scrollbar(ContextImpl const* impl,
-                                                Vec2 point,
-                                                bool top_layer) -> bool {
+        [[nodiscard]] auto mouse_over_scrollbar(ContextImpl const* impl, Vec2 point, bool top_layer)
+            -> bool {
             for (size_t index = impl->box_count; index > 0u; --index) {
                 size_t const box_index = index - 1u;
                 if (top_layer_box(impl, box_index) == top_layer &&
@@ -401,18 +402,16 @@ namespace gui {
                 std::max(0.0f, state->scroll_y - impl->frame_desc.input.scroll_delta_y);
         }
 
-        [[nodiscard]] auto scrollbar_scroll_y(Rect track,
-                                              float thumb_height,
-                                              float max_y,
-                                              float mouse_y,
-                                              float thumb_offset_y) -> float {
+        [[nodiscard]] auto scrollbar_scroll_y(
+            Rect track, float thumb_height, float max_y, float mouse_y, float thumb_offset_y
+        ) -> float {
             float const movable_height = rect_height(track) - thumb_height;
             if (movable_height <= 0.0f) {
                 return 0.0f;
             }
 
-            float const thumb_y = std::clamp(
-                mouse_y - thumb_offset_y, track.min.y, track.max.y - thumb_height);
+            float const thumb_y =
+                std::clamp(mouse_y - thumb_offset_y, track.min.y, track.max.y - thumb_height);
             return (thumb_y - track.min.y) * max_y / movable_height;
         }
 
@@ -442,18 +441,19 @@ namespace gui {
             if (mouse_pressed && impl->active_scroll_id.value == 0u &&
                 rect_contains(track, input.mouse_pos)) {
                 impl->active_scroll_id = state->id;
-                impl->active_scroll_thumb_offset_y =
-                    rect_contains(thumb, input.mouse_pos)
-                        ? input.mouse_pos.y - thumb.min.y
-                        : rect_height(thumb) * 0.5f;
+                impl->active_scroll_thumb_offset_y = rect_contains(thumb, input.mouse_pos)
+                                                         ? input.mouse_pos.y - thumb.min.y
+                                                         : rect_height(thumb) * 0.5f;
             }
 
             if (impl->active_scroll_id.value == state->id.value && input.mouse_down[0u]) {
-                state->scroll_y = scrollbar_scroll_y(track,
-                                                     rect_height(thumb),
-                                                     max_y,
-                                                     input.mouse_pos.y,
-                                                     impl->active_scroll_thumb_offset_y);
+                state->scroll_y = scrollbar_scroll_y(
+                    track,
+                    rect_height(thumb),
+                    max_y,
+                    input.mouse_pos.y,
+                    impl->active_scroll_thumb_offset_y
+                );
             }
         }
 
@@ -519,17 +519,15 @@ namespace gui {
         [[nodiscard]] auto text_line_height(BoxNode const& box) -> float {
             float const font_size = text_font_size(box);
             font_cache::Font const font = text_font(box);
-            return font_cache::font_valid(font)
-                       ? rendered_text_height(font, font_size)
-                       : font_size * 1.25f;
+            return font_cache::font_valid(font) ? rendered_text_height(font, font_size)
+                                                : font_size * 1.25f;
         }
 
         [[nodiscard]] auto text_multiline(StrRef text) -> bool {
             return text.find('\n') != StrRef::NPOS;
         }
 
-        [[nodiscard]] auto next_text_line(StrRef text, size_t& offset, TextLine& out_line)
-            -> bool {
+        [[nodiscard]] auto next_text_line(StrRef text, size_t& offset, TextLine& out_line) -> bool {
             if (text.empty() || offset > text.size()) {
                 return false;
             }
@@ -824,15 +822,14 @@ namespace gui {
             impl->focused_id = impl->focus_order[current];
         }
 
-        [[nodiscard]] auto focused_box_captures_tab(ContextImpl const* impl,
-                                                    KeyEvent const& event) -> bool {
+        [[nodiscard]] auto focused_box_captures_tab(ContextImpl const* impl, KeyEvent const& event)
+            -> bool {
             if ((event.mods & (KEY_MOD_CTRL | KEY_MOD_ALT | KEY_MOD_SUPER)) != 0u) {
                 return false;
             }
             for (size_t index = 0u; index < impl->box_count; ++index) {
                 BoxNode const& box = impl->boxes[index];
-                if (box.id.value == impl->focused_id.value &&
-                    multiline_input_text_box(box.kind)) {
+                if (box.id.value == impl->focused_id.value && multiline_input_text_box(box.kind)) {
                     return true;
                 }
             }
@@ -935,14 +932,16 @@ namespace gui {
             return result;
         }
 
-        [[nodiscard]] auto append_box(ContextImpl* impl,
-                                      BoxKind kind,
-                                      Id id_value,
-                                      Id authored_id,
-                                      StrRef text,
-                                      BoxDesc const& desc,
-                                      bool interactive,
-                                      bool focusable) -> size_t {
+        [[nodiscard]] auto append_box(
+            ContextImpl* impl,
+            BoxKind kind,
+            Id id_value,
+            Id authored_id,
+            StrRef text,
+            BoxDesc const& desc,
+            bool interactive,
+            bool focusable
+        ) -> size_t {
             ASSERT(impl != nullptr);
             ASSERT(impl->building);
             ASSERT(impl->box_count < impl->box_capacity);
@@ -980,7 +979,8 @@ namespace gui {
                     box->duplicate_id = true;
                     box->stable_id = false;
                     DEBUG_ASSERT_MSG(
-                        false, "duplicate sibling UI id; use explicit gui::id or an id scope");
+                        false, "duplicate sibling UI id; use explicit gui::id or an id scope"
+                    );
                     break;
                 }
             }
@@ -1022,7 +1022,8 @@ namespace gui {
                 merge_theme_style(resolved, impl->theme.roles[static_cast<size_t>(role)], state);
             }
             merge_theme_style(
-                resolved, impl->theme.kinds[static_cast<size_t>(box.kind)].style, state);
+                resolved, impl->theme.kinds[static_cast<size_t>(box.kind)].style, state
+            );
             merge_style(resolved, box.style);
             if (resolved.radius < 0.0f) {
                 resolved.radius = 0.0f;
@@ -1114,10 +1115,9 @@ namespace gui {
             }
         }
 
-        auto init_table_layout(Arena& arena,
-                               ContextImpl const* impl,
-                               size_t table_index,
-                               TableLayout& layout) -> void {
+        auto init_table_layout(
+            Arena& arena, ContextImpl const* impl, size_t table_index, TableLayout& layout
+        ) -> void {
             size_t rows = 0u;
             size_t cells = 0u;
             size_t columns = 0u;
@@ -1190,7 +1190,8 @@ namespace gui {
                     }
 
                     size_t const column_span = std::min(
-                        table_span(cell.table_column_span), layout.column_capacity - column);
+                        table_span(cell.table_column_span), layout.column_capacity - column
+                    );
                     size_t const row_span =
                         std::min(table_span(cell.table_row_span), layout.row_count - row);
                     for (size_t y = row; y < row + row_span; ++y) {
@@ -1199,13 +1200,10 @@ namespace gui {
                         }
                     }
 
-                    float const outer_x =
-                        cell.measured_size.x + inset_width(cell.layout.margin);
-                    float const outer_y =
-                        cell.measured_size.y + inset_height(cell.layout.margin);
+                    float const outer_x = cell.measured_size.x + inset_width(cell.layout.margin);
+                    float const outer_y = cell.measured_size.y + inset_height(cell.layout.margin);
                     float const column_width =
-                        std::max(0.0f,
-                                 outer_x - gap * static_cast<float>(column_span - 1u)) /
+                        std::max(0.0f, outer_x - gap * static_cast<float>(column_span - 1u)) /
                         static_cast<float>(column_span);
                     float const row_height =
                         std::max(0.0f, outer_y - gap * static_cast<float>(row_span - 1u)) /
@@ -1218,7 +1216,9 @@ namespace gui {
                     }
 
                     layout.column_count = std::max(layout.column_count, column + column_span);
-                    layout.cells[placement_count] = {cell_index, row, column, row_span, column_span};
+                    layout.cells[placement_count] = {
+                        cell_index, row, column, row_span, column_span
+                    };
                     placement_count += 1u;
                     column += column_span;
                 }
@@ -1280,12 +1280,11 @@ namespace gui {
                                          : box.kind == BoxKind::SLIDER_FLOAT ? 160.0f
                                          : input_text_box(box.kind)          ? 160.0f
                                                                              : 0.0f;
-            float const widget_min_y = box.kind == BoxKind::CHECKBOX ||
-                                               box.kind == BoxKind::TOGGLE ||
-                                               box.kind == BoxKind::SLIDER_FLOAT ||
-                                               input_text_box(box.kind)
-                                           ? 20.0f
-                                           : 0.0f;
+            float const widget_min_y =
+                box.kind == BoxKind::CHECKBOX || box.kind == BoxKind::TOGGLE ||
+                        box.kind == BoxKind::SLIDER_FLOAT || input_text_box(box.kind)
+                    ? 20.0f
+                    : 0.0f;
 
             if (box.kind == BoxKind::TABLE) {
                 size = measure_table(impl, index);
@@ -1441,10 +1440,9 @@ namespace gui {
             clear_scroll_requests(state);
         }
 
-        [[nodiscard]] auto list_reveal_scroll_y(StateEntry const* state,
-                                                size_t item_count,
-                                                float item_height,
-                                                float viewport_height) -> float {
+        [[nodiscard]] auto list_reveal_scroll_y(
+            StateEntry const* state, size_t item_count, float item_height, float viewport_height
+        ) -> float {
             if (item_count == 0u) {
                 return 0.0f;
             }
@@ -1471,11 +1469,13 @@ namespace gui {
             return state->scroll_y;
         }
 
-        auto consume_list_scroll_request(StateEntry* state,
-                                         size_t item_count,
-                                         float item_height,
-                                         float viewport_height,
-                                         float max_y) -> void {
+        auto consume_list_scroll_request(
+            StateEntry* state,
+            size_t item_count,
+            float item_height,
+            float viewport_height,
+            float max_y
+        ) -> void {
             if (state->scroll_request_index_set) {
                 state->scroll_y =
                     list_reveal_scroll_y(state, item_count, item_height, viewport_height);
@@ -1616,12 +1616,13 @@ namespace gui {
                 if (floating_box(child.kind)) {
                     continue;
                 }
-                float const available_x = std::max(0.0f,
-                                                   rect_width(content) - child.layout.margin.left -
-                                                       child.layout.margin.right);
-                float const available_y = std::max(0.0f,
-                                                   rect_height(content) - child.layout.margin.top -
-                                                       child.layout.margin.bottom);
+                float const available_x = std::max(
+                    0.0f, rect_width(content) - child.layout.margin.left - child.layout.margin.right
+                );
+                float const available_y = std::max(
+                    0.0f,
+                    rect_height(content) - child.layout.margin.top - child.layout.margin.bottom
+                );
 
                 Vec2 child_size = child.measured_size;
                 if (child.layout.width.kind == SizeKind::PIXELS) {
@@ -1656,12 +1657,12 @@ namespace gui {
 
                 Rect const root_bounds = impl->boxes[0].rect;
                 Rect const bounds = child.kind == BoxKind::MODAL ? root_bounds : content;
-                float const available_x = std::max(0.0f,
-                                                   rect_width(bounds) - child.layout.margin.left -
-                                                       child.layout.margin.right);
-                float const available_y = std::max(0.0f,
-                                                   rect_height(bounds) - child.layout.margin.top -
-                                                       child.layout.margin.bottom);
+                float const available_x = std::max(
+                    0.0f, rect_width(bounds) - child.layout.margin.left - child.layout.margin.right
+                );
+                float const available_y = std::max(
+                    0.0f, rect_height(bounds) - child.layout.margin.top - child.layout.margin.bottom
+                );
 
                 Vec2 child_size = child.measured_size;
                 if (child.kind == BoxKind::MODAL || child.layout.width.kind == SizeKind::FILL) {
@@ -1694,8 +1695,10 @@ namespace gui {
 
                     x += state.floating_offset_x;
                     y += state.floating_offset_y;
-                    float const max_x = std::max(root_bounds.min.x, root_bounds.max.x - child_size.x);
-                    float const max_y = std::max(root_bounds.min.y, root_bounds.max.y - child_size.y);
+                    float const max_x =
+                        std::max(root_bounds.min.x, root_bounds.max.x - child_size.x);
+                    float const max_y =
+                        std::max(root_bounds.min.y, root_bounds.max.y - child_size.y);
                     x = std::clamp(x, root_bounds.min.x, max_x);
                     y = std::clamp(y, root_bounds.min.y, max_y);
                     state.floating_offset_x = x - base_x;
@@ -1725,10 +1728,8 @@ namespace gui {
             return result;
         }
 
-        [[nodiscard]] auto table_axis_span(float const* values,
-                                           size_t start,
-                                           size_t count,
-                                           float gap) -> float {
+        [[nodiscard]] auto
+        table_axis_span(float const* values, size_t start, size_t count, float gap) -> float {
             float result = 0.0f;
             for (size_t index = 0u; index < count; ++index) {
                 result += values[start + index];
@@ -1769,15 +1770,16 @@ namespace gui {
                  ++placement_index) {
                 TableCellPlacement const& cell = table.cells[placement_index];
                 BoxNode& box_cell = impl->boxes[cell.box_index];
-                float const x =
-                    content.min.x + table_axis_offset(table.columns, cell.column, gap);
+                float const x = content.min.x + table_axis_offset(table.columns, cell.column, gap);
                 float const y = content.min.y + table_axis_offset(table.rows, cell.row, gap);
                 float const width =
                     table_axis_span(table.columns, cell.column, cell.column_span, gap);
                 float const height = table_axis_span(table.rows, cell.row, cell.row_span, gap);
-                Rect cell_rect = {{x + box_cell.layout.margin.left, y + box_cell.layout.margin.top},
-                                  {x + width - box_cell.layout.margin.right,
-                                   y + height - box_cell.layout.margin.bottom}};
+                Rect cell_rect = {
+                    {x + box_cell.layout.margin.left, y + box_cell.layout.margin.top},
+                    {x + width - box_cell.layout.margin.right,
+                     y + height - box_cell.layout.margin.bottom}
+                };
                 if (cell_rect.max.x < cell_rect.min.x) {
                     cell_rect.max.x = cell_rect.min.x;
                 }
@@ -1857,9 +1859,11 @@ namespace gui {
                     float const cross_start =
                         content.min.y + child.layout.margin.top +
                         align_offset(cross_align, cross_available, child_size.y);
-                    Rect child_rect = {{cursor + child.layout.margin.left, cross_start},
-                                       {cursor + child.layout.margin.left + child_size.x,
-                                        cross_start + child_size.y}};
+                    Rect child_rect = {
+                        {cursor + child.layout.margin.left, cross_start},
+                        {cursor + child.layout.margin.left + child_size.x,
+                         cross_start + child_size.y}
+                    };
                     layout_node(impl, child_index, child_rect);
                     cursor += child.layout.margin.left + child_size.x + child.layout.margin.right +
                               box.layout.gap;
@@ -1869,9 +1873,11 @@ namespace gui {
                     float const cross_start =
                         content.min.x + child.layout.margin.left +
                         align_offset(cross_align, cross_available, child_size.x);
-                    Rect child_rect = {{cross_start, cursor + child.layout.margin.top},
-                                       {cross_start + child_size.x,
-                                        cursor + child.layout.margin.top + child_size.y}};
+                    Rect child_rect = {
+                        {cross_start, cursor + child.layout.margin.top},
+                        {cross_start + child_size.x,
+                         cursor + child.layout.margin.top + child_size.y}
+                    };
                     layout_node(impl, child_index, child_rect);
                     cursor += child.layout.margin.top + child_size.y + child.layout.margin.bottom +
                               box.layout.gap;
@@ -1914,6 +1920,276 @@ namespace gui {
                                                            key_pressed(impl, Key::SPACE, false)));
             box.signal = signal;
             return signal;
+        }
+
+        [[nodiscard]] auto table_sort_count(TableSortDesc const& desc) -> size_t {
+            size_t const count =
+                desc.column_count != nullptr ? *desc.column_count : desc.columns.size();
+            return std::min(count, desc.columns.size());
+        }
+
+        [[nodiscard]] auto table_sort_direction(TableSortDesc const& desc, size_t column)
+            -> TableSortDirection {
+            size_t const count = table_sort_count(desc);
+            for (size_t index = 0u; index < count; ++index) {
+                TableSortColumn const& item = desc.columns[index];
+                if (item.column == column && item.direction != TableSortDirection::NONE) {
+                    return item.direction;
+                }
+            }
+            return TableSortDirection::NONE;
+        }
+
+        [[nodiscard]] auto table_sort_next_direction(TableSortDirection direction)
+            -> TableSortDirection {
+            return direction == TableSortDirection::ASCENDING ? TableSortDirection::DESCENDING
+                                                              : TableSortDirection::ASCENDING;
+        }
+
+        [[nodiscard]] auto table_sort_column_selected(TableSortDesc const& desc, size_t column)
+            -> bool {
+            return column < desc.selected_columns.size() && desc.selected_columns[column];
+        }
+
+        auto append_table_sort_column(
+            TableSortDesc const& desc, size_t& count, size_t column, TableSortDirection direction
+        ) -> void {
+            if (count < desc.columns.size()) {
+                desc.columns[count] = {column, direction};
+                count += 1u;
+            }
+        }
+
+        auto apply_table_sort(TableSortDesc const& desc, size_t column) -> bool {
+            if (desc.column_count == nullptr || desc.columns.empty()) {
+                return false;
+            }
+
+            size_t const previous_count = table_sort_count(desc);
+            TableSortDirection const next =
+                table_sort_next_direction(table_sort_direction(desc, column));
+            size_t count = 0u;
+            append_table_sort_column(desc, count, column, next);
+
+            if (table_sort_column_selected(desc, column)) {
+                for (size_t index = 0u; index < desc.selected_columns.size(); ++index) {
+                    if (index == column || !desc.selected_columns[index]) {
+                        continue;
+                    }
+                    append_table_sort_column(desc, count, index, next);
+                }
+            }
+
+            for (size_t index = count; index < previous_count; ++index) {
+                desc.columns[index] = {};
+            }
+            *desc.column_count = count;
+            return true;
+        }
+
+        [[nodiscard]] auto table_sort_button_id(Id table_id, size_t column) -> Id {
+            uint64_t hash = hash_combine(table_id.value, 0x50a7b0770ull);
+            hash = hash_combine(hash, column + 1u);
+            return {hash};
+        }
+
+        auto refresh_table_sort_button_icons(
+            ContextImpl* impl, Id table_id, TableSortDesc const& desc, size_t max_column
+        ) -> void {
+            for (size_t column = 0u; column < max_column; ++column) {
+                Id const authored_id = table_sort_button_id(table_id, column);
+                TableSortDirection const direction = table_sort_direction(desc, column);
+                for (size_t index = 0u; index < impl->box_count; ++index) {
+                    BoxNode& box = impl->boxes[index];
+                    if (box.kind == BoxKind::BUTTON && box.authored_id.value == authored_id.value) {
+                        box.table_sort_direction = direction;
+                    }
+                }
+            }
+        }
+
+        auto table_sort_button_desc(TableSortDesc const& desc) -> BoxDesc {
+            BoxDesc box = desc.box;
+            if (box.layout.width.kind == SizeKind::AUTO) {
+                box.layout.width = px(22.0f);
+            }
+            if (box.layout.height.kind == SizeKind::AUTO) {
+                box.layout.height = fill();
+            }
+            if (insets_empty(box.layout.padding)) {
+                box.layout.padding = insets(0.0f);
+            }
+            return box;
+        }
+
+        [[nodiscard]] auto compact_table_sort_desc(TableSortDesc const& desc) -> TableSortDesc {
+            TableSortDesc result = desc;
+            if (result.box.layout.width.kind == SizeKind::AUTO) {
+                result.box.layout.width = px(18.0f);
+            }
+            if (result.box.layout.height.kind == SizeKind::AUTO) {
+                result.box.layout.height = px(18.0f);
+            }
+            return result;
+        }
+
+        [[nodiscard]] auto sortable_header_row_padding(BoxDesc const& cell_desc) -> Insets {
+            return cell_desc.layout.padding.left == 0.0f ? insets(0.0f, 0.0f, 0.0f, 10.0f)
+                                                         : insets(0.0f);
+        }
+
+        [[nodiscard]] auto sortable_header_checkbox_desc() -> BoxDesc {
+            return {
+                .layout = {
+                    .width = text(),
+                    .height = px(18.0f),
+                    .padding = insets(0.0f, 10.0f, 0.0f, 0.0f),
+                },
+            };
+        }
+
+        [[nodiscard]] auto first_descendant_text(ContextImpl const* impl, size_t index) -> StrRef {
+            BoxNode const& box = impl->boxes[index];
+            if (!box.text.empty()) {
+                return box.text;
+            }
+            for (size_t child = box.first_child; child != INVALID_INDEX;
+                 child = impl->boxes[child].next_sibling) {
+                StrRef const text = first_descendant_text(impl, child);
+                if (!text.empty()) {
+                    return text;
+                }
+            }
+            return {};
+        }
+
+        [[nodiscard]] auto table_cell_sort_text(ContextImpl const* impl, size_t cell_index)
+            -> StrRef {
+            BoxNode const& cell = impl->boxes[cell_index];
+            return !cell.table_sort_text.empty() ? cell.table_sort_text
+                                                 : first_descendant_text(impl, cell_index);
+        }
+
+        [[nodiscard]] auto
+        table_row_sort_text(ContextImpl const* impl, size_t row_index, size_t column) -> StrRef {
+            size_t cell_column = 0u;
+            for (size_t cell_index = impl->boxes[row_index].first_child;
+                 cell_index != INVALID_INDEX;
+                 cell_index = impl->boxes[cell_index].next_sibling) {
+                BoxNode const& cell = impl->boxes[cell_index];
+                if (!table_cell_box(cell.kind)) {
+                    continue;
+                }
+                size_t const span = table_span(cell.table_column_span);
+                if (column >= cell_column && column < cell_column + span) {
+                    return table_cell_sort_text(impl, cell_index);
+                }
+                cell_column += span;
+            }
+            return {};
+        }
+
+        [[nodiscard]] auto
+        table_compare_row_text(TableSortDesc const& desc, size_t column, StrRef lhs, StrRef rhs)
+            -> int {
+            return desc.compare != nullptr ? desc.compare(desc.compare_user_data, column, lhs, rhs)
+                                           : lhs.compare(rhs);
+        }
+
+        [[nodiscard]] auto table_compare_rows(
+            ContextImpl const* impl, TableSortDesc const& desc, size_t lhs, size_t rhs
+        ) -> int {
+            size_t const count = table_sort_count(desc);
+            for (size_t index = 0u; index < count; ++index) {
+                TableSortColumn const& sort = desc.columns[index];
+                if (sort.direction == TableSortDirection::NONE) {
+                    continue;
+                }
+                int const result = table_compare_row_text(
+                    desc,
+                    sort.column,
+                    table_row_sort_text(impl, lhs, sort.column),
+                    table_row_sort_text(impl, rhs, sort.column)
+                );
+                if (result != 0) {
+                    return sort.direction == TableSortDirection::DESCENDING ? -result : result;
+                }
+            }
+            return 0;
+        }
+
+        auto sort_table_rows(ContextImpl* impl, size_t table_index) -> void {
+            BoxNode& table = impl->boxes[table_index];
+            if (!table.table_sort_enabled || table_sort_count(table.table_sort) == 0u) {
+                return;
+            }
+
+            size_t child_count = 0u;
+            size_t row_count = 0u;
+            for (size_t child = table.first_child; child != INVALID_INDEX;
+                 child = impl->boxes[child].next_sibling) {
+                child_count += 1u;
+                if (impl->boxes[child].kind == BoxKind::TABLE_ROW) {
+                    row_count += 1u;
+                }
+            }
+            if (row_count < 2u) {
+                return;
+            }
+
+            ArenaTemp temp(impl->frame_arena);
+            size_t* children = arena_alloc<size_t>(*temp.arena(), child_count);
+            size_t* rows = arena_alloc<size_t>(*temp.arena(), row_count);
+            size_t count = 0u;
+            size_t row_index = 0u;
+            for (size_t child = table.first_child; child != INVALID_INDEX;
+                 child = impl->boxes[child].next_sibling) {
+                children[count] = child;
+                count += 1u;
+                if (impl->boxes[child].kind == BoxKind::TABLE_ROW) {
+                    rows[row_index] = child;
+                    row_index += 1u;
+                }
+            }
+
+            for (size_t index = 1u; index < row_count; ++index) {
+                size_t const value = rows[index];
+                size_t at = index;
+                while (at > 0u &&
+                       table_compare_rows(impl, table.table_sort, value, rows[at - 1u]) < 0) {
+                    rows[at] = rows[at - 1u];
+                    at -= 1u;
+                }
+                rows[at] = value;
+            }
+
+            size_t sorted_index = 0u;
+            size_t previous = INVALID_INDEX;
+            for (size_t index = 0u; index < child_count; ++index) {
+                size_t const child = children[index];
+                size_t const item =
+                    impl->boxes[child].kind == BoxKind::TABLE_ROW ? rows[sorted_index++] : child;
+                if (previous != INVALID_INDEX) {
+                    impl->boxes[previous].next_sibling = item;
+                } else {
+                    table.first_child = item;
+                }
+                previous = item;
+            }
+            if (previous != INVALID_INDEX) {
+                impl->boxes[previous].next_sibling = INVALID_INDEX;
+                table.last_child = previous;
+            }
+        }
+
+        auto sort_tables(ContextImpl* impl, size_t index) -> void {
+            if (impl->boxes[index].kind == BoxKind::TABLE) {
+                sort_table_rows(impl, index);
+            }
+            for (size_t child = impl->boxes[index].first_child; child != INVALID_INDEX;
+                 child = impl->boxes[child].next_sibling) {
+                sort_tables(impl, child);
+            }
         }
 
         [[nodiscard]] auto tab_flag(TabFlags flags, TabFlags flag) -> bool {
@@ -2056,8 +2332,8 @@ namespace gui {
         }
 
         [[nodiscard]] auto ordered_text_selection(TextSelection selection) -> TextSelection {
-            return selection.start <= selection.end ? selection : TextSelection{selection.end,
-                                                                                selection.start};
+            return selection.start <= selection.end ? selection
+                                                    : TextSelection{selection.end, selection.start};
         }
 
         [[nodiscard]] auto utf8_trailing_byte(char value) -> bool {
@@ -2086,8 +2362,8 @@ namespace gui {
 
         [[nodiscard]] auto text_word_char(StrRef text, size_t offset) -> bool {
             uint8_t const c = static_cast<uint8_t>(text[offset]);
-            return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
-                   (c >= '0' && c <= '9') || c == '_' || c >= 0x80u;
+            return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+                   c == '_' || c >= 0x80u;
         }
 
         [[nodiscard]] auto previous_word_offset(StrRef text, size_t offset) -> size_t {
@@ -2161,10 +2437,10 @@ namespace gui {
                 return selection;
             }
 
-            size_t const anchor = selection.start == selection.end
-                                      ? cursor
-                                      : (cursor == selection.start ? selection.end
-                                                                   : selection.start);
+            size_t const anchor =
+                selection.start == selection.end
+                    ? cursor
+                    : (cursor == selection.start ? selection.end : selection.start);
             cursor = text_cursor_key_offset(text, cursor, event);
             return ordered_text_selection({anchor, cursor});
         }
@@ -2201,8 +2477,8 @@ namespace gui {
             return {start, end};
         }
 
-        auto
-        copy_selected_text(ContextImpl const* impl, StrRef text, TextSelection selection) -> void {
+        auto copy_selected_text(ContextImpl const* impl, StrRef text, TextSelection selection)
+            -> void {
             if (impl->set_clipboard_text == nullptr || selection.start == selection.end) {
                 return;
             }
@@ -2212,9 +2488,8 @@ namespace gui {
             );
         }
 
-        [[nodiscard]] auto text_line_index_from_x(BoxNode const& box,
-                                                  TextLine const& line,
-                                                  float text_x) -> size_t {
+        [[nodiscard]] auto
+        text_line_index_from_x(BoxNode const& box, TextLine const& line, float text_x) -> size_t {
             if (line.text.empty()) {
                 return line.start;
             }
@@ -2239,10 +2514,9 @@ namespace gui {
             return line.end;
         }
 
-        [[nodiscard]] auto vertical_text_cursor_offset(BoxNode const& box,
-                                                       StrRef text,
-                                                       size_t cursor,
-                                                       Key key) -> size_t {
+        [[nodiscard]] auto
+        vertical_text_cursor_offset(BoxNode const& box, StrRef text, size_t cursor, Key key)
+            -> size_t {
             cursor = std::min(cursor, text.size());
             size_t offset = 0u;
             TextLine previous = {};
@@ -2324,8 +2598,10 @@ namespace gui {
             while (next_text_line(box.text, offset, line)) {
                 if (cursor <= line.end) {
                     size_t const line_cursor = std::min(cursor, line.end) - line.start;
-                    return {pos.x + text_advance(box, line.text.prefix(line_cursor)),
-                            pos.y + line_height * static_cast<float>(line_index)};
+                    return {
+                        pos.x + text_advance(box, line.text.prefix(line_cursor)),
+                        pos.y + line_height * static_cast<float>(line_index)
+                    };
                 }
                 line_index += 1u;
             }
@@ -2338,8 +2614,7 @@ namespace gui {
                 ordered_text_selection(clamp_text_selection(selection, box.text.size()));
             if (box.state != nullptr) {
                 Signal const signal = box.signal;
-                size_t const cursor =
-                    text_index_from_mouse(box, impl->frame_desc.input.mouse_pos);
+                size_t const cursor = text_index_from_mouse(box, impl->frame_desc.input.mouse_pos);
                 bool const triple_clicked =
                     signal.hovered && impl->frame_desc.input.mouse_triple_clicked[0u];
                 bool const double_clicked =
@@ -2454,7 +2729,8 @@ namespace gui {
             Rect const rect = box.state != nullptr ? box.state->rect : box.rect;
             float const width = std::max(1.0f, rect_width(rect));
             return std::clamp(
-                (impl->frame_desc.input.mouse_pos.x - rect.min.x) / width, 0.0f, 1.0f);
+                (impl->frame_desc.input.mouse_pos.x - rect.min.x) / width, 0.0f, 1.0f
+            );
         }
 
         [[nodiscard]] auto text_buffer_size(char const* buffer, size_t buffer_size) -> size_t {
@@ -2536,9 +2812,9 @@ namespace gui {
             return true;
         }
 
-        [[nodiscard]] auto text_edit_can_insert(TextEditBuffer const& buffer,
-                                                size_t selected_size,
-                                                size_t insert_size) -> bool {
+        [[nodiscard]] auto
+        text_edit_can_insert(TextEditBuffer const& buffer, size_t selected_size, size_t insert_size)
+            -> bool {
             if (buffer.string != nullptr) {
                 return true;
             }
@@ -2556,10 +2832,9 @@ namespace gui {
             return text_edit_resize(buffer, size - (end - start));
         }
 
-        auto insert_text_bytes(TextEditBuffer& buffer,
-                               size_t& cursor,
-                               char const* text,
-                               size_t text_size) -> bool {
+        auto insert_text_bytes(
+            TextEditBuffer& buffer, size_t& cursor, char const* text, size_t text_size
+        ) -> bool {
             cursor = std::min(cursor, buffer.size);
             if (text_size == 0u) {
                 return false;
@@ -2575,11 +2850,13 @@ namespace gui {
             return true;
         }
 
-        auto save_text_undo(ContextImpl* impl,
-                            StateEntry& state,
-                            StrRef text,
-                            size_t cursor,
-                            TextSelection selection) -> void {
+        auto save_text_undo(
+            ContextImpl* impl,
+            StateEntry& state,
+            StrRef text,
+            size_t cursor,
+            TextSelection selection
+        ) -> void {
             ASSERT(impl->context_arena != nullptr);
 
             TextUndoEntry* const entry = arena_new<TextUndoEntry>(*impl->context_arena);
@@ -2588,8 +2865,7 @@ namespace gui {
             entry->text[text.size()] = '\0';
             entry->text_size = text.size();
             entry->cursor = std::min(cursor, text.size());
-            entry->selection =
-                ordered_text_selection(clamp_text_selection(selection, text.size()));
+            entry->selection = ordered_text_selection(clamp_text_selection(selection, text.size()));
             entry->previous = state.text_undo_stack;
             state.text_undo_stack = entry;
         }
@@ -2602,9 +2878,9 @@ namespace gui {
 
             TextUndoEntry const* const entry = state.text_undo_stack;
             state.text_undo_stack = entry->previous;
-            size_t const size =
-                buffer.string != nullptr ? entry->text_size : std::min(entry->text_size,
-                                                                        buffer.capacity);
+            size_t const size = buffer.string != nullptr
+                                    ? entry->text_size
+                                    : std::min(entry->text_size, buffer.capacity);
             if (!text_edit_resize(buffer, size)) {
                 return false;
             }
@@ -2616,12 +2892,14 @@ namespace gui {
             return true;
         }
 
-        auto replace_text_selection_with_bytes(ContextImpl* impl,
-                                               StateEntry& state,
-                                               TextEditBuffer& buffer,
-                                               TextSelection& selection,
-                                               char const* text,
-                                               size_t text_size) -> bool {
+        auto replace_text_selection_with_bytes(
+            ContextImpl* impl,
+            StateEntry& state,
+            TextEditBuffer& buffer,
+            TextSelection& selection,
+            char const* text,
+            size_t text_size
+        ) -> bool {
             size_t const selected_size = selection.end - selection.start;
             if (text_size == 0u && selected_size == 0u) {
                 return false;
@@ -2655,10 +2933,9 @@ namespace gui {
             return signal;
         }
 
-        auto apply_slider_widget(ContextImpl const* impl,
-                                 BoxNode& box,
-                                 float* value,
-                                 SliderFloatDesc const& desc) -> Signal {
+        auto apply_slider_widget(
+            ContextImpl const* impl, BoxNode& box, float* value, SliderFloatDesc const& desc
+        ) -> Signal {
             ASSERT(value != nullptr);
             Signal signal = box.signal;
             float const min_value = std::min(desc.min, desc.max);
@@ -2761,9 +3038,9 @@ namespace gui {
                 return;
             }
 
-            float const viewport =
-                std::max(0.0f, rect_height(box.scroll_state->rect) -
-                                   inset_height(box.layout.padding));
+            float const viewport = std::max(
+                0.0f, rect_height(box.scroll_state->rect) - inset_height(box.layout.padding)
+            );
             if (viewport <= 0.0f) {
                 return;
             }
@@ -2771,7 +3048,8 @@ namespace gui {
             float const line_height = text_line_height(box);
             float const cursor_y =
                 line_height * static_cast<float>(text_cursor_line_index(
-                                  box.text, std::min(box.state->text_cursor, box.text.size())));
+                                  box.text, std::min(box.state->text_cursor, box.text.size())
+                              ));
             float const scroll_y = box.scroll_state->scroll_y;
             if (cursor_y < scroll_y) {
                 box.scroll_state->scroll_request_y = cursor_y;
@@ -2782,10 +3060,9 @@ namespace gui {
             }
         }
 
-        auto apply_input_text_widget(ContextImpl* impl,
-                                     BoxNode& box,
-                                     TextEditBuffer& buffer,
-                                     StrRef tab_text = {}) -> Signal {
+        auto apply_input_text_widget(
+            ContextImpl* impl, BoxNode& box, TextEditBuffer& buffer, StrRef tab_text = {}
+        ) -> Signal {
             ASSERT(buffer.data != nullptr || buffer.size == 0u);
 
             Signal signal = box.signal;
@@ -2795,7 +3072,8 @@ namespace gui {
                 StateEntry& state = *box.state;
                 state.text_cursor = std::min(state.text_cursor, text_size);
                 TextSelection selection = ordered_text_selection(clamp_text_selection(
-                    {state.text_selection_start, state.text_selection_end}, text_size));
+                    {state.text_selection_start, state.text_selection_end}, text_size
+                ));
                 if (selection.start == selection.end) {
                     selection = {state.text_cursor, state.text_cursor};
                 }
@@ -2833,30 +3111,30 @@ namespace gui {
                                     skip_text_newlines -= 1u;
                                 } else {
                                     changed |= replace_text_selection_with_bytes(
-                                        impl, state, buffer, selection, "\n", 1u);
+                                        impl, state, buffer, selection, "\n", 1u
+                                    );
                                 }
                             } else if (writable && multiline && event.codepoint == '\t') {
                                 if (skip_text_tabs != 0u) {
                                     skip_text_tabs -= 1u;
                                 } else if (!tab_text.empty()) {
-                                    changed |= replace_text_selection_with_bytes(impl,
-                                                                                 state,
-                                                                                 buffer,
-                                                                                 selection,
-                                                                                 tab_text.data(),
-                                                                                 tab_text.size());
+                                    changed |= replace_text_selection_with_bytes(
+                                        impl,
+                                        state,
+                                        buffer,
+                                        selection,
+                                        tab_text.data(),
+                                        tab_text.size()
+                                    );
                                 }
                             } else if (writable) {
                                 char insert_text[4] = {};
                                 size_t const insert_size =
                                     utf8_from_codepoint(event.codepoint, insert_text);
                                 if (insert_size != 0u) {
-                                    changed |= replace_text_selection_with_bytes(impl,
-                                                                                 state,
-                                                                                 buffer,
-                                                                                 selection,
-                                                                                 insert_text,
-                                                                                 insert_size);
+                                    changed |= replace_text_selection_with_bytes(
+                                        impl, state, buffer, selection, insert_text, insert_size
+                                    );
                                 }
                             }
                             continue;
@@ -2880,14 +3158,12 @@ namespace gui {
                         if (shortcut_key_pressed(event, Key::V)) {
                             if (writable && impl->get_clipboard_text != nullptr) {
                                 StrRef const paste = impl->get_clipboard_text(
-                                    impl->clipboard_user_data, impl->frame_arena);
+                                    impl->clipboard_user_data, impl->frame_arena
+                                );
                                 if (!paste.empty()) {
-                                    changed |= replace_text_selection_with_bytes(impl,
-                                                                                 state,
-                                                                                 buffer,
-                                                                                 selection,
-                                                                                 paste.data(),
-                                                                                 paste.size());
+                                    changed |= replace_text_selection_with_bytes(
+                                        impl, state, buffer, selection, paste.data(), paste.size()
+                                    );
                                 }
                             }
                             continue;
@@ -2895,11 +3171,9 @@ namespace gui {
                         if (shortcut_key_pressed(event, Key::X)) {
                             if (writable && impl->set_clipboard_text != nullptr &&
                                 selection.start != selection.end) {
-                                save_text_undo(
-                                    impl, state, text, state.text_cursor, selection);
+                                save_text_undo(impl, state, text, state.text_cursor, selection);
                                 copy_selected_text(impl, text, selection);
-                                changed |=
-                                    erase_text_range(buffer, selection.start, selection.end);
+                                changed |= erase_text_range(buffer, selection.start, selection.end);
                                 state.text_cursor = selection.start;
                                 selection = {state.text_cursor, state.text_cursor};
                             }
@@ -2908,7 +3182,8 @@ namespace gui {
                         if (multiline && event.key == Key::ENTER) {
                             if (writable) {
                                 changed |= replace_text_selection_with_bytes(
-                                    impl, state, buffer, selection, "\n", 1u);
+                                    impl, state, buffer, selection, "\n", 1u
+                                );
                                 skip_text_newlines += 1u;
                             }
                             continue;
@@ -2916,20 +3191,17 @@ namespace gui {
                         if (multiline && event.key == Key::TAB &&
                             (event.mods & (KEY_MOD_CTRL | KEY_MOD_ALT | KEY_MOD_SUPER)) == 0u) {
                             if (writable && !tab_text.empty()) {
-                                changed |= replace_text_selection_with_bytes(impl,
-                                                                             state,
-                                                                             buffer,
-                                                                             selection,
-                                                                             tab_text.data(),
-                                                                             tab_text.size());
+                                changed |= replace_text_selection_with_bytes(
+                                    impl, state, buffer, selection, tab_text.data(), tab_text.size()
+                                );
                             }
                             skip_text_tabs += 1u;
                             continue;
                         }
                         if (text_selection_key_event(event)) {
-                            selection =
-                                apply_text_cursor_selection_key_event(
-                                    text, selection, state.text_cursor, event);
+                            selection = apply_text_cursor_selection_key_event(
+                                text, selection, state.text_cursor, event
+                            );
                             continue;
                         }
                         switch (event.key) {
@@ -2952,10 +3224,10 @@ namespace gui {
                             if ((event.mods & KEY_MOD_SHIFT) == 0u) {
                                 state.text_cursor =
                                     selection.start != selection.end
-                                        ? (event.key == Key::UP ? selection.start
-                                                                : selection.end)
+                                        ? (event.key == Key::UP ? selection.start : selection.end)
                                         : vertical_text_cursor_offset(
-                                              box, text, state.text_cursor, event.key);
+                                              box, text, state.text_cursor, event.key
+                                          );
                                 selection = {state.text_cursor, state.text_cursor};
                             }
                             break;
@@ -2969,20 +3241,16 @@ namespace gui {
                             break;
                         case Key::BACKSPACE:
                             if (writable && selection.start != selection.end) {
-                                save_text_undo(
-                                    impl, state, text, state.text_cursor, selection);
-                                changed |=
-                                    erase_text_range(buffer, selection.start, selection.end);
+                                save_text_undo(impl, state, text, state.text_cursor, selection);
+                                changed |= erase_text_range(buffer, selection.start, selection.end);
                                 state.text_cursor = selection.start;
                                 selection = {state.text_cursor, state.text_cursor};
                             } else if (writable && state.text_cursor > 0u) {
-                                size_t const start = (event.mods & KEY_MOD_CTRL) != 0u
-                                                         ? previous_word_offset(text,
-                                                                                state.text_cursor)
-                                                         : previous_text_offset(text,
-                                                                                state.text_cursor);
-                                save_text_undo(
-                                    impl, state, text, state.text_cursor, selection);
+                                size_t const start =
+                                    (event.mods & KEY_MOD_CTRL) != 0u
+                                        ? previous_word_offset(text, state.text_cursor)
+                                        : previous_text_offset(text, state.text_cursor);
+                                save_text_undo(impl, state, text, state.text_cursor, selection);
                                 changed |= erase_text_range(buffer, start, state.text_cursor);
                                 state.text_cursor = start;
                                 selection = {state.text_cursor, state.text_cursor};
@@ -2990,18 +3258,15 @@ namespace gui {
                             break;
                         case Key::DELETE_KEY:
                             if (writable && selection.start != selection.end) {
-                                save_text_undo(
-                                    impl, state, text, state.text_cursor, selection);
-                                changed |=
-                                    erase_text_range(buffer, selection.start, selection.end);
+                                save_text_undo(impl, state, text, state.text_cursor, selection);
+                                changed |= erase_text_range(buffer, selection.start, selection.end);
                                 state.text_cursor = selection.start;
                                 selection = {state.text_cursor, state.text_cursor};
                             } else if (writable && state.text_cursor < text_size) {
                                 size_t const end = (event.mods & KEY_MOD_CTRL) != 0u
                                                        ? next_word_offset(text, state.text_cursor)
                                                        : next_text_offset(text, state.text_cursor);
-                                save_text_undo(
-                                    impl, state, text, state.text_cursor, selection);
+                                save_text_undo(impl, state, text, state.text_cursor, selection);
                                 changed |= erase_text_range(buffer, state.text_cursor, end);
                                 selection = {state.text_cursor, state.text_cursor};
                             }
@@ -3038,13 +3303,15 @@ namespace gui {
             return {color.r, color.g, color.b, color.a};
         }
 
-        auto draw_widget_rect(draw::Context draw_context,
-                              Rect rect,
-                              Color fill,
-                              Color border,
-                              float border_thickness,
-                              float radius,
-                              float opacity) -> void {
+        auto draw_widget_rect(
+            draw::Context draw_context,
+            Rect rect,
+            Color fill,
+            Color border,
+            float border_thickness,
+            float radius,
+            float opacity
+        ) -> void {
             draw::BoxStyle style = {};
             style.fill_color = to_draw_color(color_mul_alpha(fill, opacity));
             style.texture = {};
@@ -3063,12 +3330,65 @@ namespace gui {
             return rect;
         }
 
-        auto render_widget_parts(ContextImpl const* impl,
-                                 BoxNode const& box,
-                                 draw::Context draw_context) -> void {
+        auto draw_sort_arrow(
+            draw::Context draw_context,
+            float x,
+            float y0,
+            float y1,
+            bool down,
+            Color color,
+            float opacity
+        ) -> void {
+            draw::Color const draw_color = to_draw_color(color_mul_alpha(color, opacity));
+            draw::draw_line(draw_context, {x, y0}, {x, y1}, draw_color, 1.8f);
+            float const tip_y = down ? y1 + 3.0f : y1 - 3.0f;
+            draw::draw_triangle_filled(
+                draw_context, {x - 3.5f, y1}, {x + 3.5f, y1}, {x, tip_y}, draw_color
+            );
+        }
+
+        auto render_table_sort_icon(BoxNode const& box, draw::Context draw_context) -> void {
+            float const cx = (box.rect.min.x + box.rect.max.x) * 0.5f;
+            float const cy = (box.rect.min.y + box.rect.max.y) * 0.5f;
+            Color const color = box.resolved_style.foreground;
+            if (box.table_sort_direction == TableSortDirection::ASCENDING) {
+                draw_sort_arrow(
+                    draw_context, cx, cy + 5.0f, cy - 3.0f, false, color, box.resolved_style.opacity
+                );
+            } else if (box.table_sort_direction == TableSortDirection::DESCENDING) {
+                draw_sort_arrow(
+                    draw_context, cx, cy - 5.0f, cy + 3.0f, true, color, box.resolved_style.opacity
+                );
+            } else {
+                draw_sort_arrow(
+                    draw_context,
+                    cx - 3.5f,
+                    cy - 5.0f,
+                    cy + 1.0f,
+                    true,
+                    color,
+                    box.resolved_style.opacity * 0.72f
+                );
+                draw_sort_arrow(
+                    draw_context,
+                    cx + 3.5f,
+                    cy + 5.0f,
+                    cy - 1.0f,
+                    false,
+                    color,
+                    box.resolved_style.opacity * 0.72f
+                );
+            }
+        }
+
+        auto
+        render_widget_parts(ContextImpl const* impl, BoxNode const& box, draw::Context draw_context)
+            -> void {
             float const opacity = box.resolved_style.opacity;
             ThemeTokens const& tokens = impl->theme.tokens;
-            if (box.kind == BoxKind::CHECKBOX) {
+            if (box.table_sort_button) {
+                render_table_sort_icon(box, draw_context);
+            } else if (box.kind == BoxKind::CHECKBOX) {
                 bool const checked = box.widget_value > 0.5f;
                 bool const muted = box_read_only(box) || box_disabled(box);
                 float const side = std::min(14.0f, std::max(0.0f, rect_height(box.rect) - 8.0f));
@@ -3107,48 +3427,57 @@ namespace gui {
             } else if (box.kind == BoxKind::TOGGLE) {
                 float const height = std::min(18.0f, std::max(0.0f, rect_height(box.rect) - 4.0f));
                 float const width = std::min(36.0f, std::max(height, rect_width(box.rect) - 4.0f));
-                Rect const track = {{box.rect.min.x + 2.0f,
-                                     box.rect.min.y + (rect_height(box.rect) - height) * 0.5f},
-                                    {box.rect.min.x + 2.0f + width,
-                                     box.rect.min.y + (rect_height(box.rect) + height) * 0.5f}};
-                draw_widget_rect(draw_context,
-                                 track,
-                                 box.widget_value > 0.5f ? tokens.accent : tokens.panel,
-                                 box.resolved_style.border,
-                                 box.resolved_style.border_thickness,
-                                 height * 0.5f,
-                                 opacity);
+                Rect const track = {
+                    {box.rect.min.x + 2.0f,
+                     box.rect.min.y + (rect_height(box.rect) - height) * 0.5f},
+                    {box.rect.min.x + 2.0f + width,
+                     box.rect.min.y + (rect_height(box.rect) + height) * 0.5f}
+                };
+                draw_widget_rect(
+                    draw_context,
+                    track,
+                    box.widget_value > 0.5f ? tokens.accent : tokens.panel,
+                    box.resolved_style.border,
+                    box.resolved_style.border_thickness,
+                    height * 0.5f,
+                    opacity
+                );
                 float const knob_size = std::max(0.0f, height - 4.0f);
                 float const knob_x =
                     track.min.x + 2.0f + (width - knob_size - 4.0f) * box.widget_value;
-                Rect const knob = {{knob_x, track.min.y + 2.0f},
-                                   {knob_x + knob_size, track.min.y + 2.0f + knob_size}};
+                Rect const knob = {
+                    {knob_x, track.min.y + 2.0f},
+                    {knob_x + knob_size, track.min.y + 2.0f + knob_size}
+                };
                 draw_widget_rect(draw_context, knob, tokens.text, {}, 0.0f, knob_size, opacity);
             } else if (box.kind == BoxKind::SLIDER_FLOAT) {
                 float const center_y = (box.rect.min.y + box.rect.max.y) * 0.5f;
-                Rect const track = {{box.rect.min.x + 4.0f, center_y - 2.0f},
-                                    {box.rect.max.x - 4.0f, center_y + 2.0f}};
+                Rect const track = {
+                    {box.rect.min.x + 4.0f, center_y - 2.0f},
+                    {box.rect.max.x - 4.0f, center_y + 2.0f}
+                };
                 Rect fill = track;
                 fill.max.x = fill.min.x + rect_width(track) * box.widget_value;
                 draw_widget_rect(draw_context, track, tokens.panel, {}, 0.0f, 2.0f, opacity);
                 draw_widget_rect(draw_context, fill, tokens.accent, {}, 0.0f, 2.0f, opacity);
                 float const thumb_x = std::clamp(fill.max.x, track.min.x, track.max.x);
-                Rect const thumb = {{thumb_x - 4.0f, center_y - 8.0f},
-                                    {thumb_x + 4.0f, center_y + 8.0f}};
+                Rect const thumb = {
+                    {thumb_x - 4.0f, center_y - 8.0f}, {thumb_x + 4.0f, center_y + 8.0f}
+                };
                 draw_widget_rect(
-                    draw_context, thumb, tokens.text, tokens.canvas, 1.0f, 4.0f, opacity);
+                    draw_context, thumb, tokens.text, tokens.canvas, 1.0f, 4.0f, opacity
+                );
             } else if (input_text_box(box.kind) && box.signal.focused && box.state != nullptr) {
                 size_t const cursor = std::min(box.state->text_cursor, box.text.size());
                 Vec2 const pos = text_cursor_position(box, cursor);
-                Rect const caret = {
-                    {pos.x, pos.y}, {pos.x + 1.0f, pos.y + text_line_height(box)}};
+                Rect const caret = {{pos.x, pos.y}, {pos.x + 1.0f, pos.y + text_line_height(box)}};
                 draw_widget_rect(draw_context, caret, tokens.text, {}, 0.0f, 0.0f, opacity);
             }
         }
 
-        auto render_text_selection(ContextImpl const* impl,
-                                   BoxNode const& box,
-                                   draw::Context draw_context) -> void {
+        auto render_text_selection(
+            ContextImpl const* impl, BoxNode const& box, draw::Context draw_context
+        ) -> void {
             if ((box.kind != BoxKind::SELECTABLE_LABEL && !input_text_box(box.kind)) ||
                 box.text.empty()) {
                 return;
@@ -3181,21 +3510,23 @@ namespace gui {
                         {pos.x + selection_end,
                          pos.y + line_height * static_cast<float>(line_index + 1u)},
                     };
-                    draw_widget_rect(draw_context,
-                                     selection_rect,
-                                     color,
-                                     {},
-                                     0.0f,
-                                     0.0f,
-                                     box.resolved_style.opacity);
+                    draw_widget_rect(
+                        draw_context,
+                        selection_rect,
+                        color,
+                        {},
+                        0.0f,
+                        0.0f,
+                        box.resolved_style.opacity
+                    );
                 }
                 line_index += 1u;
             }
         }
 
-        auto render_scrollbar(ContextImpl const* impl,
-                              BoxNode const& box,
-                              draw::Context draw_context) -> void {
+        auto
+        render_scrollbar(ContextImpl const* impl, BoxNode const& box, draw::Context draw_context)
+            -> void {
             StateEntry const* const state = box.scroll_state;
             if (state == nullptr || !state->scroll_valid || state->scroll_max_y <= 0.0f) {
                 return;
@@ -3205,18 +3536,21 @@ namespace gui {
             if (!scrollbar_track_valid(track)) {
                 return;
             }
-            Rect const thumb = scrollbar_thumb_rect(track,
-                                                    state->scroll_y,
-                                                    state->scroll_max_y,
-                                                    state->scroll_viewport_height,
-                                                    state->scroll_content_height);
+            Rect const thumb = scrollbar_thumb_rect(
+                track,
+                state->scroll_y,
+                state->scroll_max_y,
+                state->scroll_viewport_height,
+                state->scroll_content_height
+            );
             float const width = rect_width(track);
 
             ThemeTokens const& tokens = impl->theme.tokens;
             float const opacity = box.resolved_style.opacity;
             draw_widget_rect(draw_context, track, tokens.panel, {}, 0.0f, width * 0.5f, opacity);
             draw_widget_rect(
-                draw_context, thumb, tokens.text_muted, {}, 0.0f, width * 0.5f, opacity);
+                draw_context, thumb, tokens.text_muted, {}, 0.0f, width * 0.5f, opacity
+            );
         }
 
         [[nodiscard]] auto text_draw_y(float line_y) -> float {
@@ -3238,17 +3572,21 @@ namespace gui {
             if (box.kind != BoxKind::ROOT) {
                 draw::BoxStyle style = {};
                 style.fill_color = to_draw_color(
-                    color_mul_alpha(box.resolved_style.background, box.resolved_style.opacity));
+                    color_mul_alpha(box.resolved_style.background, box.resolved_style.opacity)
+                );
                 style.border_color = to_draw_color(
-                    color_mul_alpha(box.resolved_style.border, box.resolved_style.opacity));
+                    color_mul_alpha(box.resolved_style.border, box.resolved_style.opacity)
+                );
                 style.border_thickness = box.resolved_style.border_thickness;
                 style.radius = box.resolved_style.radius;
-                style.shadow.offset = {box.resolved_style.shadow.offset.x,
-                                       box.resolved_style.shadow.offset.y};
+                style.shadow.offset = {
+                    box.resolved_style.shadow.offset.x, box.resolved_style.shadow.offset.y
+                };
                 style.shadow.blur_radius = box.resolved_style.shadow.blur_radius;
                 style.shadow.spread = box.resolved_style.shadow.spread;
                 style.shadow.color = to_draw_color(
-                    color_mul_alpha(box.resolved_style.shadow.color, box.resolved_style.opacity));
+                    color_mul_alpha(box.resolved_style.shadow.color, box.resolved_style.opacity)
+                );
 
                 if (color_visible(box.resolved_style.background) ||
                     color_visible(box.resolved_style.border) ||
@@ -3259,19 +3597,18 @@ namespace gui {
                 render_widget_parts(impl, box, draw_context);
                 render_text_selection(impl, box, draw_context);
 
-                bool const text_kind = box.kind == BoxKind::LABEL ||
-                                       box.kind == BoxKind::SELECTABLE_LABEL ||
-                                       box.kind == BoxKind::BUTTON ||
-                                       box.kind == BoxKind::CHECKBOX ||
-                                       box.kind == BoxKind::TOGGLE ||
-                                       box.kind == BoxKind::SLIDER_FLOAT ||
-                                       input_text_box(box.kind);
+                bool const text_kind =
+                    box.kind == BoxKind::LABEL || box.kind == BoxKind::SELECTABLE_LABEL ||
+                    box.kind == BoxKind::BUTTON || box.kind == BoxKind::CHECKBOX ||
+                    box.kind == BoxKind::TOGGLE || box.kind == BoxKind::SLIDER_FLOAT ||
+                    input_text_box(box.kind);
                 if (text_kind && font_cache::font_valid(box.resolved_style.font)) {
                     draw::TextStyle text_style = {};
                     text_style.font = box.resolved_style.font;
                     text_style.size = text_font_size(box);
                     text_style.color = to_draw_color(
-                        color_mul_alpha(box.resolved_style.foreground, box.resolved_style.opacity));
+                        color_mul_alpha(box.resolved_style.foreground, box.resolved_style.opacity)
+                    );
                     Vec2 const text_pos = text_position(box);
                     float const line_height = text_line_height(box);
                     size_t line_index = 0u;
@@ -3283,11 +3620,13 @@ namespace gui {
                             draw::measure_text(draw_context, text_style, line.text, run);
                             float const line_y =
                                 text_pos.y + line_height * static_cast<float>(line_index);
-                            draw::draw_text(draw_context,
-                                            text_draw_position(text_pos.x, line_y),
-                                            text_style,
-                                            line.text,
-                                            nullptr);
+                            draw::draw_text(
+                                draw_context,
+                                text_draw_position(text_pos.x, line_y),
+                                text_style,
+                                line.text,
+                                nullptr
+                            );
                         }
                         line_index += 1u;
                     }
@@ -3296,7 +3635,8 @@ namespace gui {
 
             if (clips_cell_content) {
                 draw::push_clip_rect(
-                    draw_context, to_draw_rect(content_rect(box.rect, box.layout.padding)));
+                    draw_context, to_draw_rect(content_rect(box.rect, box.layout.padding))
+                );
             }
 
             for (size_t child = box.first_child; child != INVALID_INDEX;
@@ -3312,9 +3652,9 @@ namespace gui {
             }
         }
 
-        auto render_floating_boxes(ContextImpl const* impl,
-                                   draw::Context draw_context,
-                                   size_t index) -> void {
+        auto
+        render_floating_boxes(ContextImpl const* impl, draw::Context draw_context, size_t index)
+            -> void {
             BoxNode const& box = impl->boxes[index];
             bool const clips = top_layer_box(impl, index) && box_clips(box);
             if (clips) {
@@ -3362,9 +3702,9 @@ namespace gui {
             }
         }
 
-        auto render_floating_scrollbars(ContextImpl const* impl,
-                                        draw::Context draw_context,
-                                        size_t index) -> void {
+        auto render_floating_scrollbars(
+            ContextImpl const* impl, draw::Context draw_context, size_t index
+        ) -> void {
             BoxNode const& box = impl->boxes[index];
             bool const clips = top_layer_box(impl, index) && box_clips(box);
             if (clips) {
@@ -3417,8 +3757,9 @@ namespace gui {
         tokens.disabled_text = rgba(240, 242, 247, 110);
 
         theme.root = {.foreground = tokens.text, .font_size = 16.0f};
-        theme_role(theme, StyleRole::CANVAS).normal = {.background = tokens.canvas,
-                                                       .foreground = tokens.text};
+        theme_role(theme, StyleRole::CANVAS).normal = {
+            .background = tokens.canvas, .foreground = tokens.text
+        };
         theme_role(theme, StyleRole::PANEL).normal = {
             .background = tokens.panel,
             .foreground = tokens.text,
@@ -3437,11 +3778,10 @@ namespace gui {
                 },
             .hovered = {.background = tokens.control_hovered},
             .active = {.background = tokens.control_active},
-            .disabled =
-                {
-                    .background = tokens.panel,
-                    .foreground = tokens.disabled_text,
-                },
+            .disabled = {
+                .background = tokens.panel,
+                .foreground = tokens.disabled_text,
+            },
         };
         theme_role(theme, StyleRole::ACCENT) = {
             .normal =
@@ -3646,6 +3986,7 @@ namespace gui {
         BoxNode& box = impl->boxes[index];
         box.table_column_span = table_span(desc.column_span);
         box.table_row_span = table_span(desc.row_span);
+        box.table_sort_text = copy_frame_str(impl, desc.sort_text);
         push_parent(impl, index);
         return {m_scope.m_frame, index};
     }
@@ -3673,6 +4014,7 @@ namespace gui {
         BoxNode& box = impl->boxes[index];
         box.table_column_span = table_span(desc.column_span);
         box.table_row_span = table_span(desc.row_span);
+        box.table_sort_text = copy_frame_str(impl, desc.sort_text);
         push_parent(impl, index);
         return {m_scope.m_frame, index};
     }
@@ -3689,14 +4031,16 @@ namespace gui {
         }
         ContextImpl* const impl = impl_from_frame(*m_scope.m_frame);
         size_t const parent = top_parent_index(impl);
-        size_t const index = append_box(impl,
-                                        BoxKind::TABLE_HEADER_ROW,
-                                        structural_id(impl, parent, BoxKind::TABLE_HEADER_ROW),
-                                        {},
-                                        {},
-                                        desc,
-                                        false,
-                                        false);
+        size_t const index = append_box(
+            impl,
+            BoxKind::TABLE_HEADER_ROW,
+            structural_id(impl, parent, BoxKind::TABLE_HEADER_ROW),
+            {},
+            {},
+            desc,
+            false,
+            false
+        );
         push_parent(impl, index);
         return TableRowScope(Scope(m_scope.m_frame, index));
     }
@@ -3707,15 +4051,16 @@ namespace gui {
         }
         ContextImpl* const impl = impl_from_frame(*m_scope.m_frame);
         size_t const parent = top_parent_index(impl);
-        size_t const index =
-            append_box(impl,
-                       BoxKind::TABLE_HEADER_ROW,
-                       explicit_id(impl, parent, BoxKind::TABLE_HEADER_ROW, id_value),
-                       id_value,
-                       {},
-                       desc,
-                       false,
-                       false);
+        size_t const index = append_box(
+            impl,
+            BoxKind::TABLE_HEADER_ROW,
+            explicit_id(impl, parent, BoxKind::TABLE_HEADER_ROW, id_value),
+            id_value,
+            {},
+            desc,
+            false,
+            false
+        );
         push_parent(impl, index);
         return TableRowScope(Scope(m_scope.m_frame, index));
     }
@@ -3726,14 +4071,16 @@ namespace gui {
         }
         ContextImpl* const impl = impl_from_frame(*m_scope.m_frame);
         size_t const parent = top_parent_index(impl);
-        size_t const index = append_box(impl,
-                                        BoxKind::TABLE_ROW,
-                                        structural_id(impl, parent, BoxKind::TABLE_ROW),
-                                        {},
-                                        {},
-                                        desc,
-                                        false,
-                                        false);
+        size_t const index = append_box(
+            impl,
+            BoxKind::TABLE_ROW,
+            structural_id(impl, parent, BoxKind::TABLE_ROW),
+            {},
+            {},
+            desc,
+            false,
+            false
+        );
         push_parent(impl, index);
         return TableRowScope(Scope(m_scope.m_frame, index));
     }
@@ -3744,16 +4091,167 @@ namespace gui {
         }
         ContextImpl* const impl = impl_from_frame(*m_scope.m_frame);
         size_t const parent = top_parent_index(impl);
-        size_t const index = append_box(impl,
-                                        BoxKind::TABLE_ROW,
-                                        explicit_id(impl, parent, BoxKind::TABLE_ROW, id_value),
-                                        id_value,
-                                        {},
-                                        desc,
-                                        false,
-                                        false);
+        size_t const index = append_box(
+            impl,
+            BoxKind::TABLE_ROW,
+            explicit_id(impl, parent, BoxKind::TABLE_ROW, id_value),
+            id_value,
+            {},
+            desc,
+            false,
+            false
+        );
         push_parent(impl, index);
         return TableRowScope(Scope(m_scope.m_frame, index));
+    }
+
+    auto TableScope::sortable_header_cell(size_t column, StrRef label, TableCellDesc const& desc)
+        -> Signal {
+        if (m_scope.m_frame == nullptr) {
+            return {};
+        }
+        ContextImpl* const impl = impl_from_frame(*m_scope.m_frame);
+        size_t const parent = top_parent_index(impl);
+        BoxDesc const box_desc = table_cell_box_desc(desc, BoxKind::TABLE_HEADER_CELL);
+        size_t const index = append_box(
+            impl,
+            BoxKind::TABLE_HEADER_CELL,
+            structural_id(impl, parent, BoxKind::TABLE_HEADER_CELL),
+            {},
+            {},
+            box_desc,
+            false,
+            false
+        );
+        BoxNode& box = impl->boxes[index];
+        box.table_column_span = table_span(desc.column_span);
+        box.table_row_span = table_span(desc.row_span);
+        box.table_sort_text = copy_frame_str(impl, desc.sort_text);
+        push_parent(impl, index);
+
+        Signal signal = {};
+        if (auto row = m_scope.m_frame->row({
+                .layout = {
+                    .width = children(),
+                    .height = fill(),
+                    .padding = sortable_header_row_padding(box_desc),
+                    .gap = 4.0f,
+                    .align_y = Align::CENTER,
+                },
+            })) {
+            TableSortDesc const sort_desc =
+                compact_table_sort_desc(impl->boxes[m_scope.m_box_index].table_sort);
+            signal = sort_button(column, sort_desc);
+            if (column < sort_desc.selected_columns.size()) {
+                Signal const select_signal = m_scope.m_frame->checkbox(
+                    label,
+                    sort_desc.selected_columns.data() + column,
+                    sortable_header_checkbox_desc()
+                );
+                signal.changed = signal.changed || select_signal.changed;
+            } else {
+                m_scope.m_frame->label(
+                    label, {.layout = {.width = text(), .height = fill()}, .debug_name = label}
+                );
+            }
+        }
+        pop_parent_to(impl, index);
+        return signal;
+    }
+
+    auto TableScope::sortable_header_cell(
+        Id id_value, size_t column, StrRef label, TableCellDesc const& desc
+    ) -> Signal {
+        if (m_scope.m_frame == nullptr) {
+            return {};
+        }
+        ContextImpl* const impl = impl_from_frame(*m_scope.m_frame);
+        size_t const parent = top_parent_index(impl);
+        BoxDesc const box_desc = table_cell_box_desc(desc, BoxKind::TABLE_HEADER_CELL);
+        size_t const index = append_box(
+            impl,
+            BoxKind::TABLE_HEADER_CELL,
+            explicit_id(impl, parent, BoxKind::TABLE_HEADER_CELL, id_value),
+            id_value,
+            {},
+            box_desc,
+            false,
+            false
+        );
+        BoxNode& box = impl->boxes[index];
+        box.table_column_span = table_span(desc.column_span);
+        box.table_row_span = table_span(desc.row_span);
+        box.table_sort_text = copy_frame_str(impl, desc.sort_text);
+        push_parent(impl, index);
+
+        Signal signal = {};
+        if (auto row = m_scope.m_frame->row({
+                .layout = {
+                    .width = children(),
+                    .height = fill(),
+                    .padding = sortable_header_row_padding(box_desc),
+                    .gap = 4.0f,
+                    .align_y = Align::CENTER,
+                },
+            })) {
+            TableSortDesc const sort_desc =
+                compact_table_sort_desc(impl->boxes[m_scope.m_box_index].table_sort);
+            signal = sort_button(column, sort_desc);
+            if (column < sort_desc.selected_columns.size()) {
+                Signal const select_signal = m_scope.m_frame->checkbox(
+                    label,
+                    sort_desc.selected_columns.data() + column,
+                    sortable_header_checkbox_desc()
+                );
+                signal.changed = signal.changed || select_signal.changed;
+            } else {
+                m_scope.m_frame->label(
+                    label, {.layout = {.width = text(), .height = fill()}, .debug_name = label}
+                );
+            }
+        }
+        pop_parent_to(impl, index);
+        return signal;
+    }
+
+    auto TableScope::sort_button(size_t column, TableSortDesc const& desc) -> Signal {
+        if (m_scope.m_frame == nullptr) {
+            return {};
+        }
+
+        ContextImpl* const impl = impl_from_frame(*m_scope.m_frame);
+        size_t const parent = top_parent_index(impl);
+        Id const table_id = impl->boxes[m_scope.m_box_index].id;
+        Id const authored_id = table_sort_button_id(table_id, column);
+        BoxDesc const box_desc = table_sort_button_desc(desc);
+        size_t max_column = std::max(column + 1u, desc.selected_columns.size());
+        for (size_t index = 0u; index < table_sort_count(desc); ++index) {
+            max_column = std::max(max_column, desc.columns[index].column + 1u);
+        }
+        size_t const index = append_box(
+            impl,
+            BoxKind::BUTTON,
+            explicit_id(impl, parent, BoxKind::BUTTON, authored_id),
+            authored_id,
+            {},
+            box_desc,
+            true,
+            true
+        );
+        BoxNode& box = impl->boxes[index];
+        box.table_sort_button = true;
+        box.table_sort_direction = table_sort_direction(desc, column);
+        Signal signal = apply_button_activation(impl, box);
+        if (signal.activated && !box_read_only(box) && apply_table_sort(desc, column)) {
+            box.table_sort_direction = table_sort_direction(desc, column);
+            for (size_t sort_index = 0u; sort_index < table_sort_count(desc); ++sort_index) {
+                max_column = std::max(max_column, desc.columns[sort_index].column + 1u);
+            }
+            refresh_table_sort_button_icons(impl, table_id, desc, max_column);
+            signal.changed = true;
+            box.signal = signal;
+        }
+        return signal;
     }
 
     TabViewScope::TabViewScope(Scope&& root, Scope&& body, TabViewResult result)
@@ -3793,14 +4291,16 @@ namespace gui {
     auto Frame::row(BoxDesc const& desc) -> Scope {
         ContextImpl* const impl = impl_from_frame(*this);
         size_t const parent = top_parent_index(impl);
-        size_t const index = append_box(impl,
-                                        BoxKind::ROW,
-                                        structural_id(impl, parent, BoxKind::ROW),
-                                        {},
-                                        {},
-                                        desc,
-                                        false,
-                                        false);
+        size_t const index = append_box(
+            impl,
+            BoxKind::ROW,
+            structural_id(impl, parent, BoxKind::ROW),
+            {},
+            {},
+            desc,
+            false,
+            false
+        );
         push_parent(impl, index);
         return {this, index};
     }
@@ -3808,14 +4308,16 @@ namespace gui {
     auto Frame::row(Id id_value, BoxDesc const& desc) -> Scope {
         ContextImpl* const impl = impl_from_frame(*this);
         size_t const parent = top_parent_index(impl);
-        size_t const index = append_box(impl,
-                                        BoxKind::ROW,
-                                        explicit_id(impl, parent, BoxKind::ROW, id_value),
-                                        id_value,
-                                        {},
-                                        desc,
-                                        false,
-                                        false);
+        size_t const index = append_box(
+            impl,
+            BoxKind::ROW,
+            explicit_id(impl, parent, BoxKind::ROW, id_value),
+            id_value,
+            {},
+            desc,
+            false,
+            false
+        );
         push_parent(impl, index);
         return {this, index};
     }
@@ -3823,14 +4325,16 @@ namespace gui {
     auto Frame::column(BoxDesc const& desc) -> Scope {
         ContextImpl* const impl = impl_from_frame(*this);
         size_t const parent = top_parent_index(impl);
-        size_t const index = append_box(impl,
-                                        BoxKind::COLUMN,
-                                        structural_id(impl, parent, BoxKind::COLUMN),
-                                        {},
-                                        {},
-                                        desc,
-                                        false,
-                                        false);
+        size_t const index = append_box(
+            impl,
+            BoxKind::COLUMN,
+            structural_id(impl, parent, BoxKind::COLUMN),
+            {},
+            {},
+            desc,
+            false,
+            false
+        );
         push_parent(impl, index);
         return {this, index};
     }
@@ -3838,14 +4342,16 @@ namespace gui {
     auto Frame::column(Id id_value, BoxDesc const& desc) -> Scope {
         ContextImpl* const impl = impl_from_frame(*this);
         size_t const parent = top_parent_index(impl);
-        size_t const index = append_box(impl,
-                                        BoxKind::COLUMN,
-                                        explicit_id(impl, parent, BoxKind::COLUMN, id_value),
-                                        id_value,
-                                        {},
-                                        desc,
-                                        false,
-                                        false);
+        size_t const index = append_box(
+            impl,
+            BoxKind::COLUMN,
+            explicit_id(impl, parent, BoxKind::COLUMN, id_value),
+            id_value,
+            {},
+            desc,
+            false,
+            false
+        );
         push_parent(impl, index);
         return {this, index};
     }
@@ -3853,14 +4359,16 @@ namespace gui {
     auto Frame::overlay(BoxDesc const& desc) -> Scope {
         ContextImpl* const impl = impl_from_frame(*this);
         size_t const parent = top_parent_index(impl);
-        size_t const index = append_box(impl,
-                                        BoxKind::OVERLAY,
-                                        structural_id(impl, parent, BoxKind::OVERLAY),
-                                        {},
-                                        {},
-                                        desc,
-                                        false,
-                                        false);
+        size_t const index = append_box(
+            impl,
+            BoxKind::OVERLAY,
+            structural_id(impl, parent, BoxKind::OVERLAY),
+            {},
+            {},
+            desc,
+            false,
+            false
+        );
         push_parent(impl, index);
         return {this, index};
     }
@@ -3868,14 +4376,16 @@ namespace gui {
     auto Frame::overlay(Id id_value, BoxDesc const& desc) -> Scope {
         ContextImpl* const impl = impl_from_frame(*this);
         size_t const parent = top_parent_index(impl);
-        size_t const index = append_box(impl,
-                                        BoxKind::OVERLAY,
-                                        explicit_id(impl, parent, BoxKind::OVERLAY, id_value),
-                                        id_value,
-                                        {},
-                                        desc,
-                                        false,
-                                        false);
+        size_t const index = append_box(
+            impl,
+            BoxKind::OVERLAY,
+            explicit_id(impl, parent, BoxKind::OVERLAY, id_value),
+            id_value,
+            {},
+            desc,
+            false,
+            false
+        );
         push_parent(impl, index);
         return {this, index};
     }
@@ -3883,14 +4393,16 @@ namespace gui {
     auto Frame::popup(Id id_value, BoxDesc const& desc) -> Scope {
         ContextImpl* const impl = impl_from_frame(*this);
         size_t const parent = top_parent_index(impl);
-        size_t const index = append_box(impl,
-                                        BoxKind::POPUP,
-                                        explicit_id(impl, parent, BoxKind::POPUP, id_value),
-                                        id_value,
-                                        {},
-                                        desc,
-                                        true,
-                                        false);
+        size_t const index = append_box(
+            impl,
+            BoxKind::POPUP,
+            explicit_id(impl, parent, BoxKind::POPUP, id_value),
+            id_value,
+            {},
+            desc,
+            true,
+            false
+        );
         push_parent(impl, index);
         return {this, index};
     }
@@ -3901,14 +4413,16 @@ namespace gui {
         BoxDesc modal_desc = desc;
         modal_desc.layout.width = fill();
         modal_desc.layout.height = fill();
-        size_t const index = append_box(impl,
-                                        BoxKind::MODAL,
-                                        explicit_id(impl, parent, BoxKind::MODAL, id_value),
-                                        id_value,
-                                        {},
-                                        modal_desc,
-                                        true,
-                                        false);
+        size_t const index = append_box(
+            impl,
+            BoxKind::MODAL,
+            explicit_id(impl, parent, BoxKind::MODAL, id_value),
+            id_value,
+            {},
+            modal_desc,
+            true,
+            false
+        );
         push_parent(impl, index);
         return {this, index};
     }
@@ -3919,14 +4433,16 @@ namespace gui {
         BoxDesc panel_desc = desc;
         panel_desc.layout.clip = true;
         panel_desc.layout.scroll_y = true;
-        size_t const index = append_box(impl,
-                                        BoxKind::SCROLL_PANEL,
-                                        explicit_id(impl, parent, BoxKind::SCROLL_PANEL, id_value),
-                                        id_value,
-                                        {},
-                                        panel_desc,
-                                        false,
-                                        false);
+        size_t const index = append_box(
+            impl,
+            BoxKind::SCROLL_PANEL,
+            explicit_id(impl, parent, BoxKind::SCROLL_PANEL, id_value),
+            id_value,
+            {},
+            panel_desc,
+            false,
+            false
+        );
         BoxNode& panel = impl->boxes[index];
         set_scroll_state(impl, panel, id_value);
         push_parent(impl, index);
@@ -3936,14 +4452,16 @@ namespace gui {
     auto Frame::table(BoxDesc const& desc) -> TableScope {
         ContextImpl* const impl = impl_from_frame(*this);
         size_t const parent = top_parent_index(impl);
-        size_t const index = append_box(impl,
-                                        BoxKind::TABLE,
-                                        structural_id(impl, parent, BoxKind::TABLE),
-                                        {},
-                                        {},
-                                        desc,
-                                        false,
-                                        false);
+        size_t const index = append_box(
+            impl,
+            BoxKind::TABLE,
+            structural_id(impl, parent, BoxKind::TABLE),
+            {},
+            {},
+            desc,
+            false,
+            false
+        );
         push_parent(impl, index);
         return TableScope(Scope(this, index));
     }
@@ -3951,16 +4469,40 @@ namespace gui {
     auto Frame::table(Id id_value, BoxDesc const& desc) -> TableScope {
         ContextImpl* const impl = impl_from_frame(*this);
         size_t const parent = top_parent_index(impl);
-        size_t const index = append_box(impl,
-                                        BoxKind::TABLE,
-                                        explicit_id(impl, parent, BoxKind::TABLE, id_value),
-                                        id_value,
-                                        {},
-                                        desc,
-                                        false,
-                                        false);
+        size_t const index = append_box(
+            impl,
+            BoxKind::TABLE,
+            explicit_id(impl, parent, BoxKind::TABLE, id_value),
+            id_value,
+            {},
+            desc,
+            false,
+            false
+        );
         push_parent(impl, index);
         return TableScope(Scope(this, index));
+    }
+
+    auto Frame::table(TableDesc const& desc) -> TableScope {
+        TableScope result = table(desc.box);
+        if (result.m_scope.m_frame != nullptr) {
+            ContextImpl* const impl = impl_from_frame(*this);
+            BoxNode& box = impl->boxes[result.m_scope.m_box_index];
+            box.table_sort = desc.sort;
+            box.table_sort_enabled = !desc.sort.columns.empty();
+        }
+        return result;
+    }
+
+    auto Frame::table(Id id_value, TableDesc const& desc) -> TableScope {
+        TableScope result = table(id_value, desc.box);
+        if (result.m_scope.m_frame != nullptr) {
+            ContextImpl* const impl = impl_from_frame(*this);
+            BoxNode& box = impl->boxes[result.m_scope.m_box_index];
+            box.table_sort = desc.sort;
+            box.table_sort_enabled = !desc.sort.columns.empty();
+        }
+        return result;
     }
 
     auto Frame::tab_view(Id id_value, TabViewDesc const& desc) -> TabViewScope {
@@ -4169,14 +4711,16 @@ namespace gui {
     auto Frame::spacer(BoxDesc const& desc) -> void {
         ContextImpl* const impl = impl_from_frame(*this);
         size_t const parent = top_parent_index(impl);
-        BASE_UNUSED(append_box(impl,
-                               BoxKind::SPACER,
-                               structural_id(impl, parent, BoxKind::SPACER),
-                               {},
-                               {},
-                               desc,
-                               false,
-                               false));
+        BASE_UNUSED(append_box(
+            impl,
+            BoxKind::SPACER,
+            structural_id(impl, parent, BoxKind::SPACER),
+            {},
+            {},
+            desc,
+            false,
+            false
+        ));
     }
 
     auto Frame::spacer(float size) -> void {
@@ -4196,69 +4740,74 @@ namespace gui {
     auto Frame::label(StrRef text_value, BoxDesc const& desc) -> Signal {
         ContextImpl* const impl = impl_from_frame(*this);
         size_t const parent = top_parent_index(impl);
-        size_t const index = append_box(impl,
-                                        BoxKind::LABEL,
-                                        text_id(impl, parent, BoxKind::LABEL, text_value),
-                                        {},
-                                        text_value,
-                                        desc,
-                                        false,
-                                        false);
+        size_t const index = append_box(
+            impl,
+            BoxKind::LABEL,
+            text_id(impl, parent, BoxKind::LABEL, text_value),
+            {},
+            text_value,
+            desc,
+            false,
+            false
+        );
         return impl->boxes[index].signal;
     }
 
     auto Frame::label(Id id_value, StrRef text_value, BoxDesc const& desc) -> Signal {
         ContextImpl* const impl = impl_from_frame(*this);
         size_t const parent = top_parent_index(impl);
-        size_t const index = append_box(impl,
-                                        BoxKind::LABEL,
-                                        explicit_id(impl, parent, BoxKind::LABEL, id_value),
-                                        id_value,
-                                        text_value,
-                                        desc,
-                                        false,
-                                        false);
+        size_t const index = append_box(
+            impl,
+            BoxKind::LABEL,
+            explicit_id(impl, parent, BoxKind::LABEL, id_value),
+            id_value,
+            text_value,
+            desc,
+            false,
+            false
+        );
         return impl->boxes[index].signal;
     }
 
-    auto Frame::selectable_label(StrRef text_value,
-                                 TextSelection* selection,
-                                 BoxDesc const& desc) -> Signal {
+    auto Frame::selectable_label(StrRef text_value, TextSelection* selection, BoxDesc const& desc)
+        -> Signal {
         ContextImpl* const impl = impl_from_frame(*this);
         size_t const parent = top_parent_index(impl);
         BoxDesc label_desc = desc;
         label_desc.layout.clip = true;
         label_desc.layout.scroll_y = true;
-        size_t const index = append_box(impl,
-                                        BoxKind::SELECTABLE_LABEL,
-                                        text_id(impl, parent, BoxKind::SELECTABLE_LABEL, text_value),
-                                        {},
-                                        text_value,
-                                        label_desc,
-                                        true,
-                                        false);
+        size_t const index = append_box(
+            impl,
+            BoxKind::SELECTABLE_LABEL,
+            text_id(impl, parent, BoxKind::SELECTABLE_LABEL, text_value),
+            {},
+            text_value,
+            label_desc,
+            true,
+            false
+        );
         impl->boxes[index].scroll_state = impl->boxes[index].state;
         return apply_selectable_label(impl, impl->boxes[index], selection);
     }
 
-    auto Frame::selectable_label(Id id_value,
-                                 StrRef text_value,
-                                 TextSelection* selection,
-                                 BoxDesc const& desc) -> Signal {
+    auto Frame::selectable_label(
+        Id id_value, StrRef text_value, TextSelection* selection, BoxDesc const& desc
+    ) -> Signal {
         ContextImpl* const impl = impl_from_frame(*this);
         size_t const parent = top_parent_index(impl);
         BoxDesc label_desc = desc;
         label_desc.layout.clip = true;
         label_desc.layout.scroll_y = true;
-        size_t const index =
-            append_box(impl,
-                       BoxKind::SELECTABLE_LABEL,
-                       explicit_id(impl, parent, BoxKind::SELECTABLE_LABEL, id_value),
-                       id_value,
-                       text_value,
-                       label_desc,
-                       true,
-                       false);
+        size_t const index = append_box(
+            impl,
+            BoxKind::SELECTABLE_LABEL,
+            explicit_id(impl, parent, BoxKind::SELECTABLE_LABEL, id_value),
+            id_value,
+            text_value,
+            label_desc,
+            true,
+            false
+        );
         set_scroll_state(impl, impl->boxes[index], id_value);
         return apply_selectable_label(impl, impl->boxes[index], selection);
     }
@@ -4266,42 +4815,48 @@ namespace gui {
     auto Frame::button(StrRef text_value, BoxDesc const& desc) -> Signal {
         ContextImpl* const impl = impl_from_frame(*this);
         size_t const parent = top_parent_index(impl);
-        size_t const index = append_box(impl,
-                                        BoxKind::BUTTON,
-                                        text_id(impl, parent, BoxKind::BUTTON, text_value),
-                                        {},
-                                        text_value,
-                                        desc,
-                                        true,
-                                        true);
+        size_t const index = append_box(
+            impl,
+            BoxKind::BUTTON,
+            text_id(impl, parent, BoxKind::BUTTON, text_value),
+            {},
+            text_value,
+            desc,
+            true,
+            true
+        );
         return apply_button_activation(impl, impl->boxes[index]);
     }
 
     auto Frame::button(Id id_value, StrRef text_value, BoxDesc const& desc) -> Signal {
         ContextImpl* const impl = impl_from_frame(*this);
         size_t const parent = top_parent_index(impl);
-        size_t const index = append_box(impl,
-                                        BoxKind::BUTTON,
-                                        explicit_id(impl, parent, BoxKind::BUTTON, id_value),
-                                        id_value,
-                                        text_value,
-                                        desc,
-                                        true,
-                                        true);
+        size_t const index = append_box(
+            impl,
+            BoxKind::BUTTON,
+            explicit_id(impl, parent, BoxKind::BUTTON, id_value),
+            id_value,
+            text_value,
+            desc,
+            true,
+            true
+        );
         return apply_button_activation(impl, impl->boxes[index]);
     }
 
     auto Frame::checkbox(StrRef text_value, bool* value, BoxDesc const& desc) -> Signal {
         ContextImpl* const impl = impl_from_frame(*this);
         size_t const parent = top_parent_index(impl);
-        size_t const index = append_box(impl,
-                                        BoxKind::CHECKBOX,
-                                        text_id(impl, parent, BoxKind::CHECKBOX, text_value),
-                                        {},
-                                        text_value,
-                                        desc,
-                                        true,
-                                        true);
+        size_t const index = append_box(
+            impl,
+            BoxKind::CHECKBOX,
+            text_id(impl, parent, BoxKind::CHECKBOX, text_value),
+            {},
+            text_value,
+            desc,
+            true,
+            true
+        );
         return apply_bool_widget(impl, impl->boxes[index], value);
     }
 
@@ -4309,42 +4864,48 @@ namespace gui {
         -> Signal {
         ContextImpl* const impl = impl_from_frame(*this);
         size_t const parent = top_parent_index(impl);
-        size_t const index = append_box(impl,
-                                        BoxKind::CHECKBOX,
-                                        explicit_id(impl, parent, BoxKind::CHECKBOX, id_value),
-                                        id_value,
-                                        text_value,
-                                        desc,
-                                        true,
-                                        true);
+        size_t const index = append_box(
+            impl,
+            BoxKind::CHECKBOX,
+            explicit_id(impl, parent, BoxKind::CHECKBOX, id_value),
+            id_value,
+            text_value,
+            desc,
+            true,
+            true
+        );
         return apply_bool_widget(impl, impl->boxes[index], value);
     }
 
     auto Frame::toggle(StrRef text_value, bool* value, BoxDesc const& desc) -> Signal {
         ContextImpl* const impl = impl_from_frame(*this);
         size_t const parent = top_parent_index(impl);
-        size_t const index = append_box(impl,
-                                        BoxKind::TOGGLE,
-                                        text_id(impl, parent, BoxKind::TOGGLE, text_value),
-                                        {},
-                                        text_value,
-                                        desc,
-                                        true,
-                                        true);
+        size_t const index = append_box(
+            impl,
+            BoxKind::TOGGLE,
+            text_id(impl, parent, BoxKind::TOGGLE, text_value),
+            {},
+            text_value,
+            desc,
+            true,
+            true
+        );
         return apply_bool_widget(impl, impl->boxes[index], value);
     }
 
     auto Frame::toggle(Id id_value, StrRef text_value, bool* value, BoxDesc const& desc) -> Signal {
         ContextImpl* const impl = impl_from_frame(*this);
         size_t const parent = top_parent_index(impl);
-        size_t const index = append_box(impl,
-                                        BoxKind::TOGGLE,
-                                        explicit_id(impl, parent, BoxKind::TOGGLE, id_value),
-                                        id_value,
-                                        text_value,
-                                        desc,
-                                        true,
-                                        true);
+        size_t const index = append_box(
+            impl,
+            BoxKind::TOGGLE,
+            explicit_id(impl, parent, BoxKind::TOGGLE, id_value),
+            id_value,
+            text_value,
+            desc,
+            true,
+            true
+        );
         return apply_bool_widget(impl, impl->boxes[index], value);
     }
 
@@ -4352,14 +4913,16 @@ namespace gui {
         -> Signal {
         ContextImpl* const impl = impl_from_frame(*this);
         size_t const parent = top_parent_index(impl);
-        size_t const index = append_box(impl,
-                                        BoxKind::SLIDER_FLOAT,
-                                        text_id(impl, parent, BoxKind::SLIDER_FLOAT, text_value),
-                                        {},
-                                        text_value,
-                                        desc.box,
-                                        true,
-                                        true);
+        size_t const index = append_box(
+            impl,
+            BoxKind::SLIDER_FLOAT,
+            text_id(impl, parent, BoxKind::SLIDER_FLOAT, text_value),
+            {},
+            text_value,
+            desc.box,
+            true,
+            true
+        );
         return apply_slider_widget(impl, impl->boxes[index], value, desc);
     }
 
@@ -4368,14 +4931,16 @@ namespace gui {
         -> Signal {
         ContextImpl* const impl = impl_from_frame(*this);
         size_t const parent = top_parent_index(impl);
-        size_t const index = append_box(impl,
-                                        BoxKind::SLIDER_FLOAT,
-                                        explicit_id(impl, parent, BoxKind::SLIDER_FLOAT, id_value),
-                                        id_value,
-                                        text_value,
-                                        desc.box,
-                                        true,
-                                        true);
+        size_t const index = append_box(
+            impl,
+            BoxKind::SLIDER_FLOAT,
+            explicit_id(impl, parent, BoxKind::SLIDER_FLOAT, id_value),
+            id_value,
+            text_value,
+            desc.box,
+            true,
+            true
+        );
         return apply_slider_widget(impl, impl->boxes[index], value, desc);
     }
 
@@ -4388,15 +4953,16 @@ namespace gui {
         size_t const parent = top_parent_index(impl);
         BoxDesc box_desc = desc;
         box_desc.layout.clip = true;
-        size_t const index =
-            append_box(impl,
-                       BoxKind::INPUT_TEXT,
-                       text_id(impl, parent, BoxKind::INPUT_TEXT, label),
-                       {},
-                       {buffer, text_buffer_size(buffer, buffer_size)},
-                       box_desc,
-                       true,
-                       true);
+        size_t const index = append_box(
+            impl,
+            BoxKind::INPUT_TEXT,
+            text_id(impl, parent, BoxKind::INPUT_TEXT, label),
+            {},
+            {buffer, text_buffer_size(buffer, buffer_size)},
+            box_desc,
+            true,
+            true
+        );
         BoxNode& box = impl->boxes[index];
         box.id_source = label.empty() ? BoxIdSource::STRUCTURAL : BoxIdSource::TEXT;
         box.stable_id = false;
@@ -4404,11 +4970,9 @@ namespace gui {
         return apply_input_text_widget(impl, box, edit);
     }
 
-    auto Frame::input_text(Id id_value,
-                           StrRef label,
-                           char* buffer,
-                           size_t buffer_size,
-                           BoxDesc const& desc) -> Signal {
+    auto Frame::input_text(
+        Id id_value, StrRef label, char* buffer, size_t buffer_size, BoxDesc const& desc
+    ) -> Signal {
         ASSERT(buffer != nullptr);
         ASSERT(buffer_size > 0u);
 
@@ -4416,23 +4980,24 @@ namespace gui {
         size_t const parent = top_parent_index(impl);
         BoxDesc box_desc = desc;
         box_desc.layout.clip = true;
-        size_t const index =
-            append_box(impl,
-                       BoxKind::INPUT_TEXT,
-                       explicit_id(impl, parent, BoxKind::INPUT_TEXT, id_value),
-                       id_value,
-                       {buffer, text_buffer_size(buffer, buffer_size)},
-                       box_desc,
-                       true,
-                       true);
+        size_t const index = append_box(
+            impl,
+            BoxKind::INPUT_TEXT,
+            explicit_id(impl, parent, BoxKind::INPUT_TEXT, id_value),
+            id_value,
+            {buffer, text_buffer_size(buffer, buffer_size)},
+            box_desc,
+            true,
+            true
+        );
         BASE_UNUSED(label);
         TextEditBuffer edit = fixed_text_edit_buffer(buffer, buffer_size);
         return apply_input_text_widget(impl, impl->boxes[index], edit);
     }
 
-    auto Frame::input_text_multiline(StrRef label,
-                                     StringBuffer* buffer,
-                                     InputTextMultilineDesc const& desc) -> Signal {
+    auto Frame::input_text_multiline(
+        StrRef label, StringBuffer* buffer, InputTextMultilineDesc const& desc
+    ) -> Signal {
         ASSERT(buffer != nullptr);
 
         ContextImpl* const impl = impl_from_frame(*this);
@@ -4440,15 +5005,16 @@ namespace gui {
         BoxDesc box_desc = desc.box;
         box_desc.layout.clip = true;
         box_desc.layout.scroll_y = true;
-        size_t const index =
-            append_box(impl,
-                       BoxKind::INPUT_TEXT_MULTILINE,
-                       text_id(impl, parent, BoxKind::INPUT_TEXT_MULTILINE, label),
-                       {},
-                       buffer->str(),
-                       box_desc,
-                       true,
-                       true);
+        size_t const index = append_box(
+            impl,
+            BoxKind::INPUT_TEXT_MULTILINE,
+            text_id(impl, parent, BoxKind::INPUT_TEXT_MULTILINE, label),
+            {},
+            buffer->str(),
+            box_desc,
+            true,
+            true
+        );
         BoxNode& box = impl->boxes[index];
         box.id_source = label.empty() ? BoxIdSource::STRUCTURAL : BoxIdSource::TEXT;
         box.stable_id = false;
@@ -4457,10 +5023,9 @@ namespace gui {
         return apply_input_text_widget(impl, box, edit, desc.tab_text);
     }
 
-    auto Frame::input_text_multiline(Id id_value,
-                                     StrRef label,
-                                     StringBuffer* buffer,
-                                     InputTextMultilineDesc const& desc) -> Signal {
+    auto Frame::input_text_multiline(
+        Id id_value, StrRef label, StringBuffer* buffer, InputTextMultilineDesc const& desc
+    ) -> Signal {
         ASSERT(buffer != nullptr);
 
         ContextImpl* const impl = impl_from_frame(*this);
@@ -4468,15 +5033,16 @@ namespace gui {
         BoxDesc box_desc = desc.box;
         box_desc.layout.clip = true;
         box_desc.layout.scroll_y = true;
-        size_t const index =
-            append_box(impl,
-                       BoxKind::INPUT_TEXT_MULTILINE,
-                       explicit_id(impl, parent, BoxKind::INPUT_TEXT_MULTILINE, id_value),
-                       id_value,
-                       buffer->str(),
-                       box_desc,
-                       true,
-                       true);
+        size_t const index = append_box(
+            impl,
+            BoxKind::INPUT_TEXT_MULTILINE,
+            explicit_id(impl, parent, BoxKind::INPUT_TEXT_MULTILINE, id_value),
+            id_value,
+            buffer->str(),
+            box_desc,
+            true,
+            true
+        );
         set_scroll_state(impl, impl->boxes[index], id_value);
         TextEditBuffer edit = string_text_edit_buffer(buffer);
         BASE_UNUSED(label);
@@ -4489,14 +5055,16 @@ namespace gui {
         BoxDesc box_desc = desc.box;
         box_desc.layout.clip = true;
         box_desc.layout.scroll_y = true;
-        size_t const index = append_box(impl,
-                                        BoxKind::LIST,
-                                        explicit_id(impl, parent, BoxKind::LIST, id_value),
-                                        id_value,
-                                        {},
-                                        box_desc,
-                                        false,
-                                        false);
+        size_t const index = append_box(
+            impl,
+            BoxKind::LIST,
+            explicit_id(impl, parent, BoxKind::LIST, id_value),
+            id_value,
+            {},
+            box_desc,
+            false,
+            false
+        );
 
         BoxNode& list = impl->boxes[index];
         set_scroll_state(impl, list, id_value);
@@ -4515,16 +5083,19 @@ namespace gui {
             apply_scroll_delta(impl, list.scroll_state, list.scroll_state->rect);
         }
         consume_list_scroll_request(
-            list.scroll_state, desc.item_count, item_height, viewport_height, max_scroll);
+            list.scroll_state, desc.item_count, item_height, viewport_height, max_scroll
+        );
         list.scroll_state->scroll_y = std::clamp(list.scroll_state->scroll_y, 0.0f, max_scroll);
         if (list.scroll_state->last_frame != 0u) {
-            apply_scrollbar_input(impl,
-                                  list.scroll_state,
-                                  list.scroll_state->rect,
-                                  0.0f,
-                                  viewport_height,
-                                  content_height,
-                                  max_scroll);
+            apply_scrollbar_input(
+                impl,
+                list.scroll_state,
+                list.scroll_state->rect,
+                0.0f,
+                viewport_height,
+                content_height,
+                max_scroll
+            );
         }
         list.scroll_state->scroll_y = std::clamp(list.scroll_state->scroll_y, 0.0f, max_scroll);
         list.scroll_state->scroll_max_y = max_scroll;
@@ -4551,11 +5122,13 @@ namespace gui {
         if (state == nullptr || !state->scroll_valid) {
             return {};
         }
-        return {state->scroll_y,
-                state->scroll_max_y,
-                state->scroll_viewport_height,
-                state->scroll_content_height,
-                true};
+        return {
+            state->scroll_y,
+            state->scroll_max_y,
+            state->scroll_viewport_height,
+            state->scroll_content_height,
+            true
+        };
     }
 
     auto Frame::set_scroll_y(Id id_value, float y) -> void {
@@ -4711,6 +5284,7 @@ namespace gui {
         root_style.opacity = 1.0f;
         root_style.font_size = 16.0f;
         resolve_styles(impl, 0u, root_style);
+        sort_tables(impl, 0u);
         BASE_UNUSED(measure_node(impl, 0u));
         layout_node(impl, 0u, {{0.0f, 0.0f}, {impl->frame_desc.size.x, impl->frame_desc.size.y}});
         publish_infos(impl);

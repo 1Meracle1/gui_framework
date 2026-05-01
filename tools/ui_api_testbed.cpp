@@ -37,6 +37,11 @@ namespace {
         LIGHT,
     };
 
+    inline constexpr size_t PREVIEW_TABLE_COLUMN_COUNT = 3u;
+    inline constexpr size_t PREVIEW_TABLE_ROW_COUNT = 4u;
+    inline constexpr size_t SAMPLE_TABLE_COLUMN_COUNT = 3u;
+    inline constexpr size_t SAMPLE_TABLE_ROW_COUNT = 4u;
+
     struct TestbedState {
         bool enabled = true;
         bool preview = true;
@@ -52,8 +57,14 @@ namespace {
         float sample_value = 0.5f;
         size_t selected_tab = 0u;
         size_t selected_index = 12u;
+        size_t preview_table_sort_count = 0u;
+        size_t sample_table_sort_count = 0u;
         char name[64] = "Editable text";
         char sample_name[64] = "Second tab text";
+        gui::TableSortColumn preview_table_sort_columns[PREVIEW_TABLE_COLUMN_COUNT] = {};
+        gui::TableSortColumn sample_table_sort_columns[SAMPLE_TABLE_COLUMN_COUNT] = {};
+        bool preview_table_selected_columns[PREVIEW_TABLE_COLUMN_COUNT] = {true, true, false};
+        bool sample_table_selected_columns[SAMPLE_TABLE_COLUMN_COUNT] = {true, true, false};
         gui::TextSelection title_selection = {};
         gui::TextSelection body_selection = {};
         gui::Signal header_signal = {};
@@ -73,6 +84,32 @@ namespace {
         "Maecenas sed diam eget risus varius blandit sit amet non magna.\n"
         "Vestibulum id ligula porta felis euismod semper.";
     constexpr char CLOSE_GLYPH[] = "\xC3\x97";
+
+    struct PreviewTableRow {
+        StrRef group = {};
+        StrRef task = {};
+        StrRef status = {};
+    };
+
+    constexpr PreviewTableRow PREVIEW_TABLE_ROWS[PREVIEW_TABLE_ROW_COUNT] = {
+        {"Layout", "Build table element", "Active"},
+        {"Input", "Edit multiline text", "Ready"},
+        {"Render", "Clip table cells", "Done"},
+        {"Overlay", "Stack floating layers", "Open"},
+    };
+
+    struct SampleTableRow {
+        StrRef item = {};
+        StrRef layer = {};
+        StrRef state = {};
+    };
+
+    constexpr SampleTableRow SAMPLE_TABLE_ROWS[SAMPLE_TABLE_ROW_COUNT] = {
+        {"Checkbox", "Input", "Enabled"},
+        {"Popup", "Overlay", "Closed"},
+        {"Slider", "Input", "Ready"},
+        {"Table", "Layout", "Sortable"},
+    };
 
     struct LiquidGlassSpec {
         gui::ThemeTokens tokens = {};
@@ -443,6 +480,35 @@ namespace {
         }
     }
 
+    auto draw_preview_table_sort_control(
+        gui::Frame& ui,
+        gui::TableScope& table,
+        TestbedState& state,
+        gui::TableSortDesc const& desc,
+        gui::Id checkbox_id,
+        StrRef label,
+        size_t column,
+        float checkbox_width
+    ) -> void {
+        BASE_UNUSED(table.sort_button(column, desc));
+        ui.checkbox(
+            checkbox_id,
+            label,
+            state.preview_table_selected_columns + column,
+            {.layout = {.width = gui::px(checkbox_width), .height = gui::fill()}}
+        );
+    }
+
+    auto draw_sample_table_cell(
+        gui::Frame& ui, gui::TableRowScope& row, gui::Id id, StrRef text, float width
+    ) -> void {
+        if (auto cell = row.cell(
+                id, {.box = {.layout = {.width = gui::px(width), .height = gui::px(26.0f)}}}
+            )) {
+            ui.label(text, {.layout = {.width = gui::fill(), .height = gui::fill()}});
+        }
+    }
+
     auto draw_ui(gui::Frame& ui, TestbedState& state, LiquidGlassSpec const& spec) -> void {
         gui::Id const list_id = gui::id("asset_list");
         gui::Id const notes_id = gui::id("notes_scroll");
@@ -731,6 +797,79 @@ namespace {
                                 )
                                     .activated) {
                                 state.sample_value = 0.5f;
+                            }
+                        }
+                    }
+                    gui::TableSortDesc const sample_table_sort_desc = {
+                        .columns = slice(state.sample_table_sort_columns),
+                        .column_count = &state.sample_table_sort_count,
+                        .selected_columns = slice(state.sample_table_selected_columns),
+                    };
+                    if (auto table = ui.table(
+                            gui::id("sample_defaults_table"),
+                            {
+                                .box =
+                                    {
+                                        .layout =
+                                            {
+                                                .width = gui::children(),
+                                                .height = gui::children(),
+                                                .padding = gui::insets(4.0f),
+                                                .gap = 3.0f,
+                                            },
+                                        .debug_name = "sample_defaults_table",
+                                    },
+                                .sort = sample_table_sort_desc,
+                            }
+                        )) {
+                        if (auto header = table.header_row()) {
+                            BASE_UNUSED(header);
+                            BASE_UNUSED(table.sortable_header_cell(
+                                gui::id("sample_table_item_header"),
+                                0u,
+                                "Item",
+                                {.box = {
+                                     .layout = {
+                                         .width = gui::px(132.0f),
+                                         .height = gui::px(28.0f),
+                                     }
+                                 }}
+                            ));
+                            BASE_UNUSED(table.sortable_header_cell(
+                                gui::id("sample_table_layer_header"),
+                                1u,
+                                "Layer",
+                                {.box = {
+                                     .layout = {
+                                         .width = gui::px(116.0f),
+                                         .height = gui::px(28.0f),
+                                     }
+                                 }}
+                            ));
+                            BASE_UNUSED(table.sortable_header_cell(
+                                gui::id("sample_table_state_header"),
+                                2u,
+                                "State",
+                                {.box = {
+                                     .layout = {
+                                         .width = gui::px(116.0f),
+                                         .height = gui::px(28.0f),
+                                     }
+                                 }}
+                            ));
+                        }
+                        for (size_t index = 0u; index < SAMPLE_TABLE_ROW_COUNT; ++index) {
+                            SampleTableRow const& item = SAMPLE_TABLE_ROWS[index];
+                            if (auto row = table.row(gui::id(0x5A500000ull + index))) {
+                                draw_sample_table_cell(
+                                    ui, row, gui::id(0x5A510000ull + index), item.item, 132.0f
+                                );
+                                draw_sample_table_cell(
+                                    ui, row, gui::id(0x5A520000ull + index), item.layer, 116.0f
+                                );
+                                draw_sample_table_cell(
+                                    ui, row, gui::id(0x5A530000ull + index), item.state, 116.0f
+                                );
                             }
                         }
                     }
@@ -1141,18 +1280,34 @@ namespace {
                             .foreground = tokens.text,
                             .border = status_border,
                         };
+                        gui::TableSortDesc const table_sort_desc = {
+                            .columns = slice(state.preview_table_sort_columns),
+                            .column_count = &state.preview_table_sort_count,
+                            .selected_columns = slice(state.preview_table_selected_columns),
+                            .box = {
+                                .layout = {
+                                    .width = gui::px(22.0f),
+                                    .height = gui::fill(),
+                                    .padding = gui::insets(0.0f),
+                                },
+                            },
+                        };
                         if (auto table = ui.table(
                                 gui::id("preview_table"),
                                 {
-                                    .layout =
+                                    .box =
                                         {
-                                            .width = gui::children(),
-                                            .height = gui::children(),
-                                            .margin = gui::insets(154.0f, 0.0f, 0.0f, 0.0f),
-                                            .padding = gui::insets(4.0f),
-                                            .gap = 3.0f,
+                                            .layout =
+                                                {
+                                                    .width = gui::children(),
+                                                    .height = gui::children(),
+                                                    .margin = gui::insets(154.0f, 0.0f, 0.0f, 0.0f),
+                                                    .padding = gui::insets(4.0f),
+                                                    .gap = 3.0f,
+                                                },
+                                            .debug_name = "preview_table",
                                         },
-                                    .debug_name = "preview_table",
+                                    .sort = table_sort_desc,
                                 }
                             )) {
                             if (auto header = table.header_row()) {
@@ -1162,82 +1317,131 @@ namespace {
                                             .column_span = 2u,
                                         }
                                     )) {
-                                    ui.label(
-                                        "Plan",
-                                        {.layout = {.width = gui::fill(), .height = gui::fill()}}
-                                    );
+                                    if (auto sort_row = ui.row(
+                                            gui::id("preview_table_plan_sort"),
+                                            {
+                                                .layout = {
+                                                    .width = gui::children(),
+                                                    .height = gui::fill(),
+                                                    .gap = 4.0f,
+                                                    .align_y = gui::Align::CENTER,
+                                                },
+                                            }
+                                        )) {
+                                        draw_preview_table_sort_control(
+                                            ui,
+                                            table,
+                                            state,
+                                            table_sort_desc,
+                                            gui::id("preview_table_select_group"),
+                                            "Group",
+                                            0u,
+                                            78.0f
+                                        );
+                                        draw_preview_table_sort_control(
+                                            ui,
+                                            table,
+                                            state,
+                                            table_sort_desc,
+                                            gui::id("preview_table_select_task"),
+                                            "Task",
+                                            1u,
+                                            68.0f
+                                        );
+                                    }
                                 }
-                                if (auto cell =
-                                        header.cell(gui::id("preview_table_header_status"))) {
-                                    ui.label(
-                                        "Status",
-                                        {.layout = {.width = gui::fill(), .height = gui::fill()}}
-                                    );
-                                }
-                            }
-                            if (auto row = table.row()) {
-                                if (auto cell = row.cell(
-                                        gui::id("preview_table_row_span"),
-                                        {
-                                            .row_span = 2u,
-                                            .box = {
-                                                .layout =
-                                                    {
-                                                        .width = gui::px(112.0f),
-                                                    },
-                                                .style = table_key_cell_style,
-                                            },
-                                        }
-                                    )) {
-                                    ui.label(
-                                        "Joined rows",
-                                        {.layout = {.width = gui::fill(), .height = gui::fill()}}
-                                    );
-                                }
-                                if (auto cell = row.cell(
-                                        gui::id("preview_table_build_cell"),
+                                if (auto cell = header.cell(
+                                        gui::id("preview_table_header_status"),
                                         {
                                             .box = {
                                                 .layout = {
-                                                    .width = gui::px(204.0f),
+                                                    .width = gui::px(128.0f),
                                                 },
                                             },
                                         }
                                     )) {
-                                    ui.label(
-                                        "Build table element",
-                                        {.layout = {.width = gui::fill(), .height = gui::fill()}}
-                                    );
-                                }
-                                if (auto cell = row.cell(
-                                        gui::id("preview_table_done_cell"),
-                                        {
-                                            .box = {
-                                                .layout =
-                                                    {
-                                                        .width = gui::px(112.0f),
-                                                    },
-                                                .style = table_status_cell_style,
-                                            },
-                                        }
-                                    )) {
-                                    ui.label(
-                                        "Done",
-                                        {.layout = {.width = gui::fill(), .height = gui::fill()}}
-                                    );
+                                    if (auto sort_row = ui.row(
+                                            gui::id("preview_table_status_sort"),
+                                            {
+                                                .layout = {
+                                                    .width = gui::children(),
+                                                    .height = gui::fill(),
+                                                    .gap = 4.0f,
+                                                    .align_y = gui::Align::CENTER,
+                                                },
+                                            }
+                                        )) {
+                                        draw_preview_table_sort_control(
+                                            ui,
+                                            table,
+                                            state,
+                                            table_sort_desc,
+                                            gui::id("preview_table_select_status"),
+                                            "Status",
+                                            2u,
+                                            82.0f
+                                        );
+                                    }
                                 }
                             }
-                            if (auto row = table.row()) {
-                                if (auto cell = row.cell(
-                                        gui::id("preview_table_span_cell"),
-                                        {
-                                            .column_span = 2u,
-                                        }
-                                    )) {
-                                    ui.label(
-                                        "Joined columns",
-                                        {.layout = {.width = gui::fill(), .height = gui::fill()}}
-                                    );
+                            for (size_t source = 0u; source < PREVIEW_TABLE_ROW_COUNT; ++source) {
+                                PreviewTableRow const& item = PREVIEW_TABLE_ROWS[source];
+                                if (auto row = table.row(gui::id(0x77000000ull + source))) {
+                                    if (auto cell = row.cell(
+                                            gui::id(0x77010000ull + source),
+                                            {
+                                                .box = {
+                                                    .layout =
+                                                        {
+                                                            .width = gui::px(112.0f),
+                                                        },
+                                                    .style = table_key_cell_style,
+                                                },
+                                            }
+                                        )) {
+                                        ui.label(
+                                            item.group,
+                                            {.layout = {
+                                                 .width = gui::fill(), .height = gui::fill()
+                                             }}
+                                        );
+                                    }
+                                    if (auto cell = row.cell(
+                                            gui::id(0x77020000ull + source),
+                                            {
+                                                .box = {
+                                                    .layout = {
+                                                        .width = gui::px(204.0f),
+                                                    },
+                                                },
+                                            }
+                                        )) {
+                                        ui.label(
+                                            item.task,
+                                            {.layout = {
+                                                 .width = gui::fill(), .height = gui::fill()
+                                             }}
+                                        );
+                                    }
+                                    if (auto cell = row.cell(
+                                            gui::id(0x77030000ull + source),
+                                            {
+                                                .box = {
+                                                    .layout =
+                                                        {
+                                                            .width = gui::px(112.0f),
+                                                        },
+                                                    .style = table_status_cell_style,
+                                                },
+                                            }
+                                        )) {
+                                        ui.label(
+                                            item.status,
+                                            {.layout = {
+                                                 .width = gui::fill(), .height = gui::fill()
+                                             }}
+                                        );
+                                    }
                                 }
                             }
                         }
