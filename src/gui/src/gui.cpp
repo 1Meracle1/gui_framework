@@ -72,6 +72,12 @@ namespace gui {
             LayoutDesc layout = {};
             StyleDesc style = {};
             StyleDesc resolved_style = {};
+            IconDesc icon = {};
+            render::Texture image_texture = {};
+            Rect image_uv_rect = {{0.0f, 0.0f}, {1.0f, 1.0f}};
+            Color image_tint = {1.0f, 1.0f, 1.0f, 1.0f};
+            Vec2 image_size = {};
+            ImageFit image_fit = ImageFit::STRETCH;
             Rect rect = {};
             Vec2 measured_size = {};
             float scroll_content_height = 0.0f;
@@ -222,6 +228,12 @@ namespace gui {
 
         [[nodiscard]] auto multiline_input_text_box(BoxKind kind) -> bool {
             return kind == BoxKind::INPUT_TEXT_MULTILINE;
+        }
+
+        [[nodiscard]] auto text_content_box(BoxKind kind) -> bool {
+            return kind == BoxKind::LABEL || kind == BoxKind::SELECTABLE_LABEL ||
+                   kind == BoxKind::BUTTON || kind == BoxKind::CHECKBOX ||
+                   kind == BoxKind::TOGGLE || kind == BoxKind::SLIDER_FLOAT || input_text_box(kind);
         }
 
         [[nodiscard]] auto table_row_box(BoxKind kind) -> bool {
@@ -573,18 +585,36 @@ namespace gui {
             return size;
         }
 
-        [[nodiscard]] auto text_x_offset(BoxNode const& box, float content_width, float text_width)
-            -> float {
-            if (box.kind == BoxKind::BUTTON) {
-                return std::max(0.0f, content_width - text_width) * 0.5f;
-            }
-            if (box.kind == BoxKind::CHECKBOX) {
+        [[nodiscard]] auto icon_visible(IconDesc const& icon) -> bool {
+            return render::texture_valid(icon.texture) && icon.size > 0.0f;
+        }
+
+        [[nodiscard]] auto icon_text_gap(BoxNode const& box) -> float {
+            return !box.text.empty() && icon_visible(box.icon) ? std::max(0.0f, box.icon.gap)
+                                                               : 0.0f;
+        }
+
+        [[nodiscard]] auto icon_text_width(BoxNode const& box) -> float {
+            return icon_visible(box.icon) ? box.icon.size + icon_text_gap(box) : 0.0f;
+        }
+
+        [[nodiscard]] auto control_text_offset(BoxKind kind) -> float {
+            if (kind == BoxKind::CHECKBOX) {
                 return 24.0f;
             }
-            if (box.kind == BoxKind::TOGGLE) {
+            if (kind == BoxKind::TOGGLE) {
                 return 44.0f;
             }
             return 0.0f;
+        }
+
+        [[nodiscard]] auto text_x_offset(BoxNode const& box, float content_width, float text_width)
+            -> float {
+            if (box.kind == BoxKind::BUTTON) {
+                return std::max(0.0f, content_width - text_width - icon_text_width(box)) * 0.5f +
+                       icon_text_width(box);
+            }
+            return control_text_offset(box.kind) + icon_text_width(box);
         }
 
         [[nodiscard]] auto input_text_scroll_x(BoxNode const& box, float content_width) -> float {
@@ -618,6 +648,55 @@ namespace gui {
 
         [[nodiscard]] auto text_position(BoxNode const& box) -> Vec2 {
             return text_position(box, box.rect);
+        }
+
+        [[nodiscard]] auto image_measure_size(BoxNode const& box) -> Vec2 {
+            if (box.kind == BoxKind::ICON && icon_visible(box.icon)) {
+                return {box.icon.size, box.icon.size};
+            }
+            if (box.kind == BoxKind::IMAGE && render::texture_valid(box.image_texture)) {
+                return box.image_size;
+            }
+            return {};
+        }
+
+        [[nodiscard]] auto fit_image_rect(Rect rect, Vec2 source_size, ImageFit fit) -> Rect {
+            if (fit == ImageFit::STRETCH || source_size.x <= 0.0f || source_size.y <= 0.0f ||
+                rect_width(rect) <= 0.0f || rect_height(rect) <= 0.0f) {
+                return rect;
+            }
+
+            float const source_aspect = source_size.x / source_size.y;
+            float const rect_aspect = rect_width(rect) / rect_height(rect);
+            bool const fit_width = fit == ImageFit::CONTAIN ? source_aspect > rect_aspect
+                                                            : source_aspect < rect_aspect;
+            Vec2 size = {};
+            if (fit_width) {
+                size.x = rect_width(rect);
+                size.y = size.x / source_aspect;
+            } else {
+                size.y = rect_height(rect);
+                size.x = size.y * source_aspect;
+            }
+
+            Vec2 const center = {
+                (rect.min.x + rect.max.x) * 0.5f, (rect.min.y + rect.max.y) * 0.5f
+            };
+            return {
+                {center.x - size.x * 0.5f, center.y - size.y * 0.5f},
+                {center.x + size.x * 0.5f, center.y + size.y * 0.5f}
+            };
+        }
+
+        [[nodiscard]] auto icon_rect(BoxNode const& box, Rect rect, float text_width) -> Rect {
+            float const content_width =
+                std::max(0.0f, rect_width(rect) - inset_width(box.layout.padding));
+            float x = rect.min.x + box.layout.padding.left + control_text_offset(box.kind);
+            if (box.kind == BoxKind::BUTTON) {
+                x += std::max(0.0f, content_width - text_width - icon_text_width(box)) * 0.5f;
+            }
+            float const y = rect.min.y + (rect_height(rect) - box.icon.size) * 0.5f;
+            return {{x, y}, {x + box.icon.size, y + box.icon.size}};
         }
 
         [[nodiscard]] auto copy_frame_str(ContextImpl* impl, StrRef value) -> StrRef {
@@ -965,6 +1044,7 @@ namespace gui {
             box->debug_name = copy_frame_str(impl, desc.debug_name);
             box->layout = desc.layout;
             box->style = desc.style;
+            box->icon = desc.icon;
             box->flags = parent.flags | desc.flags;
             box->id = id_value;
             box->authored_id = authored_id;
@@ -1278,6 +1358,7 @@ namespace gui {
             Vec2 size = {};
             Vec2 const text_dim = text_size(box);
             bool const is_leaf = box.first_child == INVALID_INDEX;
+            Vec2 const image_dim = image_measure_size(box);
             float const widget_extra_x = box.kind == BoxKind::CHECKBOX       ? 24.0f
                                          : box.kind == BoxKind::TOGGLE       ? 44.0f
                                          : box.kind == BoxKind::SLIDER_FLOAT ? 160.0f
@@ -1288,6 +1369,9 @@ namespace gui {
                         box.kind == BoxKind::SLIDER_FLOAT || input_text_box(box.kind)
                     ? 20.0f
                     : 0.0f;
+            float const icon_width = text_content_box(box.kind) ? icon_text_width(box) : 0.0f;
+            float const icon_height =
+                text_content_box(box.kind) && icon_visible(box.icon) ? box.icon.size : 0.0f;
 
             if (box.kind == BoxKind::TABLE) {
                 size = measure_table(impl, index);
@@ -1298,16 +1382,21 @@ namespace gui {
 
             if (box.layout.width.kind == SizeKind::PIXELS) {
                 size.x = box.layout.width.value;
+            } else if (box.kind == BoxKind::IMAGE || box.kind == BoxKind::ICON) {
+                size.x = image_dim.x + inset_width(box.layout.padding);
             } else if (box.layout.width.kind == SizeKind::TEXT ||
                        (box.layout.width.kind == SizeKind::AUTO && is_leaf)) {
-                size.x = text_dim.x + widget_extra_x + inset_width(box.layout.padding);
+                size.x = text_dim.x + widget_extra_x + icon_width + inset_width(box.layout.padding);
             }
 
             if (box.layout.height.kind == SizeKind::PIXELS) {
                 size.y = box.layout.height.value;
+            } else if (box.kind == BoxKind::IMAGE || box.kind == BoxKind::ICON) {
+                size.y = image_dim.y + inset_height(box.layout.padding);
             } else if (box.layout.height.kind == SizeKind::TEXT ||
                        (box.layout.height.kind == SizeKind::AUTO && is_leaf)) {
-                size.y = std::max(text_dim.y, widget_min_y) + inset_height(box.layout.padding);
+                size.y = std::max(std::max(text_dim.y, widget_min_y), icon_height) +
+                         inset_height(box.layout.padding);
             }
 
             if (!is_leaf && (box.layout.width.kind == SizeKind::AUTO ||
@@ -3500,6 +3589,53 @@ namespace gui {
             return {color.r, color.g, color.b, color.a};
         }
 
+        [[nodiscard]] auto to_draw_uv(Rect rect) -> draw::Rect {
+            return {{rect.min.x, rect.min.y}, {rect.max.x, rect.max.y}};
+        }
+
+        [[nodiscard]] auto image_tint(Color tint, float opacity) -> draw::Color {
+            if (!color_set(tint)) {
+                tint = rgb(255, 255, 255);
+            }
+            return to_draw_color(color_mul_alpha(tint, opacity));
+        }
+
+        [[nodiscard]] auto icon_tint(BoxNode const& box) -> draw::Color {
+            Color tint = color_set(box.icon.tint) ? box.icon.tint : box.resolved_style.foreground;
+            return to_draw_color(color_mul_alpha(tint, box.resolved_style.opacity));
+        }
+
+        auto draw_image_fit(
+            draw::Context draw_context,
+            render::Texture texture,
+            Rect rect,
+            Rect uv_rect,
+            Color tint,
+            Vec2 source_size,
+            ImageFit fit,
+            float opacity
+        ) -> void {
+            if (!render::texture_valid(texture)) {
+                return;
+            }
+
+            Rect const image_rect = fit_image_rect(rect, source_size, fit);
+            bool const clips = fit == ImageFit::COVER;
+            if (clips) {
+                draw::push_clip_rect(draw_context, to_draw_rect(rect));
+            }
+            draw::draw_image(
+                draw_context,
+                texture,
+                to_draw_rect(image_rect),
+                to_draw_uv(uv_rect),
+                image_tint(tint, opacity)
+            );
+            if (clips) {
+                draw::pop_clip_rect(draw_context);
+            }
+        }
+
         auto draw_widget_rect(
             draw::Context draw_context,
             Rect rect,
@@ -3814,15 +3950,52 @@ namespace gui {
                     draw::draw_rect_styled(draw_context, to_draw_rect(box.rect), style);
                 }
 
+                if (box.kind == BoxKind::IMAGE) {
+                    draw_image_fit(
+                        draw_context,
+                        box.image_texture,
+                        content_rect(box.rect, box.layout.padding),
+                        box.image_uv_rect,
+                        box.image_tint,
+                        box.image_size,
+                        box.image_fit,
+                        box.resolved_style.opacity
+                    );
+                } else if (box.kind == BoxKind::ICON && icon_visible(box.icon)) {
+                    Rect const content = content_rect(box.rect, box.layout.padding);
+                    float const side = std::min(
+                        box.icon.size, std::min(rect_width(content), rect_height(content))
+                    );
+                    Vec2 const center = {
+                        (content.min.x + content.max.x) * 0.5f,
+                        (content.min.y + content.max.y) * 0.5f
+                    };
+                    Rect const rect = {
+                        {center.x - side * 0.5f, center.y - side * 0.5f},
+                        {center.x + side * 0.5f, center.y + side * 0.5f}
+                    };
+                    draw::draw_image(
+                        draw_context,
+                        box.icon.texture,
+                        to_draw_rect(rect),
+                        to_draw_uv(box.icon.uv_rect),
+                        icon_tint(box)
+                    );
+                } else if (text_content_box(box.kind) && icon_visible(box.icon)) {
+                    Rect const rect = icon_rect(box, box.rect, text_size(box).x);
+                    draw::draw_image(
+                        draw_context,
+                        box.icon.texture,
+                        to_draw_rect(rect),
+                        to_draw_uv(box.icon.uv_rect),
+                        icon_tint(box)
+                    );
+                }
+
                 render_widget_parts(impl, box, draw_context);
                 render_text_selection(impl, box, draw_context);
 
-                bool const text_kind =
-                    box.kind == BoxKind::LABEL || box.kind == BoxKind::SELECTABLE_LABEL ||
-                    box.kind == BoxKind::BUTTON || box.kind == BoxKind::CHECKBOX ||
-                    box.kind == BoxKind::TOGGLE || box.kind == BoxKind::SLIDER_FLOAT ||
-                    input_text_box(box.kind);
-                if (text_kind && font_cache::font_valid(box.resolved_style.font)) {
+                if (text_content_box(box.kind) && font_cache::font_valid(box.resolved_style.font)) {
                     draw::TextStyle text_style = {};
                     text_style.font = box.resolved_style.font;
                     text_style.size = text_font_size(box);
@@ -4034,6 +4207,7 @@ namespace gui {
         theme_kind(theme, BoxKind::MODAL).style.normal.background = rgba(0, 0, 0, 150);
         theme_kind(theme, BoxKind::LABEL).role = StyleRole::TEXT;
         theme_kind(theme, BoxKind::SELECTABLE_LABEL).role = StyleRole::TEXT;
+        theme_kind(theme, BoxKind::ICON).role = StyleRole::TEXT;
         theme_kind(theme, BoxKind::TABLE).role = StyleRole::PANEL;
         theme_kind(theme, BoxKind::TABLE_CELL).style.normal = {
             .background = rgba(24, 28, 36, 220),
@@ -5221,6 +5395,86 @@ namespace gui {
             true
         );
         return apply_button_activation(impl, impl->boxes[index]);
+    }
+
+    auto Frame::image(render::Texture texture, ImageDesc const& desc) -> Signal {
+        ContextImpl* const impl = impl_from_frame(*this);
+        size_t const parent = top_parent_index(impl);
+        size_t const index = append_box(
+            impl,
+            BoxKind::IMAGE,
+            structural_id(impl, parent, BoxKind::IMAGE),
+            {},
+            {},
+            desc.box,
+            false,
+            false
+        );
+        BoxNode& box = impl->boxes[index];
+        box.image_texture = texture;
+        box.image_uv_rect = desc.uv_rect;
+        box.image_tint = desc.tint;
+        box.image_size = desc.size;
+        box.image_fit = desc.fit;
+        return box.signal;
+    }
+
+    auto Frame::image(Id id_value, render::Texture texture, ImageDesc const& desc) -> Signal {
+        ContextImpl* const impl = impl_from_frame(*this);
+        size_t const parent = top_parent_index(impl);
+        size_t const index = append_box(
+            impl,
+            BoxKind::IMAGE,
+            explicit_id(impl, parent, BoxKind::IMAGE, id_value),
+            id_value,
+            {},
+            desc.box,
+            false,
+            false
+        );
+        BoxNode& box = impl->boxes[index];
+        box.image_texture = texture;
+        box.image_uv_rect = desc.uv_rect;
+        box.image_tint = desc.tint;
+        box.image_size = desc.size;
+        box.image_fit = desc.fit;
+        return box.signal;
+    }
+
+    auto Frame::icon(render::Texture texture, BoxDesc const& desc) -> Signal {
+        ContextImpl* const impl = impl_from_frame(*this);
+        size_t const parent = top_parent_index(impl);
+        BoxDesc box_desc = desc;
+        box_desc.icon.texture = texture;
+        size_t const index = append_box(
+            impl,
+            BoxKind::ICON,
+            structural_id(impl, parent, BoxKind::ICON),
+            {},
+            {},
+            box_desc,
+            false,
+            false
+        );
+        return impl->boxes[index].signal;
+    }
+
+    auto Frame::icon(Id id_value, render::Texture texture, BoxDesc const& desc) -> Signal {
+        ContextImpl* const impl = impl_from_frame(*this);
+        size_t const parent = top_parent_index(impl);
+        BoxDesc box_desc = desc;
+        box_desc.icon.texture = texture;
+        size_t const index = append_box(
+            impl,
+            BoxKind::ICON,
+            explicit_id(impl, parent, BoxKind::ICON, id_value),
+            id_value,
+            {},
+            box_desc,
+            false,
+            false
+        );
+        return impl->boxes[index].signal;
     }
 
     auto Frame::checkbox(StrRef text_value, bool* value, BoxDesc const& desc) -> Signal {

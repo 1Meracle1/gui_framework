@@ -123,6 +123,20 @@ namespace gui {
         float font_size = -1.0f;
     };
 
+    enum class ImageFit : uint8_t {
+        STRETCH,
+        CONTAIN,
+        COVER,
+    };
+
+    struct IconDesc {
+        render::Texture texture = {};
+        Rect uv_rect = {{0.0f, 0.0f}, {1.0f, 1.0f}};
+        Color tint = {};
+        float size = 16.0f;
+        float gap = 6.0f;
+    };
+
     using BoxFlags = uint32_t;
     inline constexpr BoxFlags BOX_FLAG_NONE = 0u;
     inline constexpr BoxFlags BOX_FLAG_DISABLED = 1u << 0u;
@@ -131,8 +145,17 @@ namespace gui {
     struct BoxDesc {
         LayoutDesc layout = {};
         StyleDesc style = {};
+        IconDesc icon = {};
         BoxFlags flags = BOX_FLAG_NONE;
         StrRef debug_name = {};
+    };
+
+    struct ImageDesc {
+        BoxDesc box = {};
+        Rect uv_rect = {{0.0f, 0.0f}, {1.0f, 1.0f}};
+        Color tint = {1.0f, 1.0f, 1.0f, 1.0f};
+        Vec2 size = {};
+        ImageFit fit = ImageFit::STRETCH;
     };
 
     using KeyMods = uint8_t;
@@ -368,6 +391,8 @@ namespace gui {
         TAB_BAR,
         TAB,
         TAB_BODY,
+        IMAGE,
+        ICON,
         COUNT,
     };
 
@@ -678,6 +703,10 @@ namespace gui {
             -> Signal;
         auto button(StrRef text, BoxDesc const& desc = {}) -> Signal;
         auto button(Id id, StrRef text, BoxDesc const& desc = {}) -> Signal;
+        auto image(render::Texture texture, ImageDesc const& desc = {}) -> Signal;
+        auto image(Id id, render::Texture texture, ImageDesc const& desc = {}) -> Signal;
+        auto icon(render::Texture texture, BoxDesc const& desc = {}) -> Signal;
+        auto icon(Id id, render::Texture texture, BoxDesc const& desc = {}) -> Signal;
         auto checkbox(StrRef text, bool* value, BoxDesc const& desc = {}) -> Signal;
         auto checkbox(Id id, StrRef text, bool* value, BoxDesc const& desc = {}) -> Signal;
         auto toggle(StrRef text, bool* value, BoxDesc const& desc = {}) -> Signal;

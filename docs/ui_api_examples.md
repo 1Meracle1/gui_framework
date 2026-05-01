@@ -128,6 +128,31 @@ if (ui.input_text(gui::id("name"),
 }
 ```
 
+## Images And Icons
+
+```cpp
+gui::render::Texture preview_texture = load_preview_texture();
+ui.image(preview_texture,
+         {
+             .box = {.layout = {.width = gui::px(180.0f), .height = gui::px(120.0f)}},
+             .size = {640.0f, 360.0f},
+             .fit = gui::ImageFit::CONTAIN,
+         });
+
+gui::render::Texture save_icon = load_save_icon();
+ui.icon(save_icon,
+        {
+            .style = {.foreground = gui::rgb(220, 230, 245)},
+            .icon = {.size = 18.0f},
+        });
+
+ui.button("Save",
+          {
+              .layout = {.padding = gui::insets(5.0f, 10.0f)},
+              .icon = {.texture = save_icon, .size = 16.0f, .gap = 6.0f},
+          });
+```
+
 ## List Virtualization
 
 ```cpp

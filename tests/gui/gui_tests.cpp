@@ -4323,6 +4323,150 @@ namespace {
 #endif
     }
 
+    TEST_CASE(image_widget_measures_and_emits_textured_quad) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::draw::Context draw_context = {};
+        gui::draw::create_context(arena, {}, draw_context);
+
+        int texture_storage = 0;
+        gui::render::Texture texture = {&texture_storage};
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {100.0f, 40.0f}});
+        ui.image(
+            gui::id("photo"),
+            texture,
+            {.tint = gui::rgba(128, 255, 64, 200), .size = {40.0f, 20.0f}}
+        );
+        gui::end_frame(ui);
+
+        gui::BoxInfo const* image = ui.find_box(gui::id("photo"), gui::BoxKind::IMAGE);
+        TEST_EXPECT(context, image != nullptr);
+        if (image != nullptr) {
+            expect_rect(context, image->rect, {{0.0f, 0.0f}, {40.0f, 20.0f}});
+        }
+
+        gui::draw::begin_frame(draw_context);
+        gui::render_frame(ui, draw_context);
+
+        TEST_EXPECT(context, gui::draw::primitive_command_count(draw_context) == 1u);
+        gui::draw::PrimitiveCommand const* command = gui::draw::primitive_command(draw_context, 0u);
+        TEST_EXPECT(context, command != nullptr);
+        if (command != nullptr) {
+            TEST_EXPECT(context, command->texture.handle == texture.handle);
+            TEST_EXPECT(context, command->vertex_count == 6u);
+            TEST_EXPECT(context, command->vertices[0u].position.x == 0.0f);
+            TEST_EXPECT(context, command->vertices[0u].position.y == 0.0f);
+            TEST_EXPECT(context, command->vertices[2u].position.x == 40.0f);
+            TEST_EXPECT(context, command->vertices[2u].position.y == 20.0f);
+            TEST_EXPECT(context, command->vertices[2u].uv.x == 1.0f);
+            TEST_EXPECT(context, command->vertices[2u].uv.y == 1.0f);
+            TEST_EXPECT(context, command->vertices[0u].color.r == (128.0f / 255.0f));
+            TEST_EXPECT(context, command->vertices[0u].color.a == (200.0f / 255.0f));
+        }
+
+        gui::draw::destroy_context(draw_context);
+        gui::destroy_context(gui_context);
+    }
+
+    TEST_CASE(image_contain_fit_preserves_source_aspect) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::draw::Context draw_context = {};
+        gui::draw::create_context(arena, {}, draw_context);
+
+        int texture_storage = 0;
+        gui::render::Texture texture = {&texture_storage};
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {100.0f, 100.0f}});
+        ui.image(
+            texture,
+            {
+                .box = {.layout = {.width = gui::px(80.0f), .height = gui::px(80.0f)}},
+                .size = {40.0f, 20.0f},
+                .fit = gui::ImageFit::CONTAIN,
+            }
+        );
+        gui::end_frame(ui);
+
+        gui::draw::begin_frame(draw_context);
+        gui::render_frame(ui, draw_context);
+
+        gui::draw::PrimitiveCommand const* command = gui::draw::primitive_command(draw_context, 0u);
+        TEST_EXPECT(context, command != nullptr);
+        if (command != nullptr) {
+            TEST_EXPECT(context, command->vertices[0u].position.x == 0.0f);
+            TEST_EXPECT(context, command->vertices[0u].position.y == 20.0f);
+            TEST_EXPECT(context, command->vertices[2u].position.x == 80.0f);
+            TEST_EXPECT(context, command->vertices[2u].position.y == 60.0f);
+        }
+
+        gui::draw::destroy_context(draw_context);
+        gui::destroy_context(gui_context);
+    }
+
+    TEST_CASE(icon_widgets_and_button_icons_emit_tinted_quads) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::draw::Context draw_context = {};
+        gui::draw::create_context(arena, {}, draw_context);
+
+        int texture_storage = 0;
+        gui::render::Texture texture = {&texture_storage};
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {120.0f, 50.0f}});
+        ui.icon(
+            gui::id("tool_icon"),
+            texture,
+            {.style = {.foreground = gui::rgb(10, 20, 30)}, .icon = {.size = 20.0f}}
+        );
+        ui.button("Run", {.icon = {.texture = texture, .size = 16.0f, .gap = 4.0f}});
+        gui::end_frame(ui);
+
+        gui::BoxInfo const* icon = ui.find_box(gui::id("tool_icon"), gui::BoxKind::ICON);
+        gui::BoxInfo const* button = find_box_text(ui, gui::BoxKind::BUTTON, "Run");
+        TEST_EXPECT(context, icon != nullptr);
+        TEST_EXPECT(context, button != nullptr);
+        if (icon != nullptr && button != nullptr) {
+            expect_rect(context, icon->rect, {{0.0f, 0.0f}, {20.0f, 20.0f}});
+            expect_rect(context, button->rect, {{0.0f, 20.0f}, {44.0f, 40.0f}});
+        }
+
+        gui::draw::begin_frame(draw_context);
+        gui::render_frame(ui, draw_context);
+
+        TEST_EXPECT(context, gui::draw::primitive_command_count(draw_context) == 2u);
+        gui::draw::PrimitiveCommand const* standalone =
+            gui::draw::primitive_command(draw_context, 0u);
+        gui::draw::PrimitiveCommand const* button_icon =
+            gui::draw::primitive_command(draw_context, 1u);
+        TEST_EXPECT(context, standalone != nullptr);
+        TEST_EXPECT(context, button_icon != nullptr);
+        if (standalone != nullptr) {
+            TEST_EXPECT(context, standalone->vertices[0u].color.r == (10.0f / 255.0f));
+            TEST_EXPECT(context, standalone->vertices[0u].color.g == (20.0f / 255.0f));
+            TEST_EXPECT(context, standalone->vertices[0u].color.b == (30.0f / 255.0f));
+        }
+        if (button_icon != nullptr) {
+            TEST_EXPECT(context, button_icon->vertices[0u].position.x == 0.0f);
+            TEST_EXPECT(context, button_icon->vertices[0u].position.y == 22.0f);
+            TEST_EXPECT(context, button_icon->vertices[2u].position.x == 16.0f);
+            TEST_EXPECT(context, button_icon->vertices[2u].position.y == 38.0f);
+        }
+
+        gui::draw::destroy_context(draw_context);
+        gui::destroy_context(gui_context);
+    }
+
     TEST_CASE(widget_metadata_and_draw_output_are_published) {
         Arena arena = {};
         arena.init();

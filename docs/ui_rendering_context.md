@@ -56,10 +56,21 @@ Every future prompt must:
 4. List changed files and verification commands in the final answer.
 
 ## Latest Update
-- Date: 2026-04-29
-- Slice: Created this persistent context file from the current thread context.
-- Changed files: `docs/ui_rendering_context.md`
-- Verification: `rg -n "UI Rendering Context|optimized v2 UI drawing|ui_api_testbed" .`;
-  no build run, docs-only change.
-- Deferred work: Start the first implementation slice, likely minimal render
-  instancing in `src/render/include/render/render.h` and backend call sites.
+- Date: 2026-05-01
+- Slice: Added UI-level image and icon support: `Frame::image`, `Frame::icon`,
+  leading `BoxDesc::icon`, image fit modes, draw emission, focused tests, and
+  examples.
+- Changed files: `src/gui/include/gui/gui.h`, `src/gui/src/gui.cpp`,
+  `tests/gui/gui_tests.cpp`, `docs/ui_api_examples.md`,
+  `docs/ui_rendering_context.md`.
+- Verification: `clang-format --dry-run --Werror src\gui\include\gui\gui.h
+  src\gui\src\gui.cpp tests\gui\gui_tests.cpp` passed; `cmd /c "call
+  scripts\windows_build_env.bat windows-msvc-debug && cmake --build --preset
+  windows-msvc-debug --target gui_tests --config Debug --verbose"` passed;
+  `.\run.bat windows-msvc-debug gui_tests` built and ran 85 tests, including the
+  new image/icon cases, but failed three existing cases:
+  `tab_view_adds_closes_and_moves_app_owned_tabs`,
+  `table_desc_sorts_rows_by_cell_text`, and
+  `dense_controls_panel_renders_only_batchable_styled_rects_without_font`.
+- Deferred work: Decide whether styled backgrounds need a texture field; current
+  support covers image widgets, icon widgets, and leading icons on text widgets.
