@@ -180,6 +180,7 @@ namespace gui {
         };
 
         [[nodiscard]] auto next_text_offset(StrRef text, size_t offset) -> size_t;
+        [[nodiscard]] auto previous_text_offset(StrRef text, size_t offset) -> size_t;
 
         [[nodiscard]] auto impl_from_context(Context context) -> ContextImpl* {
             return static_cast<ContextImpl*>(context.handle);
@@ -652,36 +653,68 @@ namespace gui {
                 return true;
             }
 
-            size_t cursor = start;
-            size_t break_offset = StrRef::NPOS;
-            while (cursor < end) {
-                size_t const next = next_text_offset(text, cursor);
-                bool const whitespace = is_ascii_whitespace(text[cursor]);
-                float const advance = text_advance(box, text.substr(start, next - start));
+            size_t low = start;
+            size_t high = next_text_offset(text, start);
+            size_t step = 1u;
+            bool overflow = false;
+            while (true) {
+                float const advance = text_advance(box, text.substr(start, high - start));
                 if (advance > wrap_width) {
-                    if (cursor == start) {
-                        out_line = {text.substr(start, next - start), start, next};
-                        offset = next;
-                        return true;
-                    }
-                    size_t line_end = cursor;
-                    size_t next_offset = whitespace ? next : cursor;
-                    if (!whitespace && break_offset != StrRef::NPOS && break_offset > start) {
-                        line_end = break_offset;
-                        next_offset = break_offset;
-                    }
-                    out_line = {text.substr(start, line_end - start), start, line_end};
-                    offset = next_offset;
-                    return true;
+                    overflow = true;
+                    break;
                 }
-                if (whitespace) {
-                    break_offset = next;
+                if (high >= end) {
+                    break;
                 }
-                cursor = next;
+                low = high;
+                for (size_t index = 0u; index < step && high < end; ++index) {
+                    high = std::min(next_text_offset(text, high), end);
+                }
+                step *= 2u;
             }
 
-            out_line = {text.substr(start, end - start), start, end};
-            offset = newline == StrRef::NPOS ? text.size() : newline + 1u;
+            if (!overflow) {
+                out_line = {text.substr(start, end - start), start, end};
+                offset = newline == StrRef::NPOS ? text.size() : newline + 1u;
+                return true;
+            }
+
+            while (next_text_offset(text, low) < high) {
+                size_t middle = previous_text_offset(text, low + (high - low) / 2u);
+                if (middle <= low) {
+                    middle = next_text_offset(text, low);
+                }
+                float const advance = text_advance(box, text.substr(start, middle - start));
+                if (advance > wrap_width) {
+                    high = middle;
+                } else {
+                    low = middle;
+                }
+            }
+
+            size_t const cursor = previous_text_offset(text, high);
+            size_t break_offset = StrRef::NPOS;
+            for (size_t scan = start; scan < cursor; scan = next_text_offset(text, scan)) {
+                if (is_ascii_whitespace(text[scan])) {
+                    break_offset = next_text_offset(text, scan);
+                }
+            }
+
+            if (cursor == start) {
+                out_line = {text.substr(start, high - start), start, high};
+                offset = high;
+                return true;
+            }
+
+            bool const whitespace = is_ascii_whitespace(text[cursor]);
+            size_t line_end = cursor;
+            size_t next_offset = whitespace ? high : cursor;
+            if (!whitespace && break_offset != StrRef::NPOS && break_offset > start) {
+                line_end = break_offset;
+                next_offset = break_offset;
+            }
+            out_line = {text.substr(start, line_end - start), start, line_end};
+            offset = next_offset;
             return true;
         }
 
