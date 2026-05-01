@@ -523,7 +523,12 @@ namespace {
         }
     }
 
-    auto draw_ui(gui::Frame& ui, TestbedState& state, LiquidGlassSpec const& spec) -> void {
+    auto draw_ui(
+        gui::Frame& ui,
+        TestbedState& state,
+        LiquidGlassSpec const& spec,
+        gui::render::Texture sample_texture
+    ) -> void {
         gui::Id const list_id = gui::id("asset_list");
         gui::Id const notes_id = gui::id("notes_scroll");
         gui::Id const body_text_id = gui::id("body_text_scroll");
@@ -1157,10 +1162,11 @@ namespace {
                                       {
                                           .layout =
                                               {
-                                                  .width = gui::px(66.0f),
+                                                  .width = gui::px(84.0f),
                                                   .height = gui::fill(),
                                                   .padding = gui::insets(3.0f, 6.0f),
                                               },
+                                          .icon = {.texture = sample_texture, .size = 14.0f},
                                           .debug_name = "popup_button",
                                       }
                                 )
@@ -1253,6 +1259,14 @@ namespace {
                                     .debug_name = "preview_top",
                                 }
                             )) {
+                            ui.icon(
+                                gui::id("sample_icon"),
+                                sample_texture,
+                                {
+                                    .style = {.foreground = tokens.text_muted},
+                                    .icon = {.size = 18.0f},
+                                }
+                            );
                             ui.label(
                                 "Preview fills the overlay",
                                 {
@@ -1261,6 +1275,18 @@ namespace {
                                 }
                             );
                             ui.spacer({.layout = {.width = gui::fill(), .height = gui::px(1.0f)}});
+                            ui.image(
+                                gui::id("sample_image"),
+                                sample_texture,
+                                {
+                                    .box = {
+                                        .layout = {
+                                            .width = gui::px(48.0f),
+                                            .height = gui::px(24.0f),
+                                        },
+                                    },
+                                }
+                            );
                             if (auto badge = ui.row(
                                     gui::id("overlay_badge"),
                                     {
@@ -1680,6 +1706,7 @@ namespace {
         font_provider::Context provider = {};
         font_cache::Cache cache = {};
         font_cache::Font font = {};
+        render::Texture sample_texture = {};
         gui::Context ui_context = {};
         draw::Context draw_context = {};
         draw::Renderer draw_renderer = {};
@@ -1813,6 +1840,40 @@ namespace {
 
     auto log_font_result(char const* operation, font_provider::Result result) -> void {
         fmt::eprintf("%s failed: %s\n", operation, font_provider::result_name(result));
+    }
+
+    [[nodiscard]] auto create_ui_sample_texture(render::Context context, render::Texture& texture)
+        -> bool {
+        uint8_t const pixels[] = {
+            61,
+            151,
+            255,
+            255,
+            255,
+            216,
+            112,
+            255,
+            130,
+            86,
+            198,
+            255,
+            255,
+            118,
+            139,
+            255,
+        };
+
+        render::TextureDesc desc = {};
+        desc.size = {2u, 2u};
+        desc.bytes_per_row = 8u;
+        desc.rgba_pixels = pixels;
+
+        render::Result const result = render::create_texture(context, desc, texture);
+        if (render::result_failed(result)) {
+            log_render_result("render::create_texture", result);
+            return false;
+        }
+        return true;
     }
 
     [[nodiscard]] auto key_from_virtual_key(WPARAM value) -> gui::Key {
@@ -2035,6 +2096,9 @@ namespace {
         if (font_cache::cache_valid(runtime->cache)) {
             font_cache::destroy_cache(runtime->cache);
         }
+        if (render::texture_valid(runtime->sample_texture)) {
+            render::destroy_texture(render_context, runtime->sample_texture);
+        }
         if (font_provider::context_valid(runtime->provider)) {
             font_provider::destroy_context(runtime->provider);
         }
@@ -2060,6 +2124,9 @@ namespace {
 
         font_cache::create_cache(arena, runtime->provider, {}, runtime->cache);
         font_cache::open_system_font(runtime->cache, "Segoe UI", runtime->font);
+        if (!create_ui_sample_texture(render_context, runtime->sample_texture)) {
+            return false;
+        }
 
         draw::ContextDesc draw_desc = {};
         draw_desc.font_cache = runtime->cache;
@@ -2107,7 +2174,7 @@ namespace {
                 .input = input,
             }
         );
-        draw_ui(ui, runtime->state, style);
+        draw_ui(ui, runtime->state, style, runtime->sample_texture);
         gui::end_frame(ui);
 
         draw::begin_frame(runtime->draw_context);
@@ -2412,9 +2479,11 @@ namespace {
         BASE_UNUSED(state.multiline_text_buffer.write_string(
             "Editable multiline text\nPress Enter for a new line\nTab inserts four spaces"
         ));
+        int sample_texture_storage = 0;
+        gui::render::Texture sample_texture = {&sample_texture_storage};
         gui::Frame ui =
             gui::begin_frame(ui_context, {.size = {640.0f, 400.0f}, .delta_time = 1.0f / 60.0f});
-        draw_ui(ui, state, style);
+        draw_ui(ui, state, style, sample_texture);
         gui::end_frame(ui);
 
         gui::draw::begin_frame(draw_context);
