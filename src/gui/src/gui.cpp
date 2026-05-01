@@ -1061,11 +1061,37 @@ namespace gui {
             return std::max(value, static_cast<size_t>(1u));
         }
 
-        auto count_table(ContextImpl const* impl,
-                         size_t table_index,
-                         size_t& out_rows,
-                         size_t& out_cells,
-                         size_t& out_column_capacity) -> void {
+        [[nodiscard]] auto insets_empty(Insets value) -> bool {
+            return value.top == 0.0f && value.right == 0.0f && value.bottom == 0.0f &&
+                   value.left == 0.0f;
+        }
+
+        [[nodiscard]] auto table_cell_box_desc(TableCellDesc const& desc, BoxKind kind) -> BoxDesc {
+            BoxDesc box_desc = desc.box;
+            if (box_desc.layout.align_y == Align::START) {
+                box_desc.layout.align_y = Align::CENTER;
+            }
+            if (box_desc.layout.height.kind == SizeKind::AUTO) {
+                if (box_desc.layout.min_height.kind == SizeKind::AUTO) {
+                    box_desc.layout.min_height =
+                        kind == BoxKind::TABLE_HEADER_CELL ? px(28.0f) : px(30.0f);
+                }
+                if (insets_empty(box_desc.layout.padding)) {
+                    box_desc.layout.padding = kind == BoxKind::TABLE_HEADER_CELL
+                                                  ? insets(5.0f, 10.0f)
+                                                  : insets(6.0f, 10.0f);
+                }
+            }
+            return box_desc;
+        }
+
+        auto count_table(
+            ContextImpl const* impl,
+            size_t table_index,
+            size_t& out_rows,
+            size_t& out_cells,
+            size_t& out_column_capacity
+        ) -> void {
             out_rows = 0u;
             out_cells = 0u;
             out_column_capacity = 0u;
@@ -3450,10 +3476,19 @@ namespace gui {
         theme_kind(theme, BoxKind::SELECTABLE_LABEL).role = StyleRole::TEXT;
         theme_kind(theme, BoxKind::TABLE).role = StyleRole::PANEL;
         theme_kind(theme, BoxKind::TABLE_CELL).style.normal = {
-            .border = tokens.border,
+            .background = rgba(24, 28, 36, 220),
+            .foreground = tokens.text,
+            .border = rgba(0, 0, 0, 0),
             .border_thickness = tokens.border_thickness,
+            .radius = tokens.radius_md,
         };
-        theme_kind(theme, BoxKind::TABLE_HEADER_CELL).role = StyleRole::CONTROL;
+        theme_kind(theme, BoxKind::TABLE_HEADER_CELL).style.normal = {
+            .background = tokens.control,
+            .foreground = tokens.text,
+            .border = rgba(0, 0, 0, 0),
+            .border_thickness = tokens.border_thickness,
+            .radius = tokens.radius_md,
+        };
         theme_kind(theme, BoxKind::TAB_VIEW).role = StyleRole::PANEL;
         theme_kind(theme, BoxKind::TAB).role = StyleRole::CONTROL;
         theme_kind(theme, BoxKind::TAB_BODY).role = StyleRole::PANEL;
@@ -3604,14 +3639,10 @@ namespace gui {
         BoxKind const kind = impl->boxes[parent].kind == BoxKind::TABLE_HEADER_ROW
                                  ? BoxKind::TABLE_HEADER_CELL
                                  : BoxKind::TABLE_CELL;
-        size_t const index = append_box(impl,
-                                        kind,
-                                        structural_id(impl, parent, kind),
-                                        {},
-                                        {},
-                                        desc.box,
-                                        false,
-                                        false);
+        BoxDesc const box_desc = table_cell_box_desc(desc, kind);
+        size_t const index = append_box(
+            impl, kind, structural_id(impl, parent, kind), {}, {}, box_desc, false, false
+        );
         BoxNode& box = impl->boxes[index];
         box.table_column_span = table_span(desc.column_span);
         box.table_row_span = table_span(desc.row_span);
@@ -3628,14 +3659,17 @@ namespace gui {
         BoxKind const kind = impl->boxes[parent].kind == BoxKind::TABLE_HEADER_ROW
                                  ? BoxKind::TABLE_HEADER_CELL
                                  : BoxKind::TABLE_CELL;
-        size_t const index = append_box(impl,
-                                        kind,
-                                        explicit_id(impl, parent, kind, id_value),
-                                        id_value,
-                                        {},
-                                        desc.box,
-                                        false,
-                                        false);
+        BoxDesc const box_desc = table_cell_box_desc(desc, kind);
+        size_t const index = append_box(
+            impl,
+            kind,
+            explicit_id(impl, parent, kind, id_value),
+            id_value,
+            {},
+            box_desc,
+            false,
+            false
+        );
         BoxNode& box = impl->boxes[index];
         box.table_column_span = table_span(desc.column_span);
         box.table_row_span = table_span(desc.row_span);

@@ -98,9 +98,7 @@ namespace {
         gui::Color tab_bar_border = {};
         gui::Color table_cell_background = {};
         gui::Color table_cell_foreground = {};
-        gui::Color table_cell_border = {};
         gui::Color table_header_background = {};
-        gui::Color table_header_border = {};
         gui::Color input_background = {};
         gui::Color input_hovered_background = {};
         gui::Color input_active_background = {};
@@ -177,9 +175,7 @@ namespace {
             .tab_bar_border = gui::rgba(255, 255, 255, 38),
             .table_cell_background = gui::rgba(15, 21, 29, 232),
             .table_cell_foreground = gui::rgba(234, 240, 246, 222),
-            .table_cell_border = gui::rgba(255, 255, 255, 24),
             .table_header_background = gui::rgba(27, 35, 45, 238),
-            .table_header_border = gui::rgba(255, 255, 255, 30),
             .input_background = gui::rgba(246, 250, 255, 24),
             .input_hovered_background = gui::rgba(246, 250, 255, 32),
             .input_active_background = gui::rgba(246, 250, 255, 38),
@@ -257,9 +253,7 @@ namespace {
             .tab_bar_border = gui::rgba(78, 94, 114, 38),
             .table_cell_background = gui::rgba(255, 255, 255, 214),
             .table_cell_foreground = gui::rgba(37, 45, 56, 226),
-            .table_cell_border = gui::rgba(80, 96, 116, 32),
             .table_header_background = gui::rgba(236, 242, 249, 232),
-            .table_header_border = gui::rgba(80, 96, 116, 38),
             .input_background = gui::rgba(255, 255, 255, 192),
             .input_hovered_background = gui::rgba(255, 255, 255, 220),
             .input_active_background = gui::rgba(255, 255, 255, 238),
@@ -395,18 +389,32 @@ namespace {
             .border_thickness = 1.0f,
             .radius = 17.0f,
         };
-        gui::theme_kind(theme, gui::BoxKind::TABLE).role = gui::StyleRole::NONE;
+        gui::theme_kind(theme, gui::BoxKind::TABLE).style.normal = {
+            .background = spec.preview_table_background,
+            .border = spec.preview_table_border,
+            .border_thickness = 1.0f,
+            .radius = 14.0f,
+            .shadow =
+                {
+                    .offset = {0.0f, 6.0f},
+                    .blur_radius = 18.0f,
+                    .color = spec.panel_shadow,
+                },
+            .font_size = 12.5f,
+        };
         gui::theme_kind(theme, gui::BoxKind::TABLE_CELL).style.normal = {
             .background = spec.table_cell_background,
             .foreground = spec.table_cell_foreground,
-            .border = spec.table_cell_border,
+            .border = gui::rgba(0, 0, 0, 0),
             .border_thickness = 1.0f,
+            .radius = 8.0f,
         };
         gui::theme_kind(theme, gui::BoxKind::TABLE_HEADER_CELL).style.normal = {
             .background = spec.table_header_background,
             .foreground = tokens.text,
-            .border = spec.table_header_border,
+            .border = gui::rgba(0, 0, 0, 0),
             .border_thickness = 1.0f,
+            .radius = 9.0f,
         };
         gui::theme_kind(theme, gui::BoxKind::INPUT_TEXT).style.normal.background =
             spec.input_background;
@@ -1120,23 +1128,29 @@ namespace {
                                 },
                             }
                         );
+                        gui::Color status_background = tokens.accent;
+                        status_background.a = 0.20f;
+                        gui::Color status_border = tokens.accent;
+                        status_border.a = 0.36f;
+                        gui::StyleDesc const table_key_cell_style = {
+                            .background = spec.table_header_background,
+                            .foreground = tokens.text_muted,
+                        };
+                        gui::StyleDesc const table_status_cell_style = {
+                            .background = status_background,
+                            .foreground = tokens.text,
+                            .border = status_border,
+                        };
                         if (auto table = ui.table(
                                 gui::id("preview_table"),
                                 {
                                     .layout =
                                         {
-                                            .width = gui::px(396.0f),
+                                            .width = gui::children(),
                                             .height = gui::children(),
                                             .margin = gui::insets(154.0f, 0.0f, 0.0f, 0.0f),
-                                            .gap = 1.0f,
-                                        },
-                                    .style =
-                                        {
-                                            .background = spec.preview_table_background,
-                                            .border = spec.preview_table_border,
-                                            .border_thickness = 1.0f,
-                                            .radius = 12.0f,
-                                            .font_size = 12.0f,
+                                            .padding = gui::insets(4.0f),
+                                            .gap = 3.0f,
                                         },
                                     .debug_name = "preview_table",
                                 }
@@ -1146,12 +1160,6 @@ namespace {
                                         gui::id("preview_table_header_plan"),
                                         {
                                             .column_span = 2u,
-                                            .box = {
-                                                .layout = {
-                                                    .height = gui::px(26.0f),
-                                                    .padding = gui::insets(4.0f, 8.0f),
-                                                },
-                                            },
                                         }
                                     )) {
                                     ui.label(
@@ -1159,17 +1167,8 @@ namespace {
                                         {.layout = {.width = gui::fill(), .height = gui::fill()}}
                                     );
                                 }
-                                if (auto cell = header.cell(
-                                        gui::id("preview_table_header_status"),
-                                        {
-                                            .box = {
-                                                .layout = {
-                                                    .height = gui::px(26.0f),
-                                                    .padding = gui::insets(4.0f, 8.0f),
-                                                },
-                                            },
-                                        }
-                                    )) {
+                                if (auto cell =
+                                        header.cell(gui::id("preview_table_header_status"))) {
                                     ui.label(
                                         "Status",
                                         {.layout = {.width = gui::fill(), .height = gui::fill()}}
@@ -1182,11 +1181,11 @@ namespace {
                                         {
                                             .row_span = 2u,
                                             .box = {
-                                                .layout = {
-                                                    .width = gui::px(104.0f),
-                                                    .height = gui::px(53.0f),
-                                                    .padding = gui::insets(4.0f, 8.0f),
-                                                },
+                                                .layout =
+                                                    {
+                                                        .width = gui::px(112.0f),
+                                                    },
+                                                .style = table_key_cell_style,
                                             },
                                         }
                                     )) {
@@ -1200,9 +1199,7 @@ namespace {
                                         {
                                             .box = {
                                                 .layout = {
-                                                    .width = gui::px(184.0f),
-                                                    .height = gui::px(26.0f),
-                                                    .padding = gui::insets(4.0f, 8.0f),
+                                                    .width = gui::px(204.0f),
                                                 },
                                             },
                                         }
@@ -1216,11 +1213,11 @@ namespace {
                                         gui::id("preview_table_done_cell"),
                                         {
                                             .box = {
-                                                .layout = {
-                                                    .width = gui::px(108.0f),
-                                                    .height = gui::px(26.0f),
-                                                    .padding = gui::insets(4.0f, 8.0f),
-                                                },
+                                                .layout =
+                                                    {
+                                                        .width = gui::px(112.0f),
+                                                    },
+                                                .style = table_status_cell_style,
                                             },
                                         }
                                     )) {
@@ -1235,12 +1232,6 @@ namespace {
                                         gui::id("preview_table_span_cell"),
                                         {
                                             .column_span = 2u,
-                                            .box = {
-                                                .layout = {
-                                                    .height = gui::px(26.0f),
-                                                    .padding = gui::insets(4.0f, 8.0f),
-                                                },
-                                            },
                                         }
                                     )) {
                                     ui.label(
