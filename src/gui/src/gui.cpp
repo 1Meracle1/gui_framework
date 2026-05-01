@@ -3043,26 +3043,40 @@ namespace gui {
             float const opacity = box.resolved_style.opacity;
             ThemeTokens const& tokens = impl->theme.tokens;
             if (box.kind == BoxKind::CHECKBOX) {
-                float const side = std::min(16.0f, std::max(0.0f, rect_height(box.rect) - 4.0f));
+                bool const checked = box.widget_value > 0.5f;
+                bool const muted = box_read_only(box) || box_disabled(box);
+                float const side = std::min(14.0f, std::max(0.0f, rect_height(box.rect) - 8.0f));
                 Rect const mark = {
-                    {box.rect.min.x + 2.0f, box.rect.min.y + (rect_height(box.rect) - side) * 0.5f},
-                    {box.rect.min.x + 2.0f + side,
-                     box.rect.min.y + (rect_height(box.rect) + side) * 0.5f}};
-                draw_widget_rect(draw_context,
-                                 mark,
-                                 tokens.panel,
-                                 box.resolved_style.border,
-                                 box.resolved_style.border_thickness,
-                                 3.0f,
-                                 opacity);
-                if (box.widget_value > 0.5f) {
-                    draw_widget_rect(draw_context,
-                                     inset_rect(mark, 4.0f),
-                                     tokens.accent,
-                                     {},
-                                     0.0f,
-                                     2.0f,
-                                     opacity);
+                    {box.rect.min.x + 5.0f, box.rect.min.y + (rect_height(box.rect) - side) * 0.5f},
+                    {box.rect.min.x + 5.0f + side,
+                     box.rect.min.y + (rect_height(box.rect) + side) * 0.5f}
+                };
+                Color mark_fill = checked ? tokens.accent : box.resolved_style.background;
+                Color mark_border = checked ? tokens.accent : box.resolved_style.border;
+                if (muted && checked) {
+                    mark_fill.a *= 0.56f;
+                    mark_border = box.resolved_style.border;
+                }
+                draw_widget_rect(
+                    draw_context,
+                    mark,
+                    mark_fill,
+                    mark_border,
+                    box.resolved_style.border_thickness,
+                    4.0f,
+                    opacity
+                );
+                if (checked) {
+                    Color check = rgb(255, 255, 255);
+                    if (muted) {
+                        check.a = 0.78f;
+                    }
+                    check = color_mul_alpha(check, opacity);
+                    draw::Vec2 const p0 = {mark.min.x + side * 0.27f, mark.min.y + side * 0.54f};
+                    draw::Vec2 const p1 = {mark.min.x + side * 0.44f, mark.min.y + side * 0.70f};
+                    draw::Vec2 const p2 = {mark.min.x + side * 0.75f, mark.min.y + side * 0.32f};
+                    draw::draw_line(draw_context, p0, p1, to_draw_color(check), 2.0f);
+                    draw::draw_line(draw_context, p1, p2, to_draw_color(check), 2.0f);
                 }
             } else if (box.kind == BoxKind::TOGGLE) {
                 float const height = std::min(18.0f, std::max(0.0f, rect_height(box.rect) - 4.0f));

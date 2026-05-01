@@ -72,6 +72,7 @@ namespace {
         "Cras mattis consectetur purus sit amet fermentum.\n\n"
         "Maecenas sed diam eget risus varius blandit sit amet non magna.\n"
         "Vestibulum id ligula porta felis euismod semper.";
+    constexpr char CLOSE_GLYPH[] = "\xC3\x97";
 
     struct LiquidGlassSpec {
         gui::ThemeTokens tokens = {};
@@ -499,49 +500,31 @@ namespace {
                     "UI API Testbed", {.layout = {.width = gui::text(), .height = gui::fill()}}
                 );
                 ui.spacer({.layout = {.width = gui::fill(), .height = gui::px(1.0f)}});
-                if (auto theme_switcher = ui.row(
-                        gui::id("theme_switcher"),
-                        {
-                            .layout =
-                                {
-                                    .width = gui::children(),
-                                    .height = gui::px(28.0f),
-                                    .padding = gui::insets(2.0f),
-                                    .gap = 2.0f,
-                                    .align_y = gui::Align::CENTER,
-                                },
-                            .style =
-                                {
-                                    .background = spec.toolbar_group_background,
-                                    .border = spec.toolbar_group_border,
-                                    .border_thickness = 1.0f,
-                                    .radius = 14.0f,
-                                },
-                            .debug_name = "theme_switcher",
-                        }
-                    )) {
-                    gui::BoxDesc theme_button = {
-                        .layout =
-                            {
-                                .width = gui::px(46.0f),
-                                .height = gui::fill(),
-                                .padding = gui::insets(2.0f, 5.0f),
-                            },
-                        .style = {.radius = 12.0f},
-                    };
-                    theme_button.style.role = state.theme == LiquidGlassTheme::DARK
-                                                  ? gui::StyleRole::ACCENT
-                                                  : gui::StyleRole::CONTROL;
-                    if (ui.button(gui::id("theme_dark"), "Dark", theme_button).activated) {
-                        state.theme = LiquidGlassTheme::DARK;
-                    }
-                    theme_button.layout.width = gui::px(48.0f);
-                    theme_button.style.role = state.theme == LiquidGlassTheme::LIGHT
-                                                  ? gui::StyleRole::ACCENT
-                                                  : gui::StyleRole::CONTROL;
-                    if (ui.button(gui::id("theme_light"), "Light", theme_button).activated) {
-                        state.theme = LiquidGlassTheme::LIGHT;
-                    }
+                LiquidGlassTheme const next_theme = state.theme == LiquidGlassTheme::DARK
+                                                        ? LiquidGlassTheme::LIGHT
+                                                        : LiquidGlassTheme::DARK;
+                char const* const theme_text =
+                    next_theme == LiquidGlassTheme::LIGHT ? "Light" : "Dark";
+                if (ui.button(
+                          gui::id("theme_toggle"),
+                          theme_text,
+                          {
+                              .layout =
+                                  {
+                                      .width = gui::px(62.0f),
+                                      .height = gui::px(28.0f),
+                                      .padding = gui::insets(2.0f, 6.0f),
+                                  },
+                              .style =
+                                  {
+                                      .role = gui::StyleRole::CONTROL,
+                                      .radius = 14.0f,
+                                  },
+                              .debug_name = "theme_toggle_button",
+                          }
+                    )
+                        .activated) {
+                    state.theme = next_theme;
                 }
                 if (ui.button(
                           gui::id("reset_scale"),
@@ -633,6 +616,13 @@ namespace {
             gui::StyleDesc const toolbar_label = {
                 .foreground = tokens.text_muted,
             };
+            gui::BoxDesc const enabled_checkbox = {
+                .layout = {.width = gui::px(98.0f), .height = gui::fill()},
+            };
+            gui::BoxDesc const read_only_checkbox = {
+                .layout = {.width = gui::px(110.0f), .height = gui::fill()},
+                .flags = gui::BOX_FLAG_READ_ONLY,
+            };
 
             if (tab_view.selected_index() == 1u) {
                 if (auto samples = ui.column(
@@ -664,9 +654,7 @@ namespace {
                                 gui::id("sample_enabled_checkbox"),
                                 "Enabled",
                                 &state.sample_enabled,
-                                {
-                                    .layout = {.width = gui::px(102.0f), .height = gui::fill()},
-                                }
+                                enabled_checkbox
                             );
                             ui.toggle(
                                 gui::id("sample_preview_toggle"),
@@ -901,9 +889,7 @@ namespace {
                                 gui::id("enabled_checkbox"),
                                 "Enabled",
                                 &state.enabled,
-                                {
-                                    .layout = {.width = gui::px(102.0f), .height = gui::fill()},
-                                }
+                                enabled_checkbox
                             );
                             ui.toggle(
                                 gui::id("preview_toggle"),
@@ -946,10 +932,7 @@ namespace {
                                 gui::id("read_only_checkbox"),
                                 "Read-only",
                                 &state.read_only_value,
-                                {
-                                    .layout = {.width = gui::px(108.0f), .height = gui::fill()},
-                                    .flags = gui::BOX_FLAG_READ_ONLY,
-                                }
+                                read_only_checkbox
                             );
                             ui.input_text(
                                 gui::id("name_input"),
@@ -1306,7 +1289,7 @@ namespace {
                                     );
                                     if (ui.button(
                                               gui::id("popup_close"),
-                                              "x",
+                                              CLOSE_GLYPH,
                                               {
                                                   .layout =
                                                       {
@@ -1314,7 +1297,11 @@ namespace {
                                                           .height = gui::px(28.0f),
                                                           .padding = gui::insets(0.0f),
                                                       },
-                                                  .style = {.role = gui::StyleRole::DANGER},
+                                                  .style =
+                                                      {
+                                                          .role = gui::StyleRole::DANGER,
+                                                          .font_size = 15.0f,
+                                                      },
                                               }
                                         )
                                             .activated) {
@@ -1417,7 +1404,7 @@ namespace {
                             );
                             if (ui.button(
                                       gui::id("sample_modal_close"),
-                                      "x",
+                                      CLOSE_GLYPH,
                                       {
                                           .layout =
                                               {
@@ -1425,7 +1412,11 @@ namespace {
                                                   .height = gui::px(30.0f),
                                                   .padding = gui::insets(0.0f),
                                               },
-                                          .style = {.role = gui::StyleRole::DANGER},
+                                          .style =
+                                              {
+                                                  .role = gui::StyleRole::DANGER,
+                                                  .font_size = 15.0f,
+                                              },
                                       }
                                 )
                                     .activated) {
