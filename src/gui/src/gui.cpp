@@ -3190,55 +3190,64 @@ namespace gui {
             -> TextSelection {
             TextSelection next =
                 ordered_text_selection(clamp_text_selection(selection, box.text.size()));
-            if (box.state != nullptr) {
-                Signal const signal = box.signal;
-                size_t const cursor =
-                    text_index_from_mouse(impl, box, impl->frame_desc.input.mouse_pos);
-                bool const triple_clicked =
-                    signal.hovered && impl->frame_desc.input.mouse_triple_clicked[0u];
-                bool const double_clicked =
-                    signal.hovered && impl->frame_desc.input.mouse_double_clicked[0u];
-                if (signal.pressed_left || triple_clicked || double_clicked) {
-                    impl->text_selection_owner_id = box.id;
+            if (box.state == nullptr) {
+                return next;
+            }
+
+            Signal const signal = box.signal;
+            bool const triple_clicked =
+                signal.hovered && impl->frame_desc.input.mouse_triple_clicked[0u];
+            bool const double_clicked =
+                signal.hovered && impl->frame_desc.input.mouse_double_clicked[0u];
+            bool const pointer_selecting =
+                signal.pressed_left || triple_clicked || double_clicked ||
+                (signal.active && impl->frame_desc.input.mouse_down[0u]) || signal.released_left;
+            if (!pointer_selecting) {
+                return next;
+            }
+
+            size_t const cursor =
+                text_index_from_mouse(impl, box, impl->frame_desc.input.mouse_pos);
+            if (signal.pressed_left || triple_clicked || double_clicked) {
+                impl->text_selection_owner_id = box.id;
+            }
+            if (triple_clicked || double_clicked) {
+                next = triple_clicked ? TextSelection{0u, box.text.size()}
+                                      : text_word_selection(box.text, cursor);
+                box.state->text_selection_anchor = next.start;
+                box.state->text_selection_word_start = next.start;
+                box.state->text_selection_word_end = next.end;
+                box.state->text_selection_word_active = next.start != next.end;
+            } else {
+                if (signal.pressed_left) {
+                    box.state->text_selection_anchor = cursor;
+                    box.state->text_selection_word_active = false;
                 }
-                if (triple_clicked || double_clicked) {
-                    next = triple_clicked ? TextSelection{0u, box.text.size()}
-                                          : text_word_selection(box.text, cursor);
-                    box.state->text_selection_anchor = next.start;
-                    box.state->text_selection_word_start = next.start;
-                    box.state->text_selection_word_end = next.end;
-                    box.state->text_selection_word_active = next.start != next.end;
-                } else {
-                    if (signal.pressed_left) {
-                        box.state->text_selection_anchor = cursor;
+                if (signal.active && impl->frame_desc.input.mouse_down[0u]) {
+                    if (box.state->text_selection_word_active) {
+                        size_t const start = box.state->text_selection_word_start;
+                        size_t const end = box.state->text_selection_word_end;
+                        if (cursor < start) {
+                            next = {cursor, end};
+                        } else if (cursor > end) {
+                            next = {start, cursor};
+                        } else {
+                            next = {start, end};
+                        }
+                    } else {
+                        size_t const anchor = box.state->text_selection_anchor;
+                        if (cursor != anchor) {
+                            next = ordered_text_selection({anchor, cursor});
+                        }
+                    }
+                }
+                if (signal.released_left) {
+                    if (box.state->text_selection_word_active) {
                         box.state->text_selection_word_active = false;
-                    }
-                    if (signal.active && impl->frame_desc.input.mouse_down[0u]) {
-                        if (box.state->text_selection_word_active) {
-                            size_t const start = box.state->text_selection_word_start;
-                            size_t const end = box.state->text_selection_word_end;
-                            if (cursor < start) {
-                                next = {cursor, end};
-                            } else if (cursor > end) {
-                                next = {start, cursor};
-                            } else {
-                                next = {start, end};
-                            }
-                        } else {
-                            size_t const anchor = box.state->text_selection_anchor;
-                            if (cursor != anchor) {
-                                next = ordered_text_selection({anchor, cursor});
-                            }
-                        }
-                    }
-                    if (signal.released_left) {
-                        if (box.state->text_selection_word_active) {
-                            box.state->text_selection_word_active = false;
-                        } else {
-                            size_t const anchor = box.state->text_selection_anchor;
-                            next = cursor == anchor ? TextSelection{cursor, cursor}
-                                                    : ordered_text_selection({anchor, cursor});
-                        }
+                    } else {
+                        size_t const anchor = box.state->text_selection_anchor;
+                        next = cursor == anchor ? TextSelection{cursor, cursor}
+                                                : ordered_text_selection({anchor, cursor});
                     }
                 }
             }
