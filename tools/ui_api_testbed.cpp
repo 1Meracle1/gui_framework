@@ -63,8 +63,22 @@ namespace {
         char sample_name[64] = "Second tab text";
         gui::TableSortColumn preview_table_sort_columns[PREVIEW_TABLE_COLUMN_COUNT] = {};
         gui::TableSortColumn sample_table_sort_columns[SAMPLE_TABLE_COLUMN_COUNT] = {};
+        gui::TableFilterColumn sample_table_filter_columns[SAMPLE_TABLE_COLUMN_COUNT] = {};
+        gui::TableFilterValue sample_table_item_filter_values[SAMPLE_TABLE_ROW_COUNT] = {
+            {"Checkbox"}, {"Popup"}, {"Slider"}, {"Table"}
+        };
+        gui::TableFilterValue sample_table_layer_filter_values[3] = {
+            {"Input"}, {"Overlay"}, {"Layout"}
+        };
+        gui::TableFilterValue sample_table_state_filter_values[SAMPLE_TABLE_ROW_COUNT] = {
+            {"Enabled"}, {"Closed"}, {"Ready"}, {"Sortable"}
+        };
         bool preview_table_selected_columns[PREVIEW_TABLE_COLUMN_COUNT] = {true, true, false};
         bool sample_table_selected_columns[SAMPLE_TABLE_COLUMN_COUNT] = {true, true, false};
+        bool sample_table_filter_open[SAMPLE_TABLE_COLUMN_COUNT] = {};
+        char sample_table_item_filter[32] = {};
+        char sample_table_layer_filter[32] = {};
+        char sample_table_state_filter[32] = {};
         gui::TextSelection title_selection = {};
         gui::TextSelection body_selection = {};
         gui::Signal header_signal = {};
@@ -805,6 +819,30 @@ namespace {
                         .column_count = &state.sample_table_sort_count,
                         .selected_columns = slice(state.sample_table_selected_columns),
                     };
+                    state.sample_table_filter_columns[0u] = {
+                        .column = 0u,
+                        .search_text = state.sample_table_item_filter,
+                        .search_text_buffer_size = sizeof(state.sample_table_item_filter),
+                        .values = slice(state.sample_table_item_filter_values),
+                        .popup_open = state.sample_table_filter_open + 0u,
+                    };
+                    state.sample_table_filter_columns[1u] = {
+                        .column = 1u,
+                        .search_text = state.sample_table_layer_filter,
+                        .search_text_buffer_size = sizeof(state.sample_table_layer_filter),
+                        .values = slice(state.sample_table_layer_filter_values),
+                        .popup_open = state.sample_table_filter_open + 1u,
+                    };
+                    state.sample_table_filter_columns[2u] = {
+                        .column = 2u,
+                        .search_text = state.sample_table_state_filter,
+                        .search_text_buffer_size = sizeof(state.sample_table_state_filter),
+                        .values = slice(state.sample_table_state_filter_values),
+                        .popup_open = state.sample_table_filter_open + 2u,
+                    };
+                    gui::TableFilterDesc const sample_table_filter_desc = {
+                        .columns = slice(state.sample_table_filter_columns),
+                    };
                     if (auto table = ui.table(
                             gui::id("sample_defaults_table"),
                             {
@@ -820,6 +858,7 @@ namespace {
                                         .debug_name = "sample_defaults_table",
                                     },
                                 .sort = sample_table_sort_desc,
+                                .filter = sample_table_filter_desc,
                             }
                         )) {
                         if (auto header = table.header_row()) {

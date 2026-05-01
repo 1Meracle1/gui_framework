@@ -1039,6 +1039,239 @@ namespace {
         gui::destroy_context(gui_context);
     }
 
+    TEST_CASE(table_desc_filters_rows_by_fuzzy_search_text) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::Id const table_id = gui::id("table");
+        gui::Id const row_alpha_a_id = gui::id("row_alpha_a");
+        gui::Id const row_beta_id = gui::id("row_beta");
+        gui::Id const row_alpha_b_id = gui::id("row_alpha_b");
+        char search_text[16] = "aa";
+        gui::TableFilterColumn filters[1] = {
+            {
+                .column = 0u,
+                .search_text = search_text,
+                .search_text_buffer_size = sizeof(search_text),
+            },
+        };
+        gui::TableFilterDesc const filter_desc = {.columns = slice(filters)};
+
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {120.0f, 100.0f}});
+        if (auto table = ui.table(
+                table_id,
+                {
+                    .box =
+                        {
+                            .layout =
+                                {
+                                    .width = gui::children(),
+                                    .height = gui::children(),
+                                    .gap = 2.0f,
+                                },
+                        },
+                    .filter = filter_desc,
+                }
+            )) {
+            add_table_text_row(ui, table, row_alpha_a_id, "Alpha", 80.0f);
+            add_table_text_row(ui, table, row_beta_id, "Beta", 80.0f);
+            add_table_text_row(ui, table, row_alpha_b_id, "Alpha", 80.0f);
+        }
+        gui::end_frame(ui);
+
+        gui::BoxInfo const* row_alpha_a = ui.find_box(row_alpha_a_id, gui::BoxKind::TABLE_ROW);
+        gui::BoxInfo const* row_beta = ui.find_box(row_beta_id, gui::BoxKind::TABLE_ROW);
+        gui::BoxInfo const* row_alpha_b = ui.find_box(row_alpha_b_id, gui::BoxKind::TABLE_ROW);
+        TEST_EXPECT(context, row_alpha_a != nullptr);
+        TEST_EXPECT(context, row_beta != nullptr);
+        TEST_EXPECT(context, row_alpha_b != nullptr);
+        if (row_alpha_a != nullptr && row_beta != nullptr && row_alpha_b != nullptr) {
+            TEST_EXPECT(context, row_alpha_a->rect.max.y > row_alpha_a->rect.min.y);
+            TEST_EXPECT(context, row_beta->rect.max.y == 0.0f);
+            TEST_EXPECT(context, row_alpha_b->rect.min.y > row_alpha_a->rect.min.y);
+        }
+
+        gui::destroy_context(gui_context);
+    }
+
+    TEST_CASE(table_filter_search_hides_non_matching_values) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::Id const table_id = gui::id("table");
+        gui::Id const row_alpha_id = gui::id("row_alpha");
+        gui::Id const row_beta_id = gui::id("row_beta");
+        char search_text[16] = "ap";
+        bool filter_open = true;
+        gui::TableFilterValue values[2] = {{"Alpha"}, {"Beta"}};
+        gui::TableFilterColumn filters[1] = {
+            {
+                .column = 0u,
+                .search_text = search_text,
+                .search_text_buffer_size = sizeof(search_text),
+                .values = slice(values),
+                .popup_open = &filter_open,
+            },
+        };
+        gui::TableFilterDesc const filter_desc = {.columns = slice(filters)};
+
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {180.0f, 140.0f}});
+        if (auto table = ui.table(
+                table_id,
+                {
+                    .box =
+                        {
+                            .layout =
+                                {
+                                    .width = gui::children(),
+                                    .height = gui::children(),
+                                    .gap = 2.0f,
+                                },
+                        },
+                    .filter = filter_desc,
+                }
+            )) {
+            if (auto header = table.header_row()) {
+                BASE_UNUSED(header);
+                if (auto cell = header.cell(
+                        {.box = {.layout = {.width = gui::px(90.0f), .height = gui::px(28.0f)}}}
+                    )) {
+                    BASE_UNUSED(cell);
+                    BASE_UNUSED(table.filter_button(0u, filter_desc));
+                }
+            }
+            add_table_text_row(ui, table, row_alpha_id, "Alpha", 80.0f);
+            add_table_text_row(ui, table, row_beta_id, "Beta", 80.0f);
+        }
+        gui::end_frame(ui);
+
+        TEST_EXPECT(context, find_box_text(ui, gui::BoxKind::CHECKBOX, "Alpha") != nullptr);
+        TEST_EXPECT(context, find_box_text(ui, gui::BoxKind::CHECKBOX, "Beta") == nullptr);
+        gui::BoxInfo const* row_alpha = ui.find_box(row_alpha_id, gui::BoxKind::TABLE_ROW);
+        gui::BoxInfo const* row_beta = ui.find_box(row_beta_id, gui::BoxKind::TABLE_ROW);
+        TEST_EXPECT(context, row_alpha != nullptr);
+        TEST_EXPECT(context, row_beta != nullptr);
+        if (row_alpha != nullptr && row_beta != nullptr) {
+            TEST_EXPECT(context, row_alpha->rect.max.y > row_alpha->rect.min.y);
+            TEST_EXPECT(context, row_beta->rect.max.y == 0.0f);
+        }
+
+        gui::destroy_context(gui_context);
+    }
+
+    TEST_CASE(table_filter_button_popup_updates_value_filter) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::Id const table_id = gui::id("table");
+        gui::Id const header_id = gui::id("header");
+        gui::Id const row_alpha_id = gui::id("row_alpha");
+        gui::Id const row_beta_id = gui::id("row_beta");
+        char search_text[16] = {};
+        bool filter_open = false;
+        gui::TableFilterValue values[2] = {{"Alpha"}, {"Beta"}};
+        gui::TableFilterColumn filters[1] = {
+            {
+                .column = 0u,
+                .search_text = search_text,
+                .search_text_buffer_size = sizeof(search_text),
+                .values = slice(values),
+                .popup_open = &filter_open,
+            },
+        };
+        gui::Signal filter_signal = {};
+
+        auto add_table = [&](gui::Frame& ui) -> void {
+            filter_signal = {};
+            gui::TableFilterDesc const filter_desc = {.columns = slice(filters)};
+            if (auto table = ui.table(
+                    table_id,
+                    {
+                        .box =
+                            {
+                                .layout =
+                                    {
+                                        .width = gui::children(),
+                                        .height = gui::children(),
+                                        .gap = 2.0f,
+                                    },
+                            },
+                        .filter = filter_desc,
+                    }
+                )) {
+                if (auto header = table.header_row()) {
+                    BASE_UNUSED(header);
+                    if (auto cell = header.cell(
+                            header_id,
+                            {.box = {.layout = {.width = gui::px(90.0f), .height = gui::px(28.0f)}}}
+                        )) {
+                        BASE_UNUSED(cell);
+                        filter_signal = table.filter_button(0u, filter_desc);
+                    }
+                }
+                add_table_text_row(ui, table, row_alpha_id, "Alpha", 80.0f);
+                add_table_text_row(ui, table, row_beta_id, "Beta", 80.0f);
+            }
+        };
+
+        gui::InputState input = {};
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {180.0f, 140.0f}});
+        add_table(ui);
+        gui::end_frame(ui);
+
+        gui::BoxInfo const* filter_button = find_box_text(ui, gui::BoxKind::BUTTON, "");
+        TEST_EXPECT(context, filter_button != nullptr);
+
+        input.mouse_pos = box_center(filter_button);
+        input.mouse_down[0u] = true;
+        ui = gui::begin_frame(gui_context, {.size = {180.0f, 140.0f}, .input = input});
+        add_table(ui);
+        gui::end_frame(ui);
+
+        input.mouse_down[0u] = false;
+        ui = gui::begin_frame(gui_context, {.size = {180.0f, 140.0f}, .input = input});
+        add_table(ui);
+        gui::end_frame(ui);
+
+        TEST_EXPECT(context, filter_open);
+        TEST_EXPECT(context, filter_signal.changed);
+        gui::BoxInfo const* beta_check = find_box_text(ui, gui::BoxKind::CHECKBOX, "Beta");
+        TEST_EXPECT(context, beta_check != nullptr);
+
+        input.mouse_pos = box_center(beta_check);
+        input.mouse_down[0u] = true;
+        ui = gui::begin_frame(gui_context, {.size = {180.0f, 140.0f}, .input = input});
+        add_table(ui);
+        gui::end_frame(ui);
+
+        input.mouse_down[0u] = false;
+        ui = gui::begin_frame(gui_context, {.size = {180.0f, 140.0f}, .input = input});
+        add_table(ui);
+        gui::end_frame(ui);
+
+        gui::BoxInfo const* row_alpha = ui.find_box(row_alpha_id, gui::BoxKind::TABLE_ROW);
+        gui::BoxInfo const* row_beta = ui.find_box(row_beta_id, gui::BoxKind::TABLE_ROW);
+        TEST_EXPECT(context, !values[1].selected);
+        TEST_EXPECT(context, filter_signal.changed);
+        TEST_EXPECT(context, row_alpha != nullptr);
+        TEST_EXPECT(context, row_beta != nullptr);
+        if (row_alpha != nullptr && row_beta != nullptr) {
+            TEST_EXPECT(context, row_alpha->rect.max.y > row_alpha->rect.min.y);
+            TEST_EXPECT(context, row_beta->rect.max.y == 0.0f);
+        }
+
+        gui::destroy_context(gui_context);
+    }
+
     TEST_CASE(table_layout_supports_row_span_without_header) {
         Arena arena = {};
         arena.init();

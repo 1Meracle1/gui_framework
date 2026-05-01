@@ -278,9 +278,31 @@ namespace gui {
         BoxDesc box = {};
     };
 
+    struct TableFilterValue {
+        StrRef text = {};
+        bool selected = true;
+    };
+
+    struct TableFilterColumn {
+        size_t column = 0u;
+        char* search_text = nullptr;
+        size_t search_text_buffer_size = 0u;
+        Slice<TableFilterValue> values = {};
+        bool* popup_open = nullptr;
+    };
+
+    struct TableFilterDesc {
+        Slice<TableFilterColumn> columns = {};
+        BoxDesc button_box = {};
+        BoxDesc popup_box = {};
+        BoxDesc input_box = {};
+        BoxDesc value_box = {};
+    };
+
     struct TableDesc {
         BoxDesc box = {};
         TableSortDesc sort = {};
+        TableFilterDesc filter = {};
     };
 
     struct TabItem {
@@ -592,6 +614,7 @@ namespace gui {
         sortable_header_cell(Id id, size_t column, StrRef label, TableCellDesc const& desc = {})
             -> Signal;
         [[nodiscard]] auto sort_button(size_t column, TableSortDesc const& desc) -> Signal;
+        [[nodiscard]] auto filter_button(size_t column, TableFilterDesc const& desc) -> Signal;
 
       private:
         friend class Frame;

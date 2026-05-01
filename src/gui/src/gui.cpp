@@ -82,6 +82,7 @@ namespace gui {
             size_t table_row_span = 1u;
             TableSortDirection table_sort_direction = TableSortDirection::NONE;
             TableSortDesc table_sort = {};
+            TableFilterDesc table_filter = {};
             StrRef table_sort_text = {};
             BoxFlags flags = BOX_FLAG_NONE;
             bool duplicate_id = false;
@@ -90,6 +91,8 @@ namespace gui {
             bool focus_ordered = false;
             bool table_sort_button = false;
             bool table_sort_enabled = false;
+            bool table_filter_button = false;
+            bool table_filter_enabled = false;
             Id authored_id = {};
             BoxIdSource id_source = BoxIdSource::STRUCTURAL;
             bool stable_id = false;
@@ -2033,6 +2036,150 @@ namespace gui {
             return result;
         }
 
+        [[nodiscard]] auto table_filter_column(TableFilterDesc const& desc, size_t column)
+            -> TableFilterColumn* {
+            for (size_t index = 0u; index < desc.columns.size(); ++index) {
+                if (desc.columns[index].column == column) {
+                    return desc.columns.data() + index;
+                }
+            }
+            return nullptr;
+        }
+
+        [[nodiscard]] auto table_filter_search_text(TableFilterColumn const& column) -> StrRef {
+            if (column.search_text == nullptr || column.search_text_buffer_size == 0u) {
+                return {};
+            }
+            size_t size = 0u;
+            while (size < column.search_text_buffer_size && column.search_text[size] != '\0') {
+                size += 1u;
+            }
+            return {column.search_text, std::min(size, column.search_text_buffer_size - 1u)};
+        }
+
+        [[nodiscard]] auto fuzzy_match_text(StrRef text, StrRef query) -> bool {
+            query = query.trim();
+            if (query.empty()) {
+                return true;
+            }
+            size_t query_index = 0u;
+            for (char ch : text) {
+                if (to_ascii_lower(ch) == to_ascii_lower(query[query_index])) {
+                    query_index += 1u;
+                    if (query_index == query.size()) {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+
+        [[nodiscard]] auto table_filter_all_values_selected(TableFilterColumn const& column)
+            -> bool {
+            for (TableFilterValue const& value : column.values) {
+                if (!value.selected) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        [[nodiscard]] auto table_filter_column_active(TableFilterColumn const& column) -> bool {
+            return !table_filter_search_text(column).trim().empty() ||
+                   (!column.values.empty() && !table_filter_all_values_selected(column));
+        }
+
+        [[nodiscard]] auto table_filter_value_selected(TableFilterColumn const& column, StrRef text)
+            -> bool {
+            for (TableFilterValue const& value : column.values) {
+                if (value.selected && value.text == text) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        [[nodiscard]] auto table_filter_matches(TableFilterColumn const& column, StrRef text)
+            -> bool {
+            StrRef const search = table_filter_search_text(column);
+            if (!fuzzy_match_text(text, search)) {
+                return false;
+            }
+            return column.values.empty() || table_filter_value_selected(column, text);
+        }
+
+        [[nodiscard]] auto table_filter_button_id(Id table_id, size_t column) -> Id {
+            uint64_t hash = hash_combine(table_id.value, 0xf117e2b0770ull);
+            hash = hash_combine(hash, column + 1u);
+            return {hash};
+        }
+
+        [[nodiscard]] auto table_filter_child_id(Id parent_id, uint64_t salt) -> Id {
+            return {hash_combine(parent_id.value, salt)};
+        }
+
+        auto table_filter_button_desc(TableFilterDesc const& desc) -> BoxDesc {
+            BoxDesc box = desc.button_box;
+            if (box.layout.width.kind == SizeKind::AUTO) {
+                box.layout.width = px(18.0f);
+            }
+            if (box.layout.height.kind == SizeKind::AUTO) {
+                box.layout.height = px(18.0f);
+            }
+            if (insets_empty(box.layout.padding)) {
+                box.layout.padding = insets(0.0f);
+            }
+            return box;
+        }
+
+        auto table_filter_popup_desc(TableFilterDesc const& desc) -> BoxDesc {
+            BoxDesc box = desc.popup_box;
+            if (box.layout.width.kind == SizeKind::AUTO) {
+                box.layout.width = px(230.0f);
+            }
+            if (box.layout.height.kind == SizeKind::AUTO) {
+                box.layout.height = children();
+            }
+            if (box.layout.margin.top == 0.0f) {
+                box.layout.margin.top = 22.0f;
+            }
+            if (insets_empty(box.layout.padding)) {
+                box.layout.padding = insets(8.0f);
+            }
+            if (box.layout.gap == 0.0f) {
+                box.layout.gap = 6.0f;
+            }
+            return box;
+        }
+
+        auto table_filter_input_desc(TableFilterDesc const& desc) -> BoxDesc {
+            BoxDesc box = desc.input_box;
+            if (box.layout.width.kind == SizeKind::AUTO) {
+                box.layout.width = fill();
+            }
+            if (box.layout.height.kind == SizeKind::AUTO) {
+                box.layout.height = px(24.0f);
+            }
+            if (insets_empty(box.layout.padding)) {
+                box.layout.padding = insets(3.0f, 6.0f);
+            }
+            return box;
+        }
+
+        auto table_filter_value_desc(TableFilterDesc const& desc) -> BoxDesc {
+            BoxDesc box = desc.value_box;
+            if (box.layout.width.kind == SizeKind::AUTO) {
+                box.layout.width = fill();
+            }
+            if (box.layout.height.kind == SizeKind::AUTO) {
+                box.layout.height = px(22.0f);
+            }
+            if (insets_empty(box.layout.padding)) {
+                box.layout.padding = insets(0.0f, 4.0f);
+            }
+            return box;
+        }
+
         [[nodiscard]] auto sortable_header_row_padding(BoxDesc const& cell_desc) -> Insets {
             return cell_desc.layout.padding.left == 0.0f ? insets(0.0f, 0.0f, 0.0f, 10.0f)
                                                          : insets(0.0f);
@@ -2118,6 +2265,55 @@ namespace gui {
             return 0;
         }
 
+        [[nodiscard]] auto
+        table_row_visible(ContextImpl const* impl, TableFilterDesc const& desc, size_t row_index)
+            -> bool {
+            for (TableFilterColumn const& column : desc.columns) {
+                if (table_filter_column_active(column) &&
+                    !table_filter_matches(
+                        column, table_row_sort_text(impl, row_index, column.column)
+                    )) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        auto filter_table_rows(ContextImpl* impl, size_t table_index) -> void {
+            BoxNode& table = impl->boxes[table_index];
+            if (!table.table_filter_enabled) {
+                return;
+            }
+
+            size_t first = INVALID_INDEX;
+            size_t previous = INVALID_INDEX;
+            size_t count = 0u;
+            for (size_t child = table.first_child; child != INVALID_INDEX;) {
+                size_t const next = impl->boxes[child].next_sibling;
+                bool const keep = impl->boxes[child].kind != BoxKind::TABLE_ROW ||
+                                  table_row_visible(impl, table.table_filter, child);
+                if (keep) {
+                    if (previous != INVALID_INDEX) {
+                        impl->boxes[previous].next_sibling = child;
+                    } else {
+                        first = child;
+                    }
+                    previous = child;
+                    count += 1u;
+                } else {
+                    impl->boxes[child].next_sibling = INVALID_INDEX;
+                }
+                child = next;
+            }
+
+            table.first_child = first;
+            table.last_child = previous;
+            table.child_count = count;
+            if (previous != INVALID_INDEX) {
+                impl->boxes[previous].next_sibling = INVALID_INDEX;
+            }
+        }
+
         auto sort_table_rows(ContextImpl* impl, size_t table_index) -> void {
             BoxNode& table = impl->boxes[table_index];
             if (!table.table_sort_enabled || table_sort_count(table.table_sort) == 0u) {
@@ -2184,6 +2380,7 @@ namespace gui {
 
         auto sort_tables(ContextImpl* impl, size_t index) -> void {
             if (impl->boxes[index].kind == BoxKind::TABLE) {
+                filter_table_rows(impl, index);
                 sort_table_rows(impl, index);
             }
             for (size_t child = impl->boxes[index].first_child; child != INVALID_INDEX;
@@ -3381,6 +3578,27 @@ namespace gui {
             }
         }
 
+        auto render_table_filter_icon(
+            ContextImpl const* impl, BoxNode const& box, draw::Context draw_context
+        ) -> void {
+            float const cx = (box.rect.min.x + box.rect.max.x) * 0.5f;
+            float const cy = (box.rect.min.y + box.rect.max.y) * 0.5f;
+            Color const color =
+                box.widget_value > 0.5f ? impl->theme.tokens.accent : box.resolved_style.foreground;
+            draw::Color const draw_color =
+                to_draw_color(color_mul_alpha(color, box.resolved_style.opacity * 0.82f));
+            draw::Vec2 const top_left = {cx - 5.0f, cy - 4.5f};
+            draw::Vec2 const top_right = {cx + 5.0f, cy - 4.5f};
+            draw::Vec2 const mid_right = {cx + 1.8f, cy - 0.5f};
+            draw::Vec2 const mid_left = {cx - 1.8f, cy - 0.5f};
+            draw::Vec2 const stem_bottom = {cx, cy + 5.0f};
+            draw::draw_line(draw_context, top_left, top_right, draw_color, 1.5f);
+            draw::draw_line(draw_context, top_right, mid_right, draw_color, 1.5f);
+            draw::draw_line(draw_context, mid_right, stem_bottom, draw_color, 1.5f);
+            draw::draw_line(draw_context, stem_bottom, mid_left, draw_color, 1.5f);
+            draw::draw_line(draw_context, mid_left, top_left, draw_color, 1.5f);
+        }
+
         auto
         render_widget_parts(ContextImpl const* impl, BoxNode const& box, draw::Context draw_context)
             -> void {
@@ -3388,6 +3606,8 @@ namespace gui {
             ThemeTokens const& tokens = impl->theme.tokens;
             if (box.table_sort_button) {
                 render_table_sort_icon(box, draw_context);
+            } else if (box.table_filter_button) {
+                render_table_filter_icon(impl, box, draw_context);
             } else if (box.kind == BoxKind::CHECKBOX) {
                 bool const checked = box.widget_value > 0.5f;
                 bool const muted = box_read_only(box) || box_disabled(box);
@@ -4105,6 +4325,105 @@ namespace gui {
         return TableRowScope(Scope(m_scope.m_frame, index));
     }
 
+    namespace {
+        auto draw_table_filter_popup(
+            Frame& ui, Id button_id, TableFilterDesc const& desc, TableFilterColumn& column
+        ) -> Signal {
+            Signal result = {};
+            if (auto popup =
+                    ui.popup(table_filter_child_id(button_id, 1u), table_filter_popup_desc(desc))) {
+                StrRef search = table_filter_search_text(column);
+                if (column.search_text != nullptr && column.search_text_buffer_size != 0u) {
+                    Signal const input = ui.input_text(
+                        table_filter_child_id(button_id, 2u),
+                        "Search",
+                        column.search_text,
+                        column.search_text_buffer_size,
+                        table_filter_input_desc(desc)
+                    );
+                    result.changed = result.changed || input.changed;
+                    search = table_filter_search_text(column);
+                }
+
+                if (!column.values.empty()) {
+                    size_t visible_value_count = 0u;
+                    bool all_selected = true;
+                    for (TableFilterValue const& value : column.values) {
+                        if (!fuzzy_match_text(value.text, search)) {
+                            continue;
+                        }
+                        visible_value_count += 1u;
+                        all_selected = all_selected && value.selected;
+                    }
+                    float const list_height =
+                        std::min(160.0f, 22.0f * static_cast<float>(visible_value_count + 1u));
+                    if (auto list = ui.scroll_panel(
+                            table_filter_child_id(button_id, 3u),
+                            {.layout = {.width = fill(), .height = px(list_height)}}
+                        )) {
+                        BASE_UNUSED(list);
+                        Signal const all = ui.checkbox(
+                            table_filter_child_id(button_id, 4u),
+                            "(Select All)",
+                            &all_selected,
+                            table_filter_value_desc(desc)
+                        );
+                        if (all.changed) {
+                            for (TableFilterValue& value : column.values) {
+                                if (!fuzzy_match_text(value.text, search)) {
+                                    continue;
+                                }
+                                value.selected = all_selected;
+                            }
+                            result.changed = true;
+                        }
+                        for (size_t index = 0u; index < column.values.size(); ++index) {
+                            TableFilterValue& value = column.values[index];
+                            if (!fuzzy_match_text(value.text, search)) {
+                                continue;
+                            }
+                            Signal const value_signal = ui.checkbox(
+                                table_filter_child_id(button_id, 0x100u + index),
+                                value.text,
+                                &value.selected,
+                                table_filter_value_desc(desc)
+                            );
+                            result.changed = result.changed || value_signal.changed;
+                        }
+                    }
+                }
+
+                if (auto actions = ui.row(
+                        table_filter_child_id(button_id, 5u),
+                        {.layout = {
+                             .width = fill(),
+                             .height = px(28.0f),
+                             .gap = 6.0f,
+                             .align_y = Align::CENTER,
+                         }}
+                    )) {
+                    BASE_UNUSED(actions);
+                    ui.spacer({.layout = {.width = fill(), .height = px(1.0f)}});
+                    Signal const ok = ui.button(
+                        table_filter_child_id(button_id, 6u),
+                        "OK",
+                        {.layout = {.width = px(44.0f), .height = px(24.0f)}}
+                    );
+                    Signal const cancel = ui.button(
+                        table_filter_child_id(button_id, 7u),
+                        "Cancel",
+                        {.layout = {.width = px(64.0f), .height = px(24.0f)}}
+                    );
+                    if ((ok.activated || cancel.activated) && column.popup_open != nullptr) {
+                        *column.popup_open = false;
+                        result.changed = true;
+                    }
+                }
+            }
+            return result;
+        }
+    } // namespace
+
     auto TableScope::sortable_header_cell(size_t column, StrRef label, TableCellDesc const& desc)
         -> Signal {
         if (m_scope.m_frame == nullptr) {
@@ -4142,6 +4461,11 @@ namespace gui {
             TableSortDesc const sort_desc =
                 compact_table_sort_desc(impl->boxes[m_scope.m_box_index].table_sort);
             signal = sort_button(column, sort_desc);
+            TableFilterDesc const filter_desc = impl->boxes[m_scope.m_box_index].table_filter;
+            if (table_filter_column(filter_desc, column) != nullptr) {
+                Signal const filter_signal = filter_button(column, filter_desc);
+                signal.changed = signal.changed || filter_signal.changed;
+            }
             if (column < sort_desc.selected_columns.size()) {
                 Signal const select_signal = m_scope.m_frame->checkbox(
                     label,
@@ -4197,6 +4521,11 @@ namespace gui {
             TableSortDesc const sort_desc =
                 compact_table_sort_desc(impl->boxes[m_scope.m_box_index].table_sort);
             signal = sort_button(column, sort_desc);
+            TableFilterDesc const filter_desc = impl->boxes[m_scope.m_box_index].table_filter;
+            if (table_filter_column(filter_desc, column) != nullptr) {
+                Signal const filter_signal = filter_button(column, filter_desc);
+                signal.changed = signal.changed || filter_signal.changed;
+            }
             if (column < sort_desc.selected_columns.size()) {
                 Signal const select_signal = m_scope.m_frame->checkbox(
                     label,
@@ -4249,6 +4578,52 @@ namespace gui {
             }
             refresh_table_sort_button_icons(impl, table_id, desc, max_column);
             signal.changed = true;
+            box.signal = signal;
+        }
+        return signal;
+    }
+
+    auto TableScope::filter_button(size_t column, TableFilterDesc const& desc) -> Signal {
+        if (m_scope.m_frame == nullptr) {
+            return {};
+        }
+
+        TableFilterColumn* const filter_column = table_filter_column(desc, column);
+        if (filter_column == nullptr) {
+            return {};
+        }
+
+        ContextImpl* const impl = impl_from_frame(*m_scope.m_frame);
+        size_t const parent = top_parent_index(impl);
+        Id const table_id = impl->boxes[m_scope.m_box_index].id;
+        Id const authored_id = table_filter_button_id(table_id, column);
+        size_t const index = append_box(
+            impl,
+            BoxKind::BUTTON,
+            explicit_id(impl, parent, BoxKind::BUTTON, authored_id),
+            authored_id,
+            {},
+            table_filter_button_desc(desc),
+            true,
+            true
+        );
+        BoxNode& box = impl->boxes[index];
+        box.table_filter_button = true;
+        box.widget_value = table_filter_column_active(*filter_column) ? 1.0f : 0.0f;
+
+        Signal signal = apply_button_activation(impl, box);
+        if (signal.activated && !box_read_only(box) && filter_column->popup_open != nullptr) {
+            *filter_column->popup_open = !*filter_column->popup_open;
+            signal.changed = true;
+            box.signal = signal;
+        }
+        if (filter_column->popup_open != nullptr && *filter_column->popup_open) {
+            push_parent(impl, index);
+            Signal const popup_signal =
+                draw_table_filter_popup(*m_scope.m_frame, authored_id, desc, *filter_column);
+            pop_parent_to(impl, index);
+            signal.changed = signal.changed || popup_signal.changed;
+            box.widget_value = table_filter_column_active(*filter_column) ? 1.0f : 0.0f;
             box.signal = signal;
         }
         return signal;
@@ -4490,6 +4865,8 @@ namespace gui {
             BoxNode& box = impl->boxes[result.m_scope.m_box_index];
             box.table_sort = desc.sort;
             box.table_sort_enabled = !desc.sort.columns.empty();
+            box.table_filter = desc.filter;
+            box.table_filter_enabled = !desc.filter.columns.empty();
         }
         return result;
     }
@@ -4501,6 +4878,8 @@ namespace gui {
             BoxNode& box = impl->boxes[result.m_scope.m_box_index];
             box.table_sort = desc.sort;
             box.table_sort_enabled = !desc.sort.columns.empty();
+            box.table_filter = desc.filter;
+            box.table_filter_enabled = !desc.filter.columns.empty();
         }
         return result;
     }
