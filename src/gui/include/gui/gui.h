@@ -80,6 +80,7 @@ namespace gui {
         bool clip = false;
         bool scroll_x = false;
         bool scroll_y = false;
+        bool word_wrap = false;
     };
 
     struct ShadowDesc {

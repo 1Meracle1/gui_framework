@@ -444,6 +444,33 @@ namespace {
         gui::destroy_context(gui_context);
     }
 
+    TEST_CASE(word_wrapped_label_measures_lines) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {100.0f, 80.0f}});
+        ui.label(
+            "AB CD",
+            {.layout = {
+                 .width = gui::px(16.0f),
+                 .height = gui::text(),
+                 .word_wrap = true,
+             }}
+        );
+        gui::end_frame(ui);
+
+        gui::BoxInfo const* label = ui.box_info(1u);
+        TEST_EXPECT(context, label != nullptr && label->kind == gui::BoxKind::LABEL);
+        if (label != nullptr) {
+            expect_rect(context, label->rect, {{0.0f, 0.0f}, {16.0f, 40.0f}});
+        }
+
+        gui::destroy_context(gui_context);
+    }
+
     TEST_CASE(row_layout_aligns_child_run_when_no_fill_consumes_space) {
         Arena arena = {};
         arena.init();
@@ -4243,6 +4270,39 @@ namespace {
         gui::destroy_context(gui_context);
     }
 
+    TEST_CASE(word_wrapped_selectable_label_scrolls_overflow_text) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::TextSelection selection = {};
+        gui::Id const label_id = gui::id("copyable");
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {100.0f, 40.0f}});
+        ui.set_scroll_y(label_id, 20.0f);
+        ui.selectable_label(
+            label_id,
+            "AB CD EF",
+            &selection,
+            {.layout = {
+                 .width = gui::px(16.0f),
+                 .height = gui::px(20.0f),
+                 .word_wrap = true,
+             }}
+        );
+        gui::end_frame(ui);
+
+        gui::ScrollState state = ui.scroll_state(label_id);
+        TEST_EXPECT(context, state.valid);
+        TEST_EXPECT(context, state.y == 20.0f);
+        TEST_EXPECT(context, state.max_y == 40.0f);
+        TEST_EXPECT(context, state.viewport_height == 20.0f);
+        TEST_EXPECT(context, state.content_height == 60.0f);
+
+        gui::destroy_context(gui_context);
+    }
+
     TEST_CASE(selectable_label_scrollbar_click_scrolls_without_changing_selection) {
         Arena arena = {};
         arena.init();
@@ -4301,6 +4361,46 @@ namespace {
         input.mouse_down[0u] = false;
         ui = gui::begin_frame(gui_context, {.size = {120.0f, 60.0f}, .input = input});
         gui::Signal const signal = ui.selectable_label(label_id, "AB\nCDE", &selection, box);
+        gui::end_frame(ui);
+
+        TEST_EXPECT(context, signal.released_left);
+        TEST_EXPECT(context, selection.start == 5u);
+        TEST_EXPECT(context, selection.end == 5u);
+
+        gui::destroy_context(gui_context);
+    }
+
+    TEST_CASE(word_wrapped_selectable_label_hit_tests_visual_lines) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::TextSelection selection = {};
+        gui::Id const label_id = gui::id("copyable");
+        gui::BoxDesc const box = {
+            .layout = {
+                .width = gui::px(16.0f),
+                .height = gui::px(40.0f),
+                .word_wrap = true,
+            }
+        };
+
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {120.0f, 60.0f}});
+        ui.selectable_label(label_id, "AB CD", &selection, box);
+        gui::end_frame(ui);
+
+        gui::InputState input = {};
+        input.mouse_pos = {13.0f, 25.0f};
+        input.mouse_down[0u] = true;
+        ui = gui::begin_frame(gui_context, {.size = {120.0f, 60.0f}, .input = input});
+        ui.selectable_label(label_id, "AB CD", &selection, box);
+        gui::end_frame(ui);
+
+        input.mouse_down[0u] = false;
+        ui = gui::begin_frame(gui_context, {.size = {120.0f, 60.0f}, .input = input});
+        gui::Signal const signal = ui.selectable_label(label_id, "AB CD", &selection, box);
         gui::end_frame(ui);
 
         TEST_EXPECT(context, signal.released_left);

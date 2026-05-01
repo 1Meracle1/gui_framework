@@ -179,6 +179,8 @@ namespace gui {
             bool building = false;
         };
 
+        [[nodiscard]] auto next_text_offset(StrRef text, size_t offset) -> size_t;
+
         [[nodiscard]] auto impl_from_context(Context context) -> ContextImpl* {
             return static_cast<ContextImpl*>(context.handle);
         }
@@ -552,6 +554,48 @@ namespace gui {
             return text.find('\n') != StrRef::NPOS;
         }
 
+        [[nodiscard]] auto icon_visible(IconDesc const& icon) -> bool {
+            return render::texture_valid(icon.texture) && icon.size > 0.0f;
+        }
+
+        [[nodiscard]] auto icon_text_gap(BoxNode const& box) -> float {
+            return !box.text.empty() && icon_visible(box.icon) ? std::max(0.0f, box.icon.gap)
+                                                               : 0.0f;
+        }
+
+        [[nodiscard]] auto icon_text_width(BoxNode const& box) -> float {
+            return icon_visible(box.icon) ? box.icon.size + icon_text_gap(box) : 0.0f;
+        }
+
+        [[nodiscard]] auto control_text_offset(BoxKind kind) -> float {
+            if (kind == BoxKind::CHECKBOX) {
+                return 24.0f;
+            }
+            if (kind == BoxKind::TOGGLE) {
+                return 44.0f;
+            }
+            return 0.0f;
+        }
+
+        [[nodiscard]] auto text_wrap_enabled(BoxNode const& box) -> bool {
+            return box.layout.word_wrap &&
+                   (box.kind == BoxKind::LABEL || box.kind == BoxKind::SELECTABLE_LABEL);
+        }
+
+        [[nodiscard]] auto text_wrap_width(BoxNode const& box, float width) -> float {
+            if (!text_wrap_enabled(box)) {
+                return 0.0f;
+            }
+            float const content_width = std::max(0.0f, width - inset_width(box.layout.padding));
+            return std::max(
+                0.0f, content_width - control_text_offset(box.kind) - icon_text_width(box)
+            );
+        }
+
+        [[nodiscard]] auto text_wrap_width(BoxNode const& box, Rect rect) -> float {
+            return text_wrap_width(box, rect_width(rect));
+        }
+
         [[nodiscard]] auto next_text_line(StrRef text, size_t& offset, TextLine& out_line) -> bool {
             if (text.empty() || offset > text.size()) {
                 return false;
@@ -577,7 +621,80 @@ namespace gui {
             return true;
         }
 
-        [[nodiscard]] auto text_size(BoxNode const& box) -> Vec2 {
+        [[nodiscard]] auto
+        next_text_line(BoxNode const& box, float wrap_width, size_t& offset, TextLine& out_line)
+            -> bool {
+            if (!text_wrap_enabled(box) || wrap_width <= 0.0f) {
+                return next_text_line(box.text, offset, out_line);
+            }
+            if (box.text.empty() || offset > box.text.size()) {
+                return false;
+            }
+            if (offset == box.text.size()) {
+                if (offset > 0u && box.text[offset - 1u] == '\n') {
+                    out_line = {StrRef(box.text.data() + offset, size_t{0u}), offset, offset};
+                    offset += 1u;
+                    return true;
+                }
+                return false;
+            }
+
+            size_t const start = offset;
+            size_t const newline = box.text.find('\n', start);
+            size_t end = newline == StrRef::NPOS ? box.text.size() : newline;
+            if (end > start && box.text[end - 1u] == '\r') {
+                end -= 1u;
+            }
+            if (start == end) {
+                out_line = {box.text.substr(start, size_t{0u}), start, end};
+                offset = newline == StrRef::NPOS ? box.text.size() : newline + 1u;
+                return true;
+            }
+
+            size_t cursor = start;
+            size_t break_offset = StrRef::NPOS;
+            while (cursor < end) {
+                size_t const next = next_text_offset(box.text, cursor);
+                bool const whitespace = is_ascii_whitespace(box.text[cursor]);
+                float const advance = text_advance(box, box.text.substr(start, next - start));
+                if (advance > wrap_width) {
+                    if (cursor == start) {
+                        out_line = {box.text.substr(start, next - start), start, next};
+                        offset = next;
+                        return true;
+                    }
+                    size_t line_end = cursor;
+                    size_t next_offset = whitespace ? next : cursor;
+                    if (!whitespace && break_offset != StrRef::NPOS && break_offset > start) {
+                        line_end = break_offset;
+                        next_offset = break_offset;
+                    }
+                    out_line = {box.text.substr(start, line_end - start), start, line_end};
+                    offset = next_offset;
+                    return true;
+                }
+                if (whitespace) {
+                    break_offset = next;
+                }
+                cursor = next;
+            }
+
+            out_line = {box.text.substr(start, end - start), start, end};
+            offset = newline == StrRef::NPOS ? box.text.size() : newline + 1u;
+            return true;
+        }
+
+        [[nodiscard]] auto text_measure_wrap_width(BoxNode const& box) -> float {
+            if (box.layout.width.kind == SizeKind::PIXELS) {
+                return text_wrap_width(box, box.layout.width.value);
+            }
+            if (box.layout.max_width.kind == SizeKind::PIXELS) {
+                return text_wrap_width(box, box.layout.max_width.value);
+            }
+            return 0.0f;
+        }
+
+        [[nodiscard]] auto text_size(BoxNode const& box, float wrap_width = 0.0f) -> Vec2 {
             if (box.text.empty()) {
                 return {0.0f, text_line_height(box)};
             }
@@ -587,35 +704,12 @@ namespace gui {
             size_t line_count = 0u;
             size_t offset = 0u;
             TextLine line = {};
-            while (next_text_line(box.text, offset, line)) {
+            while (next_text_line(box, wrap_width, offset, line)) {
                 size.x = std::max(size.x, text_advance(box, line.text));
                 line_count += 1u;
             }
             size.y = line_height * static_cast<float>(line_count);
             return size;
-        }
-
-        [[nodiscard]] auto icon_visible(IconDesc const& icon) -> bool {
-            return render::texture_valid(icon.texture) && icon.size > 0.0f;
-        }
-
-        [[nodiscard]] auto icon_text_gap(BoxNode const& box) -> float {
-            return !box.text.empty() && icon_visible(box.icon) ? std::max(0.0f, box.icon.gap)
-                                                               : 0.0f;
-        }
-
-        [[nodiscard]] auto icon_text_width(BoxNode const& box) -> float {
-            return icon_visible(box.icon) ? box.icon.size + icon_text_gap(box) : 0.0f;
-        }
-
-        [[nodiscard]] auto control_text_offset(BoxKind kind) -> float {
-            if (kind == BoxKind::CHECKBOX) {
-                return 24.0f;
-            }
-            if (kind == BoxKind::TOGGLE) {
-                return 44.0f;
-            }
-            return 0.0f;
         }
 
         [[nodiscard]] auto table_text_cell(ContextImpl const* impl, BoxNode const& box)
@@ -699,11 +793,13 @@ namespace gui {
 
         [[nodiscard]] auto text_position(ContextImpl const* impl, BoxNode const& box, Rect rect)
             -> Vec2 {
-            Vec2 const text_dim = text_size(box);
+            float const wrap_width = text_wrap_width(box, rect);
+            Vec2 const text_dim = text_size(box, wrap_width);
             float const content_width =
                 std::max(0.0f, rect_width(rect) - inset_width(box.layout.padding));
             float const x_offset = text_x_offset(impl, box, content_width, text_dim.x);
-            bool const multiline = text_multiline(box.text) || multiline_input_text_box(box.kind);
+            bool const multiline = text_multiline(box.text) || multiline_input_text_box(box.kind) ||
+                                   text_wrap_enabled(box);
             float const scroll_y = box.layout.scroll_y && box.scroll_state != nullptr && multiline
                                        ? box.scroll_state->scroll_y
                                        : 0.0f;
@@ -1462,7 +1558,7 @@ namespace gui {
             }
 
             Vec2 size = {};
-            Vec2 const text_dim = text_size(box);
+            Vec2 const text_dim = text_size(box, text_measure_wrap_width(box));
             bool const is_leaf = box.first_child == INVALID_INDEX;
             Vec2 const image_dim = image_measure_size(box);
             float const widget_extra_x = box.kind == BoxKind::CHECKBOX       ? 24.0f
@@ -1573,6 +1669,21 @@ namespace gui {
             return size;
         }
 
+        auto apply_wrapped_text_height(BoxNode const& box, Vec2& size) -> void {
+            if (!text_wrap_enabled(box)) {
+                return;
+            }
+            bool const is_leaf = box.first_child == INVALID_INDEX;
+            if (box.layout.height.kind != SizeKind::TEXT &&
+                !(box.layout.height.kind == SizeKind::AUTO && is_leaf)) {
+                return;
+            }
+            float const wrap_width = text_wrap_width(box, size.x);
+            if (wrap_width > 0.0f) {
+                size.y = text_size(box, wrap_width).y + inset_height(box.layout.padding);
+            }
+        }
+
         [[nodiscard]] auto child_axis_size(BoxNode const& child, Axis axis) -> float {
             Size const size = axis == Axis::X ? child.layout.width : child.layout.height;
             return size.kind == SizeKind::PIXELS
@@ -1592,6 +1703,9 @@ namespace gui {
 
         [[nodiscard]] auto
         stack_content_main_size(ContextImpl const* impl, BoxNode const& box, Axis axis) -> float {
+            Rect const content = content_rect(box.rect, box.layout.padding);
+            float const content_cross =
+                axis == Axis::X ? rect_height(content) : rect_width(content);
             float total = 0.0f;
             size_t child_count = 0u;
             for (size_t child_index = box.first_child; child_index != INVALID_INDEX;
@@ -1600,7 +1714,19 @@ namespace gui {
                 if (floating_box(child.kind)) {
                     continue;
                 }
-                total += child_axis_size(child, axis) + child_margin_main(child, axis);
+                float main = child_axis_size(child, axis);
+                if (axis == Axis::Y && text_wrap_enabled(child)) {
+                    Vec2 child_size = {
+                        child.layout.width.kind == SizeKind::FILL ||
+                                box.layout.align_x == Align::STRETCH
+                            ? std::max(0.0f, content_cross - child_margin_cross(child, axis))
+                            : child_axis_size(child, Axis::X),
+                        main
+                    };
+                    apply_wrapped_text_height(child, child_size);
+                    main = child_size.y;
+                }
+                total += main + child_margin_main(child, axis);
                 child_count += 1u;
             }
             if (child_count > 1u) {
@@ -1747,8 +1873,10 @@ namespace gui {
                         multiline_input_text_box(box.kind)) &&
                        box.layout.scroll_y) {
                 float content_height = rect_height(rect);
-                if (text_multiline(box.text) || multiline_input_text_box(box.kind)) {
-                    content_height = text_size(box).y + inset_height(box.layout.padding);
+                if (text_multiline(box.text) || multiline_input_text_box(box.kind) ||
+                    text_wrap_enabled(box)) {
+                    content_height = text_size(box, text_wrap_width(box, rect)).y +
+                                     inset_height(box.layout.padding);
                 }
                 InputState const& input = impl->frame_desc.input;
                 bool const wheel_scroll =
@@ -1833,6 +1961,7 @@ namespace gui {
                 } else if (child.layout.height.kind == SizeKind::FILL) {
                     child_size.y = available_y;
                 }
+                apply_wrapped_text_height(child, child_size);
                 apply_min_max(child, child_size);
 
                 float const x = content.min.x + child.layout.margin.left +
@@ -1873,6 +2002,7 @@ namespace gui {
                 } else if (child.layout.height.kind == SizeKind::PIXELS) {
                     child_size.y = child.layout.height.value;
                 }
+                apply_wrapped_text_height(child, child_size);
                 apply_min_max(child, child_size);
 
                 float const base_x = bounds.min.x + child.layout.margin.left +
@@ -2009,11 +2139,23 @@ namespace gui {
                     continue;
                 }
                 Size const main_size = axis == Axis::X ? child.layout.width : child.layout.height;
+                float main = child_axis_size(child, axis);
+                if (axis == Axis::Y && text_wrap_enabled(child)) {
+                    Vec2 child_size = {
+                        child.layout.width.kind == SizeKind::FILL ||
+                                box.layout.align_x == Align::STRETCH
+                            ? std::max(0.0f, content_cross - child_margin_cross(child, axis))
+                            : child_axis_size(child, Axis::X),
+                        main
+                    };
+                    apply_wrapped_text_height(child, child_size);
+                    main = child_size.y;
+                }
                 if (main_size.kind == SizeKind::FILL) {
                     fill_weight += std::max(main_size.value, 0.0f);
                     fixed += child_margin_main(child, axis);
                 } else {
-                    fixed += child_axis_size(child, axis) + child_margin_main(child, axis);
+                    fixed += main + child_margin_main(child, axis);
                 }
                 child_count += 1u;
             }
@@ -2054,6 +2196,7 @@ namespace gui {
                 }
 
                 Vec2 child_size = axis == Axis::X ? Vec2{main, cross} : Vec2{cross, main};
+                apply_wrapped_text_height(child, child_size);
                 apply_min_max(child, child_size);
                 if (axis == Axis::X) {
                     float const cross_available =
@@ -2973,7 +3116,9 @@ namespace gui {
             size_t offset = 0u;
             TextLine line = {};
             TextLine last_line = {};
-            while (next_text_line(box.text, offset, line)) {
+            float const wrap_width =
+                text_wrap_width(box, box.state != nullptr ? box.state->rect : box.rect);
+            while (next_text_line(box, wrap_width, offset, line)) {
                 if (line_index == target_line) {
                     return text_line_index_from_x(box, line, text_x);
                 }
@@ -3978,10 +4123,11 @@ namespace gui {
             Color color = impl->theme.tokens.accent;
             color.a *= 0.45f;
             float const line_height = text_line_height(box);
+            float const wrap_width = text_wrap_width(box, box.rect);
             size_t line_index = 0u;
             size_t offset = 0u;
             TextLine line = {};
-            while (next_text_line(box.text, offset, line)) {
+            while (next_text_line(box, wrap_width, offset, line)) {
                 size_t const start = std::max(selection.start, line.start);
                 size_t const end = std::min(selection.end, line.end);
                 if (start < end) {
@@ -4111,7 +4257,8 @@ namespace gui {
                         icon_tint(box)
                     );
                 } else if (text_content_box(box.kind) && icon_visible(box.icon)) {
-                    Rect const rect = icon_rect(box, box.rect, text_size(box).x);
+                    Rect const rect =
+                        icon_rect(box, box.rect, text_size(box, text_wrap_width(box, box.rect)).x);
                     draw::draw_image(
                         draw_context,
                         box.icon.texture,
@@ -4133,10 +4280,11 @@ namespace gui {
                     );
                     Vec2 const text_pos = text_position(impl, box);
                     float const line_height = text_line_height(box);
+                    float const wrap_width = text_wrap_width(box, box.rect);
                     size_t line_index = 0u;
                     size_t offset = 0u;
                     TextLine line = {};
-                    while (next_text_line(box.text, offset, line)) {
+                    while (next_text_line(box, wrap_width, offset, line)) {
                         if (!line.text.empty()) {
                             font_cache::TextRun run = {};
                             draw::measure_text(draw_context, text_style, line.text, run);

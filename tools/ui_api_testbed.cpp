@@ -104,7 +104,7 @@ namespace {
     }
 
     constexpr char BODY_TEXT[] =
-        "Lorem ipsum dolor sit amet, consectetur adipiscing elit.\n"
+        "Lorem ipsum dolor sit amet, consectetur adipiscing elit.m dolor sit amet, consectetur adipiscing elit.m dolor sit amet, consectetur adipiscing elit.\n"
         "Integer posuere erat a ante venenatis dapibus posuere velit aliquet.\n\n"
         "Donec ullamcorper nulla non metus auctor fringilla.\n"
         "Cras mattis consectetur purus sit amet fermentum.\n\n"
@@ -1406,7 +1406,12 @@ namespace {
                             BODY_TEXT,
                             &state.body_selection,
                             {
-                                .layout = {.width = gui::fill(), .height = gui::text()},
+                                .layout =
+                                    {
+                                        .width = gui::fill(),
+                                        .height = gui::text(),
+                                        .word_wrap = true,
+                                    },
                                 .style = {.foreground = tokens.text},
                                 .debug_name = "body_text",
                             }
