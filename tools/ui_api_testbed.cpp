@@ -2130,6 +2130,7 @@ namespace {
             result = draw::render_commands_to_window(
                 runtime.draw_renderer, render_context, pass_desc, runtime.draw_context
             );
+            reset_thread_temp_arenas();
             if (render::result_failed(result)) {
                 log_render_result("draw::render_commands_to_window", result);
                 break;
@@ -2206,8 +2207,10 @@ auto main() -> int {
     base::install_crash_handlers();
 
 #if defined(_WIN32)
-    return run_windowed();
+    int const result = run_windowed();
 #else
-    return run_console_fallback();
+    int const result = run_console_fallback();
 #endif
+    shutdown_thread_temp_arenas();
+    return result;
 }
