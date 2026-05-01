@@ -158,9 +158,9 @@ debug trace after a 3s warmup for a 5s capture, writes timestamped artifacts
 under `build\perf\ui_api_testbed\`, prints the trace metrics, parses zone
 mean/p95 timings into a summary text file, and fails if any `ui_api_testbed`
 process remains alive. `-Scenario mouse` runs a 1s warmup plus 5s active trace
-while the script moves the pointer over the testbed window and posts matching
-client mouse move/click messages to the window.
-`-Scenario both` captures idle first, then active mouse/click.
+while the script moves the pointer in shrinking circles over the testbed client
+area and posts matching client mouse move messages to the window.
+`-Scenario both` captures idle first, then active mouse movement.
 
 Expected output shape:
 
@@ -171,7 +171,7 @@ Trace=<trace.json>
 ProbeLog=<stdout.txt>
 Summary=<summary.txt>
 MouseMoves=<N>
-MouseClicks=<N>
+MouseClicks=0
 <zone> count=<N> mean_ms=<ms> p95_ms=<ms>
 summary duration_ms=<ms> cpu=<percent> frames=<N> fps=<fps> commands_avg=<N> text_avg=<N>
 NoProcessRunning=ui_api_testbed.exe

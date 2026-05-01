@@ -147,7 +147,7 @@ public static class UiApiTestbedPerfInput {
     }
 
     [DllImport("user32.dll")]
-    public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
+    public static extern bool GetClientRect(IntPtr hWnd, out RECT rect);
 
     [DllImport("user32.dll")]
     public static extern bool SetCursorPos(int x, int y);
@@ -162,7 +162,7 @@ public static class UiApiTestbedPerfInput {
     }
 
     [DllImport("user32.dll")]
-    public static extern bool ScreenToClient(IntPtr hWnd, ref POINT point);
+    public static extern bool ClientToScreen(IntPtr hWnd, ref POINT point);
 
     [DllImport("user32.dll")]
     public static extern bool PostMessageW(IntPtr hWnd, uint msg, UIntPtr wParam, IntPtr lParam);
@@ -172,20 +172,6 @@ public static class UiApiTestbedPerfInput {
 
 function New-MouseLParam([int]$x, [int]$y) {
     [IntPtr]([int]((($y -band 0xffff) -shl 16) -bor ($x -band 0xffff)))
-}
-
-function Send-TestbedMouseMessage([IntPtr]$hwnd, [uint32]$message, [int]$screen_x, [int]$screen_y, [uint32]$wparam) {
-    $point = New-Object "UiApiTestbedPerfInput+POINT"
-    $point.X = $screen_x
-    $point.Y = $screen_y
-    if ([UiApiTestbedPerfInput]::ScreenToClient($hwnd, [ref]$point)) {
-        [UiApiTestbedPerfInput]::PostMessageW(
-            $hwnd,
-            $message,
-            [UIntPtr]$wparam,
-            (New-MouseLParam $point.X $point.Y)
-        ) | Out-Null
-    }
 }
 
 function Invoke-MouseActivity([Diagnostics.Process]$process, [int]$milliseconds) {
@@ -204,31 +190,41 @@ function Invoke-MouseActivity([Diagnostics.Process]$process, [int]$milliseconds)
 
     [UiApiTestbedPerfInput]::SetForegroundWindow($hwnd) | Out-Null
     $moves = 0
-    $clicks = 0
+    $start = [Environment]::TickCount64
     $end = [Environment]::TickCount64 + $milliseconds
     while ([Environment]::TickCount64 -lt $end -and !$process.HasExited) {
         $rect = New-Object "UiApiTestbedPerfInput+RECT"
-        if ([UiApiTestbedPerfInput]::GetWindowRect($hwnd, [ref]$rect)) {
+        if ([UiApiTestbedPerfInput]::GetClientRect($hwnd, [ref]$rect)) {
             $width = [Math]::Max($rect.Right - $rect.Left, 1)
             $height = [Math]::Max($rect.Bottom - $rect.Top, 1)
-            $span_x = [Math]::Max($width - 240, 1)
-            $span_y = [Math]::Max($height - 220, 1)
-            $x = [Math]::Min($rect.Right - 20, $rect.Left + 120 + (($moves * 29) % $span_x))
-            $y = [Math]::Min($rect.Bottom - 20, $rect.Top + 110 + (($moves * 17) % $span_y))
-            [UiApiTestbedPerfInput]::SetCursorPos([int]$x, [int]$y) | Out-Null
-            Send-TestbedMouseMessage $hwnd 0x0200 ([int]$x) ([int]$y) 0
-            if (($moves % 30) -eq 0) {
-                Send-TestbedMouseMessage $hwnd 0x0201 ([int]$x) ([int]$y) 1
-                Start-Sleep -Milliseconds 8
-                Send-TestbedMouseMessage $hwnd 0x0202 ([int]$x) ([int]$y) 0
-                $clicks += 1
+            $elapsed = [Environment]::TickCount64 - $start
+            $progress = [Math]::Min($elapsed / [double]$milliseconds, 1.0)
+            $radius_scale = 1.0 - $progress
+            $radius = [Math]::Max(([Math]::Min($width, $height) * 0.5 - 1.0) * $radius_scale, 0.0)
+            $angle = $moves * 0.35
+            $client_x = [int][Math]::Round($width * 0.5 + [Math]::Cos($angle) * $radius)
+            $client_y = [int][Math]::Round($height * 0.5 + [Math]::Sin($angle) * $radius)
+            $client_x = [Math]::Min([Math]::Max($client_x, 0), $width - 1)
+            $client_y = [Math]::Min([Math]::Max($client_y, 0), $height - 1)
+
+            $point = New-Object "UiApiTestbedPerfInput+POINT"
+            $point.X = $client_x
+            $point.Y = $client_y
+            if ([UiApiTestbedPerfInput]::ClientToScreen($hwnd, [ref]$point)) {
+                [UiApiTestbedPerfInput]::SetCursorPos($point.X, $point.Y) | Out-Null
+                [UiApiTestbedPerfInput]::PostMessageW(
+                    $hwnd,
+                    0x0200,
+                    [UIntPtr]::Zero,
+                    (New-MouseLParam $client_x $client_y)
+                ) | Out-Null
             }
             $moves += 1
         }
         Start-Sleep -Milliseconds 16
     }
 
-    @("MouseMoves=$moves", "MouseClicks=$clicks")
+    @("MouseMoves=$moves", "MouseClicks=0")
 }
 
 function Invoke-MouseTrace {
