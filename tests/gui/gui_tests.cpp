@@ -1149,6 +1149,52 @@ namespace {
         gui::destroy_context(gui_context);
     }
 
+    TEST_CASE(scroll_panel_insets_scrollbar_inside_rounded_corners) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::draw::Context draw_context = {};
+        gui::draw::create_context(arena, {}, draw_context);
+
+        gui::Id const panel_id = gui::id("panel");
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {100.0f, 50.0f}});
+        {
+            auto panel = ui.scroll_panel(
+                panel_id,
+                {.layout = {.width = gui::fill(), .height = gui::px(30.0f)},
+                 .style = {.radius = 14.0f}}
+            );
+            TEST_EXPECT(context, panel);
+            for (size_t index = 0u; index < 3u; ++index) {
+                ui.spacer({.layout = {.width = gui::fill(), .height = gui::px(20.0f)}});
+            }
+        }
+        gui::end_frame(ui);
+
+        gui::draw::begin_frame(draw_context);
+        gui::render_frame(ui, draw_context);
+
+        TEST_EXPECT(context, gui::draw::styled_rect_command_count(draw_context) == 2u);
+        gui::draw::StyledRectCommand const* track =
+            gui::draw::styled_rect_command(draw_context, 0u);
+        gui::draw::StyledRectCommand const* thumb =
+            gui::draw::styled_rect_command(draw_context, 1u);
+        TEST_EXPECT(context, track != nullptr);
+        TEST_EXPECT(context, thumb != nullptr);
+        if (track != nullptr && thumb != nullptr) {
+            TEST_EXPECT(context, track->rect.min.y > 2.0f);
+            TEST_EXPECT(context, track->rect.max.y < 28.0f);
+            TEST_EXPECT(context, thumb->rect.min.y >= track->rect.min.y);
+            TEST_EXPECT(context, thumb->rect.max.y <= track->rect.max.y);
+        }
+
+        gui::draw::destroy_context(draw_context);
+        gui::destroy_context(gui_context);
+    }
+
     TEST_CASE(scroll_panel_scrollbar_click_and_drag_updates_scroll) {
         Arena arena = {};
         arena.init();

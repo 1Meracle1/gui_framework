@@ -308,11 +308,26 @@ namespace gui {
             return false;
         }
 
-        [[nodiscard]] auto scrollbar_track_rect(Rect rect) -> Rect {
+        [[nodiscard]] auto scrollbar_corner_inset(float radius) -> float {
+            if (radius <= SCROLLBAR_MARGIN) {
+                return SCROLLBAR_MARGIN;
+            }
+
+            float const x = radius - SCROLLBAR_MARGIN;
+            float const y = radius - std::sqrt(std::max(0.0f, radius * radius - x * x)) + 1.0f;
+            return std::max(SCROLLBAR_MARGIN, y);
+        }
+
+        [[nodiscard]] auto scrollbar_track_rect(Rect rect, float radius) -> Rect {
             float const width = std::min(
-                SCROLLBAR_WIDTH, std::max(0.0f, rect_width(rect) - SCROLLBAR_MARGIN * 2.0f));
-            return {{rect.max.x - SCROLLBAR_MARGIN - width, rect.min.y + SCROLLBAR_MARGIN},
-                    {rect.max.x - SCROLLBAR_MARGIN, rect.max.y - SCROLLBAR_MARGIN}};
+                SCROLLBAR_WIDTH, std::max(0.0f, rect_width(rect) - SCROLLBAR_MARGIN * 2.0f)
+            );
+            float const y_inset =
+                std::min(rect_height(rect) * 0.5f, scrollbar_corner_inset(radius));
+            return {
+                {rect.max.x - SCROLLBAR_MARGIN - width, rect.min.y + y_inset},
+                {rect.max.x - SCROLLBAR_MARGIN, rect.max.y - y_inset}
+            };
         }
 
         [[nodiscard]] auto scrollbar_track_valid(Rect track) -> bool {
@@ -360,7 +375,7 @@ namespace gui {
             if (!scrollbar_visible(box.scroll_state) || !hit_passes_clips(impl, index, point)) {
                 return false;
             }
-            Rect const track = scrollbar_track_rect(box.rect);
+            Rect const track = scrollbar_track_rect(box.rect, box.resolved_style.radius);
             return scrollbar_track_valid(track) && rect_contains(track, point);
         }
 
@@ -401,24 +416,28 @@ namespace gui {
             return (thumb_y - track.min.y) * max_y / movable_height;
         }
 
-        auto apply_scrollbar_input(ContextImpl* impl,
-                                   StateEntry* state,
-                                   Rect rect,
-                                   float viewport_height,
-                                   float content_height,
-                                   float max_y) -> void {
+        auto apply_scrollbar_input(
+            ContextImpl* impl,
+            StateEntry* state,
+            Rect rect,
+            float radius,
+            float viewport_height,
+            float content_height,
+            float max_y
+        ) -> void {
             if (state == nullptr || max_y <= 0.0f || content_height <= 0.0f) {
                 return;
             }
 
-            Rect const track = scrollbar_track_rect(rect);
+            Rect const track = scrollbar_track_rect(rect, radius);
             if (!scrollbar_track_valid(track)) {
                 return;
             }
 
             InputState const& input = impl->frame_desc.input;
-            Rect const thumb =
-                scrollbar_thumb_rect(track, state->scroll_y, max_y, viewport_height, content_height);
+            Rect const thumb = scrollbar_thumb_rect(
+                track, state->scroll_y, max_y, viewport_height, content_height
+            );
             bool const mouse_pressed = input.mouse_down[0u] && !impl->previous_input.mouse_down[0u];
             if (mouse_pressed && impl->active_scroll_id.value == 0u &&
                 rect_contains(track, input.mouse_pos)) {
@@ -1442,12 +1461,15 @@ namespace gui {
 
         auto clamp_multiline_cursor_to_scroll(BoxNode& box) -> void;
 
-        auto update_scroll_metrics(ContextImpl* impl,
-                                   StateEntry* state,
-                                   Rect rect,
-                                   float content_height,
-                                   bool apply_input,
-                                   bool consume_request) -> void {
+        auto update_scroll_metrics(
+            ContextImpl* impl,
+            StateEntry* state,
+            Rect rect,
+            float radius,
+            float content_height,
+            bool apply_input,
+            bool consume_request
+        ) -> void {
             if (state == nullptr) {
                 return;
             }
@@ -1462,7 +1484,9 @@ namespace gui {
                 consume_scroll_request(state, max_y);
             }
             state->scroll_y = std::clamp(state->scroll_y, 0.0f, max_y);
-            apply_scrollbar_input(impl, state, rect, viewport_height, scroll_content_height, max_y);
+            apply_scrollbar_input(
+                impl, state, rect, radius, viewport_height, scroll_content_height, max_y
+            );
             state->scroll_y = std::clamp(state->scroll_y, 0.0f, max_y);
             state->scroll_max_y = max_y;
             state->scroll_viewport_height = viewport_height;
@@ -1483,7 +1507,15 @@ namespace gui {
             if (box.kind == BoxKind::SCROLL_PANEL) {
                 float const content_height =
                     stack_content_main_size(impl, box, Axis::Y) + inset_height(box.layout.padding);
-                update_scroll_metrics(impl, box.scroll_state, rect, content_height, true, true);
+                update_scroll_metrics(
+                    impl,
+                    box.scroll_state,
+                    rect,
+                    box.resolved_style.radius,
+                    content_height,
+                    true,
+                    true
+                );
                 if (box.scroll_state != nullptr) {
                     box.scroll_offset_y = -box.scroll_state->scroll_y;
                 }
@@ -1499,7 +1531,15 @@ namespace gui {
                     input.scroll_delta_y != 0.0f && rect_contains(rect, input.mouse_pos);
                 float const scroll_y_before =
                     box.scroll_state != nullptr ? box.scroll_state->scroll_y : 0.0f;
-                update_scroll_metrics(impl, box.scroll_state, rect, content_height, true, true);
+                update_scroll_metrics(
+                    impl,
+                    box.scroll_state,
+                    rect,
+                    box.resolved_style.radius,
+                    content_height,
+                    true,
+                    true
+                );
                 bool const scrollbar_scroll =
                     box.scroll_state != nullptr &&
                     impl->active_scroll_id.value == box.scroll_state->id.value &&
@@ -1512,7 +1552,14 @@ namespace gui {
                 }
             } else if (box.kind == BoxKind::LIST) {
                 update_scroll_metrics(
-                    impl, box.scroll_state, rect, box.scroll_content_height, false, false);
+                    impl,
+                    box.scroll_state,
+                    rect,
+                    box.resolved_style.radius,
+                    box.scroll_content_height,
+                    false,
+                    false
+                );
             }
             if (box.first_child == INVALID_INDEX) {
                 return;
@@ -3114,7 +3161,7 @@ namespace gui {
                 return;
             }
 
-            Rect const track = scrollbar_track_rect(box.rect);
+            Rect const track = scrollbar_track_rect(box.rect, box.resolved_style.radius);
             if (!scrollbar_track_valid(track)) {
                 return;
             }
@@ -4426,6 +4473,7 @@ namespace gui {
             apply_scrollbar_input(impl,
                                   list.scroll_state,
                                   list.scroll_state->rect,
+                                  0.0f,
                                   viewport_height,
                                   content_height,
                                   max_scroll);
