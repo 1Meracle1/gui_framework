@@ -111,6 +111,18 @@ namespace {
         return nullptr;
     }
 
+    auto find_text_command(gui::draw::Context draw_context, StrRef text)
+        -> gui::draw::TextCommand const* {
+        for (size_t index = 0u; index < gui::draw::text_command_count(draw_context); ++index) {
+            gui::draw::TextCommand const* const command =
+                gui::draw::text_command(draw_context, index);
+            if (command != nullptr && command->text == text) {
+                return command;
+            }
+        }
+        return nullptr;
+    }
+
     TEST_CASE(version_is_available) {
         gui::Version const gui_version = gui::version();
 
@@ -1453,6 +1465,120 @@ namespace {
         TEST_EXPECT(context, command != nullptr);
         if (command != nullptr) {
             TEST_EXPECT(context, command->position.x == 23.0f);
+        }
+
+        gui::draw::destroy_context(draw_context);
+        gui::destroy_context(gui_context);
+        gui::font_cache::destroy_cache(cache);
+        gui::font_provider::destroy_context(provider);
+#else
+        TEST_EXPECT(context, provider_result == gui::font_provider::Result::UNSUPPORTED_PLATFORM);
+#endif
+    }
+
+    TEST_CASE(table_column_and_cell_alignment_position_text) {
+        Arena arena = {};
+        arena.init();
+
+        gui::font_provider::Context provider = {};
+        gui::font_provider::Result const provider_result =
+            gui::font_provider::create_context(arena, {}, provider);
+
+#if BASE_PLATFORM_WINDOWS
+        TEST_EXPECT(context, provider_result == gui::font_provider::Result::OK);
+
+        gui::font_cache::Cache cache = {};
+        gui::font_cache::create_cache(arena, provider, {}, cache);
+
+        gui::font_cache::Font font = {};
+        gui::font_cache::open_system_font(cache, "Segoe UI", font);
+
+        gui::ThemeDesc theme = gui::default_theme();
+        theme.root.font = font;
+        theme.root.font_size = 13.0f;
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {.theme = &theme}, gui_context);
+
+        gui::draw::Context draw_context = {};
+        gui::draw::create_context(arena, {.font_cache = cache}, draw_context);
+
+        gui::TableColumnDesc columns[2] = {
+            {
+                .alignment =
+                    {
+                        .horizontal = gui::TableAlign::END,
+                        .vertical = gui::TableAlign::START,
+                    },
+            },
+            {
+                .alignment = {
+                    .horizontal = gui::TableAlign::CENTER,
+                    .vertical = gui::TableAlign::END,
+                },
+            },
+        };
+        gui::Id const cell_a_id = gui::id("align_a");
+        gui::Id const cell_b_id = gui::id("align_b");
+        gui::Id const cell_c_id = gui::id("align_c");
+
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {180.0f, 100.0f}});
+        if (auto table = ui.table({
+                .box = {.layout = {.width = gui::children(), .height = gui::children()}},
+                .columns = slice(columns),
+            })) {
+            if (auto row = table.row()) {
+                if (auto cell = row.cell(
+                        cell_a_id,
+                        {.box = {.layout = {.width = gui::px(80.0f), .height = gui::px(40.0f)}}}
+                    )) {
+                    BASE_UNUSED(cell);
+                    ui.label("A", {.layout = {.width = gui::fill(), .height = gui::fill()}});
+                }
+                if (auto cell = row.cell(
+                        cell_b_id,
+                        {.box = {.layout = {.width = gui::px(80.0f), .height = gui::px(40.0f)}}}
+                    )) {
+                    BASE_UNUSED(cell);
+                    ui.label("B", {.layout = {.width = gui::fill(), .height = gui::fill()}});
+                }
+            }
+            if (auto row = table.row()) {
+                if (auto cell = row.cell(
+                        cell_c_id,
+                        {
+                            .box = {.layout = {.width = gui::px(80.0f), .height = gui::px(40.0f)}},
+                            .alignment = {
+                                .horizontal = gui::TableAlign::CENTER,
+                                .vertical = gui::TableAlign::END,
+                            },
+                        }
+                    )) {
+                    BASE_UNUSED(cell);
+                    ui.label("C", {.layout = {.width = gui::fill(), .height = gui::fill()}});
+                }
+            }
+        }
+        gui::end_frame(ui);
+
+        gui::draw::begin_frame(draw_context);
+        gui::render_frame(ui, draw_context);
+
+        gui::draw::TextCommand const* a = find_text_command(draw_context, "A");
+        gui::draw::TextCommand const* b = find_text_command(draw_context, "B");
+        gui::draw::TextCommand const* c = find_text_command(draw_context, "C");
+        gui::BoxInfo const* cell_b = ui.find_box(cell_b_id, gui::BoxKind::TABLE_CELL);
+
+        TEST_EXPECT(context, a != nullptr);
+        TEST_EXPECT(context, b != nullptr);
+        TEST_EXPECT(context, c != nullptr);
+        TEST_EXPECT(context, cell_b != nullptr);
+        if (a != nullptr && b != nullptr && c != nullptr && cell_b != nullptr) {
+            TEST_EXPECT(context, a->position.x > c->position.x);
+            TEST_EXPECT(context, c->position.y > a->position.y);
+            TEST_EXPECT(context, b->position.y > a->position.y);
+            TEST_EXPECT(context, b->position.x > cell_b->rect.min.x + 20.0f);
+            TEST_EXPECT(context, b->position.x < cell_b->rect.max.x - 20.0f);
         }
 
         gui::draw::destroy_context(draw_context);

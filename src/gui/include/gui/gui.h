@@ -271,11 +271,28 @@ namespace gui {
         BoxDesc box = {};
     };
 
+    enum class TableAlign : uint8_t {
+        INHERIT,
+        START,
+        CENTER,
+        END,
+    };
+
+    struct TableAlignment {
+        TableAlign horizontal = TableAlign::INHERIT;
+        TableAlign vertical = TableAlign::INHERIT;
+    };
+
+    struct TableColumnDesc {
+        TableAlignment alignment = {};
+    };
+
     struct TableCellDesc {
         size_t column_span = 1u;
         size_t row_span = 1u;
         StrRef sort_text = {};
         BoxDesc box = {};
+        TableAlignment alignment = {};
     };
 
     enum class TableSortDirection : uint8_t {
@@ -326,6 +343,7 @@ namespace gui {
         BoxDesc box = {};
         TableSortDesc sort = {};
         TableFilterDesc filter = {};
+        Slice<TableColumnDesc const> columns = {};
     };
 
     struct TabItem {

@@ -89,7 +89,11 @@ namespace gui {
             TableSortDirection table_sort_direction = TableSortDirection::NONE;
             TableSortDesc table_sort = {};
             TableFilterDesc table_filter = {};
+            Slice<TableColumnDesc const> table_columns = {};
             StrRef table_sort_text = {};
+            TableAlignment table_alignment = {};
+            Align table_align_x = Align::START;
+            Align table_align_y = Align::CENTER;
             BoxFlags flags = BOX_FLAG_NONE;
             bool duplicate_id = false;
             bool interactive = false;
@@ -123,6 +127,11 @@ namespace gui {
             size_t column_capacity = 0u;
             size_t column_count = 0u;
             size_t cell_count = 0u;
+        };
+
+        struct ResolvedTableAlignment {
+            Align horizontal = Align::START;
+            Align vertical = Align::CENTER;
         };
 
         struct TextLine {
@@ -608,13 +617,72 @@ namespace gui {
             return 0.0f;
         }
 
-        [[nodiscard]] auto text_x_offset(BoxNode const& box, float content_width, float text_width)
-            -> float {
-            if (box.kind == BoxKind::BUTTON) {
-                return std::max(0.0f, content_width - text_width - icon_text_width(box)) * 0.5f +
-                       icon_text_width(box);
+        [[nodiscard]] auto table_text_cell(ContextImpl const* impl, BoxNode const& box)
+            -> BoxNode const* {
+            for (size_t index = box.parent_index; index != INVALID_INDEX;
+                 index = impl->boxes[index].parent_index) {
+                BoxNode const& parent = impl->boxes[index];
+                if (table_cell_box(parent.kind)) {
+                    return &parent;
+                }
+                if (floating_box(parent.kind)) {
+                    return nullptr;
+                }
             }
-            return control_text_offset(box.kind) + icon_text_width(box);
+            return nullptr;
+        }
+
+        [[nodiscard]] auto text_align_offset(Align align, float available, float size) -> float {
+            float const free_space = std::max(0.0f, available - size);
+            switch (align) {
+            case Align::CENTER:
+                return free_space * 0.5f;
+            case Align::END:
+                return free_space;
+            case Align::START:
+            case Align::STRETCH:
+                return 0.0f;
+            }
+            return 0.0f;
+        }
+
+        [[nodiscard]] auto text_align_x(ContextImpl const* impl, BoxNode const& box) -> Align {
+            if (box.kind == BoxKind::BUTTON) {
+                return Align::CENTER;
+            }
+            BoxNode const* const cell = table_text_cell(impl, box);
+            return cell != nullptr ? cell->table_align_x : Align::START;
+        }
+
+        [[nodiscard]] auto text_align_y(ContextImpl const* impl, BoxNode const& box) -> Align {
+            BoxNode const* const cell = table_text_cell(impl, box);
+            return cell != nullptr ? cell->table_align_y : Align::CENTER;
+        }
+
+        [[nodiscard]] auto
+        text_y_offset(Align align, float content_height, float text_height, bool multiline)
+            -> float {
+            float const free_space = content_height - text_height;
+            switch (align) {
+            case Align::CENTER:
+                return (multiline ? std::max(0.0f, free_space) : free_space) * 0.5f;
+            case Align::END:
+                return multiline ? std::max(0.0f, free_space) : free_space;
+            case Align::START:
+            case Align::STRETCH:
+                return 0.0f;
+            }
+            return 0.0f;
+        }
+
+        [[nodiscard]] auto text_x_offset(
+            ContextImpl const* impl, BoxNode const& box, float content_width, float text_width
+        ) -> float {
+            float const fixed = control_text_offset(box.kind) + icon_text_width(box);
+            return fixed +
+                   text_align_offset(
+                       text_align_x(impl, box), std::max(0.0f, content_width - fixed), text_width
+                   );
         }
 
         [[nodiscard]] auto input_text_scroll_x(BoxNode const& box, float content_width) -> float {
@@ -628,26 +696,29 @@ namespace gui {
             return std::max(0.0f, cursor_x - visible_width);
         }
 
-        [[nodiscard]] auto text_position(BoxNode const& box, Rect rect) -> Vec2 {
+        [[nodiscard]] auto text_position(ContextImpl const* impl, BoxNode const& box, Rect rect)
+            -> Vec2 {
             Vec2 const text_dim = text_size(box);
             float const content_width =
                 std::max(0.0f, rect_width(rect) - inset_width(box.layout.padding));
-            float const x_offset = text_x_offset(box, content_width, text_dim.x);
+            float const x_offset = text_x_offset(impl, box, content_width, text_dim.x);
             bool const multiline = text_multiline(box.text) || multiline_input_text_box(box.kind);
             float const scroll_y = box.layout.scroll_y && box.scroll_state != nullptr && multiline
                                        ? box.scroll_state->scroll_y
                                        : 0.0f;
-            float const extra_y = rect_height(rect) - inset_height(box.layout.padding) - text_dim.y;
+            float const content_height =
+                std::max(0.0f, rect_height(rect) - inset_height(box.layout.padding));
+            float const y_offset =
+                text_y_offset(text_align_y(impl, box), content_height, text_dim.y, multiline);
             return {
                 rect.min.x + box.layout.padding.left + x_offset -
                     input_text_scroll_x(box, content_width),
-                rect.min.y + box.layout.padding.top - scroll_y +
-                    (multiline ? std::max(0.0f, extra_y) : extra_y) * 0.5f,
+                rect.min.y + box.layout.padding.top - scroll_y + y_offset,
             };
         }
 
-        [[nodiscard]] auto text_position(BoxNode const& box) -> Vec2 {
-            return text_position(box, box.rect);
+        [[nodiscard]] auto text_position(ContextImpl const* impl, BoxNode const& box) -> Vec2 {
+            return text_position(impl, box, box.rect);
         }
 
         [[nodiscard]] auto image_measure_size(BoxNode const& box) -> Vec2 {
@@ -1143,6 +1214,36 @@ namespace gui {
 
         [[nodiscard]] auto table_span(size_t value) -> size_t {
             return std::max(value, static_cast<size_t>(1u));
+        }
+
+        auto apply_table_axis_alignment(TableAlign value, Align& out) -> void {
+            switch (value) {
+            case TableAlign::START:
+                out = Align::START;
+                break;
+            case TableAlign::CENTER:
+                out = Align::CENTER;
+                break;
+            case TableAlign::END:
+                out = Align::END;
+                break;
+            case TableAlign::INHERIT:
+                break;
+            }
+        }
+
+        [[nodiscard]] auto
+        resolve_table_alignment(BoxNode const& table, BoxNode const& cell, size_t column)
+            -> ResolvedTableAlignment {
+            ResolvedTableAlignment result = {};
+            if (column < table.table_columns.size()) {
+                TableAlignment const& alignment = table.table_columns[column].alignment;
+                apply_table_axis_alignment(alignment.horizontal, result.horizontal);
+                apply_table_axis_alignment(alignment.vertical, result.vertical);
+            }
+            apply_table_axis_alignment(cell.table_alignment.horizontal, result.horizontal);
+            apply_table_axis_alignment(cell.table_alignment.vertical, result.vertical);
+            return result;
         }
 
         [[nodiscard]] auto insets_empty(Insets value) -> bool {
@@ -1862,6 +1963,10 @@ namespace gui {
                  ++placement_index) {
                 TableCellPlacement const& cell = table.cells[placement_index];
                 BoxNode& box_cell = impl->boxes[cell.box_index];
+                ResolvedTableAlignment const alignment =
+                    resolve_table_alignment(box, box_cell, cell.column);
+                box_cell.table_align_x = alignment.horizontal;
+                box_cell.table_align_y = alignment.vertical;
                 float const x = content.min.x + table_axis_offset(table.columns, cell.column, gap);
                 float const y = content.min.y + table_axis_offset(table.rows, cell.row, gap);
                 float const width =
@@ -2829,12 +2934,15 @@ namespace gui {
             return cursor;
         }
 
-        [[nodiscard]] auto text_index_from_mouse(BoxNode const& box, Vec2 mouse_pos) -> size_t {
+        [[nodiscard]] auto
+        text_index_from_mouse(ContextImpl const* impl, BoxNode const& box, Vec2 mouse_pos)
+            -> size_t {
             if (box.text.empty()) {
                 return 0u;
             }
 
-            Vec2 const pos = text_position(box, box.state != nullptr ? box.state->rect : box.rect);
+            Vec2 const pos =
+                text_position(impl, box, box.state != nullptr ? box.state->rect : box.rect);
             float const line_height = text_line_height(box);
             size_t const target_line =
                 mouse_pos.y <= pos.y
@@ -2870,8 +2978,9 @@ namespace gui {
             return line_index;
         }
 
-        [[nodiscard]] auto text_cursor_position(BoxNode const& box, size_t cursor) -> Vec2 {
-            Vec2 const pos = text_position(box);
+        [[nodiscard]] auto
+        text_cursor_position(ContextImpl const* impl, BoxNode const& box, size_t cursor) -> Vec2 {
+            Vec2 const pos = text_position(impl, box);
             if (box.text.empty()) {
                 return pos;
             }
@@ -2900,7 +3009,8 @@ namespace gui {
                 ordered_text_selection(clamp_text_selection(selection, box.text.size()));
             if (box.state != nullptr) {
                 Signal const signal = box.signal;
-                size_t const cursor = text_index_from_mouse(box, impl->frame_desc.input.mouse_pos);
+                size_t const cursor =
+                    text_index_from_mouse(impl, box, impl->frame_desc.input.mouse_pos);
                 bool const triple_clicked =
                     signal.hovered && impl->frame_desc.input.mouse_triple_clicked[0u];
                 bool const double_clicked =
@@ -3825,7 +3935,7 @@ namespace gui {
                 );
             } else if (input_text_box(box.kind) && box.signal.focused && box.state != nullptr) {
                 size_t const cursor = std::min(box.state->text_cursor, box.text.size());
-                Vec2 const pos = text_cursor_position(box, cursor);
+                Vec2 const pos = text_cursor_position(impl, box, cursor);
                 Rect const caret = {{pos.x, pos.y}, {pos.x + 1.0f, pos.y + text_line_height(box)}};
                 draw_widget_rect(draw_context, caret, tokens.text, {}, 0.0f, 0.0f, opacity);
             }
@@ -3845,7 +3955,7 @@ namespace gui {
                 return;
             }
 
-            Vec2 const pos = text_position(box);
+            Vec2 const pos = text_position(impl, box);
             Color color = impl->theme.tokens.accent;
             color.a *= 0.45f;
             float const line_height = text_line_height(box);
@@ -4002,7 +4112,7 @@ namespace gui {
                     text_style.color = to_draw_color(
                         color_mul_alpha(box.resolved_style.foreground, box.resolved_style.opacity)
                     );
-                    Vec2 const text_pos = text_position(box);
+                    Vec2 const text_pos = text_position(impl, box);
                     float const line_height = text_line_height(box);
                     size_t line_index = 0u;
                     size_t offset = 0u;
@@ -4381,6 +4491,7 @@ namespace gui {
         box.table_column_span = table_span(desc.column_span);
         box.table_row_span = table_span(desc.row_span);
         box.table_sort_text = copy_frame_str(impl, desc.sort_text);
+        box.table_alignment = desc.alignment;
         push_parent(impl, index);
         return {m_scope.m_frame, index};
     }
@@ -4409,6 +4520,7 @@ namespace gui {
         box.table_column_span = table_span(desc.column_span);
         box.table_row_span = table_span(desc.row_span);
         box.table_sort_text = copy_frame_str(impl, desc.sort_text);
+        box.table_alignment = desc.alignment;
         push_parent(impl, index);
         return {m_scope.m_frame, index};
     }
@@ -4620,6 +4732,7 @@ namespace gui {
         box.table_column_span = table_span(desc.column_span);
         box.table_row_span = table_span(desc.row_span);
         box.table_sort_text = copy_frame_str(impl, desc.sort_text);
+        box.table_alignment = desc.alignment;
         push_parent(impl, index);
 
         Signal signal = {};
@@ -4680,6 +4793,7 @@ namespace gui {
         box.table_column_span = table_span(desc.column_span);
         box.table_row_span = table_span(desc.row_span);
         box.table_sort_text = copy_frame_str(impl, desc.sort_text);
+        box.table_alignment = desc.alignment;
         push_parent(impl, index);
 
         Signal signal = {};
@@ -5041,6 +5155,7 @@ namespace gui {
             box.table_sort_enabled = !desc.sort.columns.empty();
             box.table_filter = desc.filter;
             box.table_filter_enabled = !desc.filter.columns.empty();
+            box.table_columns = desc.columns;
         }
         return result;
     }
@@ -5054,6 +5169,7 @@ namespace gui {
             box.table_sort_enabled = !desc.sort.columns.empty();
             box.table_filter = desc.filter;
             box.table_filter_enabled = !desc.filter.columns.empty();
+            box.table_columns = desc.columns;
         }
         return result;
     }
