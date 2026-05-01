@@ -6232,6 +6232,19 @@ namespace gui {
         return nullptr;
     }
 
+    auto Frame::focused_box() const -> BoxInfo const* {
+        ContextImpl const* const impl = impl_from_frame(*this);
+        if (impl == nullptr) {
+            return nullptr;
+        }
+        for (size_t index = 0u; index < impl->box_count; ++index) {
+            if (impl->boxes[index].signal.focused) {
+                return impl->infos + index;
+            }
+        }
+        return nullptr;
+    }
+
     auto begin_frame(Context context, FrameDesc const& desc) -> Frame {
         ContextImpl* const impl = impl_from_context(context);
         ASSERT(impl != nullptr);

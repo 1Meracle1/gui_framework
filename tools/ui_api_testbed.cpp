@@ -2326,6 +2326,8 @@ namespace {
         bool redraw_pending = true;
         bool resize_pending = false;
         render::SizeU32 pending_size = {};
+        gui::Frame last_frame = {};
+        gui::Id mouse_hit_id = {};
         gui::InputState input = {};
         gui::KeyEvent key_events[MAX_KEY_EVENTS_PER_FRAME] = {};
         gui::Vec2 left_double_click_pos = {};
@@ -2339,6 +2341,44 @@ namespace {
         if (state != nullptr) {
             state->redraw_pending = true;
         }
+    }
+
+    [[nodiscard]] auto frame_ready(gui::Frame const& frame) -> bool {
+        return frame.box_info_count() != 0u;
+    }
+
+    [[nodiscard]] auto frame_hit_id(gui::Frame const& frame, gui::Vec2 pos) -> gui::Id {
+        gui::BoxInfo const* const box = frame.hit_test(pos);
+        return box != nullptr ? box->id : gui::Id{};
+    }
+
+    [[nodiscard]] auto focused_box_exists(gui::Frame const& frame) -> bool {
+        return frame.focused_box() != nullptr;
+    }
+
+    [[nodiscard]] auto focused_text_box_exists(gui::Frame const& frame) -> bool {
+        gui::BoxInfo const* const box = frame.focused_box();
+        return box != nullptr && (box->kind == gui::BoxKind::INPUT_TEXT ||
+                                  box->kind == gui::BoxKind::INPUT_TEXT_MULTILINE);
+    }
+
+    [[nodiscard]] auto shortcut_key(gui::Key key, gui::KeyMods mods) -> bool {
+        if ((mods & gui::KEY_MOD_CTRL) == 0u) {
+            return false;
+        }
+        return key == gui::Key::A || key == gui::Key::C || key == gui::Key::V ||
+               key == gui::Key::X || key == gui::Key::Z;
+    }
+
+    [[nodiscard]] auto key_event_needs_frame(AppState const& state, gui::Key key, gui::KeyMods mods)
+        -> bool {
+        return state.redraw_pending || !frame_ready(state.last_frame) || key == gui::Key::TAB ||
+               shortcut_key(key, mods) || focused_box_exists(state.last_frame);
+    }
+
+    [[nodiscard]] auto text_event_needs_frame(AppState const& state) -> bool {
+        return state.redraw_pending || !frame_ready(state.last_frame) ||
+               focused_text_box_exists(state.last_frame);
     }
 
     [[nodiscard]] auto hash_bytes(uint64_t hash, void const* data, size_t size) -> uint64_t {
@@ -2780,7 +2820,8 @@ namespace {
         return mods;
     }
 
-    auto push_key_event(AppState* state, gui::Key key, gui::KeyEventKind kind) -> void {
+    auto push_key_event(AppState* state, gui::Key key, gui::KeyEventKind kind, gui::KeyMods mods)
+        -> void {
         if (state == nullptr || key == gui::Key::UNKNOWN) {
             return;
         }
@@ -2792,7 +2833,7 @@ namespace {
         }
 
         size_t const index = state->input.key_event_count;
-        state->key_events[index] = {.key = key, .kind = kind, .mods = current_key_mods()};
+        state->key_events[index] = {.key = key, .kind = kind, .mods = mods};
         state->input.key_events = state->key_events;
         state->input.key_event_count += 1u;
 
@@ -2808,14 +2849,14 @@ namespace {
 #endif
     }
 
-    auto push_text_event(AppState* state, uint32_t codepoint) -> void {
+    auto push_text_event(AppState* state, uint32_t codepoint, gui::KeyMods mods) -> void {
         if (state == nullptr || state->input.key_event_count >= MAX_KEY_EVENTS_PER_FRAME) {
             return;
         }
 
         size_t const index = state->input.key_event_count;
         state->key_events[index] = {
-            .kind = gui::KeyEventKind::TEXT, .mods = current_key_mods(), .codepoint = codepoint
+            .kind = gui::KeyEventKind::TEXT, .mods = mods, .codepoint = codepoint
         };
         state->input.key_events = state->key_events;
         state->input.key_event_count += 1u;
@@ -3026,13 +3067,13 @@ namespace {
         return true;
     }
 
-    auto build_ui_commands(
+    [[nodiscard]] auto build_ui_commands(
         UiRuntime* runtime,
         render::SizeU32 window_size,
         gui::InputState const& input,
         float delta_time,
         ManualTrace* trace
-    ) -> void {
+    ) -> gui::Frame {
         TRACE_SCOPE(trace, "ui_build");
         LiquidGlassSpec style = {};
         {
@@ -3092,6 +3133,7 @@ namespace {
 #if BASE_DEBUG
         trace_draw_command_counts(trace, runtime->draw_context);
 #endif
+        return ui;
     }
 
     auto window_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) -> LRESULT {
@@ -3109,8 +3151,17 @@ namespace {
 
         case WM_MOUSEMOVE:
             if (global_app_state != nullptr) {
-                global_app_state->input.mouse_pos = {lparam_x(lparam), lparam_y(lparam)};
-                request_redraw(global_app_state);
+                gui::Vec2 const pos = {lparam_x(lparam), lparam_y(lparam)};
+                gui::Id const hit_id = frame_hit_id(global_app_state->last_frame, pos);
+                bool const needs_frame = global_app_state->redraw_pending ||
+                                         !frame_ready(global_app_state->last_frame) ||
+                                         global_app_state->input.mouse_down[0u] ||
+                                         hit_id.value != global_app_state->mouse_hit_id.value;
+                global_app_state->input.mouse_pos = pos;
+                global_app_state->mouse_hit_id = hit_id;
+                if (needs_frame) {
+                    request_redraw(global_app_state);
+                }
             }
             return 0;
 
@@ -3167,8 +3218,12 @@ namespace {
         case WM_SYSKEYDOWN: {
             gui::Key const key = key_from_virtual_key(wparam);
             if (key != gui::Key::UNKNOWN) {
-                push_key_event(global_app_state, key, key_down_kind(lparam));
-                request_redraw(global_app_state);
+                gui::KeyMods const mods = current_key_mods();
+                if (global_app_state != nullptr &&
+                    key_event_needs_frame(*global_app_state, key, mods)) {
+                    push_key_event(global_app_state, key, key_down_kind(lparam), mods);
+                    request_redraw(global_app_state);
+                }
                 return 0;
             }
             return DefWindowProcW(hwnd, message, wparam, lparam);
@@ -3176,8 +3231,12 @@ namespace {
 
         case WM_CHAR:
             if (global_app_state != nullptr) {
-                push_text_event(global_app_state, static_cast<uint32_t>(wparam));
-                request_redraw(global_app_state);
+                if (text_event_needs_frame(*global_app_state)) {
+                    push_text_event(
+                        global_app_state, static_cast<uint32_t>(wparam), current_key_mods()
+                    );
+                    request_redraw(global_app_state);
+                }
             }
             return 0;
 
@@ -3425,13 +3484,15 @@ namespace {
                     TRACE_SCOPE(&trace, "render_begin_frame");
                     render::begin_frame(render_context);
                 }
-                build_ui_commands(
+                app_state.last_frame = build_ui_commands(
                     &runtime,
                     render::window_size(render_window),
                     app_state.input,
                     delta_time,
                     &trace
                 );
+                app_state.mouse_hit_id =
+                    frame_hit_id(app_state.last_frame, app_state.input.mouse_pos);
 
                 render::WindowRenderPassDesc pass_desc = {};
                 pass_desc.window = render_window;

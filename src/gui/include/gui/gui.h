@@ -763,6 +763,7 @@ namespace gui {
         [[nodiscard]] auto find_box(Id id) const -> BoxInfo const*;
         [[nodiscard]] auto find_box(Id id, BoxKind kind) const -> BoxInfo const*;
         [[nodiscard]] auto hit_test(Vec2 point) const -> BoxInfo const*;
+        [[nodiscard]] auto focused_box() const -> BoxInfo const*;
 
       private:
         friend class Scope;
