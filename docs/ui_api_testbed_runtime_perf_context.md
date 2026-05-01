@@ -213,6 +213,7 @@ Add one entry per completed step. Keep entries short but comparable.
 | 1 | 2026-05-01 | `windows-msvc-debug` `ui_api_testbed`, commit `7348779` with perf docs untracked | Default 1280x800 window, visible idle dark Testbed tab, D3D11 VSYNC, debug layer on, no input after 3s warmup | `build\perf\ui_api_testbed\step_01_debug_idle_vs_cpu.diagsession`; merged ETL `build\perf\ui_api_testbed\step_01_debug_idle_vs_cpu_merged.etl`; stack report `build\perf\ui_api_testbed\step_01_debug_idle_xperf_stack_butterfly_merged.html`; summaries `step_01_debug_idle_top_inclusive_functions.txt` and `step_01_debug_idle_top_modules.txt` | 8.61% no profiler over 10.01s; 8.23% during VS CPU sample over 12.02s, 12 logical processors | Top inclusive: `run_windowed` 96.59%, `build_ui_commands` 88.63%, `gui::render_frame` 50.23%, text advance chain about 47%, text raster chain about 32%, `gui::end_frame` 25.99%, layout about 24.75%. Top exclusive modules: app 42.03%, DWrite 22.94%, kernel 11.62%, Win32k 5.62%, D3D debug layer 2.11%. | Local app symbols resolved after `xperf -merge`; OS/driver/DWrite symbols mostly unresolved. WPR/xperf were installed, but `wpr.exe -start CPU -filemode` failed before capture with `0xc5585011` ("Failed to enable the policy to profile system performance"). |
 | 2 | 2026-05-01 | `windows-msvc-debug` `ui_api_testbed`, commit `7348779` with perf docs untracked and local trace edits | Default 1280x800 window, visible idle dark Testbed tab, D3D11 VSYNC, debug layer on, auto-exit manual trace after 3s warmup and 5s capture | `build\perf\ui_api_testbed\step_02_debug_idle_trace.json` Chrome Trace JSON, 968,213 bytes | 8.51% over 5.00s, normalized with `GetProcessTimes`/QPC across 12 logical processors | 354 frames, 70.8 fps. Avg draw counts: 175 total, 29 primitive commands, 10 primitive batches, 87 styled rects, 78 text, 0 layers. Trace contains `frame`, `pump_messages`, `theme_setup`, `begin_ui_frame`, `draw_ui`, `end_ui_frame`, `draw_command_recording`, `draw_begin_frame`, `draw_backdrop`, `gui_render_frame`, `draw_end_frame`, `render_begin_frame`, `draw_render_commands_to_window`, `present`, draw command counters, and summary metadata. | Idle run had no input messages, so `input_handling` did not appear. No `idle_wait` appeared because the visible VSYNC loop does not sleep outside present. |
 | 3 | 2026-05-01 | `windows-msvc-debug` `ui_api_testbed`, commit `0a2ebf4` with measurement-only `--no-d3d-debug-layer` trace option in the working tree | Default 1280x800 window, visible idle dark Testbed tab, D3D11 VSYNC, no input after 3s warmup and 5s capture; compared debug layer on and off | Debug on `build\perf\ui_api_testbed\step_03_debug_idle_trace_debug_layer_on.json`; debug off `build\perf\ui_api_testbed\step_03_debug_idle_trace_debug_layer_off.json`; reviewed Step 1 sampled profile artifacts | Debug on: 8.57%, 350 frames, 69.8 FPS. Debug off: 8.75%, 366 frames, 73.2 FPS. 12 logical processors. | Debug on means/p95: frame 14.318/15.420 ms, `ui_build` 13.070/14.140 ms, `draw_command_recording` 7.406/8.184 ms, `gui_render_frame` 7.187/7.973 ms, `end_ui_frame` 3.893/4.196 ms, `draw_ui` 1.648/1.808 ms, `draw_render_commands_to_window` 1.108/1.172 ms, `present` 0.080/0.090 ms. Debug off means/p95: frame 13.655/14.803 ms, `ui_build` 12.988/13.988 ms, `draw_command_recording` 7.345/8.257 ms, `gui_render_frame` 7.126/8.037 ms, `draw_render_commands_to_window` 0.535/0.561 ms, `present` 0.072/0.089 ms. Draw counts unchanged: 175 total, 29 primitive, 10 batches, 87 styled rects, 78 text, 0 layers. Step 1 sampled stacks still correlate: `build_ui_commands`, `gui::render_frame`, text advance/raster, and layout dominate. | Measured ranking: optimize idle redraw frequency first. Then, if redraw cost still matters, optimize per-redraw `gui_render_frame` text/layout/command volume. D3D debug layer is measurable in renderer submission but not the dominant idle CPU driver; present, pump, and theme setup are small. |
+| 4 | 2026-05-01 | `windows-msvc-debug` `ui_api_testbed`, working tree with local idle redraw gate in `tools/ui_api_testbed.cpp` | Default 1280x800 window, visible idle dark Testbed tab, D3D11 VSYNC, debug layer on, no input after 3s warmup; local message/state gated redraw policy | Trace `build\perf\ui_api_testbed\step_04_debug_idle_trace_after_redraw_gate.json`; trace summary `step_04_debug_idle_trace_after_redraw_gate_summary.txt`; CPU `step_04_debug_idle_cpu_after_redraw_gate.txt`; interaction screenshots `step_04_interaction_window_after.png` and `step_04_interaction_scroll_after.png` | Trace CPU: 0.03% over 5.00s. Independent CPU: 0.03% over 10.02s, 12 logical processors. Before comparison: Step 3 debug-layer-on idle trace was 8.57%, 350 frames, 69.8 FPS. | After idle gate: 0 rendered frames, 0 FPS, draw counts all 0 during the idle capture. Trace has 5 message/wait cycles: `idle_wait` mean/p95 999.121/2383.063 ms, `pump_messages` mean/p95 0.995/3.819 ms. The sampled before profile remains the relevant hotspot baseline: it showed continuous redraw cost in `build_ui_commands`/`gui::render_frame`; after the gate there is no comparable hot redraw stack during idle because the app is waiting. | DiagnosticsHub after-profile attempts failed before creating a session with "Value does not fall within the expected range" in attach and launch modes. Direct xperf retry with `SysProf` failed with `Access is denied`. Manual real-window interaction pass covered mouse move, theme switch, list scroll, text editing, popup, modal, and resize without a crash or missed visible update. |
 
 Step 1 commands:
 
@@ -282,6 +283,50 @@ Step 3 commands:
 - Stage timing summary: parsed both Step 3 Chrome Trace JSON files by pairing
   `B`/`E` zone events and computing mean and p95 in milliseconds.
 
+Step 4 redraw policy:
+
+- Keep redraw gating local to `tools/ui_api_testbed.cpp`.
+- `AppState::redraw_pending` starts true for initial paint.
+- Win32 input and resize messages that the local app handles set
+  `redraw_pending`.
+- A rendered frame hashes `TestbedState` before and after UI building; if local
+  app state changed during the immediate-mode frame, the loop renders one
+  follow-up frame immediately.
+- When no redraw is pending, the loop records `idle_wait` and calls
+  `MsgWaitForMultipleObjectsEx(..., QS_ALLINPUT, MWMO_INPUTAVAILABLE)`.
+- Debug trace auto-start and auto-exit still work while idle by using a
+  trace-aware wait timeout.
+
+Step 4 commands:
+
+- Format check: `clang-format --dry-run --Werror tools\ui_api_testbed.cpp`.
+- Build: `.\build.bat windows-msvc-debug ui_api_testbed`.
+- Idle trace:
+  `build\windows-msvc-debug\Debug\ui_api_testbed.exe --trace build\perf\ui_api_testbed\step_04_debug_idle_trace_after_redraw_gate.json --trace-warmup-ms 3000 --trace-duration-ms 5000`.
+- Trace stdout:
+  `ui_api_testbed trace: wrote build\perf\ui_api_testbed\step_04_debug_idle_trace_after_redraw_gate.json frames=0 duration_ms=5000.8 fps=0.0 process_cpu=0.03% commands_avg=0.0 max=0 primitive_avg=0.0 styled_rect_avg=0.0 text_avg=0.0 layers_avg=0.0`.
+- Trace summary: parsed
+  `build\perf\ui_api_testbed\step_04_debug_idle_trace_after_redraw_gate.json`
+  into
+  `build\perf\ui_api_testbed\step_04_debug_idle_trace_after_redraw_gate_summary.txt`.
+- CPU outcome without profiler: launched
+  `build\windows-msvc-debug\Debug\ui_api_testbed.exe`, warmed for 3 seconds,
+  sampled process CPU for 10.02 seconds, and saved
+  `build\perf\ui_api_testbed\step_04_debug_idle_cpu_after_redraw_gate.txt`
+  with `ProcessCpuPercent=0.03`.
+- Sampled profile attempts:
+  `VSDiagnostics.exe start 25 /attach:<pid> /loadConfig:<VS>\Team Tools\DiagnosticsHub\Collector\AgentConfigs\CpuUsageLow.json /scratchLocation:build\perf\ui_api_testbed\step_04_vs_cpu_scratch_retry /symbolCachePath:build\perf\ui_api_testbed\symbols`
+  failed before creating a session with "Value does not fall within the expected
+  range"; `VSDiagnostics.exe start 26 /launch:<ui_api_testbed.exe> ...` failed
+  the same way; `xperf.exe -on SysProf -stackwalk profile` failed with
+  `Access is denied`.
+- Interaction pass: real-window PowerShell input automation moved the mouse,
+  toggled theme, edited single-line and multiline text, opened popup and modal,
+  resized the window, and captured
+  `build\perf\ui_api_testbed\step_04_interaction_window_after.png`. A targeted
+  list scroll check captured
+  `build\perf\ui_api_testbed\step_04_interaction_scroll_after.png`.
+
 ## Decision Log
 
 - 2026-05-01: Use a staged prompt-driven workflow. The first implementation
@@ -313,29 +358,34 @@ Step 3 commands:
   `draw_command_recording`/`gui_render_frame`, and the sampled profile maps that
   work to text measurement/rasterization and layout. D3D debug-layer overhead is
   real but secondary; present, pump, and theme setup are small.
+- 2026-05-01: Implemented the first idle redraw policy locally in
+  `tools/ui_api_testbed.cpp`. It redraws after handled input messages, resize,
+  and local app state mutations, then waits for messages while idle. The default
+  debug idle outcome dropped from Step 3's 8.57% CPU / 350 frames in 5 seconds
+  to 0.03% CPU / 0 rendered frames in the same trace window.
 
 ## Current Best Diagnosis
 
-Step 3 confirms the idle cost is dominated by continuous redraw frequency, not
-present blocking or debug-layer behavior. The visible unchanged window redraws
-about 70-73 times per second and consumes about 8.6-8.8% normalized process CPU.
-Each frame spends about 13 ms in `ui_build`; most of that is
-`draw_command_recording` and `gui_render_frame`. The Step 1 sampled profile maps
-that stage to text measurement/rasterization and layout.
+Step 4 confirms the first idle redraw gate should stay local for now. The app no
+longer redraws continuously while unchanged: the 5s idle trace after warmup
+recorded 0 rendered frames and 0.03% process CPU, down from Step 3's 350 frames
+and 8.57% CPU with the D3D debug layer on.
 
-Turning off the D3D debug layer cuts renderer submission from about 1.11 ms to
-0.54 ms mean, but total CPU did not improve in the short trace. `present`,
-message pumping, and theme setup are small. The next implementation step should
-therefore gate idle redraws locally before optimizing text/layout or renderer
-submission.
+The Step 1 sampled profile remains the before-hotspot reference for active
+redraw cost: `build_ui_commands`, `gui::render_frame`, text
+measurement/rasterization, and layout dominate when frames are actually drawn.
+After the idle gate, unchanged visible idle time is spent in `idle_wait`, so
+text/layout optimization should wait until an active or interaction scenario
+shows it still matters.
 
 ## Current Open Questions
 
-- Is there any hidden animation, caret, hover, or time-dependent style that
-  requires continuous frames?
-- Can idle redraw be gated locally in `ui_api_testbed`, or does the framework
-  need a minimal "needs repaint" signal?
-- Which stage remains hot after idle redraw is fixed?
+- Does any future animated UI state need an explicit local redraw request?
+- If active interaction still feels expensive, which active scenario should be
+  profiled next now that idle redraw is fixed?
+- DiagnosticsHub and xperf were blocked for the after sampled profile in this
+  session; retry from an elevated profiler shell if a post-gate stack artifact
+  is required.
 
 ## Handoff Rules For Each New Chat
 

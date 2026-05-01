@@ -2323,6 +2323,7 @@ namespace {
     struct AppState {
         HWND hwnd = nullptr;
         bool running = true;
+        bool redraw_pending = true;
         bool resize_pending = false;
         render::SizeU32 pending_size = {};
         gui::InputState input = {};
@@ -2333,6 +2334,28 @@ namespace {
     };
 
     AppState* global_app_state = nullptr;
+
+    auto request_redraw(AppState* state) -> void {
+        if (state != nullptr) {
+            state->redraw_pending = true;
+        }
+    }
+
+    [[nodiscard]] auto hash_bytes(uint64_t hash, void const* data, size_t size) -> uint64_t {
+        uint8_t const* bytes = static_cast<uint8_t const*>(data);
+        for (size_t index = 0u; index < size; ++index) {
+            hash ^= bytes[index];
+            hash *= 1099511628211ull;
+        }
+        return hash;
+    }
+
+    [[nodiscard]] auto testbed_state_hash(TestbedState const& state) -> uint64_t {
+        uint64_t hash = 1469598103934665603ull;
+        hash = hash_bytes(hash, &state, sizeof(state));
+        StrRef const multiline_text = state.multiline_text_buffer.str();
+        return hash_bytes(hash, multiline_text.data(), multiline_text.size());
+    }
 
     auto
     draw_liquid_glass_backdrop(draw::Context context, render::SizeU32 size, LiquidGlassTheme theme)
@@ -3079,6 +3102,7 @@ namespace {
                 if (size.width != 0u && size.height != 0u) {
                     global_app_state->pending_size = size;
                     global_app_state->resize_pending = true;
+                    request_redraw(global_app_state);
                 }
             }
             return 0;
@@ -3086,6 +3110,7 @@ namespace {
         case WM_MOUSEMOVE:
             if (global_app_state != nullptr) {
                 global_app_state->input.mouse_pos = {lparam_x(lparam), lparam_y(lparam)};
+                request_redraw(global_app_state);
             }
             return 0;
 
@@ -3097,6 +3122,7 @@ namespace {
                 global_app_state->input.mouse_triple_clicked[0u] =
                     left_triple_click(*global_app_state, pos);
                 global_app_state->left_double_click_pending = false;
+                request_redraw(global_app_state);
             }
             SetCapture(hwnd);
             SetFocus(hwnd);
@@ -3106,6 +3132,7 @@ namespace {
             if (global_app_state != nullptr) {
                 global_app_state->input.mouse_down[0u] = false;
                 global_app_state->input.mouse_pos = {lparam_x(lparam), lparam_y(lparam)};
+                request_redraw(global_app_state);
             }
             if (GetCapture() == hwnd) {
                 ReleaseCapture();
@@ -3121,6 +3148,7 @@ namespace {
                 global_app_state->left_double_click_pos = pos;
                 global_app_state->left_double_click_ticks = GetTickCount64();
                 global_app_state->left_double_click_pending = true;
+                request_redraw(global_app_state);
             }
             SetCapture(hwnd);
             SetFocus(hwnd);
@@ -3131,6 +3159,7 @@ namespace {
                 global_app_state->input.scroll_delta_y +=
                     static_cast<float>(GET_WHEEL_DELTA_WPARAM(wparam)) /
                     static_cast<float>(WHEEL_DELTA) * 36.0f;
+                request_redraw(global_app_state);
             }
             return 0;
 
@@ -3139,6 +3168,7 @@ namespace {
             gui::Key const key = key_from_virtual_key(wparam);
             if (key != gui::Key::UNKNOWN) {
                 push_key_event(global_app_state, key, key_down_kind(lparam));
+                request_redraw(global_app_state);
                 return 0;
             }
             return DefWindowProcW(hwnd, message, wparam, lparam);
@@ -3147,6 +3177,7 @@ namespace {
         case WM_CHAR:
             if (global_app_state != nullptr) {
                 push_text_event(global_app_state, static_cast<uint32_t>(wparam));
+                request_redraw(global_app_state);
             }
             return 0;
 
@@ -3224,6 +3255,27 @@ namespace {
         UnregisterClassW(WINDOW_CLASS_NAME, GetModuleHandleW(nullptr));
     }
 
+#if BASE_DEBUG
+    [[nodiscard]] auto trace_idle_wait_ms(
+        TraceOptions const& options,
+        ManualTrace const& trace,
+        bool trace_start_done,
+        uint64_t trace_warmup_start
+    ) -> DWORD {
+        uint64_t wait_ms = INFINITE;
+        if (!trace_start_done && options.path != nullptr) {
+            uint64_t const elapsed_ms = GetTickCount64() - trace_warmup_start;
+            wait_ms = elapsed_ms < options.warmup_ms ? options.warmup_ms - elapsed_ms : 0u;
+        } else if (options.duration_ms != 0u && trace_active(&trace)) {
+            double const elapsed_ms = trace_elapsed_ms(trace);
+            wait_ms = elapsed_ms < static_cast<double>(options.duration_ms)
+                          ? options.duration_ms - static_cast<uint64_t>(elapsed_ms)
+                          : 0u;
+        }
+        return wait_ms >= INFINITE ? INFINITE - 1u : static_cast<DWORD>(wait_ms);
+    }
+#endif
+
     auto run_windowed(TraceOptions trace_options) -> int {
         AppState app_state = {};
         global_app_state = &app_state;
@@ -3300,6 +3352,13 @@ namespace {
                 ));
 #endif
             }
+#if BASE_DEBUG
+            if (trace_options.duration_ms != 0u && trace_active(&trace) &&
+                trace_elapsed_ms(trace) >= static_cast<double>(trace_options.duration_ms)) {
+                app_state.running = false;
+                break;
+            }
+#endif
 
             {
                 TRACE_SCOPE(&trace, "frame");
@@ -3338,11 +3397,29 @@ namespace {
                         break;
                     }
                     app_state.resize_pending = false;
+                    app_state.redraw_pending = true;
+                }
+
+                if (!app_state.redraw_pending) {
+                    TRACE_SCOPE(&trace, "idle_wait");
+#if BASE_DEBUG
+                    DWORD const wait_ms = trace_idle_wait_ms(
+                        trace_options, trace, trace_start_done, trace_warmup_start
+                    );
+#else
+                    DWORD const wait_ms = INFINITE;
+#endif
+                    BASE_UNUSED(MsgWaitForMultipleObjectsEx(
+                        0u, nullptr, wait_ms, QS_ALLINPUT, MWMO_INPUTAVAILABLE
+                    ));
+                    continue;
                 }
 
                 uint64_t const ticks = GetTickCount64();
                 float const delta_time = static_cast<float>(ticks - previous_ticks) * 0.001f;
                 previous_ticks = ticks;
+                app_state.redraw_pending = false;
+                uint64_t const state_hash_before = testbed_state_hash(runtime.state);
 
                 {
                     TRACE_SCOPE(&trace, "render_begin_frame");
@@ -3376,6 +3453,7 @@ namespace {
                     TRACE_SCOPE(&trace, "present");
                     result = render::present_window(render_context, render_window);
                 }
+                app_state.redraw_pending = testbed_state_hash(runtime.state) != state_hash_before;
                 app_state.input.scroll_delta_y = 0.0f;
                 app_state.input.mouse_double_clicked[0u] = false;
                 app_state.input.mouse_triple_clicked[0u] = false;
@@ -3389,13 +3467,6 @@ namespace {
                     break;
                 }
             }
-
-#if BASE_DEBUG
-            if (trace_options.duration_ms != 0u && trace_active(&trace) &&
-                trace_elapsed_ms(trace) >= static_cast<double>(trace_options.duration_ms)) {
-                app_state.running = false;
-            }
-#endif
         }
 
 #if BASE_DEBUG
