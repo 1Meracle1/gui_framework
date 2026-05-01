@@ -579,7 +579,8 @@ namespace gui {
 
         [[nodiscard]] auto text_wrap_enabled(BoxNode const& box) -> bool {
             return box.layout.word_wrap &&
-                   (box.kind == BoxKind::LABEL || box.kind == BoxKind::SELECTABLE_LABEL);
+                   (box.kind == BoxKind::LABEL || box.kind == BoxKind::SELECTABLE_LABEL ||
+                    box.kind == BoxKind::INPUT_TEXT_MULTILINE);
         }
 
         [[nodiscard]] auto text_wrap_width(BoxNode const& box, float width) -> float {
@@ -621,18 +622,18 @@ namespace gui {
             return true;
         }
 
-        [[nodiscard]] auto
-        next_text_line(BoxNode const& box, float wrap_width, size_t& offset, TextLine& out_line)
-            -> bool {
+        [[nodiscard]] auto next_text_line(
+            BoxNode const& box, StrRef text, float wrap_width, size_t& offset, TextLine& out_line
+        ) -> bool {
             if (!text_wrap_enabled(box) || wrap_width <= 0.0f) {
-                return next_text_line(box.text, offset, out_line);
+                return next_text_line(text, offset, out_line);
             }
-            if (box.text.empty() || offset > box.text.size()) {
+            if (text.empty() || offset > text.size()) {
                 return false;
             }
-            if (offset == box.text.size()) {
-                if (offset > 0u && box.text[offset - 1u] == '\n') {
-                    out_line = {StrRef(box.text.data() + offset, size_t{0u}), offset, offset};
+            if (offset == text.size()) {
+                if (offset > 0u && text[offset - 1u] == '\n') {
+                    out_line = {StrRef(text.data() + offset, size_t{0u}), offset, offset};
                     offset += 1u;
                     return true;
                 }
@@ -640,26 +641,26 @@ namespace gui {
             }
 
             size_t const start = offset;
-            size_t const newline = box.text.find('\n', start);
-            size_t end = newline == StrRef::NPOS ? box.text.size() : newline;
-            if (end > start && box.text[end - 1u] == '\r') {
+            size_t const newline = text.find('\n', start);
+            size_t end = newline == StrRef::NPOS ? text.size() : newline;
+            if (end > start && text[end - 1u] == '\r') {
                 end -= 1u;
             }
             if (start == end) {
-                out_line = {box.text.substr(start, size_t{0u}), start, end};
-                offset = newline == StrRef::NPOS ? box.text.size() : newline + 1u;
+                out_line = {text.substr(start, size_t{0u}), start, end};
+                offset = newline == StrRef::NPOS ? text.size() : newline + 1u;
                 return true;
             }
 
             size_t cursor = start;
             size_t break_offset = StrRef::NPOS;
             while (cursor < end) {
-                size_t const next = next_text_offset(box.text, cursor);
-                bool const whitespace = is_ascii_whitespace(box.text[cursor]);
-                float const advance = text_advance(box, box.text.substr(start, next - start));
+                size_t const next = next_text_offset(text, cursor);
+                bool const whitespace = is_ascii_whitespace(text[cursor]);
+                float const advance = text_advance(box, text.substr(start, next - start));
                 if (advance > wrap_width) {
                     if (cursor == start) {
-                        out_line = {box.text.substr(start, next - start), start, next};
+                        out_line = {text.substr(start, next - start), start, next};
                         offset = next;
                         return true;
                     }
@@ -669,7 +670,7 @@ namespace gui {
                         line_end = break_offset;
                         next_offset = break_offset;
                     }
-                    out_line = {box.text.substr(start, line_end - start), start, line_end};
+                    out_line = {text.substr(start, line_end - start), start, line_end};
                     offset = next_offset;
                     return true;
                 }
@@ -679,9 +680,15 @@ namespace gui {
                 cursor = next;
             }
 
-            out_line = {box.text.substr(start, end - start), start, end};
-            offset = newline == StrRef::NPOS ? box.text.size() : newline + 1u;
+            out_line = {text.substr(start, end - start), start, end};
+            offset = newline == StrRef::NPOS ? text.size() : newline + 1u;
             return true;
+        }
+
+        [[nodiscard]] auto
+        next_text_line(BoxNode const& box, float wrap_width, size_t& offset, TextLine& out_line)
+            -> bool {
+            return next_text_line(box, box.text, wrap_width, offset, out_line);
         }
 
         [[nodiscard]] auto text_measure_wrap_width(BoxNode const& box) -> float {
@@ -3071,11 +3078,16 @@ namespace gui {
         vertical_text_cursor_offset(BoxNode const& box, StrRef text, size_t cursor, Key key)
             -> size_t {
             cursor = std::min(cursor, text.size());
+            Rect const rect = box.state != nullptr ? box.state->rect : box.rect;
+            float wrap_width = text_wrap_width(box, rect);
+            if (wrap_width <= 0.0f) {
+                wrap_width = text_measure_wrap_width(box);
+            }
             size_t offset = 0u;
             TextLine previous = {};
             bool has_previous = false;
             TextLine line = {};
-            while (next_text_line(text, offset, line)) {
+            while (next_text_line(box, text, wrap_width, offset, line)) {
                 if (cursor <= line.end) {
                     TextLine target = {};
                     if (key == Key::UP) {
@@ -3083,7 +3095,7 @@ namespace gui {
                             return cursor;
                         }
                         target = previous;
-                    } else if (!next_text_line(text, offset, target)) {
+                    } else if (!next_text_line(box, text, wrap_width, offset, target)) {
                         return cursor;
                     }
                     size_t const line_cursor = std::min(cursor, line.end) - line.start;
@@ -3128,12 +3140,18 @@ namespace gui {
             return text_line_index_from_x(box, last_line, text_x);
         }
 
-        [[nodiscard]] auto text_cursor_line_index(StrRef text, size_t cursor) -> size_t {
+        [[nodiscard]] auto
+        text_cursor_line_index(BoxNode const& box, StrRef text, size_t cursor, Rect rect)
+            -> size_t {
             cursor = std::min(cursor, text.size());
+            float wrap_width = text_wrap_width(box, rect);
+            if (wrap_width <= 0.0f) {
+                wrap_width = text_measure_wrap_width(box);
+            }
             size_t line_index = 0u;
             size_t offset = 0u;
             TextLine line = {};
-            while (next_text_line(text, offset, line)) {
+            while (next_text_line(box, text, wrap_width, offset, line)) {
                 if (cursor <= line.end) {
                     return line_index;
                 }
@@ -3151,10 +3169,11 @@ namespace gui {
 
             cursor = std::min(cursor, box.text.size());
             float const line_height = text_line_height(box);
+            float const wrap_width = text_wrap_width(box, box.rect);
             size_t line_index = 0u;
             size_t offset = 0u;
             TextLine line = {};
-            while (next_text_line(box.text, offset, line)) {
+            while (next_text_line(box, wrap_width, offset, line)) {
                 if (cursor <= line.end) {
                     size_t const line_cursor = std::min(cursor, line.end) - line.start;
                     return {
@@ -3565,7 +3584,8 @@ namespace gui {
             for (;;) {
                 size_t const cursor = std::min(box.state->text_cursor, box.text.size());
                 float const cursor_y =
-                    line_height * static_cast<float>(text_cursor_line_index(box.text, cursor));
+                    line_height *
+                    static_cast<float>(text_cursor_line_index(box, box.text, cursor, box.rect));
                 Key const key =
                     cursor_y < scroll_y
                         ? Key::DOWN
@@ -3606,10 +3626,10 @@ namespace gui {
             }
 
             float const line_height = text_line_height(box);
-            float const cursor_y =
-                line_height * static_cast<float>(text_cursor_line_index(
-                                  box.text, std::min(box.state->text_cursor, box.text.size())
-                              ));
+            size_t const cursor = std::min(box.state->text_cursor, box.text.size());
+            float const cursor_y = line_height * static_cast<float>(text_cursor_line_index(
+                                                     box, box.text, cursor, box.scroll_state->rect
+                                                 ));
             float const scroll_y = box.scroll_state->scroll_y;
             if (cursor_y < scroll_y) {
                 box.scroll_state->scroll_request_y = cursor_y;

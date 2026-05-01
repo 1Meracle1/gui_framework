@@ -471,6 +471,41 @@ namespace {
         gui::destroy_context(gui_context);
     }
 
+    TEST_CASE(input_text_multiline_word_wrap_measures_lines) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::Id const field_id = gui::id("field");
+        StringBuffer buffer;
+        TEST_EXPECT(context, buffer.write_string("AB CD") == 5u);
+
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {100.0f, 80.0f}});
+        ui.input_text_multiline(
+            field_id,
+            "Field",
+            &buffer,
+            {.box = {
+                 .layout = {
+                     .width = gui::px(16.0f),
+                     .height = gui::text(),
+                     .word_wrap = true,
+                 }
+             }}
+        );
+        gui::end_frame(ui);
+
+        gui::BoxInfo const* field = ui.find_box(field_id, gui::BoxKind::INPUT_TEXT_MULTILINE);
+        TEST_EXPECT(context, field != nullptr);
+        if (field != nullptr) {
+            expect_rect(context, field->rect, {{0.0f, 0.0f}, {16.0f, 40.0f}});
+        }
+
+        gui::destroy_context(gui_context);
+    }
+
     TEST_CASE(row_layout_aligns_child_run_when_no_fill_consumes_space) {
         Arena arena = {};
         arena.init();
@@ -3473,6 +3508,44 @@ namespace {
 
         TEST_EXPECT(context, signal.changed);
         TEST_EXPECT(context, buffer.str() == StrRef("abc\ndeX\nghiY"));
+
+        gui::destroy_context(gui_context);
+    }
+
+    TEST_CASE(input_text_multiline_word_wrap_up_down_moves_cursor_by_visual_line) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::Id const field_id = gui::id("field");
+        gui::BoxDesc const box = {
+            .layout = {
+                .width = gui::px(16.0f),
+                .height = gui::px(40.0f),
+                .word_wrap = true,
+            }
+        };
+        StringBuffer buffer;
+        TEST_EXPECT(context, buffer.write_string("AB CD") == 5u);
+
+        gui::KeyEvent const events[] = {
+            {.key = gui::Key::UP},
+            {.kind = gui::KeyEventKind::TEXT, .codepoint = 'X'},
+        };
+        gui::InputState input = {};
+        input.key_events = events;
+        input.key_event_count = 2u;
+
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {100.0f, 80.0f}, .input = input});
+        ui.request_focus(field_id);
+        gui::Signal const signal =
+            ui.input_text_multiline(field_id, "Field", &buffer, {.box = box});
+        gui::end_frame(ui);
+
+        TEST_EXPECT(context, signal.changed);
+        TEST_EXPECT(context, buffer.str() == StrRef("ABX CD"));
 
         gui::destroy_context(gui_context);
     }

@@ -104,7 +104,8 @@ namespace {
     }
 
     constexpr char BODY_TEXT[] =
-        "Lorem ipsum dolor sit amet, consectetur adipiscing elit.m dolor sit amet, consectetur adipiscing elit.m dolor sit amet, consectetur adipiscing elit.\n"
+        "Lorem ipsum dolor sit amet, consectetur adipiscing elit.m dolor sit amet, consectetur "
+        "adipiscing elit.m dolor sit amet, consectetur adipiscing elit.\n"
         "Integer posuere erat a ante venenatis dapibus posuere velit aliquet.\n\n"
         "Donec ullamcorper nulla non metus auctor fringilla.\n"
         "Cras mattis consectetur purus sit amet fermentum.\n\n"
@@ -1511,6 +1512,7 @@ namespace {
                                             .height = gui::px(108.0f),
                                             .margin = gui::insets(36.0f, 0.0f, 0.0f, 0.0f),
                                             .padding = gui::insets(9.0f, 12.0f),
+                                            .word_wrap = true,
                                         },
                                     .style =
                                         {
