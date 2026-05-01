@@ -872,6 +872,50 @@ namespace {
                         ui.spacer({.layout = {.width = gui::fill(), .height = gui::px(1.0f)}});
                         if (auto actions =
                                 ui.row(gui::id("sample_control_actions"), toolbar_group)) {
+                            gui::Signal const above_signal = ui.button(
+                                gui::id("sample_hover_above_button"),
+                                "Above",
+                                {
+                                    .layout =
+                                        {
+                                            .width = gui::px(72.0f),
+                                            .height = gui::fill(),
+                                            .padding = gui::insets(3.0f, 6.0f),
+                                        },
+                                    .debug_name = "sample_hover_above_button",
+                                }
+                            );
+                            if (auto above = ui.hover_popup(
+                                    gui::id("sample_hover_above_popup"),
+                                    above_signal,
+                                    {
+                                        .layout =
+                                            {
+                                                .width = gui::px(212.0f),
+                                                .height = gui::children(),
+                                                .margin = gui::insets(-104.0f, 0.0f, 0.0f, 0.0f),
+                                                .padding = gui::insets(10.0f, 12.0f),
+                                                .gap = 4.0f,
+                                                .align_x = gui::Align::STRETCH,
+                                            },
+                                        .debug_name = "sample_hover_above_popup",
+                                    }
+                                )) {
+                                ui.label(
+                                    "Samples popup",
+                                    {
+                                        .layout = {.width = gui::fill(), .height = gui::px(22.0f)},
+                                        .style = {.foreground = tokens.text, .font_size = 14.0f},
+                                    }
+                                );
+                                ui.label(
+                                    "Positioned above the hovered button.",
+                                    {
+                                        .layout = {.width = gui::fill(), .height = gui::text()},
+                                        .style = {.foreground = tokens.text_muted},
+                                    }
+                                );
+                            }
                             if (ui.button(
                                       gui::id("sample_reset_button"),
                                       "Reset",
@@ -1271,6 +1315,50 @@ namespace {
                                 )
                                     .activated) {
                                 state.popup_open = !state.popup_open;
+                            }
+                            gui::Signal const info_signal = ui.button(
+                                gui::id("hover_info_button"),
+                                "Info",
+                                {
+                                    .layout =
+                                        {
+                                            .width = gui::px(58.0f),
+                                            .height = gui::fill(),
+                                            .padding = gui::insets(3.0f, 6.0f),
+                                        },
+                                    .debug_name = "hover_info_button",
+                                }
+                            );
+                            if (auto info = ui.hover_popup(
+                                    gui::id("hover_info_popup"),
+                                    info_signal,
+                                    {
+                                        .layout =
+                                            {
+                                                .width = gui::px(270.0f),
+                                                .height = gui::children(),
+                                                .margin = gui::insets(28.0f, 0.0f, 0.0f, 0.0f),
+                                                .padding = gui::insets(10.0f, 12.0f),
+                                                .gap = 6.0f,
+                                                .align_x = gui::Align::STRETCH,
+                                            },
+                                        .debug_name = "hover_info_popup",
+                                    }
+                                )) {
+                                ui.label(
+                                    "Hover popup",
+                                    {
+                                        .layout = {.width = gui::fill(), .height = gui::px(22.0f)},
+                                        .style = {.foreground = tokens.text, .font_size = 14.0f},
+                                    }
+                                );
+                                ui.label(
+                                    "Stays open while the Info button or this popup is hovered.",
+                                    {
+                                        .layout = {.width = gui::fill(), .height = gui::text()},
+                                        .style = {.foreground = tokens.text_muted},
+                                    }
+                                );
                             }
                             if (ui.button(
                                       gui::id("modal_button"),

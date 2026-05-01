@@ -222,6 +222,8 @@ namespace gui {
 
     struct Signal {
         bool hovered = false;
+        bool hover_entered = false;
+        bool hover_exited = false;
         bool active = false;
         bool focused = false;
         bool focus_gained = false;
@@ -703,6 +705,7 @@ namespace gui {
         [[nodiscard]] auto overlay(BoxDesc const& desc = {}) -> Scope;
         [[nodiscard]] auto overlay(Id id, BoxDesc const& desc = {}) -> Scope;
         [[nodiscard]] auto popup(Id id, BoxDesc const& desc = {}) -> Scope;
+        [[nodiscard]] auto hover_popup(Id id, Signal source, BoxDesc const& desc = {}) -> Scope;
         [[nodiscard]] auto modal(Id id, BoxDesc const& desc = {}) -> Scope;
         [[nodiscard]] auto scroll_panel(Id id, BoxDesc const& desc = {}) -> Scope;
         [[nodiscard]] auto table(BoxDesc const& desc = {}) -> TableScope;

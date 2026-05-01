@@ -285,6 +285,53 @@ namespace {
         gui::destroy_context(gui_context);
     }
 
+    TEST_CASE(button_signal_reports_hover_edges) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::Id const button_id = gui::id("button");
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {100.0f, 40.0f}});
+        ui.button(
+            button_id, "Info", {.layout = {.width = gui::px(60.0f), .height = gui::px(20.0f)}}
+        );
+        gui::end_frame(ui);
+
+        gui::InputState input = {};
+        input.mouse_pos = {5.0f, 5.0f};
+        ui = gui::begin_frame(gui_context, {.size = {100.0f, 40.0f}, .input = input});
+        gui::Signal signal = ui.button(
+            button_id, "Info", {.layout = {.width = gui::px(60.0f), .height = gui::px(20.0f)}}
+        );
+        TEST_EXPECT(context, signal.hovered);
+        TEST_EXPECT(context, signal.hover_entered);
+        TEST_EXPECT(context, !signal.hover_exited);
+        gui::end_frame(ui);
+
+        ui = gui::begin_frame(gui_context, {.size = {100.0f, 40.0f}, .input = input});
+        signal = ui.button(
+            button_id, "Info", {.layout = {.width = gui::px(60.0f), .height = gui::px(20.0f)}}
+        );
+        TEST_EXPECT(context, signal.hovered);
+        TEST_EXPECT(context, !signal.hover_entered);
+        TEST_EXPECT(context, !signal.hover_exited);
+        gui::end_frame(ui);
+
+        input.mouse_pos = {80.0f, 30.0f};
+        ui = gui::begin_frame(gui_context, {.size = {100.0f, 40.0f}, .input = input});
+        signal = ui.button(
+            button_id, "Info", {.layout = {.width = gui::px(60.0f), .height = gui::px(20.0f)}}
+        );
+        TEST_EXPECT(context, !signal.hovered);
+        TEST_EXPECT(context, !signal.hover_entered);
+        TEST_EXPECT(context, signal.hover_exited);
+        gui::end_frame(ui);
+
+        gui::destroy_context(gui_context);
+    }
+
     TEST_CASE(input_text_theme_defaults_keep_background_on_actions) {
         gui::ThemeDesc theme = gui::default_theme();
         gui::Color const background =
@@ -1724,6 +1771,67 @@ namespace {
             expect_rect(context, popup->rect, {{60.0f, 60.0f}, {100.0f, 80.0f}});
             TEST_EXPECT(context, hit != nullptr && hit->id.value == popup->id.value);
         }
+
+        gui::destroy_context(gui_context);
+    }
+
+    TEST_CASE(hover_popup_stays_open_over_source_or_popup) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::Id const source_id = gui::id("source");
+        gui::Id const popup_id = gui::id("hover_popup");
+        auto add_ui = [&](gui::Frame& frame, gui::Signal* out_source) -> void {
+            gui::Signal const source = frame.button(
+                source_id, "Info", {.layout = {.width = gui::px(50.0f), .height = gui::px(20.0f)}}
+            );
+            if (out_source != nullptr) {
+                *out_source = source;
+            }
+            if (auto popup = frame.hover_popup(
+                    popup_id,
+                    source,
+                    {.layout = {
+                         .width = gui::px(70.0f),
+                         .height = gui::px(20.0f),
+                         .margin = gui::insets(20.0f, 0.0f, 0.0f, 0.0f),
+                     }}
+                )) {
+                frame.label("Details", {.layout = {.width = gui::fill(), .height = gui::fill()}});
+            }
+        };
+
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {120.0f, 60.0f}});
+        add_ui(ui, nullptr);
+        gui::end_frame(ui);
+        TEST_EXPECT(context, ui.find_box(popup_id, gui::BoxKind::POPUP) == nullptr);
+
+        gui::InputState input = {};
+        input.mouse_pos = {5.0f, 5.0f};
+        ui = gui::begin_frame(gui_context, {.size = {120.0f, 60.0f}, .input = input});
+        gui::Signal source = {};
+        add_ui(ui, &source);
+        gui::end_frame(ui);
+        TEST_EXPECT(context, source.hovered);
+        TEST_EXPECT(context, source.hover_entered);
+        TEST_EXPECT(context, ui.find_box(popup_id, gui::BoxKind::POPUP) != nullptr);
+
+        input.mouse_pos = {5.0f, 25.0f};
+        ui = gui::begin_frame(gui_context, {.size = {120.0f, 60.0f}, .input = input});
+        add_ui(ui, &source);
+        gui::end_frame(ui);
+        TEST_EXPECT(context, !source.hovered);
+        TEST_EXPECT(context, source.hover_exited);
+        TEST_EXPECT(context, ui.find_box(popup_id, gui::BoxKind::POPUP) != nullptr);
+
+        input.mouse_pos = {100.0f, 50.0f};
+        ui = gui::begin_frame(gui_context, {.size = {120.0f, 60.0f}, .input = input});
+        add_ui(ui, nullptr);
+        gui::end_frame(ui);
+        TEST_EXPECT(context, ui.find_box(popup_id, gui::BoxKind::POPUP) == nullptr);
 
         gui::destroy_context(gui_context);
     }

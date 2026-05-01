@@ -166,6 +166,7 @@ namespace gui {
             SetClipboardTextFn set_clipboard_text = nullptr;
             GetClipboardTextFn get_clipboard_text = nullptr;
             void* clipboard_user_data = nullptr;
+            Id previous_hot_id = {};
             Id hot_id = {};
             Id active_id = {};
             Id active_scroll_id = {};
@@ -1059,8 +1060,12 @@ namespace gui {
                 bool const hovered = impl->hot_id.value == box.id.value;
                 bool const mouse_down = impl->frame_desc.input.mouse_down[0u];
                 bool const previous_mouse_down = impl->previous_input.mouse_down[0u];
+                bool const was_hovered = impl->previous_hot_id.value == box.id.value &&
+                                         box.state->last_frame + 1u == impl->frame_index;
 
                 result.hovered = hovered;
+                result.hover_entered = hovered && !was_hovered;
+                result.hover_exited = !hovered && was_hovered;
                 result.pressed_left = hovered && mouse_down && !previous_mouse_down;
                 result.released_left =
                     previous_mouse_down && !mouse_down && impl->active_id.value == box.id.value;
@@ -5084,6 +5089,16 @@ namespace gui {
         return {this, index};
     }
 
+    auto Frame::hover_popup(Id id_value, Signal source, BoxDesc const& desc) -> Scope {
+        ContextImpl* const impl = impl_from_frame(*this);
+        size_t const parent = top_parent_index(impl);
+        Id const popup_id = explicit_id(impl, parent, BoxKind::POPUP, id_value);
+        if (!source.hovered && impl->hot_id.value != popup_id.value) {
+            return {};
+        }
+        return popup(id_value, desc);
+    }
+
     auto Frame::modal(Id id_value, BoxDesc const& desc) -> Scope {
         ContextImpl* const impl = impl_from_frame(*this);
         size_t const parent = top_parent_index(impl);
@@ -6012,6 +6027,7 @@ namespace gui {
         ASSERT(impl != nullptr);
         impl->frame_desc = desc;
         impl->frame_start_focus_id = impl->focused_id;
+        impl->previous_hot_id = impl->hot_id;
         impl->hot_id = compute_hot_id(impl);
         process_focus_keys(impl);
         impl->frame_arena.reset();
