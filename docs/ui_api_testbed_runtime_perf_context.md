@@ -145,6 +145,44 @@ This CPU command is not enough by itself for any optimization step. Keep the
 profiling tool, trace command, output path, and short hotspot summary in this
 file with each result.
 
+Canonical repeatable probes on Windows:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\ui_api_testbed_perf_probe.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\ui_api_testbed_perf_probe.ps1 -Scenario mouse
+powershell -ExecutionPolicy Bypass -File .\scripts\ui_api_testbed_perf_probe.ps1 -Scenario both
+```
+
+The default probe builds `windows-msvc-debug` `ui_api_testbed`, runs the idle
+debug trace after a 3s warmup for a 5s capture, writes timestamped artifacts
+under `build\perf\ui_api_testbed\`, prints the trace metrics, parses zone
+mean/p95 timings into a summary text file, and fails if any `ui_api_testbed`
+process remains alive. `-Scenario mouse` runs a 1s warmup plus 5s active trace
+while the script moves the pointer over the testbed window and posts matching
+client mouse move/click messages to the window.
+`-Scenario both` captures idle first, then active mouse/click.
+
+Expected output shape:
+
+```text
+ui_api_testbed trace: wrote <trace.json> frames=<N> duration_ms=<ms> fps=<fps> process_cpu=<percent>% commands_avg=<N> max=<N> primitive_avg=<N> styled_rect_avg=<N> text_avg=<N> layers_avg=<N>
+Scenario=<idle|mouse>
+Trace=<trace.json>
+ProbeLog=<stdout.txt>
+Summary=<summary.txt>
+MouseMoves=<N>
+MouseClicks=<N>
+<zone> count=<N> mean_ms=<ms> p95_ms=<ms>
+summary duration_ms=<ms> cpu=<percent> frames=<N> fps=<fps> commands_avg=<N> text_avg=<N>
+NoProcessRunning=ui_api_testbed.exe
+```
+
+Use the probe as a comparable artifact generator, not a pass/fail benchmark.
+For a sampled profile/flamegraph, use the Step 1 DiagnosticsHub/xperf command
+sequence below when the local profiler is working, save the raw profiler
+artifact and exported stack/flamegraph under `build\perf\ui_api_testbed\`, and
+record profiler failures as stdout/stderr artifacts if the tool cannot capture.
+
 Preferred artifact location:
 
 ```text
@@ -178,41 +216,31 @@ window, default dark Testbed tab, no user input after warmup:
 Release measurements are useful for comparison, but do not replace the debug
 acceptance target.
 
-## Working Hypotheses
+## Final Findings
 
-Rank these with data before optimizing:
-
-Step 3 ranking after correlating the sampled profile with manual trace timings:
-
-1. Continuous idle redraw was the first optimization target. The default visible
-   idle window still renders about 70-73 FPS with no input, spending about
-   13-14 ms of CPU-side frame work every frame and about 8.6-8.8% normalized
-   process CPU before Step 4. Step 4 reduced unchanged visible idle to 0
-   rendered frames and about 0.03% process CPU.
-2. Per-redraw UI build and draw command recording remain the dominant active
-   redraw stage costs.
-   `ui_build` is about 13.0 ms mean / 14.1 ms p95, dominated by
-   `draw_command_recording` and `gui_render_frame` at about 7.2-7.4 ms mean.
-   The sampled profile maps that stage to text measurement/rasterization and
-   layout. Step 5 removed one measured `draw_ui` sub-cost:
-   selectable-label pointer hit testing when no pointer selection is active.
-   Step 7 reduced the measured wrapped text line-breaking cost by replacing the
-   per-character prefix advance scan with a first-overflow search that keeps the
-   same whitespace fallback.
-3. Command/text volume is the main remaining per-redraw sub-cost to revisit if
-   more active redraw work is needed after Step 5:
-   after Step 7, `gui_render_frame` costs about 5.7 ms mean in the active
-   synthetic trace, with 175 commands including 78 text commands and 87 styled
-   rects.
-4. The draw/render submission stage is secondary. Step 6 rechecked active
-   redraws and measured `draw_render_commands_to_window` at about 1.11 ms mean
-   with the D3D11 debug layer and 0.54 ms without it. Compact redundant-state
-   candidates did not improve the trace, so no draw/render source change was
-   kept.
-5. Present, message pumping, and theme setup are not first-order blockers in
-   the current traces. `present` is about 0.07-0.08 ms mean and `theme_setup`
-   stayed about 0.02 ms mean in Step 5, so theme/spec caching was rejected for
-   now.
+1. The debug idle target is met on this machine. The pre-gate sampled profile
+   showed continuous redraw spending 8.23-8.61% CPU in `run_windowed`,
+   `build_ui_commands`, `gui::render_frame`, text advance/rasterization, and
+   layout. The final default debug idle trace now records 0 rendered frames,
+   0.03% CPU, and one long `idle_wait` across the 5s capture.
+2. Active interaction still has meaningful per-redraw cost, but it is no longer
+   an idle blocker. The final interaction trace rendered 116 frames in 5.02s at
+   3.94% CPU while synthetic client mouse messages drove redraws. The dominant
+   active stages were `gui_render_frame` and `draw_command_recording`.
+3. Text/layout remains the next optional active-redraw target if interaction
+   performance becomes important. Step 5 removed the measured selectable-label
+   pointer hit-test cost, and Step 7 reduced wrapped text line-breaking cost.
+   Command volume is still about 175 commands with 78 text commands per redraw.
+4. Draw/render submission is secondary. Step 6 measured it and rejected compact
+   redundant-state changes because traces did not improve; no draw/render source
+   change was kept.
+5. Present, message pumping, and theme setup are not current blockers. Theme
+   setup stayed near 0.02 ms in earlier active traces, and the final idle trace
+   spends the acceptance window waiting.
+6. Post-gate sampled profiling remains a tooling risk, not an implementation
+   blocker. DiagnosticsHub and xperf failed in prior after-profile attempts; the
+   retained Step 1 sampled profile is still the resolved stack evidence for the
+   removed continuous-redraw cost.
 
 ## Living Measurement Log
 
@@ -228,6 +256,11 @@ Add one entry per completed step. Keep entries short but comparable.
 | 5 | 2026-05-01 | `windows-msvc-debug` `ui_api_testbed`, working tree with shared selectable-label pointer-hit-test gate in `src\gui\src\gui.cpp` | Default 1280x800 window, visible dark Testbed tab, D3D11 VSYNC, debug layer on, 1s warmup and 5s trace while synthetic mouse movement triggered active redraws after the Step 4 idle gate | Before trace `build\perf\ui_api_testbed\step_05_active_trace_before_theme_cache.json`; before summary `step_05_active_trace_before_theme_cache.summary.txt`; after trace `build\perf\ui_api_testbed\step_05_active_trace_after_selectable_pointer_gate.json`; after summary `step_05_active_trace_after_selectable_pointer_gate.summary.txt`; reviewed Step 1 sampled stack report `step_01_debug_idle_top_inclusive_functions.txt` | Before: 4.57%, 173 frames, 34.53 FPS. After: 3.83%, 174 frames, 34.80 FPS. Draw counts unchanged at 175 commands, 78 text, 87 styled rects. | Before means/p95: `ui_build` 14.068/17.242 ms, `draw_ui` 2.351/2.514 ms, `theme_setup` 0.020/0.025 ms, `gui_render_frame` 7.371/9.908 ms. After means/p95: `ui_build` 11.475/12.554 ms, `draw_ui` 0.225/0.238 ms, `theme_setup` 0.020/0.032 ms, `gui_render_frame` 7.138/8.163 ms. Step 1 sampled stacks mapped the `draw_ui` cost to `apply_pointer_text_selection`/`text_index_from_mouse` at about 9.6% inclusive. | Changed `apply_pointer_text_selection` to call `text_index_from_mouse` only when a selectable label is pressed, double/triple clicked, actively dragging, or released. Rejected theme/spec caching because `theme_setup` stayed about 0.020 ms. Rejected local style initializer churn because no sampled stack identified it and draw command counts were unchanged. DiagnosticsHub attach and launch retries both failed to create an after sampled profile with "Value does not fall within the expected range"; no `.diagsession` was produced. Full `gui_tests.exe` was run because the harness has no filter; selectable-label tests passed, but the executable reported failures in unrelated tab/table/dense-controls cases. |
 | 6 | 2026-05-01 | `windows-msvc-debug` `ui_api_testbed`, clean source tree after rejected draw/render probes | Default 1280x800 window, visible dark Testbed tab, D3D11 VSYNC, 1s warmup and 5s trace while synthetic mouse movement triggered active redraws after the Step 4 idle gate; compared D3D11 debug layer on/off | Before traces `build\perf\ui_api_testbed\step_06_active_trace_before_debug_layer_on.json` and `_off.json`; summaries with matching `.summary.txt`; rejected-probe traces `step_06_active_trace_after_debug_layer_on.json`, `step_06_active_trace_after_sampler_debug_layer_on.json`, and `step_06_active_trace_after_begin_unbind_delete_debug_layer_on.json`; reviewed Step 1 sampled profile detail | Before debug on: 3.62%, 170 frames, 33.96 FPS. Before debug off: 3.75%, 166 frames, 33.20 FPS. Rejected probes stayed in the same range: sampler-once debug on 3.98%, begin-unbind deletion debug on 3.67%. | Before debug on means/p95: `draw_render_commands_to_window` 1.112/1.179 ms, `gui_render_frame` 7.208/7.855 ms. Before debug off: `draw_render_commands_to_window` 0.538/0.629 ms, `gui_render_frame` 7.346/8.653 ms. Sampler-once was 1.124/1.188 ms debug on and 0.536/0.624 ms debug off. Begin-pass unbind deletion was 1.129/1.308 ms debug on and 0.560/0.802 ms debug off. | Inspected measured draw/render paths only. Tried and reverted draw-layer redundant pipeline/scissor tracking, draw-layer sampler-once binding, and D3D11 begin-pass redundant unbind deletion because traces showed noise or regressions. Step 1 sampled profile detail listed draw/render submission functions at 0.00-0.01%, with `render_commands_to_window` at 0.00%, so the sampled profile still points away from renderer submission as the next optimization target. |
 | 7 | 2026-05-01 | `windows-msvc-debug` `ui_api_testbed`, working tree with wrapped text first-overflow search in `src\gui\src\gui.cpp` | Default 1280x800 window, visible dark Testbed tab, D3D11 VSYNC, debug layer on, 1s warmup and 5s trace while synthetic mouse movement triggered active redraws after the Step 4 idle gate | Before trace `build\perf\ui_api_testbed\step_06_active_trace_before_debug_layer_on.json`; after trace `build\perf\ui_api_testbed\step_07_active_trace_after_wrap_search.json`; after summary `step_07_active_trace_after_wrap_search.summary.txt`; sampled profile attempt log `step_07_active_sample_after_wrap_search.stdout.txt` | Before: 3.62%, 170 frames, 33.96 FPS. After: 3.04%, 172 frames, 34.33 FPS. Draw counts unchanged at 175 commands, 78 text, 87 styled rects. | Before means/p95: `ui_build` 11.719/12.616 ms, `end_ui_frame` 3.930/3.975 ms, `gui_render_frame` 7.208/7.855 ms. After means/p95: `ui_build` 7.062/9.784 ms, `end_ui_frame` 0.786/1.100 ms, `gui_render_frame` 5.691/8.041 ms. | Step 1 sampled stacks pointed at `next_text_line`/`text_advance`; Step 7 changes wrapped line breaking from per-character prefix measurement to exponential/binary first-overflow search, preserving the existing whitespace skip/backtrack rule. New risk: after sampled stack is still unavailable because DiagnosticsHub failed again with "Value does not fall within the expected range"; no `.diagsession` was produced, and p95 trace timings remain noisier than means. |
+| 8 | 2026-05-01 | `windows-msvc-debug` `ui_api_testbed`, commit `72fbd13` with local Step 8 probe script | Canonical default idle probe: 1280x800 visible dark Testbed tab, D3D11 VSYNC, debug layer on, 3s warmup and 5s trace capture | Trace `build\perf\ui_api_testbed\step_08_debug_idle_trace_20260501_200937.json`; stdout `step_08_debug_idle_probe_20260501_200937.txt`; summary `step_08_debug_idle_summary_20260501_200937.txt` | 0.00% over 5013.67 ms, 0 rendered frames, 0.00 FPS | Summary: `frame` count 1 mean/p95 5013.579/5013.579 ms, `idle_wait` count 1 mean/p95 5013.524/5013.524 ms, `pump_messages` count 1 mean/p95 0.007/0.007 ms, commands/text averages 0.00. | Canonical command `powershell -ExecutionPolicy Bypass -File .\scripts\ui_api_testbed_perf_probe.ps1` built the target, ran the trace, wrote artifacts, exited cleanly, and printed `NoProcessRunning=ui_api_testbed.exe`. The probe intentionally does not assert cross-machine thresholds and does not replace sampled stack profiles. |
+| 8a | 2026-05-01 | `windows-msvc-debug` `ui_api_testbed`, commit `72fbd13` with local Step 8 probe script | Canonical active mouse/click probe: 1280x800 visible dark Testbed tab, D3D11 VSYNC, debug layer on, 1s warmup and 5s trace capture while the script moved and clicked the mouse | Trace `build\perf\ui_api_testbed\step_08_debug_mouse_trace_20260501_200855.json`; stdout `step_08_debug_mouse_probe_20260501_200855.txt`; summary `step_08_debug_mouse_summary_20260501_200855.txt` | 1.61% over 5007.39 ms, 187 rendered frames, 37.34 FPS | Mouse activity: 212 moves, 8 clicks. Means/p95: `ui_build` 6.744/7.735 ms, `draw_command_recording` 5.675/6.191 ms, `gui_render_frame` 5.458/5.950 ms, `draw_render_commands_to_window` 1.132/1.178 ms, `present` 0.174/0.272 ms, `input_handling` 0.018/0.031 ms. Commands/text averages 175.72/78.00. | Command `powershell -ExecutionPolicy Bypass -File .\scripts\ui_api_testbed_perf_probe.ps1 -Scenario mouse` built the target, ran the active trace, wrote artifacts, exited cleanly, and printed `NoProcessRunning=ui_api_testbed.exe`. |
+| 9 | 2026-05-01 | `windows-msvc-debug` `ui_api_testbed`, commit `72fbd13` plus probe-script reliability fix in the working tree | Final default idle acceptance: 1280x800 visible dark Testbed tab, D3D11 VSYNC, debug layer on, 3s warmup and 5s trace capture | Trace `build\perf\ui_api_testbed\step_08_debug_idle_trace_20260501_201624.json`; stdout `step_08_debug_idle_probe_20260501_201624.txt`; summary `step_08_debug_idle_summary_20260501_201624.txt`; sampled-profile review `step_09_sampled_profile_review_20260501_201624.txt` | 0.03% over 5010.91 ms, 0 rendered frames, 0.00 FPS | Summary: `frame` count 1 mean/p95 5010.587/5010.587 ms, `idle_wait` count 1 mean/p95 5010.456/5010.456 ms, `pump_messages` count 1 mean/p95 0.035/0.035 ms, commands/text averages 0.00. Sampled profile review: Step 1 profile had `run_windowed` 96.59%, `build_ui_commands` 88.63%, `gui::render_frame` 50.23%, text advance chain about 47%, text raster chain about 32%, layout about 24.75%. | Final debug idle target accepted on this machine. The app is waiting during unchanged idle, so the old hot continuous-redraw stack is gone from the acceptance window. |
+| 9a | 2026-05-01 | `windows-msvc-debug` `ui_api_testbed`, commit `72fbd13` plus probe-script reliability fix in the working tree | Final active interaction probe: 1280x800 visible dark Testbed tab, D3D11 VSYNC, debug layer on, 1s warmup and 5s trace capture while the script moved the pointer and posted client mouse move/click messages | Trace `build\perf\ui_api_testbed\step_08_debug_mouse_trace_20260501_201624.json`; stdout `step_08_debug_mouse_probe_20260501_201624.txt`; summary `step_08_debug_mouse_summary_20260501_201624.txt` | 3.94% over 5021.90 ms, 116 rendered frames, 23.10 FPS | Mouse activity: 197 moves, 7 clicks. Means/p95: `ui_build` 16.756/36.024 ms, `draw_command_recording` 14.160/31.484 ms, `gui_render_frame` 13.638/30.432 ms, `draw_render_commands_to_window` 2.491/6.095 ms, `present` 0.316/0.739 ms, `input_handling` 0.030/0.089 ms. Commands/text averages 175.00/78.00. | A first rerun using only global cursor movement produced 0 rendered frames because foreground/z-order blocked the synthetic input. The probe now posts targeted client mouse messages to the testbed window, so it validates the idle-wait redraw path reliably and no longer clicks unrelated foreground windows. |
+| 9b | 2026-05-01 | `windows-msvc-release` `ui_api_testbed`, commit `72fbd13` plus probe-script reliability fix in the working tree | Release comparison: visible idle after 3s warmup, 10.02s CPU sample, launched with `--no-d3d-debug-layer` | CPU artifact `build\perf\ui_api_testbed\step_09_release_idle_cpu_20260501_201911.txt` | 0.00% over 10.02s, 12 logical processors | No trace; release tracing is debug-only. | Release comparison is also idle-wait bound. |
 
 Step 1 commands:
 
@@ -430,6 +463,71 @@ Step 7 commands:
   `build\perf\ui_api_testbed\step_07_active_sample_after_wrap_search.diagsession`
   was produced.
 
+Step 8 commands:
+
+- Canonical idle probe:
+  `powershell -ExecutionPolicy Bypass -File .\scripts\ui_api_testbed_perf_probe.ps1`.
+- Canonical active mouse/click probe:
+  `powershell -ExecutionPolicy Bypass -File .\scripts\ui_api_testbed_perf_probe.ps1 -Scenario mouse`.
+- Combined probe:
+  `powershell -ExecutionPolicy Bypass -File .\scripts\ui_api_testbed_perf_probe.ps1 -Scenario both`.
+- The probe internally ran:
+  `.\build.bat windows-msvc-debug ui_api_testbed`, then
+  `build\windows-msvc-debug\Debug\ui_api_testbed.exe --trace build\perf\ui_api_testbed\step_08_debug_idle_trace_<timestamp>.json --trace-warmup-ms 3000 --trace-duration-ms 5000`.
+- The active mouse/click probe internally ran:
+  `build\windows-msvc-debug\Debug\ui_api_testbed.exe --trace build\perf\ui_api_testbed\step_08_debug_mouse_trace_<timestamp>.json --trace-warmup-ms 1000 --trace-duration-ms 5000`, then moved the pointer over the window roughly every 16 ms and clicked every 30 moves until the trace exited.
+  In Step 9 the probe was tightened to post `WM_MOUSEMOVE`,
+  `WM_LBUTTONDOWN`, and `WM_LBUTTONUP` directly to the testbed window after
+  converting each screen point to client coordinates. This keeps the active
+  probe valid when foreground focus or z-order blocks global cursor input.
+- Idle validation run output:
+  `ui_api_testbed trace: wrote D:\dev\cpp\gui_framework\build\perf\ui_api_testbed\step_08_debug_idle_trace_20260501_200937.json frames=0 duration_ms=5013.7 fps=0.0 process_cpu=0.00% commands_avg=0.0 max=0 primitive_avg=0.0 styled_rect_avg=0.0 text_avg=0.0 layers_avg=0.0`.
+- Idle parsed summary:
+  `build\perf\ui_api_testbed\step_08_debug_idle_summary_20260501_200937.txt`
+  with `summary duration_ms=5013.67 cpu=0.00 frames=0 fps=0.00 commands_avg=0.00 text_avg=0.00`.
+- Active mouse/click validation run output:
+  `ui_api_testbed trace: wrote D:\dev\cpp\gui_framework\build\perf\ui_api_testbed\step_08_debug_mouse_trace_20260501_200855.json frames=187 duration_ms=5007.4 fps=37.3 process_cpu=1.61% commands_avg=175.7 max=176 primitive_avg=29.0 styled_rect_avg=87.7 text_avg=78.0 layers_avg=0.0`.
+- Active parsed summary:
+  `build\perf\ui_api_testbed\step_08_debug_mouse_summary_20260501_200855.txt`
+  with `MouseMoves=212`, `MouseClicks=8`, and `summary duration_ms=5007.39 cpu=1.61 frames=187 fps=37.34 commands_avg=175.72 text_avg=78.00`.
+- Process cleanup check:
+  the probe printed `NoProcessRunning=ui_api_testbed.exe`, and a separate
+  `Get-Process ui_api_testbed -ErrorAction SilentlyContinue` returned no
+  process.
+- Sampled profile capture remains manual because DiagnosticsHub/xperf were
+  previously flaky on this machine. Use the Step 1 DiagnosticsHub/xperf command
+  sequence when a new stack artifact is needed, save raw/exported artifacts
+  under `build\perf\ui_api_testbed\`, and keep any profiler failure stdout as a
+  comparison artifact.
+
+Step 9 final acceptance commands:
+
+- Canonical combined debug probe:
+  `powershell -ExecutionPolicy Bypass -File .\scripts\ui_api_testbed_perf_probe.ps1 -Scenario both`.
+- Idle trace output:
+  `ui_api_testbed trace: wrote D:\dev\cpp\gui_framework\build\perf\ui_api_testbed\step_08_debug_idle_trace_20260501_201624.json frames=0 duration_ms=5010.9 fps=0.0 process_cpu=0.03% commands_avg=0.0 max=0 primitive_avg=0.0 styled_rect_avg=0.0 text_avg=0.0 layers_avg=0.0`.
+- Idle parsed summary:
+  `build\perf\ui_api_testbed\step_08_debug_idle_summary_20260501_201624.txt`
+  with `summary duration_ms=5010.91 cpu=0.03 frames=0 fps=0.00 commands_avg=0.00 text_avg=0.00`.
+- Active interaction output after the probe reliability fix:
+  `ui_api_testbed trace: wrote D:\dev\cpp\gui_framework\build\perf\ui_api_testbed\step_08_debug_mouse_trace_20260501_201624.json frames=116 duration_ms=5021.9 fps=23.1 process_cpu=3.94% commands_avg=175.0 max=175 primitive_avg=29.0 styled_rect_avg=87.0 text_avg=78.0 layers_avg=0.0`.
+- Active parsed summary:
+  `build\perf\ui_api_testbed\step_08_debug_mouse_summary_20260501_201624.txt`
+  with `MouseMoves=197`, `MouseClicks=7`, and
+  `summary duration_ms=5021.90 cpu=3.94 frames=116 fps=23.10 commands_avg=175.00 text_avg=78.00`.
+- Sampled-profile review artifact:
+  `build\perf\ui_api_testbed\step_09_sampled_profile_review_20260501_201624.txt`.
+- Release comparison build:
+  `.\build.bat windows-msvc-release ui_api_testbed`.
+- Release comparison CPU sample:
+  launched
+  `build\windows-msvc-release\Release\ui_api_testbed.exe --no-d3d-debug-layer`,
+  warmed for 3s, sampled process CPU for 10.02s, and saved
+  `build\perf\ui_api_testbed\step_09_release_idle_cpu_20260501_201911.txt`
+  with `ProcessCpuPercent=0`.
+- Process cleanup check:
+  the combined debug probe printed `NoProcessRunning=ui_api_testbed.exe`.
+
 ## Decision Log
 
 - 2026-05-01: Use a staged prompt-driven workflow. The first implementation
@@ -482,13 +580,23 @@ Step 7 commands:
   stack had `next_text_line` and `text_advance` on the hot `gui::render_frame`
   path, so wrapped text now searches for the first overflowing prefix instead
   of measuring every prefix. No persistent cache was added.
+- 2026-05-01: Step 8 added `scripts\ui_api_testbed_perf_probe.ps1` as the
+  canonical repeatable debug idle and active mouse/click probe. It records
+  trace/stdout/summary artifacts and a process cleanup check, but deliberately
+  does not encode a pass/fail threshold because the numbers are
+  machine-dependent.
+- 2026-05-01: Step 9 accepted the default debug idle target on this machine:
+  final canonical idle measured 0.03% CPU, 0 rendered frames, and a single long
+  `idle_wait` over 5.01s. The probe's active interaction path now posts client
+  mouse messages directly to the testbed window so it is not dependent on
+  foreground focus.
 
 ## Current Best Diagnosis
 
-Step 4 confirms the first idle redraw gate should stay local for now. The app no
-longer redraws continuously while unchanged: the 5s idle trace after warmup
-recorded 0 rendered frames and 0.03% process CPU, down from Step 3's 350 frames
-and 8.57% CPU with the D3D debug layer on.
+The debug idle target is accepted on this machine. The final 5s default idle
+trace after warmup recorded 0 rendered frames and 0.03% process CPU, down from
+Step 3's 350 frames and 8.57% CPU with the D3D debug layer on. The release
+comparison with `--no-d3d-debug-layer` measured 0.00% over 10.02s.
 
 Step 5 confirms active redraw still has meaningful per-frame CPU work after the
 idle gate. The first measured UI-build cleanup reduced `draw_ui` from 2.351 ms
@@ -514,15 +622,26 @@ Theme setup is not a current target. Step 5 measured it at about 0.020 ms mean
 before and after the change, so caching theme/spec rebuilds is not worth adding
 code for now.
 
-## Current Open Questions
+Step 8 makes the current default idle measurement repeatable with one command:
+`powershell -ExecutionPolicy Bypass -File .\scripts\ui_api_testbed_perf_probe.ps1`.
+Active mouse/click measurement is repeatable with
+`powershell -ExecutionPolicy Bypass -File .\scripts\ui_api_testbed_perf_probe.ps1 -Scenario mouse`.
+Use the emitted trace JSON, probe stdout, parsed summary, mouse move/click
+counts, and process-cleanup line as the canonical comparison artifacts for
+future regression checks.
 
-- Does any future animated UI state need an explicit local redraw request?
+## Remaining Risks And Optional Work
+
+- If future UI work adds animation or timers, it must add an explicit local
+  redraw request; the current idle policy correctly sleeps when state and input
+  are unchanged.
 - If active interaction still feels expensive, profile the remaining
   `gui_render_frame` text raster/text command volume with a working sampler
-  before changing it.
+  before changing it. The final active probe validates redraw wakeups, but its
+  timings are synthetic and more variable than the idle acceptance metric.
 - DiagnosticsHub and xperf were blocked for after sampled profiles in this
-  session; retry from an elevated profiler shell if a post-gate or post-Step-5
-  stack artifact is required.
+  session; retry from an elevated profiler shell only if a new post-gate stack
+  artifact is required.
 - Investigate the current unrelated `gui_tests.exe` failures before relying on
   full GUI test executable success as a validation signal.
 
