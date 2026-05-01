@@ -1905,6 +1905,10 @@ namespace {
         draw::Context draw_context = {};
         draw::Renderer draw_renderer = {};
         TestbedState state = {};
+        HWND hwnd = nullptr;
+        StringBuffer clipboard_text = {};
+        DWORD clipboard_sequence = 0u;
+        bool clipboard_valid = false;
     };
 
     struct AppState {
@@ -2390,7 +2394,8 @@ namespace {
     }
 
     auto set_windows_clipboard_text(void* user_data, StrRef text) -> void {
-        HWND const hwnd = static_cast<HWND>(user_data);
+        UiRuntime* const runtime = static_cast<UiRuntime*>(user_data);
+        HWND const hwnd = runtime->hwnd;
         if (!OpenClipboard(hwnd)) {
             fmt::eprintf("OpenClipboard failed: %lu\n", GetLastError());
             return;
@@ -2445,7 +2450,18 @@ namespace {
     }
 
     auto get_windows_clipboard_text(void* user_data, Arena& arena) -> StrRef {
-        HWND const hwnd = static_cast<HWND>(user_data);
+        UiRuntime* const runtime = static_cast<UiRuntime*>(user_data);
+        DWORD const sequence = GetClipboardSequenceNumber();
+        if (runtime->clipboard_valid && runtime->clipboard_sequence == sequence) {
+            StrRef const text = runtime->clipboard_text.str();
+            if (text.empty()) {
+                return {};
+            }
+            char* const copy = arena_alloc<char>(arena, text.size());
+            return {copy, text.copy_to(copy, text.size())};
+        }
+
+        HWND const hwnd = runtime->hwnd;
         if (!OpenClipboard(hwnd)) {
             fmt::eprintf("OpenClipboard failed: %lu\n", GetLastError());
             return {};
@@ -2486,6 +2502,10 @@ namespace {
         );
         GlobalUnlock(handle);
         CloseClipboard();
+        runtime->clipboard_text.reset();
+        BASE_UNUSED(runtime->clipboard_text.write_bytes(text, static_cast<size_t>(byte_count)));
+        runtime->clipboard_sequence = sequence;
+        runtime->clipboard_valid = true;
         return {text, static_cast<size_t>(byte_count)};
     }
 
@@ -2517,6 +2537,7 @@ namespace {
     [[nodiscard]] auto
     create_ui_runtime(Arena& arena, render::Context render_context, HWND hwnd, UiRuntime* runtime)
         -> bool {
+        runtime->hwnd = hwnd;
         render::Result render_result =
             draw::create_renderer(arena, render_context, {}, runtime->draw_renderer);
         if (render::result_failed(render_result)) {
@@ -2563,7 +2584,7 @@ namespace {
                 .theme = &theme,
                 .set_clipboard_text = set_windows_clipboard_text,
                 .get_clipboard_text = get_windows_clipboard_text,
-                .clipboard_user_data = hwnd,
+                .clipboard_user_data = runtime,
             },
             runtime->ui_context
         );

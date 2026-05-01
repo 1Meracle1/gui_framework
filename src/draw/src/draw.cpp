@@ -638,6 +638,9 @@ namespace gui::draw {
         ContextImpl* const impl = context_from_handle(context);
         ASSERT(impl != nullptr);
 
+        if (font_cache::cache_valid(impl->font_cache)) {
+            font_cache::clear_cache(impl->font_cache);
+        }
         impl->frame_arena.reset();
         impl->primitive_command_count = 0u;
         impl->primitive_batch_count = 0u;

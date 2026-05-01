@@ -1213,6 +1213,55 @@ namespace {
 #endif
     }
 
+    TEST_CASE(draw_begin_frame_releases_previous_text_rasters) {
+        Arena owner_arena = {};
+        owner_arena.init();
+
+        gui::font_provider::Context provider = {};
+        gui::font_provider::Result const provider_result =
+            gui::font_provider::create_context(owner_arena, {}, provider);
+
+#if BASE_PLATFORM_WINDOWS
+        TEST_EXPECT(context, provider_result == gui::font_provider::Result::OK);
+
+        gui::font_cache::CacheDesc cache_desc = {};
+        cache_desc.arena_reserve_size = 64u * 1024u;
+        gui::font_cache::Cache cache = {};
+        gui::font_cache::create_cache(owner_arena, provider, cache_desc, cache);
+
+        gui::font_cache::Font font = {};
+        gui::font_cache::open_system_font(cache, {}, font);
+
+        gui::draw::Context draw_context = {};
+        gui::draw::ContextDesc draw_desc = {};
+        draw_desc.font_cache = cache;
+        gui::draw::create_context(owner_arena, draw_desc, draw_context);
+
+        gui::draw::TextStyle style = {};
+        style.font = font;
+        style.size = 18.0f;
+
+        for (size_t index = 0u; index < 64u; ++index) {
+            char text[] = "dynamic text 0000";
+            text[13u] = static_cast<char>('0' + (index / 1000u) % 10u);
+            text[14u] = static_cast<char>('0' + (index / 100u) % 10u);
+            text[15u] = static_cast<char>('0' + (index / 10u) % 10u);
+            text[16u] = static_cast<char>('0' + index % 10u);
+
+            gui::draw::begin_frame(draw_context);
+            gui::draw::draw_text(draw_context, {0.0f, 0.0f}, style, text, nullptr);
+            gui::draw::end_frame(draw_context);
+            TEST_EXPECT(context, gui::draw::text_command_count(draw_context) == 1u);
+        }
+
+        gui::draw::destroy_context(draw_context);
+        gui::font_cache::destroy_cache(cache);
+        gui::font_provider::destroy_context(provider);
+#else
+        TEST_EXPECT(context, provider_result == gui::font_provider::Result::UNSUPPORTED_PLATFORM);
+#endif
+    }
+
 } // namespace
 
 TEST_MAIN()

@@ -3,6 +3,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <draw/draw_renderer.h>
 
 namespace gui::draw {
@@ -15,6 +16,8 @@ namespace gui::draw {
         constexpr uint32_t STYLED_RECT_VERTICES_PER_COMMAND = 12u;
         constexpr uint32_t MASK_VERTEX_COUNT = 6u;
         constexpr float BLUR_KERNEL_EXTENT = 4.0f;
+        constexpr uint64_t FNV64_OFFSET = 14695981039346656037ull;
+        constexpr uint64_t FNV64_PRIME = 1099511628211ull;
 
         struct RenderVertex {
             float position[2];
@@ -43,7 +46,9 @@ namespace gui::draw {
         };
 
         struct TextTextureKey {
-            uint8_t const* rgba_pixels = nullptr;
+            size_t font = 0u;
+            uint32_t size_bits = 0u;
+            uint64_t text_hash = 0u;
             uint32_t width = 0u;
             uint32_t height = 0u;
             uint32_t stride = 0u;
@@ -106,17 +111,48 @@ namespace gui::draw {
             return static_cast<RendererImpl*>(renderer.handle);
         }
 
-        [[nodiscard]] auto text_texture_key(font_cache::TextRun const& run) -> TextTextureKey {
-            return {run.rgba_pixels, run.size.width, run.size.height, run.stride};
+        [[nodiscard]] auto hash_bytes(uint64_t seed, void const* data, size_t size) -> uint64_t {
+            uint64_t result = seed;
+            auto const* bytes = static_cast<uint8_t const*>(data);
+
+            for (size_t index = 0u; index < size; ++index) {
+                result ^= static_cast<uint64_t>(bytes[index]);
+                result *= FNV64_PRIME;
+            }
+
+            return result;
+        }
+
+        [[nodiscard]] auto float_bits(float value) -> uint32_t {
+            uint32_t bits = 0u;
+            std::memcpy(&bits, &value, sizeof(bits));
+            return bits;
+        }
+
+        [[nodiscard]] auto text_texture_key(TextCommand const& command) -> TextTextureKey {
+            font_cache::TextRun const& run = command.run;
+            return {
+                reinterpret_cast<size_t>(command.style.font.handle),
+                float_bits(command.style.size),
+                hash_bytes(FNV64_OFFSET, command.text.data(), command.text.size()),
+                run.size.width,
+                run.size.height,
+                run.stride
+            };
         }
 
         [[nodiscard]] auto text_texture_key_equal(TextTextureKey lhs, TextTextureKey rhs) -> bool {
-            return lhs.rgba_pixels == rhs.rgba_pixels && lhs.width == rhs.width &&
+            return lhs.font == rhs.font && lhs.size_bits == rhs.size_bits &&
+                   lhs.text_hash == rhs.text_hash && lhs.width == rhs.width &&
                    lhs.height == rhs.height && lhs.stride == rhs.stride;
         }
 
         [[nodiscard]] auto hash_text_texture_key(TextTextureKey key) -> size_t {
-            size_t result = reinterpret_cast<size_t>(key.rgba_pixels);
+            size_t result = key.font;
+            result ^=
+                static_cast<size_t>(key.size_bits) + 0x9e3779b9u + (result << 6u) + (result >> 2u);
+            result ^=
+                static_cast<size_t>(key.text_hash) + 0x9e3779b9u + (result << 6u) + (result >> 2u);
             result ^=
                 static_cast<size_t>(key.width) + 0x9e3779b9u + (result << 6u) + (result >> 2u);
             result ^=
@@ -815,12 +851,10 @@ namespace gui::draw {
         }
 
         [[nodiscard]] auto bind_cached_text_texture(
-            gui::render::Context render_context,
-            RendererImpl& renderer,
-            font_cache::TextRun const& run
+            gui::render::Context render_context, RendererImpl& renderer, TextCommand const& command
         ) -> bool {
             TextTextureCacheEntry* const entry =
-                find_text_texture_cache_entry(renderer, text_texture_key(run));
+                find_text_texture_cache_entry(renderer, text_texture_key(command));
             if (entry == nullptr) {
                 return false;
             }
@@ -832,9 +866,9 @@ namespace gui::draw {
             }
 
             ASSERT(renderer.arena != nullptr);
-            entry->key = text_texture_key(run);
+            entry->key = text_texture_key(command);
             gui::render::Result const texture_result =
-                create_text_texture(render_context, run, entry->texture);
+                create_text_texture(render_context, command.run, entry->texture);
             ASSERT(gui::render::result_succeeded(texture_result));
             if (gui::render::result_failed(texture_result)) {
                 *entry = {};
@@ -1063,7 +1097,7 @@ namespace gui::draw {
                 return;
             }
 
-            if (bind_cached_text_texture(render_context, renderer, command.run)) {
+            if (bind_cached_text_texture(render_context, renderer, command)) {
                 submit_text_draw(render_context, target, upload, command, text_index);
                 return;
             }
