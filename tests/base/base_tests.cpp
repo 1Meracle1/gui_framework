@@ -47,7 +47,16 @@ namespace {
         return items[0u] + items[1u];
     }
 
+    constexpr auto sum_const_slice(Slice<int const> items) -> int {
+        int sum = 0;
+        for (int item : items) {
+            sum += item;
+        }
+        return sum;
+    }
+
     static_assert(make_constexpr_slice_sum() == 5);
+    static_assert(sum_const_slice({1, 2, 3}) == 6);
 
     enum class Direction : uint8_t {
         NORTH = 1u,
@@ -364,6 +373,11 @@ namespace {
         TEST_EXPECT(context, fixed.prefix(2u).back() == 5);
         TEST_EXPECT(context, standard.drop_prefix(1u).front() == 8);
         TEST_EXPECT(context, const_dynamic.suffix(2u)[0u] == 110);
+    }
+
+    TEST_CASE(slice_views_initializer_lists_for_const_values) {
+        TEST_EXPECT(context, sum_const_slice({1, 2, 3}) == 6);
+        TEST_EXPECT(context, Slice<int const>{}.empty());
     }
 
     TEST_CASE(vec_grows_resizes_appends_and_removes_values) {

@@ -709,14 +709,14 @@ namespace {
                 }
             }
 
-            gui::TabItem testbed_tabs[] = {
-                {gui::id("testbed_main_tab"), "Testbed"},
-                {gui::id("testbed_sample_tab"), "Samples"},
-            };
             auto tab_view = ui.tab_view(
                 gui::id("testbed_tabs"),
                 {
-                    .tabs = slice(testbed_tabs),
+                    .read_only_tabs =
+                        {
+                            {gui::id("testbed_main_tab"), "Testbed"},
+                            {gui::id("testbed_sample_tab"), "Samples"},
+                        },
                     .selected_index = &state.selected_tab,
                     .flags = 0u,
                     .box =

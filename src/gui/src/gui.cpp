@@ -2587,9 +2587,18 @@ namespace gui {
             return (flags & flag) != 0u;
         }
 
+        [[nodiscard]] auto tab_view_tabs(TabViewDesc const& desc) -> Slice<TabItem const> {
+            return !desc.read_only_tabs.empty() ? desc.read_only_tabs : desc.tabs;
+        }
+
+        [[nodiscard]] auto tab_view_mutable(TabViewDesc const& desc) -> bool {
+            return desc.read_only_tabs.empty() && !desc.tabs.empty();
+        }
+
         [[nodiscard]] auto tab_count(TabViewDesc const& desc) -> size_t {
-            size_t const count = desc.tab_count != nullptr ? *desc.tab_count : desc.tabs.size();
-            return std::min(count, desc.tabs.size());
+            Slice<TabItem const> const tabs = tab_view_tabs(desc);
+            size_t const count = desc.tab_count != nullptr ? *desc.tab_count : tabs.size();
+            return std::min(count, tabs.size());
         }
 
         [[nodiscard]] auto clamp_tab_index(size_t index, size_t count) -> size_t {
@@ -2606,11 +2615,16 @@ namespace gui {
         }
 
         [[nodiscard]] auto ensure_tab_id(TabViewDesc const& desc, Id view_id, size_t index) -> Id {
-            TabItem& tab = desc.tabs[index];
-            if (tab.id.value == 0u) {
-                tab.id = tab_child_id(view_id, index + 1u);
+            if (desc.read_only_tabs.empty()) {
+                TabItem& tab = desc.tabs[index];
+                if (tab.id.value == 0u) {
+                    tab.id = tab_child_id(view_id, index + 1u);
+                }
+                return tab.id;
             }
-            return tab.id;
+
+            TabItem const& tab = desc.read_only_tabs[index];
+            return tab.id.value != 0u ? tab.id : tab_child_id(view_id, index + 1u);
         }
 
         auto move_tab(Slice<TabItem> tabs, size_t from, size_t to) -> void {
@@ -2674,8 +2688,8 @@ namespace gui {
             size_t count,
             size_t& out_to
         ) -> bool {
-            if (!tab_flag(desc.flags, TAB_FLAG_MOVABLE) || !impl->frame_desc.input.mouse_down[0u] ||
-                !impl->previous_input.mouse_down[0u]) {
+            if (!tab_view_mutable(desc) || !tab_flag(desc.flags, TAB_FLAG_MOVABLE) ||
+                !impl->frame_desc.input.mouse_down[0u] || !impl->previous_input.mouse_down[0u]) {
                 return false;
             }
 
@@ -5227,6 +5241,8 @@ namespace gui {
         );
         push_parent(impl, bar_index);
 
+        Slice<TabItem const> const tabs = tab_view_tabs(desc);
+        bool const mutable_tabs = tab_view_mutable(desc);
         size_t count = tab_count(desc);
         size_t selected = selected_tab_index(desc, count);
         TabViewResult result = {.selected_index = selected};
@@ -5281,9 +5297,9 @@ namespace gui {
             }
 
             push_parent(impl, tab_index);
-            label(desc.tabs[index].title, {.layout = {.width = text(), .height = fill()}});
+            label(tabs[index].title, {.layout = {.width = text(), .height = fill()}});
             spacer({.layout = {.width = fill(), .height = px(1.0f)}});
-            if (tab_flag(desc.flags, TAB_FLAG_CLOSABLE)) {
+            if (mutable_tabs && tab_flag(desc.flags, TAB_FLAG_CLOSABLE)) {
                 Id const close_id = tab_child_id(tab_id, 0xc105e0u);
                 Signal const close_signal = button(
                     close_id,
@@ -5302,7 +5318,7 @@ namespace gui {
             pop_parent_to(impl, tab_index);
         }
 
-        if (tab_flag(desc.flags, TAB_FLAG_ADDABLE)) {
+        if (mutable_tabs && tab_flag(desc.flags, TAB_FLAG_ADDABLE)) {
             Id const add_id = tab_child_id(view_id, 0xadd0u);
             Signal const add_signal = button(
                 add_id,
@@ -5319,15 +5335,15 @@ namespace gui {
             }
         }
 
-        if (result.closed && result.closed_index < count) {
+        if (result.closed && result.closed_index < count && mutable_tabs) {
             size_t const next_count = count - 1u;
             selected = selected_after_close(selected, result.closed_index, next_count);
             close_tab(desc.tabs, desc.tab_count, result.closed_index);
             count = desc.tab_count != nullptr ? tab_count(desc) : next_count;
-        } else if (result.moved) {
+        } else if (result.moved && mutable_tabs) {
             selected = selected_after_move(selected, result.moved_from, result.moved_to);
             move_tab(desc.tabs, result.moved_from, result.moved_to);
-        } else if (result.added && desc.tab_count != nullptr &&
+        } else if (result.added && mutable_tabs && desc.tab_count != nullptr &&
                    *desc.tab_count < desc.tabs.size()) {
             size_t const index = *desc.tab_count;
             TabItem item = desc.new_tab;

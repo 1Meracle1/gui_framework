@@ -792,8 +792,7 @@ namespace gui::draw {
     }
 
     auto draw_line(Context context, Vec2 p0, Vec2 p1, Color color, float thickness) -> void {
-        Vec2 const points[] = {p0, p1};
-        draw_polyline(context, points, color, thickness, false);
+        draw_polyline(context, {p0, p1}, color, thickness, false);
     }
 
     auto draw_polyline(Context context,
@@ -921,23 +920,20 @@ namespace gui::draw {
 
     auto draw_triangle(Context context, Vec2 p0, Vec2 p1, Vec2 p2, Color color, float thickness)
         -> void {
-        Vec2 const points[] = {p0, p1, p2};
-        draw_polyline(context, points, color, thickness, true);
+        draw_polyline(context, {p0, p1, p2}, color, thickness, true);
     }
 
     auto draw_triangle_filled(Context context, Vec2 p0, Vec2 p1, Vec2 p2, Color color) -> void {
         ContextImpl* const impl = context_from_handle(context);
         ASSERT(impl != nullptr);
 
-        Vec2 const points[] = {p0, p1, p2};
-        fill_convex_points(impl, points, color);
+        fill_convex_points(impl, {p0, p1, p2}, color);
     }
 
     auto
     draw_quad(Context context, Vec2 p0, Vec2 p1, Vec2 p2, Vec2 p3, Color color, float thickness)
         -> void {
-        Vec2 const points[] = {p0, p1, p2, p3};
-        draw_polyline(context, points, color, thickness, true);
+        draw_polyline(context, {p0, p1, p2, p3}, color, thickness, true);
     }
 
     auto draw_quad_filled(Context context, Vec2 p0, Vec2 p1, Vec2 p2, Vec2 p3, Color color)
@@ -945,8 +941,7 @@ namespace gui::draw {
         ContextImpl* const impl = context_from_handle(context);
         ASSERT(impl != nullptr);
 
-        Vec2 const points[] = {p0, p1, p2, p3};
-        fill_convex_points(impl, points, color);
+        fill_convex_points(impl, {p0, p1, p2, p3}, color);
     }
 
     auto draw_rect(Context context, Rect rect, Color color, float thickness, float rounding)
@@ -966,9 +961,11 @@ namespace gui::draw {
         }
 
         if (rounding < 0.5f) {
-            Vec2 const points[] = {
-                rect.min, {rect.max.x, rect.min.y}, rect.max, {rect.min.x, rect.max.y}};
-            fill_convex_points(impl, points, color);
+            fill_convex_points(
+                impl,
+                {rect.min, {rect.max.x, rect.min.y}, rect.max, {rect.min.x, rect.max.y}},
+                color
+            );
             return;
         }
 

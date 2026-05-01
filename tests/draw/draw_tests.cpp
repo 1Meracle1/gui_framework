@@ -907,8 +907,13 @@ namespace {
         gui::draw::create_context(owner_arena, {}, draw_context);
 
         gui::draw::begin_frame(draw_context);
-        gui::draw::Vec2 const points[] = {{0.0f, 0.0f}, {10.0f, 0.0f}, {10.0f, 10.0f}};
-        gui::draw::draw_polyline(draw_context, points, {1.0f, 1.0f, 1.0f, 1.0f}, 2.0f, false);
+        gui::draw::draw_polyline(
+            draw_context,
+            {{0.0f, 0.0f}, {10.0f, 0.0f}, {10.0f, 10.0f}},
+            {1.0f, 1.0f, 1.0f, 1.0f},
+            2.0f,
+            false
+        );
 
         TEST_EXPECT(context, gui::draw::primitive_command_count(draw_context) == 1u);
 
@@ -1007,9 +1012,13 @@ namespace {
         gui::draw::create_context(owner_arena, {}, draw_context);
 
         gui::draw::begin_frame(draw_context);
-        gui::draw::Vec2 const points[] = {
-            {0.0f, 0.0f}, {0.0f, 0.0f}, {8.0f, 0.0f}, {8.0f, 0.0f}, {8.0f, 4.0f}};
-        gui::draw::draw_polyline(draw_context, points, {1.0f, 1.0f, 1.0f, 1.0f}, 2.0f, false);
+        gui::draw::draw_polyline(
+            draw_context,
+            {{0.0f, 0.0f}, {0.0f, 0.0f}, {8.0f, 0.0f}, {8.0f, 0.0f}, {8.0f, 4.0f}},
+            {1.0f, 1.0f, 1.0f, 1.0f},
+            2.0f,
+            false
+        );
 
         gui::draw::PrimitiveCommand const* command = gui::draw::primitive_command(draw_context, 0u);
         TEST_EXPECT(context, command != nullptr);
@@ -1018,9 +1027,13 @@ namespace {
         expect_position(context, command->vertices[6u].position, 7.0f, 1.0f);
 
         gui::draw::begin_frame(draw_context);
-        gui::draw::Vec2 const degenerate_points[] = {{2.0f, 3.0f}, {2.0f, 3.0f}, {2.0f, 3.0f}};
         gui::draw::draw_polyline(
-            draw_context, degenerate_points, {1.0f, 1.0f, 1.0f, 1.0f}, 2.0f, false);
+            draw_context,
+            {{2.0f, 3.0f}, {2.0f, 3.0f}, {2.0f, 3.0f}},
+            {1.0f, 1.0f, 1.0f, 1.0f},
+            2.0f,
+            false
+        );
         TEST_EXPECT(context, gui::draw::primitive_command_count(draw_context) == 0u);
 
         gui::draw::destroy_context(draw_context);

@@ -359,6 +359,7 @@ namespace gui {
 
     struct TabViewDesc {
         Slice<TabItem> tabs = {};
+        Slice<TabItem const> read_only_tabs = {};
         size_t* tab_count = nullptr;
         size_t* selected_index = nullptr;
         TabItem new_tab = {};

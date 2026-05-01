@@ -461,19 +461,16 @@ namespace {
         gui::Context gui_context = {};
         gui::create_context(arena, {}, gui_context);
 
-        gui::TabItem tabs[] = {
-            {gui::id("tab_a"), "A"},
-            {gui::id("tab_b"), "B"},
-        };
-        size_t tab_count = 2u;
+        gui::Id const tab_a = gui::id("tab_a");
+        gui::Id const tab_b = gui::id("tab_b");
         size_t selected = 0u;
 
         gui::Frame ui = gui::begin_frame(gui_context, {.size = {240.0f, 100.0f}});
         if (auto tab_view = ui.tab_view(
                 gui::id("tabs"),
-                {.tabs = slice(tabs),
-                 .tab_count = &tab_count,
+                {.read_only_tabs = {{tab_a, "A"}, {tab_b, "B"}},
                  .selected_index = &selected,
+                 .flags = 0u,
                  .box = {.layout = {.width = gui::px(220.0f), .height = gui::px(90.0f)}}}
             )) {
             ui.label(selected == 0u ? "Alpha" : "Beta");
@@ -481,7 +478,7 @@ namespace {
         }
         gui::end_frame(ui);
 
-        gui::BoxInfo const* second_tab = ui.find_box(tabs[1].id, gui::BoxKind::TAB);
+        gui::BoxInfo const* second_tab = ui.find_box(tab_b, gui::BoxKind::TAB);
         TEST_EXPECT(context, second_tab != nullptr);
         TEST_EXPECT(context, find_box_text(ui, gui::BoxKind::LABEL, "Alpha") != nullptr);
 
@@ -491,9 +488,9 @@ namespace {
         ui = gui::begin_frame(gui_context, {.size = {240.0f, 100.0f}, .input = input});
         ui.tab_view(
             gui::id("tabs"),
-            {.tabs = slice(tabs),
-             .tab_count = &tab_count,
+            {.read_only_tabs = {{tab_a, "A"}, {tab_b, "B"}},
              .selected_index = &selected,
+             .flags = 0u,
              .box = {.layout = {.width = gui::px(220.0f), .height = gui::px(90.0f)}}}
         );
         gui::end_frame(ui);
@@ -502,9 +499,9 @@ namespace {
         ui = gui::begin_frame(gui_context, {.size = {240.0f, 100.0f}, .input = input});
         if (auto tab_view = ui.tab_view(
                 gui::id("tabs"),
-                {.tabs = slice(tabs),
-                 .tab_count = &tab_count,
+                {.read_only_tabs = {{tab_a, "A"}, {tab_b, "B"}},
                  .selected_index = &selected,
+                 .flags = 0u,
                  .box = {.layout = {.width = gui::px(220.0f), .height = gui::px(90.0f)}}}
             )) {
             ui.label(selected == 0u ? "Alpha" : "Beta");

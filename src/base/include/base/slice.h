@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <base/assert.h>
 #include <cstddef>
+#include <initializer_list>
 #include <iterator>
 #include <limits>
 #include <type_traits>
@@ -18,6 +19,10 @@ template <typename T> class Slice final {
     constexpr Slice(T* data, size_t size) : m_data(data), m_size(data != nullptr ? size : 0u) {}
 
     template <size_t N> constexpr Slice(T (&items)[N]) : Slice(items, N) {}
+
+    constexpr Slice(std::initializer_list<Value> items)
+        requires(std::is_const_v<T>)
+        : Slice(items.size() != 0u ? items.begin() : nullptr, items.size()) {}
 
     template <typename U>
         requires(std::is_convertible_v<U*, T*>)
