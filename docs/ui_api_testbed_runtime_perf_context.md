@@ -182,22 +182,26 @@ acceptance target.
 
 Rank these with data before optimizing:
 
-Step 1 ranking after the first sampled profile: continuous idle rendering is
-the lead hypothesis. Repeated per-frame text measurement/rasterization and
-layout are the strongest measured sub-costs. The D3D debug layer is visible but
-smaller in this sample. Theme setup and present/synchronization still need
-manual trace zones before they can be ranked cleanly.
+Step 3 ranking after correlating the sampled profile with manual trace timings:
 
-1. The app burns CPU because it renders continuously even when there is no
-   input, resize, animation, or dirty UI state.
-2. The D3D debug layer contributes meaningful debug idle cost.
-3. Rebuilding the full theme and applying it every frame costs more than it
-   should.
-4. Text measurement, font cache work, or table/list layout repeats expensive
-   work every frame.
-5. Draw command recording or renderer upload/submission is heavier than needed
-   for an unchanged idle frame.
-6. Present or synchronization behavior is causing extra CPU wakeups.
+1. Continuous idle redraw is the first optimization target. The default visible
+   idle window still renders about 70-73 FPS with no input, spending about
+   13-14 ms of CPU-side frame work every frame and about 8.6-8.8% normalized
+   process CPU.
+2. Per-redraw UI build and draw command recording are the dominant stage costs.
+   `ui_build` is about 13.0 ms mean / 14.1 ms p95, dominated by
+   `draw_command_recording` and `gui_render_frame` at about 7.2-7.4 ms mean.
+   The sampled profile maps that stage to text measurement/rasterization and
+   layout.
+3. Command/text volume is the main per-redraw sub-cost to revisit after idle
+   redraw is gated: each idle frame records 175 commands, including 78 text
+   commands and 87 styled rects.
+4. The D3D debug layer is secondary. Turning it off reduces
+   `draw_render_commands_to_window` from about 1.11 ms to 0.54 ms mean, but
+   measured process CPU did not improve in the 5s trace window.
+5. Present, message pumping, and theme setup are not first-order blockers in
+   the current idle trace. `present` is about 0.07-0.08 ms mean and
+   `theme_setup` is about 0.02 ms mean.
 
 ## Living Measurement Log
 
@@ -208,6 +212,7 @@ Add one entry per completed step. Keep entries short but comparable.
 | 0 | 2026-05-01 | planning only | no run yet | none | unknown | none | Context and prompt plan created. |
 | 1 | 2026-05-01 | `windows-msvc-debug` `ui_api_testbed`, commit `7348779` with perf docs untracked | Default 1280x800 window, visible idle dark Testbed tab, D3D11 VSYNC, debug layer on, no input after 3s warmup | `build\perf\ui_api_testbed\step_01_debug_idle_vs_cpu.diagsession`; merged ETL `build\perf\ui_api_testbed\step_01_debug_idle_vs_cpu_merged.etl`; stack report `build\perf\ui_api_testbed\step_01_debug_idle_xperf_stack_butterfly_merged.html`; summaries `step_01_debug_idle_top_inclusive_functions.txt` and `step_01_debug_idle_top_modules.txt` | 8.61% no profiler over 10.01s; 8.23% during VS CPU sample over 12.02s, 12 logical processors | Top inclusive: `run_windowed` 96.59%, `build_ui_commands` 88.63%, `gui::render_frame` 50.23%, text advance chain about 47%, text raster chain about 32%, `gui::end_frame` 25.99%, layout about 24.75%. Top exclusive modules: app 42.03%, DWrite 22.94%, kernel 11.62%, Win32k 5.62%, D3D debug layer 2.11%. | Local app symbols resolved after `xperf -merge`; OS/driver/DWrite symbols mostly unresolved. WPR/xperf were installed, but `wpr.exe -start CPU -filemode` failed before capture with `0xc5585011` ("Failed to enable the policy to profile system performance"). |
 | 2 | 2026-05-01 | `windows-msvc-debug` `ui_api_testbed`, commit `7348779` with perf docs untracked and local trace edits | Default 1280x800 window, visible idle dark Testbed tab, D3D11 VSYNC, debug layer on, auto-exit manual trace after 3s warmup and 5s capture | `build\perf\ui_api_testbed\step_02_debug_idle_trace.json` Chrome Trace JSON, 968,213 bytes | 8.51% over 5.00s, normalized with `GetProcessTimes`/QPC across 12 logical processors | 354 frames, 70.8 fps. Avg draw counts: 175 total, 29 primitive commands, 10 primitive batches, 87 styled rects, 78 text, 0 layers. Trace contains `frame`, `pump_messages`, `theme_setup`, `begin_ui_frame`, `draw_ui`, `end_ui_frame`, `draw_command_recording`, `draw_begin_frame`, `draw_backdrop`, `gui_render_frame`, `draw_end_frame`, `render_begin_frame`, `draw_render_commands_to_window`, `present`, draw command counters, and summary metadata. | Idle run had no input messages, so `input_handling` did not appear. No `idle_wait` appeared because the visible VSYNC loop does not sleep outside present. |
+| 3 | 2026-05-01 | `windows-msvc-debug` `ui_api_testbed`, commit `0a2ebf4` with measurement-only `--no-d3d-debug-layer` trace option in the working tree | Default 1280x800 window, visible idle dark Testbed tab, D3D11 VSYNC, no input after 3s warmup and 5s capture; compared debug layer on and off | Debug on `build\perf\ui_api_testbed\step_03_debug_idle_trace_debug_layer_on.json`; debug off `build\perf\ui_api_testbed\step_03_debug_idle_trace_debug_layer_off.json`; reviewed Step 1 sampled profile artifacts | Debug on: 8.57%, 350 frames, 69.8 FPS. Debug off: 8.75%, 366 frames, 73.2 FPS. 12 logical processors. | Debug on means/p95: frame 14.318/15.420 ms, `ui_build` 13.070/14.140 ms, `draw_command_recording` 7.406/8.184 ms, `gui_render_frame` 7.187/7.973 ms, `end_ui_frame` 3.893/4.196 ms, `draw_ui` 1.648/1.808 ms, `draw_render_commands_to_window` 1.108/1.172 ms, `present` 0.080/0.090 ms. Debug off means/p95: frame 13.655/14.803 ms, `ui_build` 12.988/13.988 ms, `draw_command_recording` 7.345/8.257 ms, `gui_render_frame` 7.126/8.037 ms, `draw_render_commands_to_window` 0.535/0.561 ms, `present` 0.072/0.089 ms. Draw counts unchanged: 175 total, 29 primitive, 10 batches, 87 styled rects, 78 text, 0 layers. Step 1 sampled stacks still correlate: `build_ui_commands`, `gui::render_frame`, text advance/raster, and layout dominate. | Measured ranking: optimize idle redraw frequency first. Then, if redraw cost still matters, optimize per-redraw `gui_render_frame` text/layout/command volume. D3D debug layer is measurable in renderer submission but not the dominant idle CPU driver; present, pump, and theme setup are small. |
 
 Step 1 commands:
 
@@ -257,6 +262,25 @@ trace start; `--trace-duration-ms` auto-exits after the capture window. Without
 that debug-only tracing is disabled. Debug builds without `--trace` still pass
 through cheap scope objects and active checks in the instrumented regions; the
 file I/O and JSON formatting happen only while tracing is active.
+`--no-d3d-debug-layer` is a measurement-only debug-build switch for comparing
+the default D3D11 debug layer against the same run with the layer disabled. Trace
+metadata records `debug_layer` as `1` or `0`.
+
+Step 3 commands:
+
+- Format check: `clang-format --dry-run --Werror tools\ui_api_testbed.cpp`.
+- Build: `.\build.bat windows-msvc-debug ui_api_testbed`.
+- Trace with D3D debug layer on:
+  `build\windows-msvc-debug\Debug\ui_api_testbed.exe --trace build\perf\ui_api_testbed\step_03_debug_idle_trace_debug_layer_on.json --trace-warmup-ms 3000 --trace-duration-ms 5000`.
+- Trace with D3D debug layer off:
+  `build\windows-msvc-debug\Debug\ui_api_testbed.exe --trace build\perf\ui_api_testbed\step_03_debug_idle_trace_debug_layer_off.json --trace-warmup-ms 3000 --trace-duration-ms 5000 --no-d3d-debug-layer`.
+- Sampled profile review:
+  `build\perf\ui_api_testbed\step_01_debug_idle_vs_cpu.diagsession`,
+  `build\perf\ui_api_testbed\step_01_debug_idle_vs_cpu_merged.etl`,
+  `build\perf\ui_api_testbed\step_01_debug_idle_top_inclusive_functions.txt`,
+  and `build\perf\ui_api_testbed\step_01_debug_idle_top_modules.txt`.
+- Stage timing summary: parsed both Step 3 Chrome Trace JSON files by pairing
+  `B`/`E` zone events and computing mean and p95 in milliseconds.
 
 ## Decision Log
 
@@ -281,30 +305,32 @@ file I/O and JSON formatting happen only while tracing is active.
   `--trace`, `--trace-warmup-ms`, and `--trace-duration-ms`, emits draw command
   counters per frame, and prints a compact summary with Task Manager-style
   process CPU percentage.
+- 2026-05-01: Added a local measurement-only `--no-d3d-debug-layer` option to
+  `ui_api_testbed` so the same traced debug executable can compare default D3D11
+  debug-layer behavior against a disabled layer without source edits.
+- 2026-05-01: Step 3 trace correlation ranks continuous idle redraw frequency
+  first. The largest per-redraw stage is `ui_build`, especially
+  `draw_command_recording`/`gui_render_frame`, and the sampled profile maps that
+  work to text measurement/rasterization and layout. D3D debug-layer overhead is
+  real but secondary; present, pump, and theme setup are small.
 
 ## Current Best Diagnosis
 
-Step 1 confirms the idle window keeps spending CPU inside the continuous frame
-loop. The hottest inclusive app path is `run_windowed -> build_ui_commands`.
-Within that path, sampled cost clusters around `gui::render_frame`/`render_box`,
-text measurement (`text_advance`, `font_cache::text_advance`,
-`font_provider::text_advance`, DWrite), text rasterization, and
-`gui::end_frame` layout.
+Step 3 confirms the idle cost is dominated by continuous redraw frequency, not
+present blocking or debug-layer behavior. The visible unchanged window redraws
+about 70-73 times per second and consumes about 8.6-8.8% normalized process CPU.
+Each frame spends about 13 ms in `ui_build`; most of that is
+`draw_command_recording` and `gui_render_frame`. The Step 1 sampled profile maps
+that stage to text measurement/rasterization and layout.
 
-Step 2 confirms the local manual trace path works and CPU remains comparable to
-the Step 1 idle baseline at 8.51%. The default idle frame records 175 draw
-commands every frame, including 78 text commands and 87 styled rects, with no
-layers. The next step should inspect or summarize the trace timings to rank
-`ui_build`, draw command recording, renderer submission, and `present`; do not
-optimize from CPU percentage alone.
+Turning off the D3D debug layer cuts renderer submission from about 1.11 ms to
+0.54 ms mean, but total CPU did not improve in the short trace. `present`,
+message pumping, and theme setup are small. The next implementation step should
+therefore gate idle redraws locally before optimizing text/layout or renderer
+submission.
 
 ## Current Open Questions
 
-- How much of the remaining debug idle CPU is app code versus D3D debug layer
-  overhead after stage timings separate UI build, draw submission, and present?
-- Does VSYNC present block cheaply, or does the loop still spend meaningful CPU
-  between presents? Step 2 now has zones to answer this, but stage timing
-  summaries have not been computed yet.
 - Is there any hidden animation, caret, hover, or time-dependent style that
   requires continuous frames?
 - Can idle redraw be gated locally in `ui_api_testbed`, or does the framework

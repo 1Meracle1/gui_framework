@@ -1902,6 +1902,7 @@ namespace {
         char const* path = nullptr;
         uint64_t warmup_ms = 0u;
         uint64_t duration_ms = 0u;
+        bool enable_debug_layer = true;
     };
 
     struct ManualTrace {
@@ -2033,7 +2034,8 @@ namespace {
         );
     }
 
-    [[nodiscard]] auto trace_start(ManualTrace* trace, char const* path, render::SizeU32 size)
+    [[nodiscard]] auto
+    trace_start(ManualTrace* trace, char const* path, render::SizeU32 size, bool enable_debug_layer)
         -> bool {
         if (trace == nullptr || path == nullptr || path[0] == '\0') {
             return false;
@@ -2073,7 +2075,7 @@ namespace {
             trace->pid,
             trace->tid
         );
-        trace_instant_u32(trace, "trace_start", size, 1u);
+        trace_instant_u32(trace, "trace_start", size, enable_debug_layer ? 1u : 0u);
         fmt::printf("ui_api_testbed trace: recording %s\n", path);
         return true;
     }
@@ -2123,7 +2125,9 @@ namespace {
         return count != 0u ? static_cast<double>(sum) / static_cast<double>(count) : 0.0;
     }
 
-    auto trace_finish(ManualTrace* trace, char const* path, render::SizeU32 size) -> void {
+    auto trace_finish(
+        ManualTrace* trace, char const* path, render::SizeU32 size, bool enable_debug_layer
+    ) -> void {
         if (!trace_active(trace)) {
             return;
         }
@@ -2154,7 +2158,8 @@ namespace {
             "{\"name\":\"trace_summary\",\"cat\":\"summary\",\"ph\":\"i\",\"s\":\"p\","
             "\"ts\":%llu,\"pid\":%u,\"tid\":%u,\"args\":{\"duration_ms\":%.2f,"
             "\"process_cpu_percent\":%.2f,\"frames\":%zu,\"fps\":%.2f,"
-            "\"window_width\":%u,\"window_height\":%u,\"avg_commands\":%.2f,"
+            "\"window_width\":%u,\"window_height\":%u,\"debug_layer\":%u,"
+            "\"avg_commands\":%.2f,"
             "\"avg_primitives\":%.2f,\"avg_primitive_batches\":%.2f,"
             "\"avg_styled_rects\":%.2f,\"avg_text\":%.2f,\"avg_layers\":%.2f,"
             "\"max_commands\":%zu}}",
@@ -2167,6 +2172,7 @@ namespace {
             fps,
             size.width,
             size.height,
+            enable_debug_layer ? 1u : 0u,
             avg_commands,
             avg_primitives,
             avg_batches,
@@ -2277,10 +2283,12 @@ namespace {
                     fmt::eprintf("invalid --trace-duration-ms value\n");
                     return false;
                 }
+            } else if (std::strcmp(arg, "--no-d3d-debug-layer") == 0) {
+                out_options->enable_debug_layer = false;
             } else {
                 fmt::eprintf(
                     "usage: ui_api_testbed [--trace <path>] [--trace-warmup-ms N] "
-                    "[--trace-duration-ms N]\n"
+                    "[--trace-duration-ms N] [--no-d3d-debug-layer]\n"
                 );
                 return false;
             }
@@ -3238,7 +3246,7 @@ namespace {
         render::ContextDesc context_desc = {};
         context_desc.backend = render::Backend::D3D11;
 #if BASE_DEBUG
-        context_desc.enable_debug_layer = true;
+        context_desc.enable_debug_layer = trace_options.enable_debug_layer;
 #endif
 
         render::Result result = render::create_context(app_arena, context_desc, render_context);
@@ -3284,9 +3292,12 @@ namespace {
                 GetTickCount64() - trace_warmup_start >= trace_options.warmup_ms) {
                 trace_start_done = true;
 #if BASE_DEBUG
-                BASE_UNUSED(
-                    trace_start(&trace, trace_options.path, render::window_size(render_window))
-                );
+                BASE_UNUSED(trace_start(
+                    &trace,
+                    trace_options.path,
+                    render::window_size(render_window),
+                    trace_options.enable_debug_layer
+                ));
 #endif
             }
 
@@ -3388,7 +3399,12 @@ namespace {
         }
 
 #if BASE_DEBUG
-        trace_finish(&trace, trace_options.path, render::window_size(render_window));
+        trace_finish(
+            &trace,
+            trace_options.path,
+            render::window_size(render_window),
+            trace_options.enable_debug_layer
+        );
 #else
         BASE_UNUSED(trace_options);
 #endif
