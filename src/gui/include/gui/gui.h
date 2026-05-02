@@ -96,6 +96,7 @@ namespace gui {
         CANVAS,
         PANEL,
         TEXT,
+        TEXT_MUTED,
         CONTROL,
         ACCENT,
         DANGER,

@@ -143,6 +143,20 @@ if(WIN32)
     )
     cpp_configure_target(liquid_glass_testbed)
 
+    add_executable(repository_ui_testbed
+        tools/repository_ui_testbed.cpp
+    )
+    target_compile_definitions(repository_ui_testbed PRIVATE
+        WIN32_LEAN_AND_MEAN
+        NOMINMAX
+    )
+    target_link_libraries(repository_ui_testbed PRIVATE
+        gui::gui
+        draw::draw
+        render::render
+    )
+    cpp_configure_target(repository_ui_testbed)
+
     add_executable(render_dx12_clear_smoke
         tools/render_dx12_clear_smoke.cpp
     )

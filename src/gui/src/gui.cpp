@@ -4716,6 +4716,8 @@ namespace gui {
         theme_role(theme, StyleRole::CANVAS).normal = {
             .background = tokens.canvas, .foreground = tokens.text
         };
+        theme_role(theme, StyleRole::TEXT).normal = {.foreground = tokens.text};
+        theme_role(theme, StyleRole::TEXT_MUTED).normal = {.foreground = tokens.text_muted};
         theme_role(theme, StyleRole::PANEL).normal = {
             .background = tokens.panel,
             .foreground = tokens.text,
