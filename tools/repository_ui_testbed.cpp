@@ -436,16 +436,6 @@ namespace {
         fmt::snprintf(out, capacity, "%.1f %s", value, suffix);
     }
 
-    [[nodiscard]] auto repo_file_count(RepoTree const& tree) -> size_t {
-        size_t count = 0u;
-        for (size_t index = 0u; index < tree.node_count; ++index) {
-            if (!tree.nodes[index].directory) {
-                count += 1u;
-            }
-        }
-        return count;
-    }
-
     [[nodiscard]] auto repo_package_bytes(RepoTree const& tree) -> uint64_t {
         uint64_t bytes = 0u;
         for (size_t index = 0u; index < tree.node_count; ++index) {
@@ -919,13 +909,6 @@ namespace {
         return theme;
     }
 
-    [[nodiscard]] auto fill_box(gui::Color background) -> gui::BoxDesc {
-        return {
-            .layout = {.width = gui::fill(), .height = gui::fill()},
-            .style = {.background = background},
-        };
-    }
-
     [[nodiscard]] auto separator_y(RepositorySpec const& spec) -> gui::BoxDesc {
         return {
             .layout = {.width = gui::fill(), .height = gui::px(1.0f)},
@@ -1069,7 +1052,7 @@ namespace {
                     {
                         .layout =
                             {
-                                .width = gui::px(32.0f),
+                                .width = gui::px(42.0f),
                                 .height = gui::px(20.0f),
                                 .padding = gui::insets(0.0f, 8.0f),
                             },
@@ -1653,7 +1636,7 @@ namespace {
                     label(ui, "T", 11.0f, gui::StyleRole::TEXT_MUTED);
                 }
                 ui.button(
-                    "+  Add file  v",
+                    "+ Add file",
                     {
                         .layout =
                             {
@@ -1665,11 +1648,11 @@ namespace {
                     }
                 );
                 ui.button(
-                    "Clone  v",
+                    "Clone",
                     {
                         .layout =
                             {
-                                .width = gui::px(76.0f),
+                                .width = gui::px(100.0f),
                                 .height = gui::fill(),
                                 .padding = gui::insets(0.0f, 10.0f),
                             },
