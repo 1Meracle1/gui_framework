@@ -159,12 +159,13 @@ namespace {
         RepoTree* tree = nullptr;
         RepoDetails* details = nullptr;
         bool running = true;
+        bool redraw_pending = true;
         bool resize_pending = false;
         render::SizeU32 window_size = {INITIAL_WINDOW_WIDTH, INITIAL_WINDOW_HEIGHT};
         render::SizeU32 pending_size = {};
-        gui::Vec2 mouse_pos = {};
-        bool mouse_down[3] = {};
-        float scroll_delta_y = 0.0f;
+        gui::Frame last_frame = {};
+        gui::Id mouse_hit_id = {};
+        gui::InputState input = {};
         RepositorySection selected_section = RepositorySection::CODE;
         size_t selected_tab = 0u;
     };
@@ -180,6 +181,30 @@ namespace {
     RepoDetails global_repo_details = {};
     AppState* global_app_state = nullptr;
     uint64_t decorative_label_index = 0u;
+
+    auto request_redraw(AppState* state) -> void {
+        if (state != nullptr) {
+            state->redraw_pending = true;
+        }
+    }
+
+    [[nodiscard]] auto frame_ready(gui::Frame const& frame) -> bool {
+        return frame.box_info_count() != 0u;
+    }
+
+    [[nodiscard]] auto frame_hit_id(gui::Frame const& frame, gui::Vec2 pos) -> gui::Id {
+        gui::BoxInfo const* const box = frame.hit_test(pos);
+        return box != nullptr ? box->id : gui::Id{};
+    }
+
+    [[nodiscard]] auto repo_tree_open_hash(RepoTree const& tree) -> uint64_t {
+        uint64_t hash = 1469598103934665603ull;
+        for (size_t index = 0u; index < tree.node_count; ++index) {
+            hash ^= tree.nodes[index].open ? index + 1u : 0u;
+            hash *= 1099511628211ull;
+        }
+        return hash;
+    }
 
     constexpr RepositoryTab REPOSITORY_TABS[] = {
         {"Files", "", 70.0f, 0.0f},
@@ -2278,15 +2303,26 @@ namespace {
                 if (size.width != 0u && size.height != 0u) {
                     global_app_state->pending_size = size;
                     global_app_state->resize_pending = true;
+                    request_redraw(global_app_state);
                 }
             }
             return 0;
         case WM_MOUSEMOVE:
             if (global_app_state != nullptr) {
-                global_app_state->mouse_pos = {
+                gui::Vec2 const pos = {
                     static_cast<float>(loword_i32(lparam)),
                     static_cast<float>(hiword_i32(lparam)),
                 };
+                gui::Id const hit_id = frame_hit_id(global_app_state->last_frame, pos);
+                bool const needs_frame = global_app_state->redraw_pending ||
+                                         !frame_ready(global_app_state->last_frame) ||
+                                         global_app_state->input.mouse_down[0u] ||
+                                         hit_id.value != global_app_state->mouse_hit_id.value;
+                global_app_state->input.mouse_pos = pos;
+                global_app_state->mouse_hit_id = hit_id;
+                if (needs_frame) {
+                    request_redraw(global_app_state);
+                }
             }
             return 0;
         case WM_MOUSEWHEEL:
@@ -2296,35 +2332,40 @@ namespace {
                     static_cast<LONG>(hiword_i32(lparam)),
                 };
                 ScreenToClient(hwnd, &point);
-                global_app_state->mouse_pos = {
+                global_app_state->input.mouse_pos = {
                     static_cast<float>(point.x),
                     static_cast<float>(point.y),
                 };
-                global_app_state->scroll_delta_y +=
+                global_app_state->input.scroll_delta_y +=
                     (static_cast<float>(GET_WHEEL_DELTA_WPARAM(wparam)) /
                      static_cast<float>(WHEEL_DELTA)) *
                     72.0f;
+                request_redraw(global_app_state);
             }
             return 0;
         case WM_LBUTTONDOWN:
             if (global_app_state != nullptr) {
-                global_app_state->mouse_pos = {
+                global_app_state->input.mouse_pos = {
                     static_cast<float>(loword_i32(lparam)),
                     static_cast<float>(hiword_i32(lparam)),
                 };
-                global_app_state->mouse_down[0] = true;
+                global_app_state->input.mouse_down[0u] = true;
+                request_redraw(global_app_state);
             }
             SetCapture(hwnd);
             return 0;
         case WM_LBUTTONUP:
             if (global_app_state != nullptr) {
-                global_app_state->mouse_pos = {
+                global_app_state->input.mouse_pos = {
                     static_cast<float>(loword_i32(lparam)),
                     static_cast<float>(hiword_i32(lparam)),
                 };
-                global_app_state->mouse_down[0] = false;
+                global_app_state->input.mouse_down[0u] = false;
+                request_redraw(global_app_state);
             }
-            ReleaseCapture();
+            if (GetCapture() == hwnd) {
+                ReleaseCapture();
+            }
             return 0;
         case WM_CLOSE:
             if (global_app_state != nullptr) {
@@ -2474,13 +2515,20 @@ auto main() -> int {
             }
             app_state.window_size = app_state.pending_size;
             app_state.resize_pending = false;
+            app_state.redraw_pending = true;
         }
 
-        gui::InputState input = {};
-        input.mouse_pos = app_state.mouse_pos;
-        input.mouse_down[0] = app_state.mouse_down[0];
-        input.scroll_delta_y = app_state.scroll_delta_y;
-        app_state.scroll_delta_y = 0.0f;
+        if (!app_state.redraw_pending) {
+            BASE_UNUSED(
+                MsgWaitForMultipleObjectsEx(0u, nullptr, INFINITE, QS_ALLINPUT, MWMO_INPUTAVAILABLE)
+            );
+            continue;
+        }
+
+        RepositorySection const selected_section_before = app_state.selected_section;
+        size_t const selected_tab_before = app_state.selected_tab;
+        uint64_t const open_hash_before = repo_tree_open_hash(*app_state.tree);
+        app_state.redraw_pending = false;
 
         gui::Frame ui = gui::begin_frame(
             runtime.ui_context,
@@ -2491,7 +2539,7 @@ auto main() -> int {
                         static_cast<float>(app_state.window_size.height),
                     },
                 .delta_time = 1.0f / 60.0f,
-                .input = input,
+                .input = app_state.input,
             }
         );
         draw_repository_ui(
@@ -2503,6 +2551,8 @@ auto main() -> int {
             *app_state.details
         );
         gui::end_frame(ui);
+        app_state.last_frame = ui;
+        app_state.mouse_hit_id = frame_hit_id(app_state.last_frame, app_state.input.mouse_pos);
 
         render::begin_frame(render_context);
         draw::begin_frame(runtime.draw_context);
@@ -2529,6 +2579,10 @@ auto main() -> int {
         }
 
         render_result = render::present_window(render_context, render_window);
+        app_state.redraw_pending = app_state.selected_section != selected_section_before ||
+                                   app_state.selected_tab != selected_tab_before ||
+                                   repo_tree_open_hash(*app_state.tree) != open_hash_before;
+        app_state.input.scroll_delta_y = 0.0f;
         if (render_result == render::Result::OCCLUDED) {
             Sleep(16u);
             continue;
