@@ -176,6 +176,7 @@ namespace gui {
             Id frame_start_focus_id = {};
             Id focus_request_id = {};
             Id text_selection_owner_id = {};
+            Id id_scope = {};
             float active_scroll_thumb_offset_y = 0.0f;
             uint64_t frame_index = 0u;
             bool building = false;
@@ -1004,6 +1005,13 @@ namespace gui {
             return {hash};
         }
 
+        [[nodiscard]] auto scoped_id(ContextImpl const* impl, Id id_value) -> Id {
+            if (impl == nullptr || impl->id_scope.value == 0u || id_value.value == 0u) {
+                return id_value;
+            }
+            return {hash_combine(impl->id_scope.value, id_value.value)};
+        }
+
         [[nodiscard]] auto structural_id(ContextImpl const* impl, size_t parent_index, BoxKind kind)
             -> Id {
             BoxNode const& parent = impl->boxes[parent_index];
@@ -1014,8 +1022,11 @@ namespace gui {
 
         [[nodiscard]] auto
         text_id(ContextImpl const* impl, size_t parent_index, BoxKind kind, StrRef text) -> Id {
-            return text.empty() ? structural_id(impl, parent_index, kind)
-                                : id_from_parts(impl, parent_index, text.hash64(), kind);
+            return text.empty()
+                       ? structural_id(impl, parent_index, kind)
+                       : id_from_parts(
+                             impl, parent_index, scoped_id(impl, {text.hash64()}).value, kind
+                         );
         }
 
         [[nodiscard]] auto
@@ -4693,6 +4704,21 @@ namespace gui {
         return {hash_u64(value)};
     }
 
+    auto id(Id scope, Id value) -> Id {
+        if (scope.value == 0u || value.value == 0u) {
+            return value;
+        }
+        return {hash_combine(scope.value, value.value)};
+    }
+
+    auto id(Id scope, StrRef value) -> Id {
+        return id(scope, id(value));
+    }
+
+    auto id(Id scope, uint64_t value) -> Id {
+        return id(scope, id(value));
+    }
+
     auto context_valid(Context context) -> bool {
         return context.handle != nullptr;
     }
@@ -4907,6 +4933,40 @@ namespace gui {
         }
     }
 
+    IdScope::~IdScope() {
+        close();
+    }
+
+    IdScope::IdScope(IdScope&& other) noexcept
+        : m_frame(other.m_frame), m_previous_scope(other.m_previous_scope) {
+        other.m_frame = nullptr;
+        other.m_previous_scope = {};
+    }
+
+    auto IdScope::operator=(IdScope&& other) noexcept -> IdScope& {
+        if (this != &other) {
+            close();
+            m_frame = other.m_frame;
+            m_previous_scope = other.m_previous_scope;
+            other.m_frame = nullptr;
+            other.m_previous_scope = {};
+        }
+        return *this;
+    }
+
+    IdScope::IdScope(Frame* frame, Id previous_scope)
+        : m_frame(frame), m_previous_scope(previous_scope) {}
+
+    auto IdScope::close() -> void {
+        if (m_frame != nullptr) {
+            ContextImpl* const impl = impl_from_frame(*m_frame);
+            if (impl != nullptr) {
+                impl->id_scope = m_previous_scope;
+            }
+            m_frame = nullptr;
+        }
+    }
+
     auto ListScope::row(Id id_value, BoxDesc const& desc) -> Scope {
         if (m_scope.m_frame == nullptr) {
             return {};
@@ -4963,11 +5023,12 @@ namespace gui {
                                  ? BoxKind::TABLE_HEADER_CELL
                                  : BoxKind::TABLE_CELL;
         BoxDesc const box_desc = table_cell_box_desc(desc, kind);
+        Id const authored_id = scoped_id(impl, id_value);
         size_t const index = append_box(
             impl,
             kind,
-            explicit_id(impl, parent, kind, id_value),
-            id_value,
+            explicit_id(impl, parent, kind, authored_id),
+            authored_id,
             {},
             box_desc,
             false,
@@ -5029,11 +5090,12 @@ namespace gui {
         }
         ContextImpl* const impl = impl_from_frame(*m_scope.m_frame);
         size_t const parent = top_parent_index(impl);
+        Id const authored_id = scoped_id(impl, id_value);
         size_t const index = append_box(
             impl,
             BoxKind::TABLE_HEADER_ROW,
-            explicit_id(impl, parent, BoxKind::TABLE_HEADER_ROW, id_value),
-            id_value,
+            explicit_id(impl, parent, BoxKind::TABLE_HEADER_ROW, authored_id),
+            authored_id,
             {},
             desc,
             false,
@@ -5069,11 +5131,12 @@ namespace gui {
         }
         ContextImpl* const impl = impl_from_frame(*m_scope.m_frame);
         size_t const parent = top_parent_index(impl);
+        Id const authored_id = scoped_id(impl, id_value);
         size_t const index = append_box(
             impl,
             BoxKind::TABLE_ROW,
-            explicit_id(impl, parent, BoxKind::TABLE_ROW, id_value),
-            id_value,
+            explicit_id(impl, parent, BoxKind::TABLE_ROW, authored_id),
+            authored_id,
             {},
             desc,
             false,
@@ -5251,11 +5314,12 @@ namespace gui {
         ContextImpl* const impl = impl_from_frame(*m_scope.m_frame);
         size_t const parent = top_parent_index(impl);
         BoxDesc const box_desc = table_cell_box_desc(desc, BoxKind::TABLE_HEADER_CELL);
+        Id const authored_id = scoped_id(impl, id_value);
         size_t const index = append_box(
             impl,
             BoxKind::TABLE_HEADER_CELL,
-            explicit_id(impl, parent, BoxKind::TABLE_HEADER_CELL, id_value),
-            id_value,
+            explicit_id(impl, parent, BoxKind::TABLE_HEADER_CELL, authored_id),
+            authored_id,
             {},
             box_desc,
             false,
@@ -5423,6 +5487,16 @@ namespace gui {
         }
     } // namespace detail
 
+    auto Frame::id_scope(Id id_value) -> IdScope {
+        ContextImpl* const impl = impl_from_frame(*this);
+        if (impl == nullptr) {
+            return {};
+        }
+        Id const previous_scope = impl->id_scope;
+        impl->id_scope = id_value.value == 0u ? previous_scope : id(previous_scope, id_value);
+        return {this, previous_scope};
+    }
+
     auto Frame::row(BoxDesc const& desc) -> Scope {
         ContextImpl* const impl = impl_from_frame(*this);
         size_t const parent = top_parent_index(impl);
@@ -5443,11 +5517,12 @@ namespace gui {
     auto Frame::row(Id id_value, BoxDesc const& desc) -> Scope {
         ContextImpl* const impl = impl_from_frame(*this);
         size_t const parent = top_parent_index(impl);
+        Id const authored_id = scoped_id(impl, id_value);
         size_t const index = append_box(
             impl,
             BoxKind::ROW,
-            explicit_id(impl, parent, BoxKind::ROW, id_value),
-            id_value,
+            explicit_id(impl, parent, BoxKind::ROW, authored_id),
+            authored_id,
             {},
             desc,
             false,
@@ -5477,11 +5552,12 @@ namespace gui {
     auto Frame::column(Id id_value, BoxDesc const& desc) -> Scope {
         ContextImpl* const impl = impl_from_frame(*this);
         size_t const parent = top_parent_index(impl);
+        Id const authored_id = scoped_id(impl, id_value);
         size_t const index = append_box(
             impl,
             BoxKind::COLUMN,
-            explicit_id(impl, parent, BoxKind::COLUMN, id_value),
-            id_value,
+            explicit_id(impl, parent, BoxKind::COLUMN, authored_id),
+            authored_id,
             {},
             desc,
             false,
@@ -5511,11 +5587,12 @@ namespace gui {
     auto Frame::overlay(Id id_value, BoxDesc const& desc) -> Scope {
         ContextImpl* const impl = impl_from_frame(*this);
         size_t const parent = top_parent_index(impl);
+        Id const authored_id = scoped_id(impl, id_value);
         size_t const index = append_box(
             impl,
             BoxKind::OVERLAY,
-            explicit_id(impl, parent, BoxKind::OVERLAY, id_value),
-            id_value,
+            explicit_id(impl, parent, BoxKind::OVERLAY, authored_id),
+            authored_id,
             {},
             desc,
             false,
@@ -5528,11 +5605,12 @@ namespace gui {
     auto Frame::popup(Id id_value, BoxDesc const& desc) -> Scope {
         ContextImpl* const impl = impl_from_frame(*this);
         size_t const parent = top_parent_index(impl);
+        Id const authored_id = scoped_id(impl, id_value);
         size_t const index = append_box(
             impl,
             BoxKind::POPUP,
-            explicit_id(impl, parent, BoxKind::POPUP, id_value),
-            id_value,
+            explicit_id(impl, parent, BoxKind::POPUP, authored_id),
+            authored_id,
             {},
             desc,
             true,
@@ -5545,7 +5623,8 @@ namespace gui {
     auto Frame::hover_popup(Id id_value, Signal source, BoxDesc const& desc) -> Scope {
         ContextImpl* const impl = impl_from_frame(*this);
         size_t const parent = top_parent_index(impl);
-        Id const popup_id = explicit_id(impl, parent, BoxKind::POPUP, id_value);
+        Id const authored_id = scoped_id(impl, id_value);
+        Id const popup_id = explicit_id(impl, parent, BoxKind::POPUP, authored_id);
         if (!source.hovered && impl->hot_id.value != popup_id.value) {
             return {};
         }
@@ -5558,11 +5637,12 @@ namespace gui {
         BoxDesc modal_desc = desc;
         modal_desc.layout.width = fill();
         modal_desc.layout.height = fill();
+        Id const authored_id = scoped_id(impl, id_value);
         size_t const index = append_box(
             impl,
             BoxKind::MODAL,
-            explicit_id(impl, parent, BoxKind::MODAL, id_value),
-            id_value,
+            explicit_id(impl, parent, BoxKind::MODAL, authored_id),
+            authored_id,
             {},
             modal_desc,
             true,
@@ -5578,18 +5658,19 @@ namespace gui {
         BoxDesc panel_desc = desc;
         panel_desc.layout.clip = true;
         panel_desc.layout.scroll_y = true;
+        Id const authored_id = scoped_id(impl, id_value);
         size_t const index = append_box(
             impl,
             BoxKind::SCROLL_PANEL,
-            explicit_id(impl, parent, BoxKind::SCROLL_PANEL, id_value),
-            id_value,
+            explicit_id(impl, parent, BoxKind::SCROLL_PANEL, authored_id),
+            authored_id,
             {},
             panel_desc,
             false,
             false
         );
         BoxNode& panel = impl->boxes[index];
-        set_scroll_state(impl, panel, id_value);
+        set_scroll_state(impl, panel, authored_id);
         push_parent(impl, index);
         return {this, index};
     }
@@ -5614,11 +5695,12 @@ namespace gui {
     auto Frame::table(Id id_value, BoxDesc const& desc) -> TableScope {
         ContextImpl* const impl = impl_from_frame(*this);
         size_t const parent = top_parent_index(impl);
+        Id const authored_id = scoped_id(impl, id_value);
         size_t const index = append_box(
             impl,
             BoxKind::TABLE,
-            explicit_id(impl, parent, BoxKind::TABLE, id_value),
-            id_value,
+            explicit_id(impl, parent, BoxKind::TABLE, authored_id),
+            authored_id,
             {},
             desc,
             false,
@@ -5659,6 +5741,7 @@ namespace gui {
     auto Frame::tab_view(Id id_value, TabViewDesc const& desc) -> TabViewScope {
         ContextImpl* const impl = impl_from_frame(*this);
         size_t const parent = top_parent_index(impl);
+        Id const authored_id = scoped_id(impl, id_value);
 
         BoxDesc view_desc = desc.box;
         if (view_desc.layout.width.kind == SizeKind::AUTO) {
@@ -5674,8 +5757,8 @@ namespace gui {
         size_t const view_index = append_box(
             impl,
             BoxKind::TAB_VIEW,
-            explicit_id(impl, parent, BoxKind::TAB_VIEW, id_value),
-            id_value,
+            explicit_id(impl, parent, BoxKind::TAB_VIEW, authored_id),
+            authored_id,
             {},
             view_desc,
             false,
@@ -5909,11 +5992,12 @@ namespace gui {
     auto Frame::label(Id id_value, StrRef text_value, BoxDesc const& desc) -> Signal {
         ContextImpl* const impl = impl_from_frame(*this);
         size_t const parent = top_parent_index(impl);
+        Id const authored_id = scoped_id(impl, id_value);
         size_t const index = append_box(
             impl,
             BoxKind::LABEL,
-            explicit_id(impl, parent, BoxKind::LABEL, id_value),
-            id_value,
+            explicit_id(impl, parent, BoxKind::LABEL, authored_id),
+            authored_id,
             text_value,
             desc,
             false,
@@ -5951,17 +6035,18 @@ namespace gui {
         BoxDesc label_desc = desc;
         label_desc.layout.clip = true;
         label_desc.layout.scroll_y = true;
+        Id const authored_id = scoped_id(impl, id_value);
         size_t const index = append_box(
             impl,
             BoxKind::SELECTABLE_LABEL,
-            explicit_id(impl, parent, BoxKind::SELECTABLE_LABEL, id_value),
-            id_value,
+            explicit_id(impl, parent, BoxKind::SELECTABLE_LABEL, authored_id),
+            authored_id,
             text_value,
             label_desc,
             true,
             false
         );
-        set_scroll_state(impl, impl->boxes[index], id_value);
+        set_scroll_state(impl, impl->boxes[index], authored_id);
         return apply_selectable_label(impl, impl->boxes[index], selection);
     }
 
@@ -5984,11 +6069,12 @@ namespace gui {
     auto Frame::button(Id id_value, StrRef text_value, BoxDesc const& desc) -> Signal {
         ContextImpl* const impl = impl_from_frame(*this);
         size_t const parent = top_parent_index(impl);
+        Id const authored_id = scoped_id(impl, id_value);
         size_t const index = append_box(
             impl,
             BoxKind::BUTTON,
-            explicit_id(impl, parent, BoxKind::BUTTON, id_value),
-            id_value,
+            explicit_id(impl, parent, BoxKind::BUTTON, authored_id),
+            authored_id,
             text_value,
             desc,
             true,
@@ -6022,11 +6108,12 @@ namespace gui {
     auto Frame::image(Id id_value, render::Texture texture, ImageDesc const& desc) -> Signal {
         ContextImpl* const impl = impl_from_frame(*this);
         size_t const parent = top_parent_index(impl);
+        Id const authored_id = scoped_id(impl, id_value);
         size_t const index = append_box(
             impl,
             BoxKind::IMAGE,
-            explicit_id(impl, parent, BoxKind::IMAGE, id_value),
-            id_value,
+            explicit_id(impl, parent, BoxKind::IMAGE, authored_id),
+            authored_id,
             {},
             desc.box,
             false,
@@ -6064,11 +6151,12 @@ namespace gui {
         size_t const parent = top_parent_index(impl);
         BoxDesc box_desc = desc;
         box_desc.icon.texture = texture;
+        Id const authored_id = scoped_id(impl, id_value);
         size_t const index = append_box(
             impl,
             BoxKind::ICON,
-            explicit_id(impl, parent, BoxKind::ICON, id_value),
-            id_value,
+            explicit_id(impl, parent, BoxKind::ICON, authored_id),
+            authored_id,
             {},
             box_desc,
             false,
@@ -6097,11 +6185,12 @@ namespace gui {
         -> Signal {
         ContextImpl* const impl = impl_from_frame(*this);
         size_t const parent = top_parent_index(impl);
+        Id const authored_id = scoped_id(impl, id_value);
         size_t const index = append_box(
             impl,
             BoxKind::CHECKBOX,
-            explicit_id(impl, parent, BoxKind::CHECKBOX, id_value),
-            id_value,
+            explicit_id(impl, parent, BoxKind::CHECKBOX, authored_id),
+            authored_id,
             text_value,
             desc,
             true,
@@ -6137,11 +6226,12 @@ namespace gui {
     ) -> Signal {
         ContextImpl* const impl = impl_from_frame(*this);
         size_t const parent = top_parent_index(impl);
+        Id const authored_id = scoped_id(impl, id_value);
         size_t const index = append_box(
             impl,
             BoxKind::RADIO_BUTTON,
-            explicit_id(impl, parent, BoxKind::RADIO_BUTTON, id_value),
-            id_value,
+            explicit_id(impl, parent, BoxKind::RADIO_BUTTON, authored_id),
+            authored_id,
             text_value,
             desc,
             true,
@@ -6169,11 +6259,12 @@ namespace gui {
     auto Frame::toggle(Id id_value, StrRef text_value, bool* value, BoxDesc const& desc) -> Signal {
         ContextImpl* const impl = impl_from_frame(*this);
         size_t const parent = top_parent_index(impl);
+        Id const authored_id = scoped_id(impl, id_value);
         size_t const index = append_box(
             impl,
             BoxKind::TOGGLE,
-            explicit_id(impl, parent, BoxKind::TOGGLE, id_value),
-            id_value,
+            explicit_id(impl, parent, BoxKind::TOGGLE, authored_id),
+            authored_id,
             text_value,
             desc,
             true,
@@ -6204,11 +6295,12 @@ namespace gui {
         -> Signal {
         ContextImpl* const impl = impl_from_frame(*this);
         size_t const parent = top_parent_index(impl);
+        Id const authored_id = scoped_id(impl, id_value);
         size_t const index = append_box(
             impl,
             BoxKind::SLIDER_FLOAT,
-            explicit_id(impl, parent, BoxKind::SLIDER_FLOAT, id_value),
-            id_value,
+            explicit_id(impl, parent, BoxKind::SLIDER_FLOAT, authored_id),
+            authored_id,
             text_value,
             desc.box,
             true,
@@ -6253,11 +6345,12 @@ namespace gui {
         size_t const parent = top_parent_index(impl);
         BoxDesc box_desc = desc;
         box_desc.layout.clip = true;
+        Id const authored_id = scoped_id(impl, id_value);
         size_t const index = append_box(
             impl,
             BoxKind::INPUT_TEXT,
-            explicit_id(impl, parent, BoxKind::INPUT_TEXT, id_value),
-            id_value,
+            explicit_id(impl, parent, BoxKind::INPUT_TEXT, authored_id),
+            authored_id,
             {buffer, text_buffer_size(buffer, buffer_size)},
             box_desc,
             true,
@@ -6306,17 +6399,18 @@ namespace gui {
         BoxDesc box_desc = desc.box;
         box_desc.layout.clip = true;
         box_desc.layout.scroll_y = true;
+        Id const authored_id = scoped_id(impl, id_value);
         size_t const index = append_box(
             impl,
             BoxKind::INPUT_TEXT_MULTILINE,
-            explicit_id(impl, parent, BoxKind::INPUT_TEXT_MULTILINE, id_value),
-            id_value,
+            explicit_id(impl, parent, BoxKind::INPUT_TEXT_MULTILINE, authored_id),
+            authored_id,
             buffer->str(),
             box_desc,
             true,
             true
         );
-        set_scroll_state(impl, impl->boxes[index], id_value);
+        set_scroll_state(impl, impl->boxes[index], authored_id);
         TextEditBuffer edit = string_text_edit_buffer(buffer);
         BASE_UNUSED(label);
         return apply_input_text_widget(impl, impl->boxes[index], edit, desc.tab_text);
@@ -6328,11 +6422,12 @@ namespace gui {
         BoxDesc box_desc = desc.box;
         box_desc.layout.clip = true;
         box_desc.layout.scroll_y = true;
+        Id const authored_id = scoped_id(impl, id_value);
         size_t const index = append_box(
             impl,
             BoxKind::LIST,
-            explicit_id(impl, parent, BoxKind::LIST, id_value),
-            id_value,
+            explicit_id(impl, parent, BoxKind::LIST, authored_id),
+            authored_id,
             {},
             box_desc,
             false,
@@ -6340,7 +6435,7 @@ namespace gui {
         );
 
         BoxNode& list = impl->boxes[index];
-        set_scroll_state(impl, list, id_value);
+        set_scroll_state(impl, list, authored_id);
         float viewport_height = rect_height(list.scroll_state->rect);
         if (viewport_height <= 0.0f && box_desc.layout.height.kind == SizeKind::PIXELS) {
             viewport_height = box_desc.layout.height.value;
@@ -6409,10 +6504,11 @@ namespace gui {
         -> TreeNodeScope {
         ContextImpl* const impl = impl_from_frame(*this);
         size_t const parent = top_parent_index(impl);
+        Id const authored_id = scoped_id(impl, id_value);
         size_t const index = append_tree_node_header(
             impl,
-            explicit_id(impl, parent, BoxKind::TREE_NODE, id_value),
-            id_value,
+            explicit_id(impl, parent, BoxKind::TREE_NODE, authored_id),
+            authored_id,
             text_value,
             desc
         );
@@ -6428,7 +6524,8 @@ namespace gui {
 
     auto Frame::scroll_state(Id id_value) const -> ScrollState {
         ContextImpl const* const impl = impl_from_frame(*this);
-        StateEntry const* const state = find_state_entry(impl, scroll_state_key(id_value));
+        StateEntry const* const state =
+            find_state_entry(impl, scroll_state_key(scoped_id(impl, id_value)));
         if (state == nullptr || !state->scroll_valid) {
             return {};
         }
@@ -6443,7 +6540,7 @@ namespace gui {
 
     auto Frame::set_scroll_y(Id id_value, float y) -> void {
         ContextImpl* const impl = impl_from_frame(*this);
-        Id const scroll_key = scroll_state_key(id_value);
+        Id const scroll_key = scroll_state_key(scoped_id(impl, id_value));
         if (impl == nullptr || scroll_key.value == 0u) {
             return;
         }
@@ -6456,7 +6553,7 @@ namespace gui {
 
     auto Frame::scroll_to_end(Id id_value) -> void {
         ContextImpl* const impl = impl_from_frame(*this);
-        Id const scroll_key = scroll_state_key(id_value);
+        Id const scroll_key = scroll_state_key(scoped_id(impl, id_value));
         if (impl == nullptr || scroll_key.value == 0u) {
             return;
         }
@@ -6468,7 +6565,7 @@ namespace gui {
 
     auto Frame::scroll_to_index(Id id_value, size_t index, ScrollReveal reveal) -> void {
         ContextImpl* const impl = impl_from_frame(*this);
-        Id const scroll_key = scroll_state_key(id_value);
+        Id const scroll_key = scroll_state_key(scoped_id(impl, id_value));
         if (impl == nullptr || scroll_key.value == 0u) {
             return;
         }
@@ -6483,7 +6580,7 @@ namespace gui {
     auto Frame::request_focus(Id id_value) -> void {
         ContextImpl* const impl = impl_from_frame(*this);
         if (impl != nullptr) {
-            impl->focus_request_id = id_value;
+            impl->focus_request_id = scoped_id(impl, id_value);
         }
     }
 
@@ -6510,16 +6607,17 @@ namespace gui {
 
     auto Frame::find_box(Id id_value) const -> BoxInfo const* {
         ContextImpl const* const impl = impl_from_frame(*this);
-        if (impl == nullptr || id_value.value == 0u) {
+        Id const query_id = scoped_id(impl, id_value);
+        if (impl == nullptr || query_id.value == 0u) {
             return nullptr;
         }
         for (size_t index = 0u; index < impl->box_count; ++index) {
-            if (impl->infos[index].id.value == id_value.value) {
+            if (impl->infos[index].id.value == query_id.value) {
                 return impl->infos + index;
             }
         }
         for (size_t index = 0u; index < impl->box_count; ++index) {
-            if (impl->infos[index].authored_id.value == id_value.value) {
+            if (impl->infos[index].authored_id.value == query_id.value) {
                 return impl->infos + index;
             }
         }
@@ -6577,6 +6675,7 @@ namespace gui {
         impl->box_count = 0u;
         impl->parent_stack_count = 0u;
         impl->focus_order_count = 0u;
+        impl->id_scope = {};
         impl->frame_index += 1u;
         impl->building = true;
 

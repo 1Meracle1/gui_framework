@@ -3896,6 +3896,51 @@ namespace {
         gui::destroy_context(gui_context);
     }
 
+    TEST_CASE(id_scopes_disambiguate_repeated_local_ids) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::Id const rows_id = gui::id("rows");
+        gui::Id const row_id = gui::id("row");
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {100.0f, 80.0f}});
+        {
+            auto rows_scope = ui.id_scope(rows_id);
+            BASE_UNUSED(rows_scope);
+            for (size_t index = 0u; index < 2u; ++index) {
+                auto item_scope = ui.id_scope(gui::id(static_cast<uint64_t>(index)));
+                BASE_UNUSED(item_scope);
+                auto row = ui.row(row_id);
+                TEST_EXPECT(context, row);
+                ui.button("Open");
+            }
+        }
+        gui::end_frame(ui);
+
+        gui::Id const first_scope = gui::id(rows_id, 0u);
+        gui::Id const second_scope = gui::id(rows_id, 1u);
+        gui::BoxInfo const* first_row = ui.find_box(gui::id(first_scope, row_id));
+        gui::BoxInfo const* second_row = ui.find_box(gui::id(second_scope, row_id));
+        gui::BoxInfo const* first_button = ui.box_info(2u);
+        gui::BoxInfo const* second_button = ui.box_info(4u);
+        TEST_EXPECT(context, first_row != nullptr && second_row != nullptr);
+        if (first_row != nullptr && second_row != nullptr) {
+            TEST_EXPECT(context, first_row->id.value != second_row->id.value);
+            TEST_EXPECT(context, !first_row->duplicate_id);
+            TEST_EXPECT(context, !second_row->duplicate_id);
+        }
+        TEST_EXPECT(context, first_button != nullptr && second_button != nullptr);
+        if (first_button != nullptr && second_button != nullptr) {
+            TEST_EXPECT(context, first_button->id.value != second_button->id.value);
+            TEST_EXPECT(context, !first_button->duplicate_id);
+            TEST_EXPECT(context, !second_button->duplicate_id);
+        }
+
+        gui::destroy_context(gui_context);
+    }
+
     TEST_CASE(disabled_widgets_ignore_pointer_focus_and_value_changes) {
         Arena arena = {};
         arena.init();

@@ -103,8 +103,8 @@ namespace {
         TextureSample embedded = {};
     };
 
-    auto row_id(size_t index) -> gui::Id {
-        return gui::id(0xA1100000ull + static_cast<uint64_t>(index));
+    auto indexed_id(StrRef scope, uint64_t index) -> gui::Id {
+        return gui::id(gui::id(scope), index);
     }
 
     constexpr char BODY_TEXT[] =
@@ -1222,15 +1222,17 @@ namespace {
                         }
                         for (size_t index = 0u; index < SAMPLE_TABLE_ROW_COUNT; ++index) {
                             SampleTableRow const& item = SAMPLE_TABLE_ROWS[index];
-                            if (auto row = table.row(gui::id(0x5A500000ull + index))) {
+                            auto row_scope = ui.id_scope(
+                                indexed_id("sample_table_row", static_cast<uint64_t>(index))
+                            );
+                            BASE_UNUSED(row_scope);
+                            if (auto row = table.row(gui::id("row"))) {
+                                draw_sample_table_cell(ui, row, gui::id("item"), item.item, 132.0f);
                                 draw_sample_table_cell(
-                                    ui, row, gui::id(0x5A510000ull + index), item.item, 132.0f
+                                    ui, row, gui::id("layer"), item.layer, 116.0f
                                 );
                                 draw_sample_table_cell(
-                                    ui, row, gui::id(0x5A520000ull + index), item.layer, 116.0f
-                                );
-                                draw_sample_table_cell(
-                                    ui, row, gui::id(0x5A530000ull + index), item.state, 116.0f
+                                    ui, row, gui::id("state"), item.state, 116.0f
                                 );
                             }
                         }
@@ -1360,8 +1362,11 @@ namespace {
                         );
                         for (size_t index = rows.first; index < rows.end; ++index) {
                             bool const selected = index == state.selected_index;
+                            auto row_scope =
+                                ui.id_scope(indexed_id("asset_row", static_cast<uint64_t>(index)));
+                            BASE_UNUSED(row_scope);
                             auto row = rows.row(
-                                row_id(index),
+                                gui::id("row"),
                                 {
                                     .layout =
                                         {
@@ -1892,9 +1897,13 @@ namespace {
                             }
                             for (size_t source = 0u; source < PREVIEW_TABLE_ROW_COUNT; ++source) {
                                 PreviewTableRow const& item = PREVIEW_TABLE_ROWS[source];
-                                if (auto row = table.row(gui::id(0x77000000ull + source))) {
+                                auto row_scope = ui.id_scope(
+                                    indexed_id("preview_table_row", static_cast<uint64_t>(source))
+                                );
+                                BASE_UNUSED(row_scope);
+                                if (auto row = table.row(gui::id("row"))) {
                                     if (auto cell = row.cell(
-                                            gui::id(0x77010000ull + source),
+                                            gui::id("group"),
                                             {
                                                 .box = {
                                                     .layout =
@@ -1913,7 +1922,7 @@ namespace {
                                         );
                                     }
                                     if (auto cell = row.cell(
-                                            gui::id(0x77020000ull + source),
+                                            gui::id("task"),
                                             {
                                                 .box = {
                                                     .layout = {
@@ -1930,7 +1939,7 @@ namespace {
                                         );
                                     }
                                     if (auto cell = row.cell(
-                                            gui::id(0x77030000ull + source),
+                                            gui::id("status"),
                                             {
                                                 .box = {
                                                     .layout =

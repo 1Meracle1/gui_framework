@@ -208,34 +208,24 @@ namespace {
 
     constexpr StrRef SECTION_ROWS[] = {"Overview", "Open items", "Recent activity", "Timeline"};
 
-    [[nodiscard]] auto file_row_id(size_t index) -> gui::Id {
-        return gui::id(0xF1100000ull + static_cast<uint64_t>(index));
+    [[nodiscard]] auto indexed_id(StrRef scope, uint64_t index) -> gui::Id {
+        return gui::id(gui::id(scope), index);
     }
 
-    [[nodiscard]] auto tab_id(size_t index) -> gui::Id {
-        return gui::id(0x7AB00000ull + static_cast<uint64_t>(index));
+    [[nodiscard]] auto indexed_local_id(StrRef scope, uint64_t index, StrRef local) -> gui::Id {
+        return gui::id(indexed_id(scope, index), local);
+    }
+
+    [[nodiscard]] auto file_row_id(size_t index) -> gui::Id {
+        return indexed_local_id("file_row", static_cast<uint64_t>(index), "row");
     }
 
     [[nodiscard]] auto tab_scroll_id(size_t index) -> gui::Id {
-        return gui::id(0x5C900000ull + static_cast<uint64_t>(index));
-    }
-
-    [[nodiscard]] auto section_scroll_id(RepositorySection section) -> gui::Id {
-        return gui::id(0x5A700000ull + static_cast<uint64_t>(section));
-    }
-
-    [[nodiscard]] auto section_row_id(RepositorySection section, size_t index) -> gui::Id {
-        return gui::id(
-            0x5A710000ull + static_cast<uint64_t>(section) * 16ull + static_cast<uint64_t>(index)
-        );
+        return indexed_local_id("tab_scroll", static_cast<uint64_t>(index), "content");
     }
 
     [[nodiscard]] auto section_title(RepositorySection section) -> StrRef {
         return SECTION_TITLES[static_cast<size_t>(section)];
-    }
-
-    [[nodiscard]] auto commit_row_id(size_t index) -> gui::Id {
-        return gui::id(0xC0110000ull + static_cast<uint64_t>(index));
     }
 
     auto copy_cstr(char* dst, size_t capacity, char const* src) -> void {
@@ -851,7 +841,7 @@ namespace {
     }
 
     [[nodiscard]] auto decorative_label_id() -> gui::Id {
-        gui::Id const result = gui::id(0xB1100000ull + decorative_label_index);
+        gui::Id const result = indexed_id("decorative_label", decorative_label_index);
         decorative_label_index += 1u;
         return result;
     }
@@ -1130,42 +1120,66 @@ namespace {
             }
 
             NavItem const items[] = {
-                {gui::id("nav_code"), RepositorySection::CODE, ICON_CODE, "Code", ""},
-                {gui::id("nav_issues"), RepositorySection::ISSUES, ICON_ISSUES, "Issues", "1.2k"},
-                {gui::id("nav_prs"),
-                 RepositorySection::PULL_REQUESTS,
-                 ICON_PULL_REQUESTS,
-                 "Pull requests",
-                 "247"},
-                {gui::id("nav_actions"),
-                 RepositorySection::ACTIONS,
-                 ICON_ACTIONS,
-                 "Actions",
-                 "",
-                 true},
-                {gui::id("nav_projects"),
-                 RepositorySection::PROJECTS,
-                 ICON_PROJECTS,
-                 "Projects",
-                 "8"},
-                {gui::id("nav_security"),
-                 RepositorySection::SECURITY,
-                 ICON_SECURITY,
-                 "Security",
-                 "",
-                 true},
-                {gui::id("nav_insights"),
-                 RepositorySection::INSIGHTS,
-                 ICON_INSIGHTS,
-                 "Insights",
-                 "",
-                 true},
+                {
+                    gui::id("nav_code"),
+                    RepositorySection::CODE,
+                    ICON_CODE,
+                    "Code",
+                    "",
+                },
+                {
+                    gui::id("nav_issues"),
+                    RepositorySection::ISSUES,
+                    ICON_ISSUES,
+                    "Issues",
+                    "1.2k",
+                },
+                {
+                    gui::id("nav_prs"),
+                    RepositorySection::PULL_REQUESTS,
+                    ICON_PULL_REQUESTS,
+                    "Pull requests",
+                    "247",
+                },
+                {
+                    gui::id("nav_actions"),
+                    RepositorySection::ACTIONS,
+                    ICON_ACTIONS,
+                    "Actions",
+                    "",
+                    true,
+                },
+                {
+                    gui::id("nav_projects"),
+                    RepositorySection::PROJECTS,
+                    ICON_PROJECTS,
+                    "Projects",
+                    "8",
+                },
+                {
+                    gui::id("nav_security"),
+                    RepositorySection::SECURITY,
+                    ICON_SECURITY,
+                    "Security",
+                    "",
+                    true,
+                },
+                {
+                    gui::id("nav_insights"),
+                    RepositorySection::INSIGHTS,
+                    ICON_INSIGHTS,
+                    "Insights",
+                    "",
+                    true,
+                },
                 {gui::id("nav_wiki"), RepositorySection::WIKI, ICON_WIKI, "Wiki", ""},
-                {gui::id("nav_settings"),
-                 RepositorySection::SETTINGS,
-                 ICON_SETTINGS,
-                 "Settings",
-                 ""},
+                {
+                    gui::id("nav_settings"),
+                    RepositorySection::SETTINGS,
+                    ICON_SETTINGS,
+                    "Settings",
+                    "",
+                },
             };
             for (size_t index = 0u; index < sizeof(items) / sizeof(items[0]); ++index) {
                 draw_nav_item(ui, spec, icon_font, items[index], selected_section);
@@ -1221,8 +1235,11 @@ namespace {
         size_t& selected_tab
     ) -> void {
         bool const selected = selected_tab == tab_index;
+        auto tab_scope =
+            ui.id_scope(indexed_id("repository_tab", static_cast<uint64_t>(tab_index)));
+        BASE_UNUSED(tab_scope);
         if (auto tab = ui.column(
-                tab_id(tab_index),
+                gui::id("tab"),
                 {
                     .layout =
                         {
@@ -1536,8 +1553,10 @@ namespace {
         -> void {
         int32_t const node_index = tree.visible[index];
         RepoNode& node = tree.nodes[node_index];
+        auto row_scope = ui.id_scope(indexed_id("file_row", static_cast<uint64_t>(node_index)));
+        BASE_UNUSED(row_scope);
         if (auto item = ui.row(
-                file_row_id(static_cast<size_t>(node_index)),
+                gui::id("row"),
                 {
                     .layout = {
                         .width = gui::fill(),
@@ -1758,8 +1777,11 @@ namespace {
 
             for (size_t index = 0u; index < details.shown_commit_count; ++index) {
                 RepoCommit const& commit = details.commits[index];
+                auto row_scope =
+                    ui.id_scope(indexed_id("commit_row", static_cast<uint64_t>(index)));
+                BASE_UNUSED(row_scope);
                 if (auto row = ui.row(
-                        commit_row_id(index),
+                        gui::id("row"),
                         {
                             .layout = {
                                 .width = gui::fill(),
@@ -1810,8 +1832,11 @@ namespace {
             );
             ui.spacer(separator_y(spec));
             for (size_t index = 0u; index < 18u; ++index) {
+                auto row_scope =
+                    ui.id_scope(indexed_id("secondary_row", static_cast<uint64_t>(index)));
+                BASE_UNUSED(row_scope);
                 if (auto row = ui.row(
-                        gui::id(0x5EC00000ull + static_cast<uint64_t>(index)),
+                        gui::id("row"),
                         {
                             .layout = {
                                 .width = gui::fill(),
@@ -1898,8 +1923,11 @@ namespace {
             ui.spacer(separator_y(spec));
             for (size_t index = 0u; index < sizeof(SECTION_ROWS) / sizeof(SECTION_ROWS[0]);
                  ++index) {
+                gui::Id const scope = indexed_id("section_row", static_cast<uint64_t>(section));
+                auto row_scope = ui.id_scope(gui::id(scope, static_cast<uint64_t>(index)));
+                BASE_UNUSED(row_scope);
                 if (auto row = ui.row(
-                        section_row_id(section, index),
+                        gui::id("row"),
                         {
                             .layout = {
                                 .width = gui::fill(),
@@ -1935,8 +1963,11 @@ namespace {
             )) {
             if (selected_section == RepositorySection::CODE) {
                 draw_top_bar(ui, spec, details, selected_tab);
+                auto scroll_scope =
+                    ui.id_scope(indexed_id("tab_scroll", static_cast<uint64_t>(selected_tab)));
+                BASE_UNUSED(scroll_scope);
                 if (auto content = ui.scroll_panel(
-                        tab_scroll_id(selected_tab),
+                        gui::id("content"),
                         {
                             .layout =
                                 {
@@ -1960,8 +1991,12 @@ namespace {
                 }
             } else {
                 draw_section_top_bar(ui, spec, details, selected_section);
+                auto scroll_scope = ui.id_scope(
+                    indexed_id("section_scroll", static_cast<uint64_t>(selected_section))
+                );
+                BASE_UNUSED(scroll_scope);
                 if (auto content = ui.scroll_panel(
-                        section_scroll_id(selected_section),
+                        gui::id("content"),
                         {
                             .layout =
                                 {

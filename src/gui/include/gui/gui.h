@@ -558,6 +558,9 @@ namespace gui {
 
     [[nodiscard]] auto id(StrRef value) -> Id;
     [[nodiscard]] auto id(uint64_t value) -> Id;
+    [[nodiscard]] auto id(Id scope, Id value) -> Id;
+    [[nodiscard]] auto id(Id scope, StrRef value) -> Id;
+    [[nodiscard]] auto id(Id scope, uint64_t value) -> Id;
     [[nodiscard]] auto context_valid(Context context) -> bool;
     [[nodiscard]] auto default_theme() -> ThemeDesc;
     [[nodiscard]] auto theme_role(ThemeDesc& theme, StyleRole role) -> ThemeStyle&;
@@ -603,6 +606,27 @@ namespace gui {
 
         Frame* m_frame = nullptr;
         size_t m_box_index = 0u;
+    };
+
+    class IdScope final {
+      public:
+        IdScope() = default;
+        ~IdScope();
+
+        IdScope(IdScope&& other) noexcept;
+        IdScope(IdScope const&) = delete;
+        auto operator=(IdScope&& other) noexcept -> IdScope&;
+        auto operator=(IdScope const&) -> IdScope& = delete;
+
+      private:
+        friend class Frame;
+
+        IdScope(Frame* frame, Id previous_scope);
+
+        auto close() -> void;
+
+        Frame* m_frame = nullptr;
+        Id m_previous_scope = {};
     };
 
     class ListScope final {
@@ -733,6 +757,8 @@ namespace gui {
     class Frame final {
       public:
         Frame() = default;
+
+        [[nodiscard]] auto id_scope(Id id) -> IdScope;
 
         [[nodiscard]] auto row(BoxDesc const& desc = {}) -> Scope;
         [[nodiscard]] auto row(Id id, BoxDesc const& desc = {}) -> Scope;
