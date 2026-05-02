@@ -274,6 +274,12 @@ namespace gui {
         BoxDesc box = {};
     };
 
+    struct TreeNodeDesc {
+        BoxDesc box = {};
+        bool default_open = false;
+        float indent = 12.0f;
+    };
+
     enum class TableAlign : uint8_t {
         INHERIT,
         START,
@@ -415,6 +421,7 @@ namespace gui {
         TAB_BODY,
         IMAGE,
         ICON,
+        TREE_NODE,
         COUNT,
     };
 
@@ -559,6 +566,7 @@ namespace gui {
     auto set_theme(Context context, ThemeDesc const& theme) -> void;
 
     class Frame;
+    class TreeNodeScope;
     class TableScope;
     class TableRowScope;
     class TabViewScope;
@@ -583,6 +591,7 @@ namespace gui {
       private:
         friend class Frame;
         friend class ListScope;
+        friend class TreeNodeScope;
         friend class TableScope;
         friend class TableRowScope;
 
@@ -638,6 +647,30 @@ namespace gui {
         explicit TableRowScope(Scope&& scope);
 
         Scope m_scope = {};
+    };
+
+    class TreeNodeScope final {
+      public:
+        TreeNodeScope() = default;
+        ~TreeNodeScope() = default;
+
+        TreeNodeScope(TreeNodeScope&&) noexcept = default;
+        TreeNodeScope(TreeNodeScope const&) = delete;
+        auto operator=(TreeNodeScope&&) noexcept -> TreeNodeScope& = default;
+        auto operator=(TreeNodeScope const&) -> TreeNodeScope& = delete;
+
+        [[nodiscard]] explicit operator bool() const;
+        [[nodiscard]] auto signal() const -> Signal;
+        [[nodiscard]] auto open() const -> bool;
+
+      private:
+        friend class Frame;
+
+        TreeNodeScope(Scope&& body, Signal signal, bool open);
+
+        Scope m_body = {};
+        Signal m_signal = {};
+        bool m_open = false;
     };
 
     class TableScope final {
@@ -749,6 +782,9 @@ namespace gui {
             Id id, StrRef label, StringBuffer* buffer, InputTextMultilineDesc const& desc = {}
         ) -> Signal;
         [[nodiscard]] auto list_fixed(Id id, ListFixedDesc const& desc) -> ListScope;
+        [[nodiscard]] auto tree_node(StrRef text, TreeNodeDesc const& desc = {}) -> TreeNodeScope;
+        [[nodiscard]] auto tree_node(Id id, StrRef text, TreeNodeDesc const& desc = {})
+            -> TreeNodeScope;
 
         [[nodiscard]] auto scroll_state(Id id) const -> ScrollState;
         auto set_scroll_y(Id id, float y) -> void;

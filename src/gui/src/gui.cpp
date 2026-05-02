@@ -52,6 +52,8 @@ namespace gui {
             bool scroll_request_end = false;
             bool scroll_request_index_set = false;
             bool scroll_valid = false;
+            bool tree_open = false;
+            bool tree_open_initialized = false;
             bool text_selection_word_active = false;
             bool occupied = false;
         };
@@ -246,7 +248,8 @@ namespace gui {
         [[nodiscard]] auto text_content_box(BoxKind kind) -> bool {
             return kind == BoxKind::LABEL || kind == BoxKind::SELECTABLE_LABEL ||
                    kind == BoxKind::BUTTON || kind == BoxKind::CHECKBOX ||
-                   kind == BoxKind::TOGGLE || kind == BoxKind::SLIDER_FLOAT || input_text_box(kind);
+                   kind == BoxKind::TOGGLE || kind == BoxKind::SLIDER_FLOAT ||
+                   kind == BoxKind::TREE_NODE || input_text_box(kind);
         }
 
         [[nodiscard]] auto table_row_box(BoxKind kind) -> bool {
@@ -579,6 +582,9 @@ namespace gui {
             }
             if (kind == BoxKind::TOGGLE) {
                 return 44.0f;
+            }
+            if (kind == BoxKind::TREE_NODE) {
+                return 12.0f;
             }
             return 0.0f;
         }
@@ -1020,6 +1026,10 @@ namespace gui {
             return id_value.value == 0u ? Id{} : Id{hash_combine(id_value.value, 0x7d9f4a7c15ull)};
         }
 
+        [[nodiscard]] auto tree_body_id(Id id_value) -> Id {
+            return {hash_combine(id_value.value, 0x712ee0d7ull)};
+        }
+
         auto set_scroll_state(ContextImpl* impl, BoxNode& box, Id id_value) -> void {
             Id const key = scroll_state_key(id_value);
             box.scroll_state = key.value != 0u ? state_entry(impl, key) : box.state;
@@ -1397,6 +1407,34 @@ namespace gui {
                    value.left == 0.0f;
         }
 
+        [[nodiscard]] auto tree_node_box_desc(TreeNodeDesc const& desc) -> BoxDesc {
+            BoxDesc box = desc.box;
+            if (box.layout.width.kind == SizeKind::AUTO) {
+                box.layout.width = fill();
+            }
+            if (box.layout.height.kind == SizeKind::AUTO) {
+                box.layout.height = px(22.0f);
+            }
+            if (insets_empty(box.layout.padding)) {
+                box.layout.padding = insets(0.0f, 6.0f);
+            }
+            return box;
+        }
+
+        [[nodiscard]] auto tree_body_box_desc(TreeNodeDesc const& desc) -> BoxDesc {
+            BoxDesc box = {};
+            if (box.layout.width.kind == SizeKind::AUTO) {
+                box.layout.width = fill();
+            }
+            if (box.layout.height.kind == SizeKind::AUTO) {
+                box.layout.height = children();
+            }
+            box.layout.margin.left = std::max(desc.indent, 0.0f);
+            box.layout.gap = 4.0f;
+            box.layout.align_x = Align::STRETCH;
+            return box;
+        }
+
         [[nodiscard]] auto table_cell_box_desc(TableCellDesc const& desc, BoxKind kind) -> BoxDesc {
             BoxDesc box_desc = desc.box;
             if (box_desc.layout.align_y == Align::START) {
@@ -1609,11 +1647,13 @@ namespace gui {
             float const widget_extra_x = box.kind == BoxKind::CHECKBOX       ? 24.0f
                                          : box.kind == BoxKind::TOGGLE       ? 44.0f
                                          : box.kind == BoxKind::SLIDER_FLOAT ? 160.0f
+                                         : box.kind == BoxKind::TREE_NODE    ? 12.0f
                                          : input_text_box(box.kind)          ? 160.0f
                                                                              : 0.0f;
             float const widget_min_y =
                 box.kind == BoxKind::CHECKBOX || box.kind == BoxKind::TOGGLE ||
-                        box.kind == BoxKind::SLIDER_FLOAT || input_text_box(box.kind)
+                        box.kind == BoxKind::SLIDER_FLOAT || box.kind == BoxKind::TREE_NODE ||
+                        input_text_box(box.kind)
                     ? 20.0f
                     : 0.0f;
             float const icon_width = text_content_box(box.kind) ? icon_text_width(box) : 0.0f;
@@ -1896,6 +1936,40 @@ namespace gui {
         auto layout_table(ContextImpl* impl, size_t index) -> void;
         auto layout_floating_children(ContextImpl* impl, size_t index) -> void;
 
+        auto fit_auto_size_to_laid_out_children(ContextImpl* impl, size_t index) -> void {
+            BoxNode& box = impl->boxes[index];
+            if (box.first_child == INVALID_INDEX || box.kind == BoxKind::TABLE) {
+                return;
+            }
+
+            Rect const content = content_rect(box.rect, box.layout.padding);
+            if (box.layout.width.kind == SizeKind::AUTO ||
+                box.layout.width.kind == SizeKind::CHILDREN) {
+                float max_x = content.min.x;
+                for (size_t child_index = box.first_child; child_index != INVALID_INDEX;
+                     child_index = impl->boxes[child_index].next_sibling) {
+                    BoxNode const& child = impl->boxes[child_index];
+                    if (!floating_box(child.kind)) {
+                        max_x = std::max(max_x, child.rect.max.x + child.layout.margin.right);
+                    }
+                }
+                box.rect.max.x = std::max(box.rect.min.x, max_x + box.layout.padding.right);
+            }
+
+            if (box.layout.height.kind == SizeKind::AUTO ||
+                box.layout.height.kind == SizeKind::CHILDREN) {
+                float max_y = content.min.y;
+                for (size_t child_index = box.first_child; child_index != INVALID_INDEX;
+                     child_index = impl->boxes[child_index].next_sibling) {
+                    BoxNode const& child = impl->boxes[child_index];
+                    if (!floating_box(child.kind)) {
+                        max_y = std::max(max_y, child.rect.max.y + child.layout.margin.bottom);
+                    }
+                }
+                box.rect.max.y = std::max(box.rect.min.y, max_y + box.layout.padding.bottom);
+            }
+        }
+
         auto layout_node(ContextImpl* impl, size_t index, Rect rect) -> void {
             BoxNode& box = impl->boxes[index];
             box.rect = rect;
@@ -1975,6 +2049,7 @@ namespace gui {
             } else {
                 layout_overlay(impl, index);
             }
+            fit_auto_size_to_laid_out_children(impl, index);
             layout_floating_children(impl, index);
         }
 
@@ -2255,8 +2330,8 @@ namespace gui {
                          cross_start + child_size.y}
                     };
                     layout_node(impl, child_index, child_rect);
-                    cursor += child.layout.margin.left + child_size.x + child.layout.margin.right +
-                              box.layout.gap;
+                    cursor += child.layout.margin.left + rect_width(child.rect) +
+                              child.layout.margin.right + box.layout.gap;
                 } else {
                     float const cross_available =
                         content_cross - child.layout.margin.left - child.layout.margin.right;
@@ -2269,8 +2344,8 @@ namespace gui {
                          cursor + child.layout.margin.top + child_size.y}
                     };
                     layout_node(impl, child_index, child_rect);
-                    cursor += child.layout.margin.top + child_size.y + child.layout.margin.bottom +
-                              box.layout.gap;
+                    cursor += child.layout.margin.top + rect_height(child.rect) +
+                              child.layout.margin.bottom + box.layout.gap;
                 }
             }
         }
@@ -2310,6 +2385,59 @@ namespace gui {
                                                            key_pressed(impl, Key::SPACE, false)));
             box.signal = signal;
             return signal;
+        }
+
+        auto apply_tree_node(ContextImpl const* impl, BoxNode& box, bool default_open) -> Signal {
+            StateEntry* const state = box.state;
+            if (state != nullptr && !state->tree_open_initialized) {
+                state->tree_open = default_open;
+                state->tree_open_initialized = true;
+            }
+
+            Signal signal = box.signal;
+            signal.activated =
+                signal.clicked_left || (signal.focused && (key_pressed(impl, Key::ENTER, false) ||
+                                                           key_pressed(impl, Key::SPACE, false)));
+            if (signal.activated && state != nullptr && !box_read_only(box)) {
+                state->tree_open = !state->tree_open;
+                signal.changed = true;
+            }
+            box.widget_value = state != nullptr && state->tree_open ? 1.0f : 0.0f;
+            box.signal = signal;
+            return signal;
+        }
+
+        [[nodiscard]] auto append_tree_node_header(
+            ContextImpl* impl, Id id_value, Id authored_id, StrRef text, TreeNodeDesc const& desc
+        ) -> size_t {
+            return append_box(
+                impl,
+                BoxKind::TREE_NODE,
+                id_value,
+                authored_id,
+                text,
+                tree_node_box_desc(desc),
+                true,
+                true
+            );
+        }
+
+        [[nodiscard]] auto append_tree_node_body(
+            ContextImpl* impl, size_t parent, BoxNode const& node, TreeNodeDesc const& desc
+        ) -> size_t {
+            Id const body_id = tree_body_id(node.id);
+            size_t const body_index = append_box(
+                impl,
+                BoxKind::COLUMN,
+                explicit_id(impl, parent, BoxKind::COLUMN, body_id),
+                body_id,
+                {},
+                tree_body_box_desc(desc),
+                false,
+                false
+            );
+            push_parent(impl, body_index);
+            return body_index;
         }
 
         [[nodiscard]] auto table_sort_count(TableSortDesc const& desc) -> size_t {
@@ -4076,6 +4204,31 @@ namespace gui {
             draw::draw_line(draw_context, mid_left, top_left, draw_color, 1.5f);
         }
 
+        auto render_tree_node_arrow(BoxNode const& box, draw::Context draw_context) -> void {
+            float const center_x = box.rect.min.x + box.layout.padding.left + 6.0f;
+            float const center_y = (box.rect.min.y + box.rect.max.y) * 0.5f;
+            draw::Color const color = to_draw_color(
+                color_mul_alpha(box.resolved_style.foreground, box.resolved_style.opacity * 0.78f)
+            );
+            if (box.widget_value > 0.5f) {
+                draw::draw_triangle_filled(
+                    draw_context,
+                    {center_x - 4.0f, center_y - 2.0f},
+                    {center_x + 4.0f, center_y - 2.0f},
+                    {center_x, center_y + 3.0f},
+                    color
+                );
+            } else {
+                draw::draw_triangle_filled(
+                    draw_context,
+                    {center_x - 2.0f, center_y - 4.0f},
+                    {center_x - 2.0f, center_y + 4.0f},
+                    {center_x + 3.0f, center_y},
+                    color
+                );
+            }
+        }
+
         auto
         render_widget_parts(ContextImpl const* impl, BoxNode const& box, draw::Context draw_context)
             -> void {
@@ -4085,6 +4238,8 @@ namespace gui {
                 render_table_sort_icon(box, draw_context);
             } else if (box.table_filter_button) {
                 render_table_filter_icon(impl, box, draw_context);
+            } else if (box.kind == BoxKind::TREE_NODE) {
+                render_tree_node_arrow(box, draw_context);
             } else if (box.kind == BoxKind::CHECKBOX) {
                 bool const checked = box.widget_value > 0.5f;
                 bool const muted = box_read_only(box) || box_disabled(box);
@@ -4587,6 +4742,7 @@ namespace gui {
         theme_kind(theme, BoxKind::CHECKBOX).role = StyleRole::CONTROL;
         theme_kind(theme, BoxKind::TOGGLE).role = StyleRole::CONTROL;
         theme_kind(theme, BoxKind::SLIDER_FLOAT).role = StyleRole::CONTROL;
+        theme_kind(theme, BoxKind::TREE_NODE).role = StyleRole::CONTROL;
         theme_kind(theme, BoxKind::INPUT_TEXT).role = StyleRole::CONTROL;
         theme_kind(theme, BoxKind::INPUT_TEXT_MULTILINE).role = StyleRole::CONTROL;
         theme_kind(theme, BoxKind::INPUT_TEXT).style.hovered.background = tokens.control;
@@ -4770,6 +4926,21 @@ namespace gui {
         box.table_alignment = desc.alignment;
         push_parent(impl, index);
         return {m_scope.m_frame, index};
+    }
+
+    TreeNodeScope::TreeNodeScope(Scope&& body, Signal signal, bool open)
+        : m_body(std::move(body)), m_signal(signal), m_open(open) {}
+
+    TreeNodeScope::operator bool() const {
+        return m_open && static_cast<bool>(m_body);
+    }
+
+    auto TreeNodeScope::signal() const -> Signal {
+        return m_signal;
+    }
+
+    auto TreeNodeScope::open() const -> bool {
+        return m_open;
     }
 
     TableScope::TableScope(Scope&& scope) : m_scope(std::move(scope)) {}
@@ -6122,6 +6293,43 @@ namespace gui {
 
         push_parent(impl, index);
         return {Scope(this, index), first, end, item_height};
+    }
+
+    auto Frame::tree_node(StrRef text_value, TreeNodeDesc const& desc) -> TreeNodeScope {
+        ContextImpl* const impl = impl_from_frame(*this);
+        size_t const parent = top_parent_index(impl);
+        size_t const index = append_tree_node_header(
+            impl, text_id(impl, parent, BoxKind::TREE_NODE, text_value), {}, text_value, desc
+        );
+        BoxNode& node = impl->boxes[index];
+        Signal const signal = apply_tree_node(impl, node, desc.default_open);
+        if (node.widget_value <= 0.5f) {
+            return {{}, signal, false};
+        }
+
+        size_t const body_index = append_tree_node_body(impl, parent, node, desc);
+        return {Scope(this, body_index), signal, true};
+    }
+
+    auto Frame::tree_node(Id id_value, StrRef text_value, TreeNodeDesc const& desc)
+        -> TreeNodeScope {
+        ContextImpl* const impl = impl_from_frame(*this);
+        size_t const parent = top_parent_index(impl);
+        size_t const index = append_tree_node_header(
+            impl,
+            explicit_id(impl, parent, BoxKind::TREE_NODE, id_value),
+            id_value,
+            text_value,
+            desc
+        );
+        BoxNode& node = impl->boxes[index];
+        Signal const signal = apply_tree_node(impl, node, desc.default_open);
+        if (node.widget_value <= 0.5f) {
+            return {{}, signal, false};
+        }
+
+        size_t const body_index = append_tree_node_body(impl, parent, node, desc);
+        return {Scope(this, body_index), signal, true};
     }
 
     auto Frame::scroll_state(Id id_value) const -> ScrollState {

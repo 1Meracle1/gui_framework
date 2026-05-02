@@ -332,6 +332,197 @@ namespace {
         gui::destroy_context(gui_context);
     }
 
+    TEST_CASE(tree_node_default_open_builds_indented_body) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::Id const tree_id = gui::id("assets");
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {140.0f, 80.0f}});
+        if (auto tree = ui.tree_node(
+                tree_id,
+                "Assets",
+                {
+                    .box = {.layout = {.width = gui::fill(), .height = gui::px(20.0f)}},
+                    .default_open = true,
+                }
+            )) {
+            ui.label("Texture", {.layout = {.width = gui::fill(), .height = gui::px(20.0f)}});
+        }
+        gui::end_frame(ui);
+
+        gui::BoxInfo const* node = ui.find_box(tree_id, gui::BoxKind::TREE_NODE);
+        gui::BoxInfo const* body = ui.box_info(2u);
+        gui::BoxInfo const* child = find_box_text(ui, gui::BoxKind::LABEL, "Texture");
+        TEST_EXPECT(context, node != nullptr);
+        TEST_EXPECT(context, body != nullptr && body->kind == gui::BoxKind::COLUMN);
+        TEST_EXPECT(context, child != nullptr);
+        if (node != nullptr && body != nullptr && child != nullptr) {
+            TEST_EXPECT(context, body->rect.min.x == node->rect.min.x + 12.0f);
+            TEST_EXPECT(context, child->parent_id.value == body->id.value);
+        }
+
+        gui::destroy_context(gui_context);
+    }
+
+    TEST_CASE(tree_node_toggles_open_on_click) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::Id const tree_id = gui::id("assets");
+        gui::Signal signal = {};
+        bool open = false;
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {140.0f, 80.0f}});
+        {
+            auto tree = ui.tree_node(
+                tree_id,
+                "Assets",
+                {.box = {.layout = {.width = gui::fill(), .height = gui::px(20.0f)}}}
+            );
+            signal = tree.signal();
+            open = tree.open();
+            if (tree) {
+                ui.label("Texture", {.layout = {.width = gui::fill(), .height = gui::px(20.0f)}});
+            }
+        }
+        gui::end_frame(ui);
+
+        gui::BoxInfo const* node = ui.find_box(tree_id, gui::BoxKind::TREE_NODE);
+        TEST_EXPECT(context, node != nullptr);
+        TEST_EXPECT(context, !open);
+        TEST_EXPECT(context, find_box_text(ui, gui::BoxKind::LABEL, "Texture") == nullptr);
+
+        gui::InputState input = {};
+        input.mouse_pos = box_center(node);
+        input.mouse_down[0u] = true;
+        ui = gui::begin_frame(gui_context, {.size = {140.0f, 80.0f}, .input = input});
+        {
+            auto tree = ui.tree_node(
+                tree_id,
+                "Assets",
+                {.box = {.layout = {.width = gui::fill(), .height = gui::px(20.0f)}}}
+            );
+            if (tree) {
+                ui.label("Texture", {.layout = {.width = gui::fill(), .height = gui::px(20.0f)}});
+            }
+        }
+        gui::end_frame(ui);
+
+        input.mouse_down[0u] = false;
+        ui = gui::begin_frame(gui_context, {.size = {140.0f, 80.0f}, .input = input});
+        {
+            auto tree = ui.tree_node(
+                tree_id,
+                "Assets",
+                {.box = {.layout = {.width = gui::fill(), .height = gui::px(20.0f)}}}
+            );
+            signal = tree.signal();
+            open = tree.open();
+            if (tree) {
+                ui.label("Texture", {.layout = {.width = gui::fill(), .height = gui::px(20.0f)}});
+            }
+        }
+        gui::end_frame(ui);
+
+        TEST_EXPECT(context, open);
+        TEST_EXPECT(context, signal.changed);
+        TEST_EXPECT(context, find_box_text(ui, gui::BoxKind::LABEL, "Texture") != nullptr);
+
+        gui::destroy_context(gui_context);
+    }
+
+    TEST_CASE(tree_node_wrapped_children_push_following_nodes_down) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {112.0f, 120.0f}});
+        if (auto tree = ui.tree_node(
+                gui::id("root"),
+                "Root",
+                {
+                    .box = {.layout = {.width = gui::fill(), .height = gui::px(20.0f)}},
+                    .default_open = true,
+                }
+            )) {
+            ui.label(
+                gui::id("wrapped"),
+                "ui_api_testbed_texture.png",
+                {.layout = {
+                     .width = gui::fill(),
+                     .height = gui::text(),
+                     .word_wrap = true,
+                 }}
+            );
+        }
+        auto next_tree = ui.tree_node(
+            gui::id("next"),
+            "Next",
+            {.box = {.layout = {.width = gui::fill(), .height = gui::px(20.0f)}}}
+        );
+        BASE_UNUSED(next_tree);
+        gui::end_frame(ui);
+
+        gui::BoxInfo const* wrapped = ui.find_box(gui::id("wrapped"), gui::BoxKind::LABEL);
+        gui::BoxInfo const* next = ui.find_box(gui::id("next"), gui::BoxKind::TREE_NODE);
+        TEST_EXPECT(context, wrapped != nullptr);
+        TEST_EXPECT(context, next != nullptr);
+        if (wrapped != nullptr && next != nullptr) {
+            TEST_EXPECT(context, wrapped->rect.max.y <= next->rect.min.y);
+        }
+
+        gui::destroy_context(gui_context);
+    }
+
+    TEST_CASE(tree_node_body_spaces_sibling_tree_nodes) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {140.0f, 100.0f}});
+        if (auto tree = ui.tree_node(
+                gui::id("root"),
+                "Root",
+                {
+                    .box = {.layout = {.width = gui::fill(), .height = gui::px(20.0f)}},
+                    .default_open = true,
+                }
+            )) {
+            auto first_tree = ui.tree_node(
+                gui::id("first"),
+                "First",
+                {.box = {.layout = {.width = gui::fill(), .height = gui::px(20.0f)}}}
+            );
+            BASE_UNUSED(first_tree);
+            auto second_tree = ui.tree_node(
+                gui::id("second"),
+                "Second",
+                {.box = {.layout = {.width = gui::fill(), .height = gui::px(20.0f)}}}
+            );
+            BASE_UNUSED(second_tree);
+        }
+        gui::end_frame(ui);
+
+        gui::BoxInfo const* first = ui.find_box(gui::id("first"), gui::BoxKind::TREE_NODE);
+        gui::BoxInfo const* second = ui.find_box(gui::id("second"), gui::BoxKind::TREE_NODE);
+        TEST_EXPECT(context, first != nullptr);
+        TEST_EXPECT(context, second != nullptr);
+        if (first != nullptr && second != nullptr) {
+            TEST_EXPECT(context, second->rect.min.y >= first->rect.max.y + 4.0f);
+        }
+
+        gui::destroy_context(gui_context);
+    }
+
     TEST_CASE(input_text_theme_defaults_keep_background_on_actions) {
         gui::ThemeDesc theme = gui::default_theme();
         gui::Color const background =

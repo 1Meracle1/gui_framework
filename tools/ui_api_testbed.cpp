@@ -1288,6 +1288,48 @@ namespace {
                         }
                     );
 
+                    gui::TreeNodeDesc tree_desc = {
+                        .box =
+                            {
+                                .layout =
+                                    {
+                                        .width = gui::fill(),
+                                        .height = gui::px(24.0f),
+                                        .padding = gui::insets(0.0f, 6.0f),
+                                    },
+                                .style = {.role = gui::StyleRole::CONTROL, .radius = 9.0f},
+                            },
+                        .default_open = true,
+                    };
+                    gui::BoxDesc const tree_leaf = {
+                        .layout =
+                            {
+                                .width = gui::fill(),
+                                .height = gui::text(),
+                                .min_height = gui::px(20.0f),
+                                .padding = gui::insets(0.0f, 6.0f),
+                                .word_wrap = true,
+                            },
+                        .style = {.foreground = tokens.text_muted},
+                    };
+                    if (auto root_tree =
+                            ui.tree_node(gui::id("asset_tree_root"), "Asset Browser", tree_desc)) {
+                        if (auto textures_tree = ui.tree_node(
+                                gui::id("asset_tree_textures"), "Textures", tree_desc
+                            )) {
+                            ui.label(
+                                gui::id("asset_tree_disk"), "ui_api_testbed_texture.png", tree_leaf
+                            );
+                            ui.label(gui::id("asset_tree_embedded"), "embedded_texture", tree_leaf);
+                        }
+                        tree_desc.default_open = false;
+                        if (auto runtime_tree =
+                                ui.tree_node(gui::id("asset_tree_runtime"), "Runtime", tree_desc)) {
+                            ui.label(gui::id("asset_tree_draw"), "draw_context", tree_leaf);
+                            ui.label(gui::id("asset_tree_font"), "font_cache", tree_leaf);
+                        }
+                    }
+
                     {
                         auto rows = ui.list_fixed(
                             list_id,
@@ -1298,7 +1340,7 @@ namespace {
                                     .layout =
                                         {
                                             .width = gui::fill(),
-                                            .height = gui::px(504.0f),
+                                            .height = gui::px(342.0f),
                                             .clip = true,
                                         },
                                     .style =
