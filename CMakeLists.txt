@@ -189,6 +189,7 @@ if(WIN32)
         gui::gui
         draw::draw
         render::render
+        dwmapi
     )
     cpp_configure_target(repository_ui_testbed)
 

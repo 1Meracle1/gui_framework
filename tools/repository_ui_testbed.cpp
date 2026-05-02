@@ -17,6 +17,7 @@
 #include <cstring>
 #include <draw/draw.h>
 #include <draw/draw_renderer.h>
+#include <dwmapi.h>
 #include <font_cache/font_cache.h>
 #include <font_provider/font_provider.h>
 #include <gui/gui.h>
@@ -35,6 +36,12 @@ namespace {
     constexpr uint32_t INITIAL_WINDOW_WIDTH = 1600u;
     constexpr uint32_t INITIAL_WINDOW_HEIGHT = 900u;
     constexpr float SIDEBAR_WIDTH = 220.0f;
+    constexpr DWORD DWM_ATTR_USE_IMMERSIVE_DARK_MODE = 20u;
+    constexpr DWORD DWM_ATTR_BORDER_COLOR = 34u;
+    constexpr DWORD DWM_ATTR_CAPTION_COLOR = 35u;
+    constexpr DWORD DWM_ATTR_TEXT_COLOR = 36u;
+    constexpr COLORREF WINDOW_HEADER_BACKGROUND = RGB(0, 0, 0);
+    constexpr COLORREF WINDOW_HEADER_TEXT = RGB(233, 233, 233);
     constexpr size_t MAX_REPO_NODES = 1024u;
     constexpr size_t MAX_REPO_PATH = 384u;
     constexpr size_t MAX_REPO_NAME = 96u;
@@ -2381,6 +2388,29 @@ namespace {
         }
     }
 
+    auto apply_window_header_theme(HWND hwnd) -> void {
+        BOOL const dark_mode = TRUE;
+        COLORREF const border_color = WINDOW_HEADER_BACKGROUND;
+        COLORREF const caption_color = WINDOW_HEADER_BACKGROUND;
+        COLORREF const text_color = WINDOW_HEADER_TEXT;
+
+        BASE_UNUSED(DwmSetWindowAttribute(
+            hwnd,
+            DWM_ATTR_USE_IMMERSIVE_DARK_MODE,
+            &dark_mode,
+            static_cast<DWORD>(sizeof(dark_mode))
+        ));
+        BASE_UNUSED(DwmSetWindowAttribute(
+            hwnd, DWM_ATTR_BORDER_COLOR, &border_color, static_cast<DWORD>(sizeof(border_color))
+        ));
+        BASE_UNUSED(DwmSetWindowAttribute(
+            hwnd, DWM_ATTR_CAPTION_COLOR, &caption_color, static_cast<DWORD>(sizeof(caption_color))
+        ));
+        BASE_UNUSED(DwmSetWindowAttribute(
+            hwnd, DWM_ATTR_TEXT_COLOR, &text_color, static_cast<DWORD>(sizeof(text_color))
+        ));
+    }
+
     [[nodiscard]] auto create_testbed_window(AppState* app_state) -> bool {
         HINSTANCE const instance = GetModuleHandleW(nullptr);
 
@@ -2398,16 +2428,17 @@ namespace {
         }
 
         DWORD const style = WS_OVERLAPPEDWINDOW;
+        DWORD const ex_style = WS_EX_DLGMODALFRAME;
         RECT rect = {};
         rect.right = static_cast<LONG>(INITIAL_WINDOW_WIDTH);
         rect.bottom = static_cast<LONG>(INITIAL_WINDOW_HEIGHT);
-        if (!AdjustWindowRect(&rect, style, FALSE)) {
-            fmt::eprintf("AdjustWindowRect failed: %lu\n", GetLastError());
+        if (!AdjustWindowRectEx(&rect, style, FALSE, ex_style)) {
+            fmt::eprintf("AdjustWindowRectEx failed: %lu\n", GetLastError());
             return false;
         }
 
         HWND const hwnd = CreateWindowExW(
-            0u,
+            ex_style,
             WINDOW_CLASS_NAME,
             L"gui_framework repository UI testbed",
             style,
@@ -2425,6 +2456,7 @@ namespace {
             return false;
         }
 
+        apply_window_header_theme(hwnd);
         app_state->hwnd = hwnd;
         ShowWindow(hwnd, SW_SHOW);
         UpdateWindow(hwnd);
