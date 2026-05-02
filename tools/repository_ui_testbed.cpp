@@ -40,6 +40,7 @@ namespace {
     constexpr size_t MAX_REPO_MESSAGE = 160u;
     constexpr size_t MAX_REPO_AGE = 48u;
     constexpr size_t MAX_REPO_DETAIL = 192u;
+    constexpr size_t MAX_REPO_COMMITS = 64u;
 
     struct RepositorySpec {
         gui::Color shell = gui::rgb(0, 0, 0);
@@ -97,6 +98,13 @@ namespace {
         bool loaded = false;
     };
 
+    struct RepoCommit {
+        char hash[24] = {};
+        char author[MAX_REPO_NAME] = {};
+        char age[MAX_REPO_AGE] = {};
+        char subject[MAX_REPO_MESSAGE] = {};
+    };
+
     struct RepoDetails {
         char name[MAX_REPO_NAME] = {};
         char description[MAX_REPO_DETAIL] = {};
@@ -112,6 +120,9 @@ namespace {
         char activity[MAX_REPO_NAME] = {};
         char insertion_count[24] = {};
         char deletion_count[24] = {};
+        char commit_count[24] = {};
+        RepoCommit commits[MAX_REPO_COMMITS] = {};
+        size_t shown_commit_count = 0u;
     };
 
     struct AppState {
@@ -142,7 +153,7 @@ namespace {
 
     constexpr RepositoryTab REPOSITORY_TABS[] = {
         {"Files", "", 70.0f, 0.0f},
-        {"Commits", "18,451", 146.0f, 52.0f},
+        {"Commits", "", 146.0f, 52.0f},
         {"Branches", "23", 122.0f, 30.0f},
         {"Tags", "1,247", 116.0f, 46.0f},
         {"Releases", "412", 126.0f, 38.0f},
@@ -159,6 +170,10 @@ namespace {
 
     [[nodiscard]] auto tab_scroll_id(size_t index) -> gui::Id {
         return gui::id(0x5C900000ull + static_cast<uint64_t>(index));
+    }
+
+    [[nodiscard]] auto commit_row_id(size_t index) -> gui::Id {
+        return gui::id(0xC0110000ull + static_cast<uint64_t>(index));
     }
 
     auto copy_cstr(char* dst, size_t capacity, char const* src) -> void {
@@ -479,6 +494,66 @@ namespace {
         copy_cstr(details.last_commit_subject, sizeof(details.last_commit_subject), subject);
     }
 
+    auto load_commit_count(RepoTree const& tree, RepoDetails& details) -> void {
+        char command[1024] = {};
+        std::snprintf(
+            command, sizeof(command), "git -C \"%s\" rev-list --count HEAD 2>nul", tree.root
+        );
+        if (!read_first_command_line(command, details.commit_count, sizeof(details.commit_count))) {
+            copy_cstr(details.commit_count, sizeof(details.commit_count), "0");
+        }
+    }
+
+    auto load_recent_commits(RepoTree const& tree, RepoDetails& details) -> void {
+        char command[1024] = {};
+        std::snprintf(
+            command,
+            sizeof(command),
+            "git -C \"%s\" log --max-count=%llu --format=\"%%h%%x09%%an%%x09%%ar%%x09%%s\" 2>nul",
+            tree.root,
+            static_cast<unsigned long long>(MAX_REPO_COMMITS)
+        );
+
+        FILE* pipe = _popen(command, "r");
+        if (pipe == nullptr) {
+            return;
+        }
+
+        char line[512] = {};
+        while (details.shown_commit_count < MAX_REPO_COMMITS &&
+               std::fgets(line, sizeof(line), pipe) != nullptr) {
+            trim_line(line);
+            char* author = std::strchr(line, '\t');
+            if (author == nullptr) {
+                continue;
+            }
+            *author = '\0';
+            author += 1;
+
+            char* age = std::strchr(author, '\t');
+            if (age == nullptr) {
+                continue;
+            }
+            *age = '\0';
+            age += 1;
+
+            char* subject = std::strchr(age, '\t');
+            if (subject == nullptr) {
+                continue;
+            }
+            *subject = '\0';
+            subject += 1;
+
+            RepoCommit& commit = details.commits[details.shown_commit_count];
+            copy_cstr(commit.hash, sizeof(commit.hash), line);
+            copy_cstr(commit.author, sizeof(commit.author), author);
+            copy_cstr(commit.age, sizeof(commit.age), age);
+            copy_cstr(commit.subject, sizeof(commit.subject), subject);
+            details.shown_commit_count += 1u;
+        }
+        _pclose(pipe);
+    }
+
     auto load_head_stats(RepoTree const& tree, RepoDetails& details) -> void {
         char command[1024] = {};
         std::snprintf(
@@ -538,6 +613,8 @@ namespace {
         }
 
         load_latest_commit_details(tree, details);
+        load_commit_count(tree, details);
+        load_recent_commits(tree, details);
 
         std::snprintf(
             command, sizeof(command), "git -C \"%s\" describe --tags --abbrev=0 2>nul", tree.root
@@ -1074,25 +1151,26 @@ namespace {
                     selected ? gui::StyleRole::TEXT : gui::StyleRole::TEXT_MUTED
                 );
                 if (!tab_data.count.empty()) {
-                    ui.label(
-                        decorative_label_id(),
-                        tab_data.count,
-                        {
-                            .layout =
-                                {
-                                    .width = gui::px(tab_data.badge_width),
-                                    .height = gui::px(18.0f),
+                    if (auto badge = ui.row(
+                            decorative_label_id(),
+                            {
+                                .layout =
+                                    {
+                                        .width = gui::px(tab_data.badge_width),
+                                        .height = gui::px(18.0f),
+                                        .align_x = gui::Align::CENTER,
+                                        .align_y = gui::Align::CENTER,
+                                    },
+                                .style = {
+                                    .background = spec.control,
+                                    .border = spec.border,
+                                    .border_thickness = 1.0f,
+                                    .radius = 5.0f,
                                 },
-                            .style = {
-                                .background = spec.control,
-                                .foreground = selected ? spec.text : spec.muted,
-                                .border = spec.border,
-                                .border_thickness = 1.0f,
-                                .radius = 5.0f,
-                                .font_size = 11.0f,
-                            },
-                        }
-                    );
+                            }
+                        )) {
+                        label_color(ui, tab_data.count, 11.0f, selected ? spec.text : spec.muted);
+                    }
                 }
             }
             ui.spacer({
@@ -1161,7 +1239,15 @@ namespace {
             )) {
             for (size_t index = 0u; index < sizeof(REPOSITORY_TABS) / sizeof(REPOSITORY_TABS[0]);
                  ++index) {
-                draw_tab(ui, spec, REPOSITORY_TABS[index], index, selected_tab);
+                RepositoryTab tab = REPOSITORY_TABS[index];
+                if (index == 1u) {
+                    tab.count = StrRef(details.commit_count);
+                    tab.badge_width = std::max(
+                        30.0f, 18.0f + 7.0f * static_cast<float>(std::strlen(details.commit_count))
+                    );
+                    tab.width = 94.0f + tab.badge_width;
+                }
+                draw_tab(ui, spec, tab, index, selected_tab);
             }
         }
         ui.spacer(separator_y(spec));
@@ -1511,6 +1597,73 @@ namespace {
         }
     }
 
+    auto draw_commits_tab(gui::Frame& ui, RepositorySpec const& spec, RepoDetails const& details)
+        -> void {
+        if (auto panel = ui.column(
+                gui::id("commits_tab_content"),
+                {
+                    .layout = {.width = gui::fill(), .height = gui::children()},
+                    .style = {
+                        .background = spec.panel,
+                        .border = spec.border,
+                        .border_thickness = 1.0f,
+                        .radius = 8.0f,
+                    },
+                }
+            )) {
+            if (auto header = ui.row({
+                    .layout = {
+                        .width = gui::fill(),
+                        .height = gui::px(58.0f),
+                        .padding = gui::insets(0.0f, 20.0f),
+                        .gap = 10.0f,
+                        .align_y = gui::Align::CENTER,
+                    },
+                })) {
+                label_fill(ui, "Commits", 23.0f, gui::StyleRole::TEXT);
+                label(ui, details.commit_count, 13.0f, gui::StyleRole::TEXT_MUTED);
+            }
+            ui.spacer(separator_y(spec));
+            if (details.shown_commit_count == 0u) {
+                ui.label(
+                    "No commits found",
+                    {
+                        .layout =
+                            {
+                                .width = gui::fill(),
+                                .height = gui::px(44.0f),
+                                .padding = gui::insets(0.0f, 20.0f),
+                            },
+                        .style = {.role = gui::StyleRole::TEXT_MUTED, .font_size = 13.0f},
+                    }
+                );
+                return;
+            }
+
+            for (size_t index = 0u; index < details.shown_commit_count; ++index) {
+                RepoCommit const& commit = details.commits[index];
+                if (auto row = ui.row(
+                        commit_row_id(index),
+                        {
+                            .layout = {
+                                .width = gui::fill(),
+                                .height = gui::px(46.0f),
+                                .padding = gui::insets(0.0f, 20.0f),
+                                .gap = 12.0f,
+                                .align_y = gui::Align::CENTER,
+                            },
+                        }
+                    )) {
+                    label_fill(ui, commit.subject, 13.5f, gui::StyleRole::TEXT);
+                    label(ui, commit.hash, 12.0f, gui::StyleRole::TEXT_MUTED);
+                    label(ui, commit.author, 12.0f, gui::StyleRole::TEXT_MUTED);
+                    label(ui, commit.age, 12.5f, gui::StyleRole::TEXT_MUTED);
+                }
+                ui.spacer(separator_y(spec));
+            }
+        }
+    }
+
     auto draw_secondary_tab_content(gui::Frame& ui, RepositorySpec const& spec, size_t selected_tab)
         -> void {
         RepositoryTab const tab = REPOSITORY_TABS[selected_tab];
@@ -1592,6 +1745,8 @@ namespace {
                     draw_repo_summary(ui, spec, details);
                     draw_latest_commit(ui, spec, details);
                     draw_file_table(ui, spec, tree);
+                } else if (selected_tab == 1u) {
+                    draw_commits_tab(ui, spec, details);
                 } else {
                     draw_secondary_tab_content(ui, spec, selected_tab);
                 }
