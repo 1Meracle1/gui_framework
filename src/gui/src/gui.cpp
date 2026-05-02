@@ -2401,6 +2401,18 @@ namespace gui {
             return signal;
         }
 
+        [[nodiscard]] auto button_activated(ContextImpl* impl, Id id_value) -> bool {
+            bool const clicked =
+                impl->previous_input.mouse_down[0u] && !impl->frame_desc.input.mouse_down[0u] &&
+                impl->active_id.value == id_value.value && impl->hot_id.value == id_value.value;
+            if (clicked) {
+                impl->active_id = {};
+            }
+            return clicked ||
+                   (impl->focused_id.value == id_value.value &&
+                    (key_pressed(impl, Key::ENTER, false) || key_pressed(impl, Key::SPACE, false)));
+        }
+
         auto apply_tree_node(ContextImpl const* impl, BoxNode& box, bool default_open) -> Signal {
             StateEntry* const state = box.state;
             if (state != nullptr && !state->tree_open_initialized) {
@@ -3013,6 +3025,23 @@ namespace gui {
                 return selected + 1u;
             }
             return selected;
+        }
+
+        [[nodiscard]] auto add_tab(TabViewDesc const& desc, Id view_id) -> size_t {
+            if (desc.tab_count == nullptr || *desc.tab_count >= desc.tabs.size()) {
+                return TAB_INDEX_NONE;
+            }
+            size_t const index = *desc.tab_count;
+            TabItem item = desc.new_tab;
+            if (item.id.value == 0u) {
+                item.id = tab_child_id(view_id, index + 1u);
+            }
+            if (item.title.empty()) {
+                item.title = "New Tab";
+            }
+            desc.tabs[index] = item;
+            *desc.tab_count += 1u;
+            return index;
         }
 
         [[nodiscard]] auto drag_moves_tab(
@@ -4299,12 +4328,9 @@ namespace gui {
                     if (muted) {
                         check.a = 0.78f;
                     }
-                    check = color_mul_alpha(check, opacity);
-                    draw::Vec2 const p0 = {mark.min.x + side * 0.27f, mark.min.y + side * 0.54f};
-                    draw::Vec2 const p1 = {mark.min.x + side * 0.44f, mark.min.y + side * 0.70f};
-                    draw::Vec2 const p2 = {mark.min.x + side * 0.75f, mark.min.y + side * 0.32f};
-                    draw::draw_line(draw_context, p0, p1, to_draw_color(check), 2.0f);
-                    draw::draw_line(draw_context, p1, p2, to_draw_color(check), 2.0f);
+                    draw_widget_rect(
+                        draw_context, inset_rect(mark, side * 0.32f), check, {}, 0.0f, 2.0f, opacity
+                    );
                 }
             } else if (box.kind == BoxKind::RADIO_BUTTON) {
                 bool const checked = box.widget_value > 0.5f;
@@ -4742,7 +4768,6 @@ namespace gui {
         theme_role(theme, StyleRole::CANVAS).normal = {
             .background = tokens.canvas, .foreground = tokens.text
         };
-        theme_role(theme, StyleRole::TEXT).normal = {.foreground = tokens.text};
         theme_role(theme, StyleRole::TEXT_MUTED).normal = {.foreground = tokens.text_muted};
         theme_role(theme, StyleRole::PANEL).normal = {
             .background = tokens.panel,
@@ -5797,6 +5822,23 @@ namespace gui {
         size_t count = tab_count(desc);
         size_t selected = selected_tab_index(desc, count);
         TabViewResult result = {.selected_index = selected};
+        bool added_before_tabs = false;
+
+        if (mutable_tabs && tab_flag(desc.flags, TAB_FLAG_ADDABLE)) {
+            Id const add_id = tab_child_id(view_id, 0xadd0u);
+            Id const add_box_id = explicit_id(impl, bar_index, BoxKind::BUTTON, add_id);
+            if (button_activated(impl, add_box_id)) {
+                size_t const added_index = add_tab(desc, view_id);
+                if (added_index != TAB_INDEX_NONE) {
+                    result.added = true;
+                    result.added_index = added_index;
+                    added_before_tabs = true;
+                    count = tab_count(desc);
+                    selected = added_index;
+                    result.selected_index = selected;
+                }
+            }
+        }
 
         for (size_t index = 0u; index < count; ++index) {
             Id const tab_id = ensure_tab_id(desc, view_id, index);
@@ -5880,7 +5922,7 @@ namespace gui {
                      .padding = insets(0.0f),
                  }}
             );
-            if (add_signal.activated) {
+            if (add_signal.activated && !result.added) {
                 result.added = true;
                 result.added_index = count;
             }
@@ -5894,20 +5936,13 @@ namespace gui {
         } else if (result.moved && mutable_tabs) {
             selected = selected_after_move(selected, result.moved_from, result.moved_to);
             move_tab(desc.tabs, result.moved_from, result.moved_to);
-        } else if (result.added && mutable_tabs && desc.tab_count != nullptr &&
-                   *desc.tab_count < desc.tabs.size()) {
-            size_t const index = *desc.tab_count;
-            TabItem item = desc.new_tab;
-            if (item.id.value == 0u) {
-                item.id = tab_child_id(view_id, index + 1u);
+        } else if (result.added && !added_before_tabs && mutable_tabs) {
+            size_t const added_index = add_tab(desc, view_id);
+            if (added_index != TAB_INDEX_NONE) {
+                count = tab_count(desc);
+                selected = added_index;
+                result.added_index = added_index;
             }
-            if (item.title.empty()) {
-                item.title = "New Tab";
-            }
-            desc.tabs[index] = item;
-            *desc.tab_count += 1u;
-            count = *desc.tab_count;
-            selected = index;
         }
 
         selected = clamp_tab_index(selected, count);

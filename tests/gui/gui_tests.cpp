@@ -786,13 +786,13 @@ namespace {
         input.mouse_pos = box_center(second_tab);
         input.mouse_down[0u] = true;
         ui = gui::begin_frame(gui_context, {.size = {240.0f, 100.0f}, .input = input});
-        ui.tab_view(
+        BASE_UNUSED(ui.tab_view(
             gui::id("tabs"),
             {.read_only_tabs = {{tab_a, "A"}, {tab_b, "B"}},
              .selected_index = &selected,
              .flags = 0u,
              .box = {.layout = {.width = gui::px(220.0f), .height = gui::px(90.0f)}}}
-        );
+        ));
         gui::end_frame(ui);
 
         input.mouse_down[0u] = false;
@@ -837,7 +837,7 @@ namespace {
         };
 
         gui::Frame ui = gui::begin_frame(gui_context, {.size = {280.0f, 120.0f}});
-        ui.tab_view(gui::id("tabs"), desc);
+        BASE_UNUSED(ui.tab_view(gui::id("tabs"), desc));
         gui::end_frame(ui);
 
         gui::BoxInfo const* add = find_box_text(ui, gui::BoxKind::BUTTON, "+");
@@ -847,7 +847,7 @@ namespace {
         input.mouse_pos = box_center(add);
         input.mouse_down[0u] = true;
         ui = gui::begin_frame(gui_context, {.size = {280.0f, 120.0f}, .input = input});
-        ui.tab_view(gui::id("tabs"), desc);
+        BASE_UNUSED(ui.tab_view(gui::id("tabs"), desc));
         gui::end_frame(ui);
 
         input.mouse_down[0u] = false;
@@ -873,7 +873,7 @@ namespace {
         input.mouse_pos = box_center(close);
         input.mouse_down[0u] = true;
         ui = gui::begin_frame(gui_context, {.size = {280.0f, 120.0f}, .input = input});
-        ui.tab_view(gui::id("tabs"), desc);
+        BASE_UNUSED(ui.tab_view(gui::id("tabs"), desc));
         gui::end_frame(ui);
 
         input.mouse_down[0u] = false;
@@ -896,7 +896,7 @@ namespace {
         input.mouse_pos = box_center(first_tab);
         input.mouse_down[0u] = true;
         ui = gui::begin_frame(gui_context, {.size = {280.0f, 120.0f}, .input = input});
-        ui.tab_view(gui::id("tabs"), desc);
+        BASE_UNUSED(ui.tab_view(gui::id("tabs"), desc));
         gui::end_frame(ui);
 
         input.mouse_pos.x = second_tab != nullptr ? second_tab->rect.max.x + 2.0f : 0.0f;
@@ -1179,12 +1179,12 @@ namespace {
                 )) {
                 if (auto header = table.header_row()) {
                     BASE_UNUSED(header);
-                    table.sortable_header_cell(
+                    BASE_UNUSED(table.sortable_header_cell(
                         header_name_id,
                         0u,
                         "Name",
                         {.box = {.layout = {.width = gui::px(80.0f), .height = gui::px(20.0f)}}}
-                    );
+                    ));
                 }
                 add_table_text_row(ui, table, row_beta_id, "Beta", 80.0f);
                 add_table_text_row(ui, table, row_gamma_id, "Gamma", 80.0f);
@@ -1199,9 +1199,7 @@ namespace {
 
         gui::BoxInfo const* header = ui.find_box(header_name_id, gui::BoxKind::TABLE_HEADER_CELL);
         gui::BoxInfo const* sort =
-            header != nullptr
-                ? find_child_text(ui, header->id, gui::BoxKind::BUTTON, SORT_ICON_TEXT)
-                : nullptr;
+            header != nullptr ? find_box_text(ui, gui::BoxKind::BUTTON, SORT_ICON_TEXT) : nullptr;
         TEST_EXPECT(context, sort != nullptr);
 
         input.mouse_pos = box_center(sort);
