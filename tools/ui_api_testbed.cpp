@@ -60,6 +60,7 @@ namespace {
         LiquidGlassTheme theme = LiquidGlassTheme::DARK;
         float scale = 1.25f;
         float sample_value = 0.5f;
+        float sample_loading_phase = 0.0f;
         size_t selected_tab = 0u;
         size_t selected_index = 12u;
         size_t preview_table_sort_count = 0u;
@@ -597,11 +598,82 @@ namespace {
         }
     }
 
+    auto color_alpha(gui::Color color, float alpha) -> gui::Color {
+        color.a = alpha;
+        return color;
+    }
+
+    auto loading_pulse(float phase) -> float {
+        if (phase >= 1.0f) {
+            phase -= 1.0f;
+        }
+        if (phase < 0.5f) {
+            return phase * 2.0f;
+        }
+        return (1.0f - phase) * 2.0f;
+    }
+
+    auto draw_sample_loading_animation(
+        gui::Frame& ui, TestbedState const& state, LiquidGlassSpec const& spec
+    ) -> void {
+        gui::ThemeTokens const& tokens = spec.tokens;
+        if (auto strip = ui.row(
+                gui::id("sample_loading_animation"),
+                {
+                    .layout =
+                        {
+                            .width = gui::fill(),
+                            .height = gui::px(54.0f),
+                            .padding = gui::insets(8.0f, 14.0f),
+                            .gap = 8.0f,
+                            .align_y = gui::Align::CENTER,
+                        },
+                    .style = {
+                        .background = spec.controls_background,
+                        .border = spec.controls_border,
+                        .border_thickness = 1.0f,
+                        .radius = 22.0f,
+                        .shadow = {
+                            .offset = {0.0f, 10.0f},
+                            .blur_radius = 28.0f,
+                            .color = spec.controls_shadow
+                        },
+                    },
+                }
+            )) {
+            BASE_UNUSED(strip);
+            ui.label(
+                "Loading",
+                {
+                    .layout = {.width = gui::px(72.0f), .height = gui::fill()},
+                    .style = {.foreground = tokens.text, .font_size = 14.0f},
+                }
+            );
+            for (size_t index = 0u; index < 9u; ++index) {
+                float const pulse =
+                    loading_pulse(state.sample_loading_phase + static_cast<float>(index) * 0.09f);
+                ui.spacer({
+                    .layout =
+                        {
+                            .width = gui::px(8.0f),
+                            .height = gui::px(12.0f + pulse * 24.0f),
+                        },
+                    .style = {
+                        .background = color_alpha(tokens.accent, 0.22f + pulse * 0.62f),
+                        .radius = 4.0f,
+                    },
+                });
+            }
+            ui.spacer({.layout = {.width = gui::fill(), .height = gui::px(1.0f)}});
+        }
+    }
+
     auto draw_ui(
         gui::Frame& ui,
         TestbedState& state,
         LiquidGlassSpec const& spec,
-        TestbedTextures const& textures
+        TestbedTextures const& textures,
+        float delta_time
     ) -> void {
         gui::Id const list_id = gui::id("asset_list");
         gui::Id const notes_id = gui::id("notes_scroll");
@@ -792,6 +864,11 @@ namespace {
             };
 
             if (tab_view.selected_index() == 1u) {
+                state.sample_loading_phase += delta_time * 0.42f;
+                while (state.sample_loading_phase >= 1.0f) {
+                    state.sample_loading_phase -= 1.0f;
+                }
+
                 if (auto samples = ui.column(
                         gui::id("sample_tab_body"),
                         {
@@ -814,6 +891,7 @@ namespace {
                             .style = {.font_size = 14.0f},
                         }
                     );
+                    draw_sample_loading_animation(ui, state, spec);
                     if (auto row = ui.row(gui::id("sample_tab_controls"), controls_bar)) {
                         if (auto switches =
                                 ui.row(gui::id("sample_control_switches"), toolbar_group)) {
@@ -3102,7 +3180,7 @@ namespace {
         }
         {
             TRACE_SCOPE(trace, "draw_ui");
-            draw_ui(ui, runtime->state, style, runtime->textures);
+            draw_ui(ui, runtime->state, style, runtime->textures, delta_time);
         }
         {
             TRACE_SCOPE(trace, "end_ui_frame");
@@ -3514,7 +3592,8 @@ namespace {
                     TRACE_SCOPE(&trace, "present");
                     result = render::present_window(render_context, render_window);
                 }
-                app_state.redraw_pending = testbed_state_hash(runtime.state) != state_hash_before;
+                app_state.redraw_pending = runtime.state.selected_tab == 1u ||
+                                           testbed_state_hash(runtime.state) != state_hash_before;
                 app_state.input.scroll_delta_y = 0.0f;
                 app_state.input.mouse_double_clicked[0u] = false;
                 app_state.input.mouse_triple_clicked[0u] = false;
@@ -3572,7 +3651,7 @@ namespace {
         textures.embedded = textures.disk;
         gui::Frame ui =
             gui::begin_frame(ui_context, {.size = {640.0f, 400.0f}, .delta_time = 1.0f / 60.0f});
-        draw_ui(ui, state, style, textures);
+        draw_ui(ui, state, style, textures, 1.0f / 60.0f);
         gui::end_frame(ui);
 
         gui::draw::begin_frame(draw_context);
