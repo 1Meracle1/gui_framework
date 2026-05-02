@@ -146,6 +146,41 @@ if(WIN32)
     add_executable(repository_ui_testbed
         tools/repository_ui_testbed.cpp
     )
+    set(REPOSITORY_UI_TESTBED_CODICON_FONT
+        "${PROJECT_SOURCE_DIR}/third_party/codicons/codicon.ttf"
+    )
+    set(REPOSITORY_UI_TESTBED_GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
+    set(REPOSITORY_UI_TESTBED_EMBEDDED_CODICONS
+        "${REPOSITORY_UI_TESTBED_GENERATED_DIR}/repository_ui_testbed_embedded_codicons.h"
+    )
+    execute_process(
+        COMMAND "${CMAKE_COMMAND}"
+            -DINPUT=${REPOSITORY_UI_TESTBED_CODICON_FONT}
+            -DOUTPUT=${REPOSITORY_UI_TESTBED_EMBEDDED_CODICONS}
+            -DNAMESPACE=repository_ui_testbed_assets
+            -DSYMBOL=codicon_ttf
+            -P "${PROJECT_SOURCE_DIR}/cmake/embed_binary.cmake"
+        COMMAND_ERROR_IS_FATAL ANY
+    )
+    add_custom_command(
+        OUTPUT "${REPOSITORY_UI_TESTBED_EMBEDDED_CODICONS}"
+        COMMAND "${CMAKE_COMMAND}"
+            -DINPUT=${REPOSITORY_UI_TESTBED_CODICON_FONT}
+            -DOUTPUT=${REPOSITORY_UI_TESTBED_EMBEDDED_CODICONS}
+            -DNAMESPACE=repository_ui_testbed_assets
+            -DSYMBOL=codicon_ttf
+            -P "${PROJECT_SOURCE_DIR}/cmake/embed_binary.cmake"
+        DEPENDS
+            "${REPOSITORY_UI_TESTBED_CODICON_FONT}"
+            "${PROJECT_SOURCE_DIR}/cmake/embed_binary.cmake"
+        VERBATIM
+    )
+    target_sources(repository_ui_testbed PRIVATE
+        "${REPOSITORY_UI_TESTBED_EMBEDDED_CODICONS}"
+    )
+    target_include_directories(repository_ui_testbed PRIVATE
+        "${REPOSITORY_UI_TESTBED_GENERATED_DIR}"
+    )
     target_compile_definitions(repository_ui_testbed PRIVATE
         WIN32_LEAN_AND_MEAN
         NOMINMAX

@@ -21,6 +21,7 @@
 #include <font_provider/font_provider.h>
 #include <gui/gui.h>
 #include <render/render.h>
+#include <repository_ui_testbed_embedded_codicons.h>
 #include <windows.h>
 
 namespace {
@@ -41,6 +42,16 @@ namespace {
     constexpr size_t MAX_REPO_AGE = 48u;
     constexpr size_t MAX_REPO_DETAIL = 192u;
     constexpr size_t MAX_REPO_COMMITS = 64u;
+    constexpr char ICON_CODE[] = "\xee\xab\x84";
+    constexpr char ICON_ISSUES[] = "\xee\xac\x8c";
+    constexpr char ICON_PULL_REQUESTS[] = "\xee\xa9\xa4";
+    constexpr char ICON_ACTIONS[] = "\xee\xac\xac";
+    constexpr char ICON_PROJECTS[] = "\xee\xac\xb0";
+    constexpr char ICON_SECURITY[] = "\xee\xad\x93";
+    constexpr char ICON_INSIGHTS[] = "\xee\xaf\xa2";
+    constexpr char ICON_WIKI[] = "\xee\xaa\xa4";
+    constexpr char ICON_SETTINGS[] = "\xee\xab\xb8";
+    constexpr char ICON_CHEVRON_RIGHT[] = "\xee\xaa\xb6";
 
     struct RepositorySpec {
         gui::Color shell = gui::rgb(0, 0, 0);
@@ -63,15 +74,19 @@ namespace {
         font_provider::Context provider = {};
         font_cache::Cache cache = {};
         font_cache::Font font = {};
+        font_cache::Font icon_font = {};
         draw::Context draw_context = {};
         draw::Renderer draw_renderer = {};
         gui::Context ui_context = {};
+        char icon_font_path[MAX_PATH] = {};
     };
 
     struct NavItem {
         gui::Id id = {};
+        StrRef icon = {};
         StrRef label = {};
         StrRef count = {};
+        bool chevron = false;
     };
 
     struct RepoNode {
@@ -944,39 +959,68 @@ namespace {
         );
     }
 
-    auto count_label(gui::Frame& ui, StrRef text) -> void {
-        if (!text.empty()) {
-            ui.spacer({.layout = {.width = gui::fill(), .height = gui::px(1.0f)}});
-            label(ui, text, 12.5f, gui::StyleRole::TEXT_MUTED);
-        }
+    auto icon_label(
+        gui::Frame& ui,
+        font_cache::Font icon_font,
+        StrRef icon,
+        gui::Color color,
+        float size,
+        float width
+    ) -> void {
+        ui.label(
+            decorative_label_id(),
+            icon,
+            {
+                .layout = {.width = gui::px(width), .height = gui::px(20.0f)},
+                .style = {
+                    .role = gui::StyleRole::NONE,
+                    .foreground = color,
+                    .font = icon_font,
+                    .font_size = size,
+                },
+            }
+        );
     }
 
-    auto draw_nav_item(gui::Frame& ui, RepositorySpec const& spec, NavItem item, bool selected)
-        -> void {
+    auto draw_nav_item(
+        gui::Frame& ui,
+        RepositorySpec const& spec,
+        font_cache::Font icon_font,
+        NavItem item,
+        bool selected
+    ) -> void {
+        gui::Color const color = selected ? spec.text : spec.muted;
         gui::BoxDesc desc = {
             .layout =
                 {
                     .width = gui::fill(),
                     .height = gui::px(36.0f),
                     .margin = gui::insets(0.0f, 8.0f),
-                    .padding = gui::insets(0.0f, 12.0f, 0.0f, 44.0f),
+                    .padding = gui::insets(0.0f, 12.0f),
+                    .gap = 12.0f,
                     .align_y = gui::Align::CENTER,
                 },
             .style = {
                 .background = selected ? spec.selected : gui::unset_color(),
-                .foreground = selected ? spec.text : spec.muted,
+                .foreground = color,
                 .radius = 6.0f,
             },
         };
         if (auto row = ui.row(item.id, desc)) {
+            icon_label(ui, icon_font, item.icon, color, 16.0f, 20.0f);
             label_fill(
                 ui, item.label, 13.5f, selected ? gui::StyleRole::TEXT : gui::StyleRole::TEXT_MUTED
             );
-            count_label(ui, item.count);
+            if (!item.count.empty()) {
+                label(ui, item.count, 12.5f, gui::StyleRole::TEXT_MUTED);
+            } else if (item.chevron) {
+                icon_label(ui, icon_font, ICON_CHEVRON_RIGHT, spec.muted, 16.0f, 14.0f);
+            }
         }
     }
 
-    auto draw_sidebar(gui::Frame& ui, RepositorySpec const& spec) -> void {
+    auto draw_sidebar(gui::Frame& ui, RepositorySpec const& spec, font_cache::Font icon_font)
+        -> void {
         if (auto sidebar = ui.column(
                 gui::id("sidebar"),
                 {
@@ -1057,18 +1101,18 @@ namespace {
             }
 
             NavItem const items[] = {
-                {gui::id("nav_code"), "Code", ""},
-                {gui::id("nav_issues"), "Issues", "1.2k"},
-                {gui::id("nav_prs"), "Pull requests", "247"},
-                {gui::id("nav_actions"), "Actions", ""},
-                {gui::id("nav_projects"), "Projects", "8"},
-                {gui::id("nav_security"), "Security", ""},
-                {gui::id("nav_insights"), "Insights", ""},
-                {gui::id("nav_wiki"), "Wiki", ""},
-                {gui::id("nav_settings"), "Settings", ""},
+                {gui::id("nav_code"), ICON_CODE, "Code", ""},
+                {gui::id("nav_issues"), ICON_ISSUES, "Issues", "1.2k"},
+                {gui::id("nav_prs"), ICON_PULL_REQUESTS, "Pull requests", "247"},
+                {gui::id("nav_actions"), ICON_ACTIONS, "Actions", "", true},
+                {gui::id("nav_projects"), ICON_PROJECTS, "Projects", "8"},
+                {gui::id("nav_security"), ICON_SECURITY, "Security", "", true},
+                {gui::id("nav_insights"), ICON_INSIGHTS, "Insights", "", true},
+                {gui::id("nav_wiki"), ICON_WIKI, "Wiki", ""},
+                {gui::id("nav_settings"), ICON_SETTINGS, "Settings", ""},
             };
             for (size_t index = 0u; index < sizeof(items) / sizeof(items[0]); ++index) {
-                draw_nav_item(ui, spec, items[index], index == 0u);
+                draw_nav_item(ui, spec, icon_font, items[index], index == 0u);
             }
 
             ui.spacer({.layout = {.width = gui::fill(), .height = gui::fill()}});
@@ -1771,7 +1815,11 @@ namespace {
     }
 
     auto draw_repository_ui(
-        gui::Frame& ui, size_t& selected_tab, RepoTree& tree, RepoDetails const& details
+        gui::Frame& ui,
+        font_cache::Font icon_font,
+        size_t& selected_tab,
+        RepoTree& tree,
+        RepoDetails const& details
     ) -> void {
         decorative_label_index = 0u;
         RepositorySpec const spec = {};
@@ -1787,7 +1835,7 @@ namespace {
                     .style = {.background = spec.shell},
                 }
             )) {
-            draw_sidebar(ui, spec);
+            draw_sidebar(ui, spec, icon_font);
             ui.spacer(separator_x(spec));
             draw_main_content(ui, spec, details, selected_tab, tree);
         }
@@ -1838,137 +1886,6 @@ namespace {
         }
     }
 
-    auto draw_code_icon(draw::Context context, gui::Rect rect, draw::Color color) -> void {
-        float const x = rect.min.x + 20.0f;
-        float const y = (rect.min.y + rect.max.y) * 0.5f;
-        draw::draw_line(context, {x - 7.0f, y}, {x - 3.0f, y - 4.0f}, color, 1.3f);
-        draw::draw_line(context, {x - 7.0f, y}, {x - 3.0f, y + 4.0f}, color, 1.3f);
-        draw::draw_line(context, {x + 7.0f, y}, {x + 3.0f, y - 4.0f}, color, 1.3f);
-        draw::draw_line(context, {x + 7.0f, y}, {x + 3.0f, y + 4.0f}, color, 1.3f);
-        draw::draw_line(context, {x + 1.5f, y - 6.0f}, {x - 1.5f, y + 6.0f}, color, 1.1f);
-    }
-
-    auto draw_nav_dot(draw::Context context, gui::Rect rect, draw::Color color) -> void {
-        draw::Vec2 const center = {rect.min.x + 20.0f, (rect.min.y + rect.max.y) * 0.5f};
-        draw::draw_circle(context, center, 6.0f, color, 1.3f, 18);
-        draw::draw_circle_filled(context, center, 1.6f, color, 10);
-    }
-
-    auto draw_small_box_icon(draw::Context context, gui::Rect rect, draw::Color color) -> void {
-        float const x = rect.min.x + 14.0f;
-        float const y = (rect.min.y + rect.max.y) * 0.5f - 6.0f;
-        draw::draw_rect(context, {{x, y}, {x + 12.0f, y + 12.0f}}, color, 1.2f, 2.0f);
-        draw::draw_line(context, {x + 4.0f, y + 3.0f}, {x + 4.0f, y + 9.0f}, color, 1.0f);
-        draw::draw_line(context, {x + 8.0f, y + 3.0f}, {x + 8.0f, y + 9.0f}, color, 1.0f);
-    }
-
-    auto draw_pull_request_icon(draw::Context context, gui::Rect rect, draw::Color color) -> void {
-        float const x = rect.min.x + 20.0f;
-        float const y = (rect.min.y + rect.max.y) * 0.5f;
-        draw::draw_circle(context, {x - 4.0f, y - 5.0f}, 2.6f, color, 1.1f, 12);
-        draw::draw_circle(context, {x + 5.0f, y + 5.0f}, 2.6f, color, 1.1f, 12);
-        draw::draw_line(context, {x - 4.0f, y - 2.0f}, {x - 4.0f, y + 5.0f}, color, 1.1f);
-        draw::draw_line(context, {x - 4.0f, y + 5.0f}, {x + 2.0f, y + 5.0f}, color, 1.1f);
-    }
-
-    auto draw_actions_icon(draw::Context context, gui::Rect rect, draw::Color color) -> void {
-        float const x = rect.min.x + 16.0f;
-        float const y = (rect.min.y + rect.max.y) * 0.5f;
-        draw::draw_triangle(context, {x, y - 7.0f}, {x, y + 7.0f}, {x + 11.0f, y}, color, 1.2f);
-    }
-
-    auto draw_shield_icon(draw::Context context, gui::Rect rect, draw::Color color) -> void {
-        float const x = rect.min.x + 20.0f;
-        float const y = (rect.min.y + rect.max.y) * 0.5f;
-        draw::path_clear(context);
-        draw::path_line_to(context, {x, y - 8.0f});
-        draw::path_line_to(context, {x + 6.0f, y - 5.0f});
-        draw::path_line_to(context, {x + 6.0f, y + 1.0f});
-        draw::path_bezier_quadratic_to(context, {x + 5.0f, y + 6.0f}, {x, y + 8.0f}, 6);
-        draw::path_bezier_quadratic_to(context, {x - 5.0f, y + 6.0f}, {x - 6.0f, y + 1.0f}, 6);
-        draw::path_line_to(context, {x - 6.0f, y - 5.0f});
-        draw::path_stroke(context, color, true, 1.2f);
-    }
-
-    auto draw_insights_icon(draw::Context context, gui::Rect rect, draw::Color color) -> void {
-        float const x = rect.min.x + 14.0f;
-        float const y = (rect.min.y + rect.max.y) * 0.5f;
-        draw::draw_line(context, {x, y + 7.0f}, {x, y - 7.0f}, color, 1.0f);
-        draw::draw_line(context, {x, y + 7.0f}, {x + 14.0f, y + 7.0f}, color, 1.0f);
-        draw::draw_line(context, {x + 3.0f, y + 3.0f}, {x + 6.0f, y}, color, 1.2f);
-        draw::draw_line(context, {x + 6.0f, y}, {x + 9.0f, y + 1.0f}, color, 1.2f);
-        draw::draw_line(context, {x + 9.0f, y + 1.0f}, {x + 13.0f, y - 5.0f}, color, 1.2f);
-    }
-
-    auto draw_book_icon(draw::Context context, gui::Rect rect, draw::Color color) -> void {
-        float const x = rect.min.x + 20.0f;
-        float const y = (rect.min.y + rect.max.y) * 0.5f;
-        draw::path_clear(context);
-        draw::path_line_to(context, {x - 7.0f, y - 6.0f});
-        draw::path_line_to(context, {x - 1.0f, y - 4.0f});
-        draw::path_line_to(context, {x - 1.0f, y + 8.0f});
-        draw::path_line_to(context, {x - 7.0f, y + 6.0f});
-        draw::path_stroke(context, color, true, 1.1f);
-        draw::path_line_to(context, {x + 1.0f, y - 4.0f});
-        draw::path_line_to(context, {x + 7.0f, y - 6.0f});
-        draw::path_line_to(context, {x + 7.0f, y + 6.0f});
-        draw::path_line_to(context, {x + 1.0f, y + 8.0f});
-        draw::path_stroke(context, color, true, 1.1f);
-    }
-
-    auto draw_gear_icon(draw::Context context, gui::Rect rect, draw::Color color) -> void {
-        draw::Vec2 const center = {rect.min.x + 20.0f, (rect.min.y + rect.max.y) * 0.5f};
-        draw::draw_line(
-            context, {center.x, center.y - 8.0f}, {center.x, center.y - 6.0f}, color, 1.1f
-        );
-        draw::draw_line(
-            context, {center.x, center.y + 6.0f}, {center.x, center.y + 8.0f}, color, 1.1f
-        );
-        draw::draw_line(
-            context, {center.x - 8.0f, center.y}, {center.x - 6.0f, center.y}, color, 1.1f
-        );
-        draw::draw_line(
-            context, {center.x + 6.0f, center.y}, {center.x + 8.0f, center.y}, color, 1.1f
-        );
-        draw::draw_line(
-            context,
-            {center.x - 5.6f, center.y - 5.6f},
-            {center.x - 4.2f, center.y - 4.2f},
-            color,
-            1.1f
-        );
-        draw::draw_line(
-            context,
-            {center.x + 4.2f, center.y + 4.2f},
-            {center.x + 5.6f, center.y + 5.6f},
-            color,
-            1.1f
-        );
-        draw::draw_line(
-            context,
-            {center.x + 5.6f, center.y - 5.6f},
-            {center.x + 4.2f, center.y - 4.2f},
-            color,
-            1.1f
-        );
-        draw::draw_line(
-            context,
-            {center.x - 4.2f, center.y + 4.2f},
-            {center.x - 5.6f, center.y + 5.6f},
-            color,
-            1.1f
-        );
-        draw::draw_circle(context, center, 5.0f, color, 1.1f, 18);
-        draw::draw_circle(context, center, 1.7f, color, 1.1f, 12);
-    }
-
-    auto draw_chevron_right(draw::Context context, gui::Rect rect, draw::Color color) -> void {
-        float const x = rect.max.x - 19.0f;
-        float const y = (rect.min.y + rect.max.y) * 0.5f;
-        draw::draw_line(context, {x - 2.0f, y - 4.0f}, {x + 2.0f, y}, color, 1.2f);
-        draw::draw_line(context, {x + 2.0f, y}, {x - 2.0f, y + 4.0f}, color, 1.2f);
-    }
-
     auto draw_logo(draw::Context context, gui::Rect rect, RepositorySpec const& spec) -> void {
         draw::Vec2 const center = {rect.min.x + 16.0f, (rect.min.y + rect.max.y) * 0.5f};
         draw::Color const color = to_draw(spec.text);
@@ -2000,7 +1917,6 @@ namespace {
     ) -> void {
         RepositorySpec const spec = {};
         draw::Color const muted = to_draw(spec.muted);
-        draw::Color const text = to_draw(spec.text);
 
         if (gui::BoxInfo const* box = ui.find_box(gui::id("workspace_header"))) {
             draw_logo(context, box->rect, spec);
@@ -2030,36 +1946,6 @@ namespace {
                 to_draw(spec.green),
                 12
             );
-        }
-        if (gui::BoxInfo const* box = ui.find_box(gui::id("nav_code"))) {
-            draw_code_icon(context, box->rect, text);
-        }
-        if (gui::BoxInfo const* box = ui.find_box(gui::id("nav_issues"))) {
-            draw_nav_dot(context, box->rect, muted);
-        }
-        if (gui::BoxInfo const* box = ui.find_box(gui::id("nav_prs"))) {
-            draw_pull_request_icon(context, box->rect, muted);
-        }
-        if (gui::BoxInfo const* box = ui.find_box(gui::id("nav_actions"))) {
-            draw_actions_icon(context, box->rect, muted);
-            draw_chevron_right(context, box->rect, muted);
-        }
-        if (gui::BoxInfo const* box = ui.find_box(gui::id("nav_projects"))) {
-            draw_small_box_icon(context, box->rect, muted);
-        }
-        if (gui::BoxInfo const* box = ui.find_box(gui::id("nav_security"))) {
-            draw_shield_icon(context, box->rect, muted);
-            draw_chevron_right(context, box->rect, muted);
-        }
-        if (gui::BoxInfo const* box = ui.find_box(gui::id("nav_insights"))) {
-            draw_insights_icon(context, box->rect, muted);
-            draw_chevron_right(context, box->rect, muted);
-        }
-        if (gui::BoxInfo const* box = ui.find_box(gui::id("nav_wiki"))) {
-            draw_book_icon(context, box->rect, muted);
-        }
-        if (gui::BoxInfo const* box = ui.find_box(gui::id("nav_settings"))) {
-            draw_gear_icon(context, box->rect, muted);
         }
 
         if (selected_tab == 0u) {
@@ -2092,6 +1978,43 @@ namespace {
         }
     }
 
+    [[nodiscard]] auto write_embedded_icon_font(Runtime* runtime) -> bool {
+        char temp_dir[MAX_PATH] = {};
+        DWORD const temp_dir_capacity = static_cast<DWORD>(sizeof(temp_dir));
+        DWORD const temp_dir_size = GetTempPathA(temp_dir_capacity, temp_dir);
+        if (temp_dir_size == 0u || temp_dir_size >= temp_dir_capacity) {
+            return false;
+        }
+
+        char font_path[MAX_PATH] = {};
+        if (GetTempFileNameA(temp_dir, "gfi", 0u, font_path) == 0u) {
+            return false;
+        }
+
+        HANDLE const file = CreateFileA(
+            font_path, GENERIC_WRITE, 0u, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_TEMPORARY, nullptr
+        );
+        if (file == INVALID_HANDLE_VALUE) {
+            DeleteFileA(font_path);
+            return false;
+        }
+
+        DWORD const font_size = static_cast<DWORD>(repository_ui_testbed_assets::codicon_ttf_size);
+        DWORD bytes_written = 0u;
+        BOOL const write_ok = WriteFile(
+            file, repository_ui_testbed_assets::codicon_ttf, font_size, &bytes_written, nullptr
+        );
+        CloseHandle(file);
+
+        if (write_ok == FALSE || bytes_written != font_size) {
+            DeleteFileA(font_path);
+            return false;
+        }
+
+        copy_cstr(runtime->icon_font_path, sizeof(runtime->icon_font_path), font_path);
+        return true;
+    }
+
     auto destroy_runtime(render::Context render_context, Runtime* runtime) -> void {
         if (runtime == nullptr) {
             return;
@@ -2108,10 +2031,15 @@ namespace {
         if (font_cache::cache_valid(runtime->cache)) {
             font_cache::destroy_cache(runtime->cache);
         }
+        if (runtime->icon_font_path[0] != '\0') {
+            DeleteFileA(runtime->icon_font_path);
+            runtime->icon_font_path[0] = '\0';
+        }
         if (font_provider::context_valid(runtime->provider)) {
             font_provider::destroy_context(runtime->provider);
         }
         runtime->font = {};
+        runtime->icon_font = {};
     }
 
     [[nodiscard]] auto
@@ -2132,6 +2060,11 @@ namespace {
 
         font_cache::create_cache(arena, runtime->provider, {}, runtime->cache);
         font_cache::open_system_font(runtime->cache, "Segoe UI", runtime->font);
+        if (!write_embedded_icon_font(runtime)) {
+            fmt::eprintf("failed to write embedded Codicons font\n");
+            return false;
+        }
+        font_cache::open_font_file(runtime->cache, runtime->icon_font_path, runtime->icon_font);
 
         draw::ContextDesc draw_desc = {};
         draw_desc.font_cache = runtime->cache;
@@ -2370,7 +2303,9 @@ auto main() -> int {
                 .input = input,
             }
         );
-        draw_repository_ui(ui, app_state.selected_tab, *app_state.tree, *app_state.details);
+        draw_repository_ui(
+            ui, runtime.icon_font, app_state.selected_tab, *app_state.tree, *app_state.details
+        );
         gui::end_frame(ui);
 
         render::begin_frame(render_context);
