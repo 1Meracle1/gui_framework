@@ -81,8 +81,22 @@ namespace {
         char icon_font_path[MAX_PATH] = {};
     };
 
+    enum class RepositorySection : uint8_t {
+        CODE,
+        ISSUES,
+        PULL_REQUESTS,
+        ACTIONS,
+        PROJECTS,
+        SECURITY,
+        INSIGHTS,
+        WIKI,
+        SETTINGS,
+        COUNT,
+    };
+
     struct NavItem {
         gui::Id id = {};
+        RepositorySection section = RepositorySection::CODE;
         StrRef icon = {};
         StrRef label = {};
         StrRef count = {};
@@ -151,6 +165,7 @@ namespace {
         gui::Vec2 mouse_pos = {};
         bool mouse_down[3] = {};
         float scroll_delta_y = 0.0f;
+        RepositorySection selected_section = RepositorySection::CODE;
         size_t selected_tab = 0u;
     };
 
@@ -175,6 +190,24 @@ namespace {
         {"Contributors", "3.2k", 158.0f, 42.0f},
     };
 
+    constexpr StrRef SECTION_TITLES[] = {
+        "Code",
+        "Issues",
+        "Pull requests",
+        "Actions",
+        "Projects",
+        "Security",
+        "Insights",
+        "Wiki",
+        "Settings",
+    };
+    static_assert(
+        sizeof(SECTION_TITLES) / sizeof(SECTION_TITLES[0]) ==
+        static_cast<size_t>(RepositorySection::COUNT)
+    );
+
+    constexpr StrRef SECTION_ROWS[] = {"Overview", "Open items", "Recent activity", "Timeline"};
+
     [[nodiscard]] auto file_row_id(size_t index) -> gui::Id {
         return gui::id(0xF1100000ull + static_cast<uint64_t>(index));
     }
@@ -185,6 +218,20 @@ namespace {
 
     [[nodiscard]] auto tab_scroll_id(size_t index) -> gui::Id {
         return gui::id(0x5C900000ull + static_cast<uint64_t>(index));
+    }
+
+    [[nodiscard]] auto section_scroll_id(RepositorySection section) -> gui::Id {
+        return gui::id(0x5A700000ull + static_cast<uint64_t>(section));
+    }
+
+    [[nodiscard]] auto section_row_id(RepositorySection section, size_t index) -> gui::Id {
+        return gui::id(
+            0x5A710000ull + static_cast<uint64_t>(section) * 16ull + static_cast<uint64_t>(index)
+        );
+    }
+
+    [[nodiscard]] auto section_title(RepositorySection section) -> StrRef {
+        return SECTION_TITLES[static_cast<size_t>(section)];
     }
 
     [[nodiscard]] auto commit_row_id(size_t index) -> gui::Id {
@@ -872,6 +919,8 @@ namespace {
         };
         gui::theme_kind(theme, gui::BoxKind::ROOT).role = gui::StyleRole::CANVAS;
         gui::theme_kind(theme, gui::BoxKind::LABEL).role = gui::StyleRole::TEXT;
+        gui::theme_kind(theme, gui::BoxKind::ROW).style.hovered.background = spec.control_hovered;
+        gui::theme_kind(theme, gui::BoxKind::ROW).style.active.background = spec.selected;
         gui::theme_kind(theme, gui::BoxKind::BUTTON).role = gui::StyleRole::CONTROL;
         gui::theme_kind(theme, gui::BoxKind::INPUT_TEXT).role = gui::StyleRole::CONTROL;
         return theme;
@@ -959,8 +1008,9 @@ namespace {
         RepositorySpec const& spec,
         font_cache::Font icon_font,
         NavItem item,
-        bool selected
+        RepositorySection& selected_section
     ) -> void {
+        bool const selected = selected_section == item.section;
         gui::Color const color = selected ? spec.text : spec.muted;
         gui::BoxDesc desc = {
             .layout =
@@ -979,6 +1029,9 @@ namespace {
             },
         };
         if (auto row = ui.row(item.id, desc)) {
+            if (row.signal().activated) {
+                selected_section = item.section;
+            }
             icon_label(ui, icon_font, item.icon, color, 16.0f, 20.0f);
             label_fill(
                 ui, item.label, 13.5f, selected ? gui::StyleRole::TEXT : gui::StyleRole::TEXT_MUTED
@@ -991,8 +1044,12 @@ namespace {
         }
     }
 
-    auto draw_sidebar(gui::Frame& ui, RepositorySpec const& spec, font_cache::Font icon_font)
-        -> void {
+    auto draw_sidebar(
+        gui::Frame& ui,
+        RepositorySpec const& spec,
+        font_cache::Font icon_font,
+        RepositorySection& selected_section
+    ) -> void {
         if (auto sidebar = ui.column(
                 gui::id("sidebar"),
                 {
@@ -1073,18 +1130,45 @@ namespace {
             }
 
             NavItem const items[] = {
-                {gui::id("nav_code"), ICON_CODE, "Code", ""},
-                {gui::id("nav_issues"), ICON_ISSUES, "Issues", "1.2k"},
-                {gui::id("nav_prs"), ICON_PULL_REQUESTS, "Pull requests", "247"},
-                {gui::id("nav_actions"), ICON_ACTIONS, "Actions", "", true},
-                {gui::id("nav_projects"), ICON_PROJECTS, "Projects", "8"},
-                {gui::id("nav_security"), ICON_SECURITY, "Security", "", true},
-                {gui::id("nav_insights"), ICON_INSIGHTS, "Insights", "", true},
-                {gui::id("nav_wiki"), ICON_WIKI, "Wiki", ""},
-                {gui::id("nav_settings"), ICON_SETTINGS, "Settings", ""},
+                {gui::id("nav_code"), RepositorySection::CODE, ICON_CODE, "Code", ""},
+                {gui::id("nav_issues"), RepositorySection::ISSUES, ICON_ISSUES, "Issues", "1.2k"},
+                {gui::id("nav_prs"),
+                 RepositorySection::PULL_REQUESTS,
+                 ICON_PULL_REQUESTS,
+                 "Pull requests",
+                 "247"},
+                {gui::id("nav_actions"),
+                 RepositorySection::ACTIONS,
+                 ICON_ACTIONS,
+                 "Actions",
+                 "",
+                 true},
+                {gui::id("nav_projects"),
+                 RepositorySection::PROJECTS,
+                 ICON_PROJECTS,
+                 "Projects",
+                 "8"},
+                {gui::id("nav_security"),
+                 RepositorySection::SECURITY,
+                 ICON_SECURITY,
+                 "Security",
+                 "",
+                 true},
+                {gui::id("nav_insights"),
+                 RepositorySection::INSIGHTS,
+                 ICON_INSIGHTS,
+                 "Insights",
+                 "",
+                 true},
+                {gui::id("nav_wiki"), RepositorySection::WIKI, ICON_WIKI, "Wiki", ""},
+                {gui::id("nav_settings"),
+                 RepositorySection::SETTINGS,
+                 ICON_SETTINGS,
+                 "Settings",
+                 ""},
             };
             for (size_t index = 0u; index < sizeof(items) / sizeof(items[0]); ++index) {
-                draw_nav_item(ui, spec, icon_font, items[index], index == 0u);
+                draw_nav_item(ui, spec, icon_font, items[index], selected_section);
             }
 
             ui.spacer({.layout = {.width = gui::fill(), .height = gui::fill()}});
@@ -1745,10 +1829,100 @@ namespace {
         }
     }
 
+    auto draw_section_top_bar(
+        gui::Frame& ui,
+        RepositorySpec const& spec,
+        RepoDetails const& details,
+        RepositorySection section
+    ) -> void {
+        StrRef const title = section_title(section);
+        if (auto top = ui.row(
+                gui::id("section_top_bar"),
+                {
+                    .layout =
+                        {
+                            .width = gui::fill(),
+                            .height = gui::px(58.0f),
+                            .padding = gui::insets(0.0f, 20.0f),
+                            .gap = 12.0f,
+                            .align_y = gui::Align::CENTER,
+                        },
+                    .style = {.background = spec.shell},
+                }
+            )) {
+            label(ui, details.name, 13.5f, gui::StyleRole::TEXT_MUTED);
+            label(ui, "/", 14.0f, gui::StyleRole::TEXT_MUTED);
+            label(ui, title, 13.5f, gui::StyleRole::TEXT);
+            ui.spacer({.layout = {.width = gui::fill(), .height = gui::px(1.0f)}});
+            label(ui, "Local", 12.5f, gui::StyleRole::TEXT_MUTED);
+            label(ui, details.activity, 12.5f, gui::StyleRole::TEXT_MUTED);
+        }
+        ui.spacer(separator_y(spec));
+    }
+
+    auto draw_section_page(gui::Frame& ui, RepositorySpec const& spec, RepositorySection section)
+        -> void {
+        StrRef const title = section_title(section);
+        if (auto panel = ui.column(
+                gui::id("section_panel"),
+                {
+                    .layout =
+                        {
+                            .width = gui::fill(),
+                            .height = gui::children(),
+                            .padding = gui::insets(20.0f),
+                            .gap = 16.0f,
+                        },
+                    .style = {
+                        .background = spec.panel,
+                        .border = spec.border,
+                        .border_thickness = 1.0f,
+                        .radius = 8.0f,
+                    },
+                }
+            )) {
+            if (auto crumb = ui.row(
+                    {.layout = {.width = gui::fill(), .height = gui::px(20.0f), .gap = 8.0f}}
+                )) {
+                label(ui, "Repository", 12.5f, gui::StyleRole::TEXT_MUTED);
+                label(ui, "/", 12.5f, gui::StyleRole::TEXT_MUTED);
+                label(ui, title, 12.5f, gui::StyleRole::TEXT);
+            }
+            ui.label(
+                title,
+                {
+                    .layout = {.width = gui::fill(), .height = gui::px(30.0f)},
+                    .style = {.font_size = 23.0f},
+                }
+            );
+            ui.spacer(separator_y(spec));
+            for (size_t index = 0u; index < sizeof(SECTION_ROWS) / sizeof(SECTION_ROWS[0]);
+                 ++index) {
+                if (auto row = ui.row(
+                        section_row_id(section, index),
+                        {
+                            .layout = {
+                                .width = gui::fill(),
+                                .height = gui::px(44.0f),
+                                .padding = gui::insets(0.0f, 20.0f),
+                                .gap = 12.0f,
+                                .align_y = gui::Align::CENTER,
+                            },
+                        }
+                    )) {
+                    label_fill(ui, SECTION_ROWS[index], 13.5f, gui::StyleRole::TEXT);
+                    label(ui, "Updated now", 12.5f, gui::StyleRole::TEXT_MUTED);
+                }
+                ui.spacer(separator_y(spec));
+            }
+        }
+    }
+
     auto draw_main_content(
         gui::Frame& ui,
         RepositorySpec const& spec,
         RepoDetails const& details,
+        RepositorySection selected_section,
         size_t& selected_tab,
         RepoTree& tree
     ) -> void {
@@ -1759,28 +1933,47 @@ namespace {
                     .style = {.background = spec.shell},
                 }
             )) {
-            draw_top_bar(ui, spec, details, selected_tab);
-            if (auto content = ui.scroll_panel(
-                    tab_scroll_id(selected_tab),
-                    {
-                        .layout =
-                            {
-                                .width = gui::fill(),
-                                .height = gui::fill(),
-                                .padding = gui::insets(24.0f),
-                                .gap = 20.0f,
-                            },
-                        .debug_name = "repository_tab_content",
+            if (selected_section == RepositorySection::CODE) {
+                draw_top_bar(ui, spec, details, selected_tab);
+                if (auto content = ui.scroll_panel(
+                        tab_scroll_id(selected_tab),
+                        {
+                            .layout =
+                                {
+                                    .width = gui::fill(),
+                                    .height = gui::fill(),
+                                    .padding = gui::insets(24.0f),
+                                    .gap = 20.0f,
+                                },
+                            .debug_name = "repository_tab_content",
+                        }
+                    )) {
+                    if (selected_tab == 0u) {
+                        draw_repo_summary(ui, spec, details);
+                        draw_latest_commit(ui, spec, details);
+                        draw_file_table(ui, spec, tree);
+                    } else if (selected_tab == 1u) {
+                        draw_commits_tab(ui, spec, details);
+                    } else {
+                        draw_secondary_tab_content(ui, spec, selected_tab);
                     }
-                )) {
-                if (selected_tab == 0u) {
-                    draw_repo_summary(ui, spec, details);
-                    draw_latest_commit(ui, spec, details);
-                    draw_file_table(ui, spec, tree);
-                } else if (selected_tab == 1u) {
-                    draw_commits_tab(ui, spec, details);
-                } else {
-                    draw_secondary_tab_content(ui, spec, selected_tab);
+                }
+            } else {
+                draw_section_top_bar(ui, spec, details, selected_section);
+                if (auto content = ui.scroll_panel(
+                        section_scroll_id(selected_section),
+                        {
+                            .layout =
+                                {
+                                    .width = gui::fill(),
+                                    .height = gui::fill(),
+                                    .padding = gui::insets(24.0f),
+                                    .gap = 20.0f,
+                                },
+                            .debug_name = "repository_section_content",
+                        }
+                    )) {
+                    draw_section_page(ui, spec, selected_section);
                 }
             }
         }
@@ -1789,6 +1982,7 @@ namespace {
     auto draw_repository_ui(
         gui::Frame& ui,
         font_cache::Font icon_font,
+        RepositorySection& selected_section,
         size_t& selected_tab,
         RepoTree& tree,
         RepoDetails const& details
@@ -1807,9 +2001,9 @@ namespace {
                     .style = {.background = spec.shell},
                 }
             )) {
-            draw_sidebar(ui, spec, icon_font);
+            draw_sidebar(ui, spec, icon_font, selected_section);
             ui.spacer(separator_x(spec));
-            draw_main_content(ui, spec, details, selected_tab, tree);
+            draw_main_content(ui, spec, details, selected_section, selected_tab, tree);
         }
     }
 
@@ -1885,7 +2079,11 @@ namespace {
     }
 
     auto draw_repository_icons(
-        gui::Frame const& ui, draw::Context context, size_t selected_tab, RepoTree const& tree
+        gui::Frame const& ui,
+        draw::Context context,
+        RepositorySection selected_section,
+        size_t selected_tab,
+        RepoTree const& tree
     ) -> void {
         RepositorySpec const spec = {};
         draw::Color const muted = to_draw(spec.muted);
@@ -1920,7 +2118,7 @@ namespace {
             );
         }
 
-        if (selected_tab == 0u) {
+        if (selected_section == RepositorySection::CODE && selected_tab == 0u) {
             gui::Rect clip_rect = {};
             bool clipped = false;
             if (gui::BoxInfo const* scroll = ui.find_box(tab_scroll_id(0u))) {
@@ -2276,14 +2474,25 @@ auto main() -> int {
             }
         );
         draw_repository_ui(
-            ui, runtime.icon_font, app_state.selected_tab, *app_state.tree, *app_state.details
+            ui,
+            runtime.icon_font,
+            app_state.selected_section,
+            app_state.selected_tab,
+            *app_state.tree,
+            *app_state.details
         );
         gui::end_frame(ui);
 
         render::begin_frame(render_context);
         draw::begin_frame(runtime.draw_context);
         gui::render_frame(ui, runtime.draw_context);
-        draw_repository_icons(ui, runtime.draw_context, app_state.selected_tab, *app_state.tree);
+        draw_repository_icons(
+            ui,
+            runtime.draw_context,
+            app_state.selected_section,
+            app_state.selected_tab,
+            *app_state.tree
+        );
         draw::end_frame(runtime.draw_context);
 
         render::WindowRenderPassDesc pass_desc = {};
