@@ -217,7 +217,10 @@ namespace {
     }
 
     [[nodiscard]] auto file_row_id(size_t index) -> gui::Id {
-        return indexed_local_id("file_row", static_cast<uint64_t>(index), "row");
+        gui::Id const tab_scope = indexed_id("tab_scroll", 0u);
+        gui::Id const row_scope =
+            gui::id(tab_scope, indexed_id("file_row", static_cast<uint64_t>(index)));
+        return gui::id(row_scope, "row");
     }
 
     [[nodiscard]] auto tab_scroll_id(size_t index) -> gui::Id {
