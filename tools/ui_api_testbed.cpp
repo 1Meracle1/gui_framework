@@ -613,6 +613,15 @@ namespace {
         return (1.0f - phase) * 2.0f;
     }
 
+    auto loading_ring_alpha(float phase, size_t index, size_t count) -> float {
+        float offset = phase - static_cast<float>(index) / static_cast<float>(count);
+        if (offset < 0.0f) {
+            offset += 1.0f;
+        }
+        float const pulse = std::max(0.0f, 1.0f - offset * 4.0f);
+        return 0.18f + pulse * 0.70f;
+    }
+
     auto draw_sample_loading_animation(
         gui::Frame& ui, TestbedState const& state, LiquidGlassSpec const& spec
     ) -> void {
@@ -665,6 +674,74 @@ namespace {
                 });
             }
             ui.spacer({.layout = {.width = gui::fill(), .height = gui::px(1.0f)}});
+        }
+    }
+
+    auto draw_sample_circular_loading_animation(
+        gui::Frame& ui, TestbedState const& state, LiquidGlassSpec const& spec
+    ) -> void {
+        constexpr size_t DOT_COUNT = 12u;
+        constexpr gui::Vec2 DOT_POSITIONS[DOT_COUNT] = {
+            {25.5f, 4.0f},
+            {37.0f, 7.0f},
+            {45.5f, 15.5f},
+            {49.0f, 27.0f},
+            {45.5f, 38.5f},
+            {37.0f, 47.0f},
+            {25.5f, 50.0f},
+            {14.0f, 47.0f},
+            {5.5f, 38.5f},
+            {2.0f, 27.0f},
+            {5.5f, 15.5f},
+            {14.0f, 7.0f},
+        };
+
+        gui::ThemeTokens const& tokens = spec.tokens;
+        float ring_phase = state.sample_loading_phase * 2.0f;
+        while (ring_phase >= 1.0f) {
+            ring_phase -= 1.0f;
+        }
+
+        if (auto card = ui.overlay(
+                gui::id("sample_circular_loading_animation"),
+                {
+                    .layout =
+                        {
+                            .width = gui::px(74.0f),
+                            .height = gui::px(74.0f),
+                            .padding = gui::insets(9.0f),
+                        },
+                    .style = {
+                        .background = spec.controls_background,
+                        .border = spec.controls_border,
+                        .border_thickness = 1.0f,
+                        .radius = 22.0f,
+                        .shadow = {
+                            .offset = {0.0f, 10.0f},
+                            .blur_radius = 28.0f,
+                            .color = spec.controls_shadow,
+                        },
+                    },
+                }
+            )) {
+            BASE_UNUSED(card);
+            for (size_t index = 0u; index < DOT_COUNT; ++index) {
+                gui::Vec2 const pos = DOT_POSITIONS[index];
+                ui.spacer({
+                    .layout =
+                        {
+                            .width = gui::px(5.0f),
+                            .height = gui::px(5.0f),
+                            .margin = gui::insets(pos.y, 0.0f, 0.0f, pos.x),
+                        },
+                    .style = {
+                        .background = color_alpha(
+                            tokens.accent, loading_ring_alpha(ring_phase, index, DOT_COUNT)
+                        ),
+                        .radius = 2.5f,
+                    },
+                });
+            }
         }
     }
 
@@ -891,7 +968,21 @@ namespace {
                             .style = {.font_size = 14.0f},
                         }
                     );
-                    draw_sample_loading_animation(ui, state, spec);
+                    if (auto loading_row = ui.row(
+                            gui::id("sample_loading_row"),
+                            {
+                                .layout = {
+                                    .width = gui::fill(),
+                                    .height = gui::children(),
+                                    .gap = 10.0f,
+                                    .align_y = gui::Align::CENTER,
+                                },
+                            }
+                        )) {
+                        BASE_UNUSED(loading_row);
+                        draw_sample_loading_animation(ui, state, spec);
+                        draw_sample_circular_loading_animation(ui, state, spec);
+                    }
                     if (auto row = ui.row(gui::id("sample_tab_controls"), controls_bar)) {
                         if (auto switches =
                                 ui.row(gui::id("sample_control_switches"), toolbar_group)) {
