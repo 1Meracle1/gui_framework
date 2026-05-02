@@ -1514,20 +1514,29 @@ namespace {
                         .gap = 16.0f,
                     },
                 })) {
-                ui.label(
-                    details.author_initial,
-                    {
-                        .layout = {.width = gui::px(32.0f), .height = gui::px(32.0f)},
+                if (auto avatar = ui.row({
+                        .layout =
+                            {
+                                .width = gui::px(32.0f),
+                                .height = gui::px(32.0f),
+                                .align_x = gui::Align::CENTER,
+                                .align_y = gui::Align::CENTER,
+                            },
                         .style = {
                             .background = gui::rgb(12, 12, 12),
-                            .foreground = spec.text,
                             .border = spec.border,
                             .border_thickness = 1.0f,
                             .radius = 16.0f,
-                            .font_size = 12.0f,
                         },
-                    }
-                );
+                    })) {
+                    ui.label(
+                        details.author_initial,
+                        {
+                            .layout = {.width = gui::text(), .height = gui::fill()},
+                            .style = {.role = gui::StyleRole::TEXT, .font_size = 12.0f},
+                        }
+                    );
+                }
                 if (auto commit_text = ui.column({
                         .layout = {
                             .width = gui::fill(),
