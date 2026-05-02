@@ -8,14 +8,16 @@
 #endif
 #endif
 
+#include "app.h"
+
 #include <algorithm>
 #include <base/config.h>
-#include <base/crash.h>
 #include <base/fmt.h>
 #include <base/memory.h>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <new>
 #if defined(_WIN32)
 #include <draw/draw_renderer.h>
 #include <font_cache/font_cache.h>
@@ -26,7 +28,7 @@
 #endif
 #include <gui/gui.h>
 
-namespace {
+namespace ui_api_testbed {
 
 #if defined(_WIN32)
     namespace draw = gui::draw;
@@ -2306,418 +2308,8 @@ namespace {
     }
 
 #if defined(_WIN32)
-    constexpr wchar_t WINDOW_CLASS_NAME[] = L"gui_framework_ui_api_testbed";
-    constexpr uint32_t INITIAL_WINDOW_WIDTH = 1280u;
-    constexpr uint32_t INITIAL_WINDOW_HEIGHT = 800u;
-    constexpr size_t MAX_KEY_EVENTS_PER_FRAME = 32u;
-
-    struct TraceOptions {
-        char const* path = nullptr;
-        uint64_t warmup_ms = 0u;
-        uint64_t duration_ms = 0u;
-        bool enable_debug_layer = true;
-    };
-
-    struct ManualTrace {
-#if BASE_DEBUG
-        std::FILE* file = nullptr;
-        LARGE_INTEGER frequency = {};
-        int64_t start_counter = 0;
-        uint64_t cpu_start_100ns = 0u;
-        uint32_t pid = 0u;
-        uint32_t tid = 0u;
-        uint32_t logical_processor_count = 1u;
-        size_t frame_count = 0u;
-        size_t command_sum = 0u;
-        size_t primitive_sum = 0u;
-        size_t batch_sum = 0u;
-        size_t styled_rect_sum = 0u;
-        size_t text_sum = 0u;
-        size_t layer_sum = 0u;
-        size_t command_max = 0u;
-        bool first_event = true;
-#endif
-    };
-
-#if BASE_DEBUG
-    [[nodiscard]] auto trace_active(ManualTrace const* trace) -> bool {
-        return trace != nullptr && trace->file != nullptr;
-    }
-
-    [[nodiscard]] auto trace_counter() -> int64_t {
-        LARGE_INTEGER counter = {};
-        QueryPerformanceCounter(&counter);
-        return counter.QuadPart;
-    }
-
-    [[nodiscard]] auto trace_us(ManualTrace const& trace, int64_t counter) -> uint64_t {
-        return static_cast<uint64_t>(
-            (counter - trace.start_counter) * 1000000ll / trace.frequency.QuadPart
-        );
-    }
-
-    [[nodiscard]] auto trace_elapsed_ms(ManualTrace const& trace) -> double {
-        int64_t const counter = trace_counter();
-        return static_cast<double>(counter - trace.start_counter) * 1000.0 /
-               static_cast<double>(trace.frequency.QuadPart);
-    }
-
-    [[nodiscard]] auto file_time_100ns(FILETIME time) -> uint64_t {
-        return (static_cast<uint64_t>(time.dwHighDateTime) << 32u) |
-               static_cast<uint64_t>(time.dwLowDateTime);
-    }
-
-    [[nodiscard]] auto process_cpu_100ns() -> uint64_t {
-        FILETIME creation = {};
-        FILETIME exit = {};
-        FILETIME kernel = {};
-        FILETIME user = {};
-        if (!GetProcessTimes(GetCurrentProcess(), &creation, &exit, &kernel, &user)) {
-            return 0u;
-        }
-        return file_time_100ns(kernel) + file_time_100ns(user);
-    }
-
-    auto trace_separator(ManualTrace* trace) -> void {
-        if (!trace->first_event) {
-            fmt::fprintf(trace->file, ",\n");
-        }
-        trace->first_event = false;
-    }
-
-    auto trace_zone_event(ManualTrace* trace, char const* name, char phase) -> void {
-        if (!trace_active(trace)) {
-            return;
-        }
-        trace_separator(trace);
-        fmt::fprintf(
-            trace->file,
-            "{\"name\":\"%s\",\"cat\":\"zone\",\"ph\":\"%c\",\"ts\":%llu,"
-            "\"pid\":%u,\"tid\":%u}",
-            name,
-            phase,
-            static_cast<unsigned long long>(trace_us(*trace, trace_counter())),
-            trace->pid,
-            trace->tid
-        );
-    }
-
-    class TraceScope final {
-      public:
-        TraceScope(ManualTrace* trace, char const* name)
-            : m_trace(trace_active(trace) ? trace : nullptr), m_name(name) {
-            if (m_trace != nullptr) {
-                trace_zone_event(m_trace, m_name, 'B');
-            }
-        }
-
-        ~TraceScope() {
-            if (m_trace != nullptr) {
-                trace_zone_event(m_trace, m_name, 'E');
-            }
-        }
-
-      private:
-        ManualTrace* m_trace = nullptr;
-        char const* m_name = nullptr;
-    };
-
-#define UI_TRACE_JOIN_INNER(a, b) a##b
-#define UI_TRACE_JOIN(a, b) UI_TRACE_JOIN_INNER(a, b)
-#define TRACE_SCOPE(trace, name) TraceScope UI_TRACE_JOIN(trace_scope_, __LINE__)((trace), (name))
-
-    auto trace_instant_u32(
-        ManualTrace* trace, char const* name, render::SizeU32 window_size, uint32_t debug_layer
-    ) -> void {
-        trace_separator(trace);
-        fmt::fprintf(
-            trace->file,
-            "{\"name\":\"%s\",\"cat\":\"meta\",\"ph\":\"i\",\"s\":\"p\",\"ts\":%llu,"
-            "\"pid\":%u,\"tid\":%u,\"args\":{\"build\":\"windows-msvc-debug\","
-            "\"debug_layer\":%u,\"window_width\":%u,\"window_height\":%u,"
-            "\"logical_processors\":%u,\"timestamp_unit\":\"microseconds\"}}",
-            name,
-            static_cast<unsigned long long>(trace_us(*trace, trace_counter())),
-            trace->pid,
-            trace->tid,
-            debug_layer,
-            window_size.width,
-            window_size.height,
-            trace->logical_processor_count
-        );
-    }
-
-    [[nodiscard]] auto
-    trace_start(ManualTrace* trace, char const* path, render::SizeU32 size, bool enable_debug_layer)
-        -> bool {
-        if (trace == nullptr || path == nullptr || path[0] == '\0') {
-            return false;
-        }
-
-        std::FILE* file = nullptr;
-        if (fopen_s(&file, path, "wb") != 0 || file == nullptr) {
-            fmt::eprintf("ui_api_testbed trace: failed to open %s\n", path);
-            return false;
-        }
-
-        *trace = {};
-        trace->file = file;
-        QueryPerformanceFrequency(&trace->frequency);
-        trace->start_counter = trace_counter();
-        trace->cpu_start_100ns = process_cpu_100ns();
-        trace->pid = GetCurrentProcessId();
-        trace->tid = GetCurrentThreadId();
-        SYSTEM_INFO system_info = {};
-        GetSystemInfo(&system_info);
-        trace->logical_processor_count =
-            std::max(static_cast<uint32_t>(system_info.dwNumberOfProcessors), 1u);
-
-        fmt::fprintf(trace->file, "{\"displayTimeUnit\":\"ms\",\"traceEvents\":[\n");
-        trace_separator(trace);
-        fmt::fprintf(
-            trace->file,
-            "{\"name\":\"process_name\",\"ph\":\"M\",\"pid\":%u,\"tid\":0,"
-            "\"args\":{\"name\":\"ui_api_testbed\"}}",
-            trace->pid
-        );
-        trace_separator(trace);
-        fmt::fprintf(
-            trace->file,
-            "{\"name\":\"thread_name\",\"ph\":\"M\",\"pid\":%u,\"tid\":%u,"
-            "\"args\":{\"name\":\"main\"}}",
-            trace->pid,
-            trace->tid
-        );
-        trace_instant_u32(trace, "trace_start", size, enable_debug_layer ? 1u : 0u);
-        fmt::printf("ui_api_testbed trace: recording %s\n", path);
-        return true;
-    }
-
-    auto trace_draw_command_counts(ManualTrace* trace, draw::Context context) -> void {
-        if (!trace_active(trace)) {
-            return;
-        }
-
-        size_t const command_count = draw::command_count(context);
-        size_t const primitive_count = draw::primitive_command_count(context);
-        size_t const batch_count = draw::primitive_batch_count(context);
-        size_t const styled_rect_count = draw::styled_rect_command_count(context);
-        size_t const text_count = draw::text_command_count(context);
-        size_t const layer_count = draw::layer_command_count(context);
-        size_t const frame_index = trace->frame_count;
-        trace->frame_count += 1u;
-        trace->command_sum += command_count;
-        trace->primitive_sum += primitive_count;
-        trace->batch_sum += batch_count;
-        trace->styled_rect_sum += styled_rect_count;
-        trace->text_sum += text_count;
-        trace->layer_sum += layer_count;
-        trace->command_max = std::max(trace->command_max, command_count);
-
-        trace_separator(trace);
-        fmt::fprintf(
-            trace->file,
-            "{\"name\":\"draw_commands\",\"cat\":\"counters\",\"ph\":\"C\",\"ts\":%llu,"
-            "\"pid\":%u,\"tid\":%u,\"args\":{\"frame\":%zu,\"total\":%zu,"
-            "\"primitive\":%zu,\"primitive_batches\":%zu,\"styled_rects\":%zu,"
-            "\"text\":%zu,\"layers\":%zu}}",
-            static_cast<unsigned long long>(trace_us(*trace, trace_counter())),
-            trace->pid,
-            trace->tid,
-            frame_index,
-            command_count,
-            primitive_count,
-            batch_count,
-            styled_rect_count,
-            text_count,
-            layer_count
-        );
-    }
-
-    [[nodiscard]] auto trace_average(size_t sum, size_t count) -> double {
-        return count != 0u ? static_cast<double>(sum) / static_cast<double>(count) : 0.0;
-    }
-
-    auto trace_finish(
-        ManualTrace* trace, char const* path, render::SizeU32 size, bool enable_debug_layer
-    ) -> void {
-        if (!trace_active(trace)) {
-            return;
-        }
-
-        int64_t const end_counter = trace_counter();
-        uint64_t const cpu_end_100ns = process_cpu_100ns();
-        double const duration_ms = static_cast<double>(end_counter - trace->start_counter) *
-                                   1000.0 / static_cast<double>(trace->frequency.QuadPart);
-        double const duration_100ns = duration_ms * 10000.0;
-        double const cpu_percent =
-            duration_100ns > 0.0
-                ? static_cast<double>(cpu_end_100ns - trace->cpu_start_100ns) * 100.0 /
-                      duration_100ns / static_cast<double>(trace->logical_processor_count)
-                : 0.0;
-        double const fps = duration_ms > 0.0
-                               ? static_cast<double>(trace->frame_count) * 1000.0 / duration_ms
-                               : 0.0;
-        double const avg_commands = trace_average(trace->command_sum, trace->frame_count);
-        double const avg_primitives = trace_average(trace->primitive_sum, trace->frame_count);
-        double const avg_batches = trace_average(trace->batch_sum, trace->frame_count);
-        double const avg_styled_rects = trace_average(trace->styled_rect_sum, trace->frame_count);
-        double const avg_text = trace_average(trace->text_sum, trace->frame_count);
-        double const avg_layers = trace_average(trace->layer_sum, trace->frame_count);
-
-        trace_separator(trace);
-        fmt::fprintf(
-            trace->file,
-            "{\"name\":\"trace_summary\",\"cat\":\"summary\",\"ph\":\"i\",\"s\":\"p\","
-            "\"ts\":%llu,\"pid\":%u,\"tid\":%u,\"args\":{\"duration_ms\":%.2f,"
-            "\"process_cpu_percent\":%.2f,\"frames\":%zu,\"fps\":%.2f,"
-            "\"window_width\":%u,\"window_height\":%u,\"debug_layer\":%u,"
-            "\"avg_commands\":%.2f,"
-            "\"avg_primitives\":%.2f,\"avg_primitive_batches\":%.2f,"
-            "\"avg_styled_rects\":%.2f,\"avg_text\":%.2f,\"avg_layers\":%.2f,"
-            "\"max_commands\":%zu}}",
-            static_cast<unsigned long long>(trace_us(*trace, end_counter)),
-            trace->pid,
-            trace->tid,
-            duration_ms,
-            cpu_percent,
-            trace->frame_count,
-            fps,
-            size.width,
-            size.height,
-            enable_debug_layer ? 1u : 0u,
-            avg_commands,
-            avg_primitives,
-            avg_batches,
-            avg_styled_rects,
-            avg_text,
-            avg_layers,
-            trace->command_max
-        );
-        fmt::fprintf(trace->file, "\n]}\n");
-        std::fclose(trace->file);
-        trace->file = nullptr;
-
-        fmt::printf(
-            "ui_api_testbed trace: wrote %s frames=%zu duration_ms=%.1f fps=%.1f "
-            "process_cpu=%.2f%% commands_avg=%.1f max=%zu primitive_avg=%.1f "
-            "styled_rect_avg=%.1f text_avg=%.1f layers_avg=%.1f\n",
-            path,
-            trace->frame_count,
-            duration_ms,
-            fps,
-            cpu_percent,
-            avg_commands,
-            trace->command_max,
-            avg_primitives,
-            avg_styled_rects,
-            avg_text,
-            avg_layers
-        );
-    }
-
-    [[nodiscard]] auto trace_input_message(UINT message) -> bool {
-        switch (message) {
-        case WM_MOUSEMOVE:
-        case WM_LBUTTONDOWN:
-        case WM_LBUTTONUP:
-        case WM_LBUTTONDBLCLK:
-        case WM_MOUSEWHEEL:
-        case WM_KEYDOWN:
-        case WM_SYSKEYDOWN:
-        case WM_CHAR:
-            return true;
-        default:
-            return false;
-        }
-    }
-#else
 #define TRACE_SCOPE(trace, name) BASE_UNUSED(trace)
-#endif
-
-    [[nodiscard]] auto parse_u64(char const* text, uint64_t* out_value) -> bool {
-        if (text == nullptr || text[0] == '\0' || out_value == nullptr) {
-            return false;
-        }
-        uint64_t value = 0u;
-        for (char const* at = text; *at != '\0'; ++at) {
-            if (*at < '0' || *at > '9') {
-                return false;
-            }
-            value = value * 10u + static_cast<uint64_t>(*at - '0');
-        }
-        *out_value = value;
-        return true;
-    }
-
-    [[nodiscard]] auto consume_trace_value(
-        int argc, char** argv, int* index, char const* option, char const** out_value
-    ) -> bool {
-        if (*index + 1 >= argc) {
-            fmt::eprintf("%s requires a value\n", option);
-            return false;
-        }
-        *index += 1;
-        *out_value = argv[*index];
-        return true;
-    }
-
-    [[nodiscard]] auto parse_trace_options(int argc, char** argv, TraceOptions* out_options)
-        -> bool {
-        for (int index = 1; index < argc; ++index) {
-            char const* const arg = argv[index];
-            if (std::strncmp(arg, "--trace=", 8u) == 0) {
-                out_options->path = arg + 8u;
-            } else if (std::strcmp(arg, "--trace") == 0) {
-                if (!consume_trace_value(argc, argv, &index, "--trace", &out_options->path)) {
-                    return false;
-                }
-            } else if (std::strncmp(arg, "--trace-warmup-ms=", 18u) == 0) {
-                if (!parse_u64(arg + 18u, &out_options->warmup_ms)) {
-                    fmt::eprintf("invalid --trace-warmup-ms value\n");
-                    return false;
-                }
-            } else if (std::strcmp(arg, "--trace-warmup-ms") == 0) {
-                char const* value = nullptr;
-                if (!consume_trace_value(argc, argv, &index, arg, &value) ||
-                    !parse_u64(value, &out_options->warmup_ms)) {
-                    fmt::eprintf("invalid --trace-warmup-ms value\n");
-                    return false;
-                }
-            } else if (std::strncmp(arg, "--trace-duration-ms=", 20u) == 0) {
-                if (!parse_u64(arg + 20u, &out_options->duration_ms)) {
-                    fmt::eprintf("invalid --trace-duration-ms value\n");
-                    return false;
-                }
-            } else if (std::strcmp(arg, "--trace-duration-ms") == 0) {
-                char const* value = nullptr;
-                if (!consume_trace_value(argc, argv, &index, arg, &value) ||
-                    !parse_u64(value, &out_options->duration_ms)) {
-                    fmt::eprintf("invalid --trace-duration-ms value\n");
-                    return false;
-                }
-            } else if (std::strcmp(arg, "--no-d3d-debug-layer") == 0) {
-                out_options->enable_debug_layer = false;
-            } else {
-                fmt::eprintf(
-                    "usage: ui_api_testbed [--trace <path>] [--trace-warmup-ms N] "
-                    "[--trace-duration-ms N] [--no-d3d-debug-layer]\n"
-                );
-                return false;
-            }
-        }
-        if (out_options->path == nullptr &&
-            (out_options->warmup_ms != 0u || out_options->duration_ms != 0u)) {
-            fmt::eprintf("--trace-warmup-ms and --trace-duration-ms require --trace\n");
-            return false;
-        }
-        return true;
-    }
-
-    [[nodiscard]] auto trace_requested(TraceOptions const& options) -> bool {
-        return options.path != nullptr || options.warmup_ms != 0u || options.duration_ms != 0u;
-    }
-
+#define trace_draw_command_counts(trace, context) BASE_UNUSED(trace)
     struct UiRuntime {
         font_provider::Context provider = {};
         font_cache::Cache cache = {};
@@ -2732,67 +2324,6 @@ namespace {
         DWORD clipboard_sequence = 0u;
         bool clipboard_valid = false;
     };
-
-    struct AppState {
-        HWND hwnd = nullptr;
-        bool running = true;
-        bool redraw_pending = true;
-        bool resize_pending = false;
-        render::SizeU32 pending_size = {};
-        gui::Frame last_frame = {};
-        gui::Id mouse_hit_id = {};
-        gui::InputState input = {};
-        gui::KeyEvent key_events[MAX_KEY_EVENTS_PER_FRAME] = {};
-        gui::Vec2 left_double_click_pos = {};
-        uint64_t left_double_click_ticks = 0u;
-        bool left_double_click_pending = false;
-    };
-
-    AppState* global_app_state = nullptr;
-
-    auto request_redraw(AppState* state) -> void {
-        if (state != nullptr) {
-            state->redraw_pending = true;
-        }
-    }
-
-    [[nodiscard]] auto frame_ready(gui::Frame const& frame) -> bool {
-        return frame.box_info_count() != 0u;
-    }
-
-    [[nodiscard]] auto frame_hit_id(gui::Frame const& frame, gui::Vec2 pos) -> gui::Id {
-        gui::BoxInfo const* const box = frame.hit_test(pos);
-        return box != nullptr ? box->id : gui::Id{};
-    }
-
-    [[nodiscard]] auto focused_box_exists(gui::Frame const& frame) -> bool {
-        return frame.focused_box() != nullptr;
-    }
-
-    [[nodiscard]] auto focused_text_box_exists(gui::Frame const& frame) -> bool {
-        gui::BoxInfo const* const box = frame.focused_box();
-        return box != nullptr && (box->kind == gui::BoxKind::INPUT_TEXT ||
-                                  box->kind == gui::BoxKind::INPUT_TEXT_MULTILINE);
-    }
-
-    [[nodiscard]] auto shortcut_key(gui::Key key, gui::KeyMods mods) -> bool {
-        if ((mods & gui::KEY_MOD_CTRL) == 0u) {
-            return false;
-        }
-        return key == gui::Key::A || key == gui::Key::C || key == gui::Key::V ||
-               key == gui::Key::X || key == gui::Key::Z;
-    }
-
-    [[nodiscard]] auto key_event_needs_frame(AppState const& state, gui::Key key, gui::KeyMods mods)
-        -> bool {
-        return state.redraw_pending || !frame_ready(state.last_frame) || key == gui::Key::TAB ||
-               shortcut_key(key, mods) || focused_box_exists(state.last_frame);
-    }
-
-    [[nodiscard]] auto text_event_needs_frame(AppState const& state) -> bool {
-        return state.redraw_pending || !frame_ready(state.last_frame) ||
-               focused_text_box_exists(state.last_frame);
-    }
 
     [[nodiscard]] auto hash_bytes(uint64_t hash, void const* data, size_t size) -> uint64_t {
         uint8_t const* bytes = static_cast<uint8_t const*>(data);
@@ -2889,34 +2420,6 @@ namespace {
         return {0.010f, 0.014f, 0.020f, 1.0f};
     }
 
-    [[nodiscard]] auto loword_u32(LPARAM value) -> uint32_t {
-        return static_cast<uint32_t>(static_cast<uint16_t>(value & 0xffff));
-    }
-
-    [[nodiscard]] auto hiword_u32(LPARAM value) -> uint32_t {
-        return static_cast<uint32_t>(static_cast<uint16_t>((value >> 16) & 0xffff));
-    }
-
-    [[nodiscard]] auto lparam_x(LPARAM value) -> float {
-        return static_cast<float>(static_cast<int16_t>(value & 0xffff));
-    }
-
-    [[nodiscard]] auto lparam_y(LPARAM value) -> float {
-        return static_cast<float>(static_cast<int16_t>((value >> 16) & 0xffff));
-    }
-
-    [[nodiscard]] auto left_triple_click(AppState const& state, gui::Vec2 pos) -> bool {
-        float const x_radius = static_cast<float>(GetSystemMetrics(SM_CXDOUBLECLK)) * 0.5f;
-        float const y_radius = static_cast<float>(GetSystemMetrics(SM_CYDOUBLECLK)) * 0.5f;
-        return state.left_double_click_pending &&
-               GetTickCount64() - state.left_double_click_ticks <=
-                   static_cast<uint64_t>(GetDoubleClickTime()) &&
-               pos.x >= state.left_double_click_pos.x - x_radius &&
-               pos.x <= state.left_double_click_pos.x + x_radius &&
-               pos.y >= state.left_double_click_pos.y - y_radius &&
-               pos.y <= state.left_double_click_pos.y + y_radius;
-    }
-
     auto log_render_result(char const* operation, render::Result result) -> void {
         fmt::eprintf("%s failed: %s\n", operation, render::result_name(result));
     }
@@ -2971,110 +2474,6 @@ namespace {
             render::destroy_texture(context, sample.texture);
         }
         sample.size = {};
-    }
-
-    [[nodiscard]] auto key_from_virtual_key(WPARAM value) -> gui::Key {
-        switch (value) {
-        case VK_TAB:
-            return gui::Key::TAB;
-        case VK_RETURN:
-            return gui::Key::ENTER;
-        case VK_ESCAPE:
-            return gui::Key::ESCAPE;
-        case VK_SPACE:
-            return gui::Key::SPACE;
-        case VK_LEFT:
-            return gui::Key::LEFT;
-        case VK_RIGHT:
-            return gui::Key::RIGHT;
-        case VK_UP:
-            return gui::Key::UP;
-        case VK_DOWN:
-            return gui::Key::DOWN;
-        case VK_HOME:
-            return gui::Key::HOME;
-        case VK_END:
-            return gui::Key::END;
-        case VK_BACK:
-            return gui::Key::BACKSPACE;
-        case VK_DELETE:
-            return gui::Key::DELETE_KEY;
-        case 'A':
-            return gui::Key::A;
-        case 'C':
-            return gui::Key::C;
-        case 'V':
-            return gui::Key::V;
-        case 'X':
-            return gui::Key::X;
-        case 'Z':
-            return gui::Key::Z;
-        default:
-            return gui::Key::UNKNOWN;
-        }
-    }
-
-    [[nodiscard]] auto current_key_mods() -> gui::KeyMods {
-        gui::KeyMods mods = gui::KEY_MOD_NONE;
-        if ((GetKeyState(VK_SHIFT) & 0x8000) != 0) {
-            mods |= gui::KEY_MOD_SHIFT;
-        }
-        if ((GetKeyState(VK_CONTROL) & 0x8000) != 0) {
-            mods |= gui::KEY_MOD_CTRL;
-        }
-        if ((GetKeyState(VK_MENU) & 0x8000) != 0) {
-            mods |= gui::KEY_MOD_ALT;
-        }
-        if ((GetKeyState(VK_LWIN) & 0x8000) != 0 || (GetKeyState(VK_RWIN) & 0x8000) != 0) {
-            mods |= gui::KEY_MOD_SUPER;
-        }
-        return mods;
-    }
-
-    auto push_key_event(AppState* state, gui::Key key, gui::KeyEventKind kind, gui::KeyMods mods)
-        -> void {
-        if (state == nullptr || key == gui::Key::UNKNOWN) {
-            return;
-        }
-        if (state->input.key_event_count >= MAX_KEY_EVENTS_PER_FRAME) {
-#if BASE_DEBUG
-            fmt::eprintf("dropped key event\n");
-#endif
-            return;
-        }
-
-        size_t const index = state->input.key_event_count;
-        state->key_events[index] = {.key = key, .kind = kind, .mods = mods};
-        state->input.key_events = state->key_events;
-        state->input.key_event_count += 1u;
-
-#if BASE_DEBUG
-        if (kind == gui::KeyEventKind::PRESS || kind == gui::KeyEventKind::REPEAT) {
-            fmt::printf(
-                "key %s: %u mods=0x%02x\n",
-                kind == gui::KeyEventKind::REPEAT ? "repeat" : "press",
-                static_cast<unsigned>(key),
-                static_cast<unsigned>(state->key_events[index].mods)
-            );
-        }
-#endif
-    }
-
-    auto push_text_event(AppState* state, uint32_t codepoint, gui::KeyMods mods) -> void {
-        if (state == nullptr || state->input.key_event_count >= MAX_KEY_EVENTS_PER_FRAME) {
-            return;
-        }
-
-        size_t const index = state->input.key_event_count;
-        state->key_events[index] = {
-            .kind = gui::KeyEventKind::TEXT, .mods = mods, .codepoint = codepoint
-        };
-        state->input.key_events = state->key_events;
-        state->input.key_event_count += 1u;
-    }
-
-    [[nodiscard]] auto key_down_kind(LPARAM lparam) -> gui::KeyEventKind {
-        return (lparam & (1ll << 30)) != 0 ? gui::KeyEventKind::REPEAT : gui::KeyEventKind::PRESS;
     }
 
     auto set_windows_clipboard_text(void* user_data, StrRef text) -> void {
@@ -3296,7 +2695,7 @@ namespace {
         render::SizeU32 window_size,
         gui::InputState const& input,
         float delta_time,
-        ManualTrace* trace
+        void* trace
     ) -> gui::Frame {
         TRACE_SCOPE(trace, "ui_build");
         LiquidGlassSpec style = {};
@@ -3360,419 +2759,92 @@ namespace {
         return ui;
     }
 
-    auto window_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) -> LRESULT {
-        switch (message) {
-        case WM_SIZE:
-            if (global_app_state != nullptr && wparam != SIZE_MINIMIZED) {
-                render::SizeU32 const size = {loword_u32(lparam), hiword_u32(lparam)};
-                if (size.width != 0u && size.height != 0u) {
-                    global_app_state->pending_size = size;
-                    global_app_state->resize_pending = true;
-                    request_redraw(global_app_state);
-                }
-            }
-            return 0;
+#undef trace_draw_command_counts
+#undef TRACE_SCOPE
 
-        case WM_MOUSEMOVE:
-            if (global_app_state != nullptr) {
-                gui::Vec2 const pos = {lparam_x(lparam), lparam_y(lparam)};
-                gui::Id const hit_id = frame_hit_id(global_app_state->last_frame, pos);
-                bool const needs_frame = global_app_state->redraw_pending ||
-                                         !frame_ready(global_app_state->last_frame) ||
-                                         global_app_state->input.mouse_down[0u] ||
-                                         hit_id.value != global_app_state->mouse_hit_id.value;
-                global_app_state->input.mouse_pos = pos;
-                global_app_state->mouse_hit_id = hit_id;
-                if (needs_frame) {
-                    request_redraw(global_app_state);
-                }
-            }
-            return 0;
+    struct ModuleRuntime {
+        Arena arena = {};
+        UiRuntime runtime = {};
+    };
 
-        case WM_LBUTTONDOWN:
-            if (global_app_state != nullptr) {
-                gui::Vec2 const pos = {lparam_x(lparam), lparam_y(lparam)};
-                global_app_state->input.mouse_down[0u] = true;
-                global_app_state->input.mouse_pos = pos;
-                global_app_state->input.mouse_triple_clicked[0u] =
-                    left_triple_click(*global_app_state, pos);
-                global_app_state->left_double_click_pending = false;
-                request_redraw(global_app_state);
-            }
-            SetCapture(hwnd);
-            SetFocus(hwnd);
-            return 0;
-
-        case WM_LBUTTONUP:
-            if (global_app_state != nullptr) {
-                global_app_state->input.mouse_down[0u] = false;
-                global_app_state->input.mouse_pos = {lparam_x(lparam), lparam_y(lparam)};
-                request_redraw(global_app_state);
-            }
-            if (GetCapture() == hwnd) {
-                ReleaseCapture();
-            }
-            return 0;
-
-        case WM_LBUTTONDBLCLK:
-            if (global_app_state != nullptr) {
-                gui::Vec2 const pos = {lparam_x(lparam), lparam_y(lparam)};
-                global_app_state->input.mouse_down[0u] = true;
-                global_app_state->input.mouse_double_clicked[0u] = true;
-                global_app_state->input.mouse_pos = pos;
-                global_app_state->left_double_click_pos = pos;
-                global_app_state->left_double_click_ticks = GetTickCount64();
-                global_app_state->left_double_click_pending = true;
-                request_redraw(global_app_state);
-            }
-            SetCapture(hwnd);
-            SetFocus(hwnd);
-            return 0;
-
-        case WM_MOUSEWHEEL:
-            if (global_app_state != nullptr) {
-                POINT point = {
-                    static_cast<LONG>(lparam_x(lparam)),
-                    static_cast<LONG>(lparam_y(lparam)),
-                };
-                BASE_UNUSED(ScreenToClient(hwnd, &point));
-                global_app_state->input.mouse_pos = {
-                    static_cast<float>(point.x), static_cast<float>(point.y)
-                };
-                global_app_state->input.scroll_delta_y +=
-                    static_cast<float>(GET_WHEEL_DELTA_WPARAM(wparam)) /
-                    static_cast<float>(WHEEL_DELTA) * 36.0f;
-                request_redraw(global_app_state);
-            }
-            return 0;
-
-        case WM_KEYDOWN:
-        case WM_SYSKEYDOWN: {
-            gui::Key const key = key_from_virtual_key(wparam);
-            if (key != gui::Key::UNKNOWN) {
-                gui::KeyMods const mods = current_key_mods();
-                if (global_app_state != nullptr &&
-                    key_event_needs_frame(*global_app_state, key, mods)) {
-                    push_key_event(global_app_state, key, key_down_kind(lparam), mods);
-                    request_redraw(global_app_state);
-                }
-                return 0;
-            }
-            return DefWindowProcW(hwnd, message, wparam, lparam);
-        }
-
-        case WM_CHAR:
-            if (global_app_state != nullptr) {
-                if (text_event_needs_frame(*global_app_state)) {
-                    push_text_event(
-                        global_app_state, static_cast<uint32_t>(wparam), current_key_mods()
-                    );
-                    request_redraw(global_app_state);
-                }
-            }
-            return 0;
-
-        case WM_CLOSE:
-            if (global_app_state != nullptr) {
-                global_app_state->running = false;
-            }
-            DestroyWindow(hwnd);
-            return 0;
-
-        case WM_DESTROY:
-            PostQuitMessage(0);
-            return 0;
-
-        default:
-            return DefWindowProcW(hwnd, message, wparam, lparam);
-        }
+    [[nodiscard]] auto draw_command_counts(draw::Context context) -> DrawCommandCounts {
+        return {
+            .command_count = draw::command_count(context),
+            .primitive_count = draw::primitive_command_count(context),
+            .batch_count = draw::primitive_batch_count(context),
+            .styled_rect_count = draw::styled_rect_command_count(context),
+            .text_count = draw::text_command_count(context),
+            .layer_count = draw::layer_command_count(context),
+        };
     }
 
-    [[nodiscard]] auto create_testbed_window(AppState* app_state) -> bool {
-        HINSTANCE const instance = GetModuleHandleW(nullptr);
-
-        WNDCLASSEXW window_class = {};
-        window_class.cbSize = static_cast<UINT>(sizeof(window_class));
-        window_class.style = CS_HREDRAW | CS_VREDRAW | CS_DBLCLKS;
-        window_class.lpfnWndProc = window_proc;
-        window_class.hInstance = instance;
-        window_class.hCursor = LoadCursorW(nullptr, MAKEINTRESOURCEW(32512));
-        window_class.lpszClassName = WINDOW_CLASS_NAME;
-
-        if (RegisterClassExW(&window_class) == 0u) {
-            fmt::eprintf("RegisterClassExW failed: %lu\n", GetLastError());
+    [[nodiscard]] auto
+    module_create(void* storage, render::Context render_context, void* native_window) -> bool {
+        auto* const module = new (storage) ModuleRuntime{};
+        module->arena.init();
+        if (!create_ui_runtime(
+                module->arena, render_context, static_cast<HWND>(native_window), &module->runtime
+            )) {
+            destroy_ui_runtime(render_context, &module->runtime);
+            module->~ModuleRuntime();
             return false;
         }
-
-        DWORD const style = WS_OVERLAPPEDWINDOW;
-        RECT rect = {};
-        rect.right = static_cast<LONG>(INITIAL_WINDOW_WIDTH);
-        rect.bottom = static_cast<LONG>(INITIAL_WINDOW_HEIGHT);
-        if (!AdjustWindowRect(&rect, style, FALSE)) {
-            fmt::eprintf("AdjustWindowRect failed: %lu\n", GetLastError());
-            return false;
-        }
-
-        HWND const hwnd = CreateWindowExW(
-            0u,
-            WINDOW_CLASS_NAME,
-            L"gui_framework UI API testbed",
-            style,
-            CW_USEDEFAULT,
-            CW_USEDEFAULT,
-            rect.right - rect.left,
-            rect.bottom - rect.top,
-            nullptr,
-            nullptr,
-            instance,
-            nullptr
-        );
-        if (hwnd == nullptr) {
-            fmt::eprintf("CreateWindowExW failed: %lu\n", GetLastError());
-            return false;
-        }
-
-        app_state->hwnd = hwnd;
-        ShowWindow(hwnd, SW_SHOW);
-        UpdateWindow(hwnd);
         return true;
     }
 
-    auto destroy_testbed_window(AppState* app_state) -> void {
-        if (app_state->hwnd != nullptr && IsWindow(app_state->hwnd)) {
-            DestroyWindow(app_state->hwnd);
+    auto module_destroy(void* storage, render::Context render_context) -> void {
+        if (storage == nullptr) {
+            return;
         }
-        app_state->hwnd = nullptr;
-        UnregisterClassW(WINDOW_CLASS_NAME, GetModuleHandleW(nullptr));
+        auto* const module = static_cast<ModuleRuntime*>(storage);
+        destroy_ui_runtime(render_context, &module->runtime);
+        module->~ModuleRuntime();
     }
 
-#if BASE_DEBUG
-    [[nodiscard]] auto trace_idle_wait_ms(
-        TraceOptions const& options,
-        ManualTrace const& trace,
-        bool trace_start_done,
-        uint64_t trace_warmup_start
-    ) -> DWORD {
-        uint64_t wait_ms = INFINITE;
-        if (!trace_start_done && options.path != nullptr) {
-            uint64_t const elapsed_ms = GetTickCount64() - trace_warmup_start;
-            wait_ms = elapsed_ms < options.warmup_ms ? options.warmup_ms - elapsed_ms : 0u;
-        } else if (options.duration_ms != 0u && trace_active(&trace)) {
-            double const elapsed_ms = trace_elapsed_ms(trace);
-            wait_ms = elapsed_ms < static_cast<double>(options.duration_ms)
-                          ? options.duration_ms - static_cast<uint64_t>(elapsed_ms)
-                          : 0u;
-        }
-        return wait_ms >= INFINITE ? INFINITE - 1u : static_cast<DWORD>(wait_ms);
-    }
-#endif
+    [[nodiscard]] auto module_render_frame(
+        void* storage,
+        render::Context render_context,
+        render::Window render_window,
+        render::SizeU32 window_size,
+        gui::InputState const& input,
+        float delta_time
+    ) -> FrameResult {
+        auto* const module = static_cast<ModuleRuntime*>(storage);
+        uint64_t const state_hash_before = testbed_state_hash(module->runtime.state);
 
-    auto run_windowed(TraceOptions trace_options) -> int {
-        AppState app_state = {};
-        global_app_state = &app_state;
+        render::begin_frame(render_context);
 
-        if (!create_testbed_window(&app_state)) {
-            global_app_state = nullptr;
-            return 1;
-        }
+        FrameResult frame_result = {};
+        frame_result.frame =
+            build_ui_commands(&module->runtime, window_size, input, delta_time, nullptr);
+        gui::BoxInfo const* const hit_box = frame_result.frame.hit_test(input.mouse_pos);
+        frame_result.mouse_hit_id = hit_box != nullptr ? hit_box->id : gui::Id{};
 
-        Arena app_arena = {};
-        app_arena.init();
+        render::WindowRenderPassDesc pass_desc = {};
+        pass_desc.window = render_window;
+        pass_desc.clear_color = liquid_glass_clear_color(module->runtime.state.theme);
 
-        render::Context render_context = {};
-        render::ContextDesc context_desc = {};
-        context_desc.backend = render::Backend::D3D11;
-#if BASE_DEBUG
-        context_desc.enable_debug_layer = trace_options.enable_debug_layer;
-#endif
-
-        render::Result result = render::create_context(app_arena, context_desc, render_context);
-        if (render::result_failed(result)) {
-            log_render_result("render::create_context", result);
-            destroy_testbed_window(&app_state);
-            global_app_state = nullptr;
-            return 1;
-        }
-
-        render::Window render_window = {};
-        render::WindowDesc window_desc = {};
-        window_desc.native_window = app_state.hwnd;
-        window_desc.size = {INITIAL_WINDOW_WIDTH, INITIAL_WINDOW_HEIGHT};
-        window_desc.buffer_count = 2u;
-        window_desc.present_mode = render::PresentMode::VSYNC;
-
-        result = render::create_window(app_arena, render_context, window_desc, render_window);
-        if (render::result_failed(result)) {
-            log_render_result("render::create_window", result);
-            render::destroy_context(render_context);
-            destroy_testbed_window(&app_state);
-            global_app_state = nullptr;
-            return 1;
-        }
-
-        UiRuntime runtime = {};
-        if (!create_ui_runtime(app_arena, render_context, app_state.hwnd, &runtime)) {
-            destroy_ui_runtime(render_context, &runtime);
-            render::destroy_window(render_window);
-            render::destroy_context(render_context);
-            destroy_testbed_window(&app_state);
-            global_app_state = nullptr;
-            return 1;
-        }
-
-        uint64_t previous_ticks = GetTickCount64();
-        uint64_t const trace_warmup_start = previous_ticks;
-        bool trace_start_done = false;
-        ManualTrace trace = {};
-        while (app_state.running) {
-            if (!trace_start_done && trace_options.path != nullptr &&
-                GetTickCount64() - trace_warmup_start >= trace_options.warmup_ms) {
-                trace_start_done = true;
-#if BASE_DEBUG
-                BASE_UNUSED(trace_start(
-                    &trace,
-                    trace_options.path,
-                    render::window_size(render_window),
-                    trace_options.enable_debug_layer
-                ));
-#endif
-            }
-#if BASE_DEBUG
-            if (trace_options.duration_ms != 0u && trace_active(&trace) &&
-                trace_elapsed_ms(trace) >= static_cast<double>(trace_options.duration_ms)) {
-                app_state.running = false;
-                break;
-            }
-#endif
-
-            {
-                TRACE_SCOPE(&trace, "frame");
-                {
-                    TRACE_SCOPE(&trace, "pump_messages");
-                    MSG message = {};
-                    while (PeekMessageW(&message, nullptr, 0u, 0u, PM_REMOVE)) {
-                        if (message.message == WM_QUIT) {
-                            app_state.running = false;
-                            break;
-                        }
-                        TranslateMessage(&message);
-#if BASE_DEBUG
-                        if (trace_input_message(message.message)) {
-                            TRACE_SCOPE(&trace, "input_handling");
-                            DispatchMessageW(&message);
-                        } else
-#endif
-                        {
-                            DispatchMessageW(&message);
-                        }
-                    }
-                }
-
-                if (!app_state.running) {
-                    break;
-                }
-
-                if (app_state.resize_pending) {
-                    TRACE_SCOPE(&trace, "resize");
-                    result = render::resize_window(
-                        render_context, render_window, app_state.pending_size
-                    );
-                    if (render::result_failed(result)) {
-                        log_render_result("render::resize_window", result);
-                        break;
-                    }
-                    app_state.resize_pending = false;
-                    app_state.redraw_pending = true;
-                }
-
-                if (!app_state.redraw_pending) {
-                    TRACE_SCOPE(&trace, "idle_wait");
-#if BASE_DEBUG
-                    DWORD const wait_ms = trace_idle_wait_ms(
-                        trace_options, trace, trace_start_done, trace_warmup_start
-                    );
-#else
-                    DWORD const wait_ms = INFINITE;
-#endif
-                    BASE_UNUSED(MsgWaitForMultipleObjectsEx(
-                        0u, nullptr, wait_ms, QS_ALLINPUT, MWMO_INPUTAVAILABLE
-                    ));
-                    continue;
-                }
-
-                uint64_t const ticks = GetTickCount64();
-                float const delta_time = static_cast<float>(ticks - previous_ticks) * 0.001f;
-                previous_ticks = ticks;
-                app_state.redraw_pending = false;
-                uint64_t const state_hash_before = testbed_state_hash(runtime.state);
-
-                {
-                    TRACE_SCOPE(&trace, "render_begin_frame");
-                    render::begin_frame(render_context);
-                }
-                app_state.last_frame = build_ui_commands(
-                    &runtime,
-                    render::window_size(render_window),
-                    app_state.input,
-                    delta_time,
-                    &trace
-                );
-                app_state.mouse_hit_id =
-                    frame_hit_id(app_state.last_frame, app_state.input.mouse_pos);
-
-                render::WindowRenderPassDesc pass_desc = {};
-                pass_desc.window = render_window;
-                pass_desc.clear_color = liquid_glass_clear_color(runtime.state.theme);
-
-                {
-                    TRACE_SCOPE(&trace, "draw_render_commands_to_window");
-                    result = draw::render_commands_to_window(
-                        runtime.draw_renderer, render_context, pass_desc, runtime.draw_context
-                    );
-                }
-                reset_thread_temp_arenas();
-                if (render::result_failed(result)) {
-                    log_render_result("draw::render_commands_to_window", result);
-                    break;
-                }
-
-                {
-                    TRACE_SCOPE(&trace, "present");
-                    result = render::present_window(render_context, render_window);
-                }
-                app_state.redraw_pending = runtime.state.selected_tab == 1u ||
-                                           testbed_state_hash(runtime.state) != state_hash_before;
-                app_state.input.scroll_delta_y = 0.0f;
-                app_state.input.mouse_double_clicked[0u] = false;
-                app_state.input.mouse_triple_clicked[0u] = false;
-                app_state.input.key_events = app_state.key_events;
-                app_state.input.key_event_count = 0u;
-                if (result == render::Result::OCCLUDED) {
-                    TRACE_SCOPE(&trace, "idle_wait");
-                    Sleep(16u);
-                } else if (render::result_failed(result)) {
-                    log_render_result("render::present_window", result);
-                    break;
-                }
-            }
-        }
-
-#if BASE_DEBUG
-        trace_finish(
-            &trace,
-            trace_options.path,
-            render::window_size(render_window),
-            trace_options.enable_debug_layer
+        frame_result.render_result = draw::render_commands_to_window(
+            module->runtime.draw_renderer, render_context, pass_desc, module->runtime.draw_context
         );
-#else
-        BASE_UNUSED(trace_options);
-#endif
-        destroy_ui_runtime(render_context, &runtime);
-        render::destroy_window(render_window);
-        render::destroy_context(render_context);
-        destroy_testbed_window(&app_state);
-        global_app_state = nullptr;
-        return 0;
+        frame_result.draw_counts = draw_command_counts(module->runtime.draw_context);
+        reset_thread_temp_arenas();
+        frame_result.redraw_pending =
+            module->runtime.state.selected_tab == 1u ||
+            testbed_state_hash(module->runtime.state) != state_hash_before;
+        return frame_result;
+    }
+
+    [[nodiscard]] auto ui_api_testbed_module_api() -> ModuleApi const* {
+        static ModuleApi const api = {
+            .version = MODULE_API_VERSION,
+            .runtime_size = sizeof(ModuleRuntime),
+            .runtime_alignment = alignof(ModuleRuntime),
+            .create = module_create,
+            .destroy = module_destroy,
+            .render_frame = module_render_frame,
+        };
+        return &api;
     }
 #else
     auto run_console_fallback() -> int {
@@ -3818,30 +2890,14 @@ namespace {
         gui::destroy_context(ui_context);
         return 0;
     }
+
 #endif
 
-} // namespace
+} // namespace ui_api_testbed
 
-auto main(int argc, char** argv) -> int {
-    base::install_crash_handlers();
-
-#if defined(_WIN32)
-    TraceOptions trace_options = {};
-    if (!parse_trace_options(argc, argv, &trace_options)) {
-        return 2;
-    }
-#if !BASE_DEBUG
-    if (trace_requested(trace_options)) {
-        fmt::printf("ui_api_testbed trace: debug-only tracing is disabled in this build\n");
-        trace_options = {};
-    }
-#endif
-    int const result = run_windowed(trace_options);
-#else
-    BASE_UNUSED(argc);
-    BASE_UNUSED(argv);
-    int const result = run_console_fallback();
-#endif
-    shutdown_thread_temp_arenas();
-    return result;
+#if defined(_WIN32) && defined(UI_API_TESTBED_MODULE)
+extern "C" __declspec(dllexport) auto ui_api_testbed_get_module_api()
+    -> ui_api_testbed::ModuleApi const* {
+    return ui_api_testbed::ui_api_testbed_module_api();
 }
+#endif

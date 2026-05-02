@@ -36,9 +36,8 @@ add_executable(gui_framework_info
 target_link_libraries(gui_framework_info PRIVATE gui::gui)
 cpp_configure_target(gui_framework_info)
 
-add_executable(ui_api_testbed
-    tools/ui_api_testbed.cpp
-)
+set(UI_API_TESTBED_DIR "${PROJECT_SOURCE_DIR}/tools/ui_api_testbed")
+set(UI_API_TESTBED_APP_SOURCE "${UI_API_TESTBED_DIR}/app.cpp")
 set(UI_API_TESTBED_TEXTURE "${PROJECT_SOURCE_DIR}/tools/assets/ui_api_testbed_texture.png")
 set(UI_API_TESTBED_GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
 set(UI_API_TESTBED_EMBEDDED_TEXTURE
@@ -57,17 +56,54 @@ add_custom_command(
         "${PROJECT_SOURCE_DIR}/cmake/embed_binary.cmake"
     VERBATIM
 )
+
+if(WIN32)
+    add_library(ui_api_testbed_module SHARED
+        "${UI_API_TESTBED_APP_SOURCE}"
+    )
+    target_sources(ui_api_testbed_module PRIVATE
+        "${UI_API_TESTBED_EMBEDDED_TEXTURE}"
+    )
+    target_include_directories(ui_api_testbed_module PRIVATE
+        "${UI_API_TESTBED_DIR}"
+        "${UI_API_TESTBED_GENERATED_DIR}"
+    )
+    target_compile_definitions(ui_api_testbed_module PRIVATE
+        UI_API_TESTBED_MODULE
+        WIN32_LEAN_AND_MEAN
+        NOMINMAX
+    )
+    target_link_libraries(ui_api_testbed_module PRIVATE
+        gui::gui
+        draw::draw
+        render::render
+    )
+    cpp_configure_target(ui_api_testbed_module)
+endif()
+
+add_executable(ui_api_testbed
+    "${UI_API_TESTBED_DIR}/host.cpp"
+)
 target_sources(ui_api_testbed PRIVATE
     "${UI_API_TESTBED_EMBEDDED_TEXTURE}"
 )
 target_include_directories(ui_api_testbed PRIVATE
+    "${UI_API_TESTBED_DIR}"
     "${UI_API_TESTBED_GENERATED_DIR}"
 )
 target_link_libraries(ui_api_testbed PRIVATE
     gui::gui
 )
 if(WIN32)
+    target_sources(ui_api_testbed PRIVATE
+        "${UI_API_TESTBED_DIR}/module_loader.cpp"
+        "${UI_API_TESTBED_DIR}/trace.cpp"
+        $<$<NOT:$<CONFIG:Debug>>:${UI_API_TESTBED_APP_SOURCE}>
+    )
     target_compile_definitions(ui_api_testbed PRIVATE
+        UI_API_TESTBED_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
+        UI_API_TESTBED_BINARY_DIR="${CMAKE_CURRENT_BINARY_DIR}"
+        UI_API_TESTBED_BUILD_CONFIG="$<CONFIG>"
         WIN32_LEAN_AND_MEAN
         NOMINMAX
     )
@@ -81,6 +117,11 @@ if(WIN32)
             "${UI_API_TESTBED_TEXTURE}"
             "$<TARGET_FILE_DIR:ui_api_testbed>/ui_api_testbed_texture.png"
         VERBATIM
+    )
+else()
+    target_sources(ui_api_testbed PRIVATE
+        "${UI_API_TESTBED_APP_SOURCE}"
+        "${UI_API_TESTBED_EMBEDDED_TEXTURE}"
     )
 endif()
 cpp_configure_target(ui_api_testbed)
