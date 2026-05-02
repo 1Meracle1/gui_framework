@@ -440,6 +440,30 @@ namespace fmt {
     }
 
     template <typename... Args>
+    auto snprintf(char* backing, size_t capacity, StrRef format_text, Args const&... args) -> int {
+        DEBUG_ASSERT(backing != nullptr);
+        if (backing == nullptr || capacity == 0u) {
+            return -1;
+        }
+
+        backing[0] = '\0';
+        if (capacity == 1u) {
+            return format_text.empty() ? 0 : -1;
+        }
+
+        StringBuffer buffer;
+        buffer.init_with_backing(backing, capacity - 1u);
+        int const result = fmt::format(&buffer, format_text, args...);
+        backing[buffer.size()] = '\0';
+        return result;
+    }
+
+    template <size_t N, typename... Args>
+    auto snprintf(char (&backing)[N], StrRef format_text, Args const&... args) -> int {
+        return fmt::snprintf(backing, N, format_text, args...);
+    }
+
+    template <typename... Args>
     [[nodiscard]] auto tprintf(StrRef format_text, Args const&... args) -> StrRef {
         StringBuffer buffer = fmt::aprintf(thread_temp_resource(), format_text, args...);
         return buffer.str();

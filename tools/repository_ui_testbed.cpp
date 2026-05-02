@@ -365,7 +365,7 @@ namespace {
 
     auto repo_full_path(RepoTree const& tree, char const* relative_path, char* out, size_t capacity)
         -> void {
-        std::snprintf(out, capacity, "%s/%s", tree.root, relative_path);
+        fmt::snprintf(out, capacity, "%s/%s", tree.root, relative_path);
     }
 
     [[nodiscard]] auto repo_file_size(RepoTree const& tree, char const* relative_path) -> uint64_t {
@@ -393,7 +393,7 @@ namespace {
             value /= 1024.0;
             suffix = "KB";
         }
-        std::snprintf(out, capacity, "%.1f %s", value, suffix);
+        fmt::snprintf(out, capacity, "%.1f %s", value, suffix);
     }
 
     [[nodiscard]] auto repo_file_count(RepoTree const& tree) -> size_t {
@@ -468,9 +468,8 @@ namespace {
 
     auto load_latest_commit_details(RepoTree const& tree, RepoDetails& details) -> void {
         char command[1024] = {};
-        std::snprintf(
+        fmt::snprintf(
             command,
-            sizeof(command),
             "git -C \"%s\" log -1 --format=\"%%an%%x09%%ar%%x09%%h%%x09%%s\" 2>nul",
             tree.root
         );
@@ -511,9 +510,7 @@ namespace {
 
     auto load_commit_count(RepoTree const& tree, RepoDetails& details) -> void {
         char command[1024] = {};
-        std::snprintf(
-            command, sizeof(command), "git -C \"%s\" rev-list --count HEAD 2>nul", tree.root
-        );
+        fmt::snprintf(command, "git -C \"%s\" rev-list --count HEAD 2>nul", tree.root);
         if (!read_first_command_line(command, details.commit_count, sizeof(details.commit_count))) {
             copy_cstr(details.commit_count, sizeof(details.commit_count), "0");
         }
@@ -521,9 +518,8 @@ namespace {
 
     auto load_recent_commits(RepoTree const& tree, RepoDetails& details) -> void {
         char command[1024] = {};
-        std::snprintf(
+        fmt::snprintf(
             command,
-            sizeof(command),
             "git -C \"%s\" log --max-count=%llu --format=\"%%h%%x09%%an%%x09%%ar%%x09%%s\" 2>nul",
             tree.root,
             static_cast<unsigned long long>(MAX_REPO_COMMITS)
@@ -571,11 +567,8 @@ namespace {
 
     auto load_head_stats(RepoTree const& tree, RepoDetails& details) -> void {
         char command[1024] = {};
-        std::snprintf(
-            command,
-            sizeof(command),
-            "git -C \"%s\" show --numstat --format= --no-renames HEAD 2>nul",
-            tree.root
+        fmt::snprintf(
+            command, "git -C \"%s\" show --numstat --format= --no-renames HEAD 2>nul", tree.root
         );
 
         uint64_t insertions = 0u;
@@ -600,18 +593,10 @@ namespace {
             _pclose(pipe);
         }
 
-        std::snprintf(
-            details.insertion_count,
-            sizeof(details.insertion_count),
-            "+%llu",
-            static_cast<unsigned long long>(insertions)
+        fmt::snprintf(
+            details.insertion_count, "+%llu", static_cast<unsigned long long>(insertions)
         );
-        std::snprintf(
-            details.deletion_count,
-            sizeof(details.deletion_count),
-            "-%llu",
-            static_cast<unsigned long long>(deletions)
-        );
+        fmt::snprintf(details.deletion_count, "-%llu", static_cast<unsigned long long>(deletions));
     }
 
     auto load_repo_details(RepoTree const& tree, RepoDetails& details) -> void {
@@ -620,9 +605,7 @@ namespace {
         load_readme_description(tree, details);
 
         char command[1024] = {};
-        std::snprintf(
-            command, sizeof(command), "git -C \"%s\" branch --show-current 2>nul", tree.root
-        );
+        fmt::snprintf(command, "git -C \"%s\" branch --show-current 2>nul", tree.root);
         if (!read_first_command_line(command, details.branch, sizeof(details.branch))) {
             copy_cstr(details.branch, sizeof(details.branch), "HEAD");
         }
@@ -631,9 +614,7 @@ namespace {
         load_commit_count(tree, details);
         load_recent_commits(tree, details);
 
-        std::snprintf(
-            command, sizeof(command), "git -C \"%s\" describe --tags --abbrev=0 2>nul", tree.root
-        );
+        fmt::snprintf(command, "git -C \"%s\" describe --tags --abbrev=0 2>nul", tree.root);
         if (!read_first_command_line(
                 command, details.latest_release, sizeof(details.latest_release)
             )) {
@@ -646,16 +627,11 @@ namespace {
         load_license_name(tree, details);
 
         char count_line[32] = {};
-        std::snprintf(
-            command,
-            sizeof(command),
-            "git -C \"%s\" rev-list --count --since=\"30 days ago\" HEAD 2>nul",
-            tree.root
+        fmt::snprintf(
+            command, "git -C \"%s\" rev-list --count --since=\"30 days ago\" HEAD 2>nul", tree.root
         );
         if (read_first_command_line(command, count_line, sizeof(count_line))) {
-            std::snprintf(
-                details.activity, sizeof(details.activity), "%s commits / 30d", count_line
-            );
+            fmt::snprintf(details.activity, "%s commits / 30d", count_line);
         } else {
             copy_cstr(details.activity, sizeof(details.activity), "Unknown");
         }
@@ -694,9 +670,8 @@ namespace {
 
     auto load_repo_commits(RepoTree& tree) -> void {
         char command[1024] = {};
-        std::snprintf(
+        fmt::snprintf(
             command,
-            sizeof(command),
             "git -C \"%s\" log --name-only --format=\"commit%%x09%%ar%%x09%%s\" -- 2>nul",
             tree.root
         );
@@ -755,11 +730,8 @@ namespace {
         copy_cstr(tree.root, sizeof(tree.root), root);
 
         char command[1024] = {};
-        std::snprintf(
-            command,
-            sizeof(command),
-            "git -C \"%s\" ls-files --cached --others --exclude-standard 2>nul",
-            tree.root
+        fmt::snprintf(
+            command, "git -C \"%s\" ls-files --cached --others --exclude-standard 2>nul", tree.root
         );
 
         FILE* pipe = _popen(command, "r");

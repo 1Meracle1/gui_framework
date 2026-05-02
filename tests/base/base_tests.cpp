@@ -1188,6 +1188,28 @@ namespace {
         TEST_EXPECT(context, !temporary.empty());
     }
 
+    TEST_CASE(printf_formats_into_null_terminated_stack_buffers) {
+        char exact[6] = {};
+        int const exact_written = fmt::snprintf(exact, "%s", StrRef("abcde"));
+
+        TEST_EXPECT(context, exact_written == 5);
+        TEST_EXPECT(context, StrRef(exact) == "abcde");
+        TEST_EXPECT(context, exact[5] == '\0');
+
+        char truncated[8] = {};
+        int const truncated_written = fmt::snprintf(truncated, "value=%u", 1234u);
+
+        TEST_EXPECT(context, truncated_written == -1);
+        TEST_EXPECT(context, StrRef(truncated) == "value=1");
+        TEST_EXPECT(context, truncated[7] == '\0');
+
+        char tiny[1] = {'x'};
+        int const tiny_written = fmt::snprintf(tiny, "x");
+
+        TEST_EXPECT(context, tiny_written == -1);
+        TEST_EXPECT(context, tiny[0] == '\0');
+    }
+
 } // namespace
 
 TEST_MAIN()
