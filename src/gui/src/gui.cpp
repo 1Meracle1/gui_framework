@@ -325,6 +325,11 @@ namespace gui {
             return rect.max.y - rect.min.y;
         }
 
+        [[nodiscard]] auto rect_intersects_clip(Rect rect, draw::Rect const clip) -> bool {
+            return rect.max.x > clip.min.x && rect.min.x < clip.max.x && rect.max.y > clip.min.y &&
+                   rect.min.y < clip.max.y;
+        }
+
         [[nodiscard]] auto box_clips(BoxNode const& box) -> bool {
             return box.layout.clip || box.layout.scroll_x || box.layout.scroll_y ||
                    box.kind == BoxKind::SCROLL_PANEL || box.kind == BoxKind::LIST ||
@@ -4254,6 +4259,16 @@ namespace gui {
             return {std::round(x), text_draw_y(line_y)};
         }
 
+        [[nodiscard]] auto text_line_visible(
+            BoxNode const& box, draw::Rect const clip, float line_y, float line_height
+        ) -> bool {
+            Rect const rect = {
+                {box.rect.min.x, line_y - TEXT_RASTER_PADDING},
+                {box.rect.max.x, line_y + line_height + TEXT_RASTER_PADDING}
+            };
+            return rect_intersects_clip(rect, clip);
+        }
+
         auto render_box(ContextImpl const* impl, draw::Context draw_context, size_t index) -> void {
             BoxNode const& box = impl->boxes[index];
             bool const clips = box_clips(box);
@@ -4334,33 +4349,36 @@ namespace gui {
                 render_text_selection(impl, box, draw_context);
 
                 if (text_content_box(box.kind) && font_cache::font_valid(box.resolved_style.font)) {
-                    draw::TextStyle text_style = {};
-                    text_style.font = box.resolved_style.font;
-                    text_style.size = text_font_size(box);
-                    text_style.color = to_draw_color(
-                        color_mul_alpha(box.resolved_style.foreground, box.resolved_style.opacity)
-                    );
-                    Vec2 const text_pos = text_position(impl, box);
-                    float const line_height = text_line_height(box);
-                    float const wrap_width = text_wrap_width(box, box.rect);
-                    size_t line_index = 0u;
-                    size_t offset = 0u;
-                    TextLine line = {};
-                    while (next_text_line(box, wrap_width, offset, line)) {
-                        if (!line.text.empty()) {
-                            font_cache::TextRun run = {};
-                            draw::measure_text(draw_context, text_style, line.text, run);
-                            float const line_y =
-                                text_pos.y + line_height * static_cast<float>(line_index);
-                            draw::draw_text(
-                                draw_context,
-                                text_draw_position(text_pos.x, line_y),
-                                text_style,
-                                line.text,
-                                nullptr
-                            );
+                    draw::Rect const clip = draw::top_clip_rect(draw_context);
+                    Color const text_color =
+                        color_mul_alpha(box.resolved_style.foreground, box.resolved_style.opacity);
+                    if (color_visible(text_color) && rect_intersects_clip(box.rect, clip)) {
+                        draw::TextStyle text_style = {};
+                        text_style.font = box.resolved_style.font;
+                        text_style.size = text_font_size(box);
+                        text_style.color = to_draw_color(text_color);
+                        Vec2 const text_pos = text_position(impl, box);
+                        float const line_height = text_line_height(box);
+                        float const wrap_width = text_wrap_width(box, box.rect);
+                        size_t line_index = 0u;
+                        size_t offset = 0u;
+                        TextLine line = {};
+                        while (next_text_line(box, wrap_width, offset, line)) {
+                            if (!line.text.empty()) {
+                                float const line_y =
+                                    text_pos.y + line_height * static_cast<float>(line_index);
+                                if (text_line_visible(box, clip, line_y, line_height)) {
+                                    draw::draw_text(
+                                        draw_context,
+                                        text_draw_position(text_pos.x, line_y),
+                                        text_style,
+                                        line.text,
+                                        nullptr
+                                    );
+                                }
+                            }
+                            line_index += 1u;
                         }
-                        line_index += 1u;
                     }
                 }
             }
