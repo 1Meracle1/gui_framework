@@ -14,7 +14,6 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
-#include <cstring>
 #include <draw/draw.h>
 #include <draw/draw_renderer.h>
 #include <dwmapi.h>
@@ -44,21 +43,18 @@ namespace {
     constexpr COLORREF WINDOW_HEADER_TEXT = RGB(233, 233, 233);
     constexpr size_t MAX_REPO_NODES = 1024u;
     constexpr size_t MAX_REPO_PATH = 384u;
-    constexpr size_t MAX_REPO_NAME = 96u;
-    constexpr size_t MAX_REPO_MESSAGE = 160u;
-    constexpr size_t MAX_REPO_AGE = 48u;
-    constexpr size_t MAX_REPO_DETAIL = 192u;
     constexpr size_t MAX_REPO_COMMITS = 64u;
-    constexpr char ICON_CODE[] = "\xee\xab\x84";
-    constexpr char ICON_ISSUES[] = "\xee\xac\x8c";
-    constexpr char ICON_PULL_REQUESTS[] = "\xee\xa9\xa4";
-    constexpr char ICON_ACTIONS[] = "\xee\xac\xac";
-    constexpr char ICON_PROJECTS[] = "\xee\xac\xb0";
-    constexpr char ICON_SECURITY[] = "\xee\xad\x93";
-    constexpr char ICON_INSIGHTS[] = "\xee\xaf\xa2";
-    constexpr char ICON_WIKI[] = "\xee\xaa\xa4";
-    constexpr char ICON_SETTINGS[] = "\xee\xab\xb8";
-    constexpr char ICON_CHEVRON_RIGHT[] = "\xee\xaa\xb6";
+    constexpr size_t REPO_COMMAND_LINE_CAPACITY = 512u;
+    constexpr StrRef ICON_CODE = "\xee\xab\x84";
+    constexpr StrRef ICON_ISSUES = "\xee\xac\x8c";
+    constexpr StrRef ICON_PULL_REQUESTS = "\xee\xa9\xa4";
+    constexpr StrRef ICON_ACTIONS = "\xee\xac\xac";
+    constexpr StrRef ICON_PROJECTS = "\xee\xac\xb0";
+    constexpr StrRef ICON_SECURITY = "\xee\xad\x93";
+    constexpr StrRef ICON_INSIGHTS = "\xee\xaf\xa2";
+    constexpr StrRef ICON_WIKI = "\xee\xaa\xa4";
+    constexpr StrRef ICON_SETTINGS = "\xee\xab\xb8";
+    constexpr StrRef ICON_CHEVRON_RIGHT = "\xee\xaa\xb6";
 
     struct RepositorySpec {
         gui::Color shell = gui::rgb(0, 0, 0);
@@ -85,7 +81,7 @@ namespace {
         draw::Context draw_context = {};
         draw::Renderer draw_renderer = {};
         gui::Context ui_context = {};
-        char icon_font_path[MAX_PATH] = {};
+        StrRef icon_font_path = {};
     };
 
     enum class RepositorySection : uint8_t {
@@ -111,10 +107,10 @@ namespace {
     };
 
     struct RepoNode {
-        char name[MAX_REPO_NAME] = {};
-        char path[MAX_REPO_PATH] = {};
-        char message[MAX_REPO_MESSAGE] = {};
-        char age[MAX_REPO_AGE] = {};
+        StrRef name = {};
+        StrRef path = {};
+        StrRef message = {};
+        StrRef age = {};
         int32_t parent = -1;
         int32_t first_child = -1;
         int32_t next_sibling = -1;
@@ -125,7 +121,7 @@ namespace {
     };
 
     struct RepoTree {
-        char root[MAX_REPO_PATH] = {};
+        StrRef root = {};
         RepoNode nodes[MAX_REPO_NODES] = {};
         int32_t root_child = -1;
         int32_t visible[MAX_REPO_NODES] = {};
@@ -135,28 +131,28 @@ namespace {
     };
 
     struct RepoCommit {
-        char hash[24] = {};
-        char author[MAX_REPO_NAME] = {};
-        char age[MAX_REPO_AGE] = {};
-        char subject[MAX_REPO_MESSAGE] = {};
+        StrRef hash = {};
+        StrRef author = {};
+        StrRef age = {};
+        StrRef subject = {};
     };
 
     struct RepoDetails {
-        char name[MAX_REPO_NAME] = {};
-        char description[MAX_REPO_DETAIL] = {};
-        char branch[MAX_REPO_NAME] = {};
-        char short_hash[24] = {};
-        char author[MAX_REPO_NAME] = {};
-        char author_initial[2] = {};
-        char last_commit_age[MAX_REPO_AGE] = {};
-        char last_commit_subject[MAX_REPO_MESSAGE] = {};
-        char latest_release[MAX_REPO_NAME] = {};
-        char package_size[MAX_REPO_NAME] = {};
-        char license[MAX_REPO_NAME] = {};
-        char activity[MAX_REPO_NAME] = {};
-        char insertion_count[24] = {};
-        char deletion_count[24] = {};
-        char commit_count[24] = {};
+        StrRef name = {};
+        StrRef description = {};
+        StrRef branch = {};
+        StrRef short_hash = {};
+        StrRef author = {};
+        StrRef author_initial = {};
+        StrRef last_commit_age = {};
+        StrRef last_commit_subject = {};
+        StrRef latest_release = {};
+        StrRef package_size = {};
+        StrRef license = {};
+        StrRef activity = {};
+        StrRef insertion_count = {};
+        StrRef deletion_count = {};
+        StrRef commit_count = {};
         RepoCommit commits[MAX_REPO_COMMITS] = {};
         size_t shown_commit_count = 0u;
     };
@@ -263,65 +259,22 @@ namespace {
         return SECTION_TITLES[static_cast<size_t>(section)];
     }
 
-    auto copy_cstr(char* dst, size_t capacity, char const* src) -> void {
-        if (dst == nullptr || capacity == 0u) {
-            return;
-        }
-        size_t index = 0u;
-        if (src != nullptr) {
-            while (index + 1u < capacity && src[index] != '\0') {
-                dst[index] = src[index];
-                index += 1u;
-            }
-        }
-        dst[index] = '\0';
+    [[nodiscard]] auto trim_command_line(StrRef text) -> StrRef {
+        return text.trim_end_matches('\n').trim_end_matches('\r');
     }
 
-    auto copy_slice(char* dst, size_t capacity, char const* src, size_t size) -> void {
-        if (dst == nullptr || capacity == 0u) {
-            return;
-        }
-        size_t const count = std::min(size, capacity - 1u);
-        for (size_t index = 0u; index < count; ++index) {
-            dst[index] = src[index];
-        }
-        dst[count] = '\0';
-    }
-
-    auto trim_line(char* text) -> void {
-        if (text == nullptr) {
-            return;
-        }
-        size_t size = std::strlen(text);
-        while (size > 0u && (text[size - 1u] == '\n' || text[size - 1u] == '\r')) {
-            size -= 1u;
-            text[size] = '\0';
-        }
-    }
-
-    [[nodiscard]] auto ascii_lower(char value) -> char {
-        return value >= 'A' && value <= 'Z' ? static_cast<char>(value + ('a' - 'A')) : value;
-    }
-
-    [[nodiscard]] auto compare_ascii_ci(char const* lhs, char const* rhs) -> int32_t {
-        size_t index = 0u;
-        for (;;) {
-            char const left = ascii_lower(lhs[index]);
-            char const right = ascii_lower(rhs[index]);
-            if (left != right || left == '\0' || right == '\0') {
-                return static_cast<int32_t>(static_cast<unsigned char>(left)) -
-                       static_cast<int32_t>(static_cast<unsigned char>(right));
-            }
-            index += 1u;
-        }
+    template <typename... Args>
+    [[nodiscard]] auto arena_printf(Arena& arena, StrRef format, Args const&... args) -> StrRef {
+        ArenaTemp temp = begin_thread_temp_arena();
+        return arena_copy_str(arena, fmt::tprintf(format, args...));
     }
 
     [[nodiscard]] auto compare_repo_nodes(RepoNode const& lhs, RepoNode const& rhs) -> int32_t {
         if (lhs.directory != rhs.directory) {
             return lhs.directory ? -1 : 1;
         }
-        int32_t const name_compare = compare_ascii_ci(lhs.name, rhs.name);
-        return name_compare != 0 ? name_compare : compare_ascii_ci(lhs.path, rhs.path);
+        int32_t const name_compare = lhs.name.compare_ignore_ascii_case(rhs.name);
+        return name_compare != 0 ? name_compare : lhs.path.compare_ignore_ascii_case(rhs.path);
     }
 
     [[nodiscard]] auto child_head(RepoTree& tree, int32_t parent) -> int32_t* {
@@ -332,11 +285,10 @@ namespace {
         return parent >= 0 ? tree.nodes[parent].first_child : tree.root_child;
     }
 
-    [[nodiscard]] auto find_child(RepoTree const& tree, int32_t parent, char const* name)
-        -> int32_t {
+    [[nodiscard]] auto find_child(RepoTree const& tree, int32_t parent, StrRef name) -> int32_t {
         for (int32_t child = first_child(tree, parent); child >= 0;
              child = tree.nodes[child].next_sibling) {
-            if (std::strcmp(tree.nodes[child].name, name) == 0) {
+            if (tree.nodes[child].name == name) {
                 return child;
             }
         }
@@ -363,7 +315,7 @@ namespace {
     }
 
     [[nodiscard]] auto create_repo_node(
-        RepoTree& tree, int32_t parent, char const* name, char const* path, bool directory
+        Arena& arena, RepoTree& tree, int32_t parent, StrRef name, StrRef path, bool directory
     ) -> int32_t {
         if (tree.node_count >= MAX_REPO_NODES) {
             return -1;
@@ -373,10 +325,10 @@ namespace {
         tree.node_count += 1u;
 
         RepoNode& node = tree.nodes[node_index];
-        copy_cstr(node.name, sizeof(node.name), name);
-        copy_cstr(node.path, sizeof(node.path), path);
-        copy_cstr(node.message, sizeof(node.message), "Loading commit data");
-        copy_cstr(node.age, sizeof(node.age), "");
+        node.name = arena_copy_str(arena, name);
+        node.path = arena_copy_str(arena, path);
+        node.message = "Loading commit data";
+        node.age = {};
         node.parent = parent;
         node.indent = parent >= 0 ? static_cast<uint8_t>(tree.nodes[parent].indent + 1u) : 0u;
         node.directory = directory;
@@ -385,12 +337,12 @@ namespace {
         return node_index;
     }
 
-    auto repo_tree_add_path(RepoTree& tree, char const* path) -> void {
-        size_t const path_size = std::strlen(path);
+    auto repo_tree_add_path(Arena& arena, RepoTree& tree, StrRef path) -> void {
         int32_t parent = -1;
         size_t segment_start = 0u;
-        for (size_t cursor = 0u; cursor <= path_size; ++cursor) {
-            if (path[cursor] != '/' && path[cursor] != '\\' && path[cursor] != '\0') {
+        for (size_t cursor = 0u; cursor <= path.size(); ++cursor) {
+            char const value = cursor < path.size() ? path[cursor] : '\0';
+            if (value != '/' && value != '\\' && value != '\0') {
                 continue;
             }
             if (cursor == segment_start) {
@@ -398,14 +350,11 @@ namespace {
                 continue;
             }
 
-            char name[MAX_REPO_NAME] = {};
-            copy_slice(name, sizeof(name), path + segment_start, cursor - segment_start);
-            bool const directory = path[cursor] != '\0';
+            StrRef const name = path.slice(segment_start, cursor - segment_start);
+            bool const directory = value != '\0';
             int32_t child = find_child(tree, parent, name);
             if (child < 0) {
-                char node_path[MAX_REPO_PATH] = {};
-                copy_slice(node_path, sizeof(node_path), path, cursor);
-                child = create_repo_node(tree, parent, name, node_path, directory);
+                child = create_repo_node(arena, tree, parent, name, path.prefix(cursor), directory);
             } else if (directory) {
                 tree.nodes[child].directory = true;
             }
@@ -417,35 +366,41 @@ namespace {
         }
     }
 
-    [[nodiscard]] auto read_first_command_line(char const* command, char* out, size_t capacity)
-        -> bool {
-        if (out == nullptr || capacity == 0u) {
-            return false;
+    [[nodiscard]] auto read_first_command_line(StrRef command, char* line, size_t capacity)
+        -> StrRef {
+        if (line == nullptr || capacity == 0u) {
+            return {};
         }
-        out[0] = '\0';
-        FILE* pipe = _popen(command, "r");
+        line[0] = '\0';
+        FILE* pipe = _popen(command.data(), "r");
         if (pipe == nullptr) {
-            return false;
+            return {};
         }
-        bool const read = std::fgets(out, static_cast<int>(capacity), pipe) != nullptr;
+        bool const read = std::fgets(line, static_cast<int>(capacity), pipe) != nullptr;
         _pclose(pipe);
-        if (read) {
-            trim_line(out);
+        return read ? trim_command_line(StrRef(line)) : StrRef();
+    }
+
+    [[nodiscard]] auto read_first_command_line(Arena& arena, StrRef command) -> StrRef {
+        ArenaTemp temp = begin_thread_temp_arena();
+        char* const line = arena_alloc<char>(*temp.arena(), REPO_COMMAND_LINE_CAPACITY);
+        StrRef const result = read_first_command_line(command, line, REPO_COMMAND_LINE_CAPACITY);
+        if (result.empty()) {
+            return {};
         }
-        return read && out[0] != '\0';
+        return arena_copy_str(arena, result);
     }
 
-    auto repo_full_path(RepoTree const& tree, char const* relative_path, char* out, size_t capacity)
-        -> void {
-        fmt::snprintf(out, capacity, "%s/%s", tree.root, relative_path);
+    [[nodiscard]] auto repo_full_path(RepoTree const& tree, StrRef relative_path) -> StrRef {
+        return fmt::tprintf("%s/%s", tree.root, relative_path);
     }
 
-    [[nodiscard]] auto repo_file_size(RepoTree const& tree, char const* relative_path) -> uint64_t {
-        char path[MAX_REPO_PATH * 2u] = {};
-        repo_full_path(tree, relative_path, path, sizeof(path));
+    [[nodiscard]] auto repo_file_size(RepoTree const& tree, StrRef relative_path) -> uint64_t {
+        ArenaTemp temp = begin_thread_temp_arena();
+        StrRef const path = repo_full_path(tree, relative_path);
 
         WIN32_FILE_ATTRIBUTE_DATA data = {};
-        if (!GetFileAttributesExA(path, GetFileExInfoStandard, &data)) {
+        if (!GetFileAttributesExA(path.data(), GetFileExInfoStandard, &data)) {
             return 0u;
         }
 
@@ -453,19 +408,6 @@ namespace {
         size.HighPart = data.nFileSizeHigh;
         size.LowPart = data.nFileSizeLow;
         return size.QuadPart;
-    }
-
-    auto format_byte_size(uint64_t bytes, char* out, size_t capacity) -> void {
-        char const* suffix = "B";
-        double value = static_cast<double>(bytes);
-        if (bytes >= 1024ull * 1024ull) {
-            value /= 1024.0 * 1024.0;
-            suffix = "MB";
-        } else if (bytes >= 1024ull) {
-            value /= 1024.0;
-            suffix = "KB";
-        }
-        fmt::snprintf(out, capacity, "%.1f %s", value, suffix);
     }
 
     [[nodiscard]] auto repo_package_bytes(RepoTree const& tree) -> uint64_t {
@@ -479,172 +421,165 @@ namespace {
         return bytes;
     }
 
-    auto repo_root_name(RepoTree const& tree, char* out, size_t capacity) -> void {
-        char const* name = tree.root;
-        for (char const* cursor = tree.root; *cursor != '\0'; ++cursor) {
-            if (*cursor == '/' || *cursor == '\\') {
-                name = cursor + 1;
+    [[nodiscard]] auto repo_root_name(RepoTree const& tree) -> StrRef {
+        StrRef name = tree.root;
+        for (size_t index = 0u; index < tree.root.size(); ++index) {
+            if (tree.root[index] == '/' || tree.root[index] == '\\') {
+                name = tree.root.drop_prefix(index + 1u);
             }
         }
-        copy_cstr(out, capacity, name);
+        return name;
     }
 
-    auto load_readme_description(RepoTree const& tree, RepoDetails& details) -> void {
-        char path[MAX_REPO_PATH * 2u] = {};
-        repo_full_path(tree, "README.md", path, sizeof(path));
+    auto load_readme_description(Arena& arena, RepoTree const& tree, RepoDetails& details) -> void {
+        ArenaTemp temp = begin_thread_temp_arena();
+        StrRef const path = repo_full_path(tree, "README.md");
         FILE* file = nullptr;
-        fopen_s(&file, path, "r");
+        fopen_s(&file, path.data(), "r");
         if (file == nullptr) {
-            copy_cstr(details.description, sizeof(details.description), "No README summary found.");
+            details.description = "No README summary found.";
             return;
         }
 
-        char line[512] = {};
-        while (std::fgets(line, sizeof(line), file) != nullptr) {
-            trim_line(line);
-            if (line[0] == '\0' || line[0] == '#') {
+        char* const line = arena_alloc<char>(*temp.arena(), REPO_COMMAND_LINE_CAPACITY);
+        while (std::fgets(line, static_cast<int>(REPO_COMMAND_LINE_CAPACITY), file) != nullptr) {
+            StrRef const text = trim_command_line(StrRef(line));
+            if (text.empty() || text.starts_with('#')) {
                 continue;
             }
-            copy_cstr(details.description, sizeof(details.description), line);
+            details.description = arena_copy_str(arena, text);
             break;
         }
         std::fclose(file);
 
-        if (details.description[0] == '\0') {
-            copy_cstr(details.description, sizeof(details.description), "No README summary found.");
+        if (details.description.empty()) {
+            details.description = "No README summary found.";
         }
+    }
+
+    [[nodiscard]] auto format_byte_size(Arena& arena, uint64_t bytes) -> StrRef {
+        char const* suffix = "B";
+        double value = static_cast<double>(bytes);
+        if (bytes >= 1024ull * 1024ull) {
+            value /= 1024.0 * 1024.0;
+            suffix = "MB";
+        } else if (bytes >= 1024ull) {
+            value /= 1024.0;
+            suffix = "KB";
+        }
+        return arena_printf(arena, "%.1f %s", value, suffix);
     }
 
     auto load_license_name(RepoTree const& tree, RepoDetails& details) -> void {
-        char const* names[] = {"LICENSE", "LICENSE.md", "LICENSE.txt", "COPYING"};
-        for (char const* name : names) {
-            char path[MAX_REPO_PATH * 2u] = {};
-            repo_full_path(tree, name, path, sizeof(path));
-            if (GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES) {
-                copy_cstr(details.license, sizeof(details.license), name);
+        constexpr StrRef names[] = {"LICENSE", "LICENSE.md", "LICENSE.txt", "COPYING"};
+        ArenaTemp temp = begin_thread_temp_arena();
+        for (StrRef name : names) {
+            StrRef const path = repo_full_path(tree, name);
+            if (GetFileAttributesA(path.data()) != INVALID_FILE_ATTRIBUTES) {
+                details.license = name;
                 return;
             }
         }
-        copy_cstr(details.license, sizeof(details.license), "Unspecified");
+        details.license = "Unspecified";
     }
 
-    auto load_latest_commit_details(RepoTree const& tree, RepoDetails& details) -> void {
-        char command[1024] = {};
-        fmt::snprintf(
-            command,
-            "git -C \"%s\" log -1 --format=\"%%an%%x09%%ar%%x09%%h%%x09%%s\" 2>nul",
-            tree.root
+    auto load_latest_commit_details(Arena& arena, RepoTree const& tree, RepoDetails& details)
+        -> void {
+        ArenaTemp temp = begin_thread_temp_arena();
+        StrRef const command = fmt::tprintf(
+            "git -C \"%s\" log -1 --format=\"%%an%%x09%%ar%%x09%%h%%x09%%s\" 2>nul", tree.root
         );
-
-        char line[512] = {};
-        if (!read_first_command_line(command, line, sizeof(line))) {
+        char* const line_buffer = arena_alloc<char>(*temp.arena(), REPO_COMMAND_LINE_CAPACITY);
+        StrRef const line =
+            read_first_command_line(command, line_buffer, REPO_COMMAND_LINE_CAPACITY);
+        StrRef::SplitOnce const author_split = line.split_once('\t');
+        if (!author_split) {
+            return;
+        }
+        StrRef::SplitOnce const age_split = author_split.after.split_once('\t');
+        if (!age_split) {
+            return;
+        }
+        StrRef::SplitOnce const hash_split = age_split.after.split_once('\t');
+        if (!hash_split) {
             return;
         }
 
-        char* age = std::strchr(line, '\t');
-        if (age == nullptr) {
-            return;
-        }
-        *age = '\0';
-        age += 1;
-
-        char* hash = std::strchr(age, '\t');
-        if (hash == nullptr) {
-            return;
-        }
-        *hash = '\0';
-        hash += 1;
-
-        char* subject = std::strchr(hash, '\t');
-        if (subject == nullptr) {
-            return;
-        }
-        *subject = '\0';
-        subject += 1;
-
-        copy_cstr(details.author, sizeof(details.author), line);
-        details.author_initial[0] = line[0] != '\0' ? line[0] : '?';
-        details.author_initial[1] = '\0';
-        copy_cstr(details.last_commit_age, sizeof(details.last_commit_age), age);
-        copy_cstr(details.short_hash, sizeof(details.short_hash), hash);
-        copy_cstr(details.last_commit_subject, sizeof(details.last_commit_subject), subject);
+        details.author = arena_copy_str(arena, author_split.before);
+        details.author_initial = author_split.before.empty()
+                                     ? StrRef("?")
+                                     : arena_copy_str(arena, author_split.before.prefix(1u));
+        details.last_commit_age = arena_copy_str(arena, age_split.before);
+        details.short_hash = arena_copy_str(arena, hash_split.before);
+        details.last_commit_subject = arena_copy_str(arena, hash_split.after);
     }
 
-    auto load_commit_count(RepoTree const& tree, RepoDetails& details) -> void {
-        char command[1024] = {};
-        fmt::snprintf(command, "git -C \"%s\" rev-list --count HEAD 2>nul", tree.root);
-        if (!read_first_command_line(command, details.commit_count, sizeof(details.commit_count))) {
-            copy_cstr(details.commit_count, sizeof(details.commit_count), "0");
-        }
+    auto load_commit_count(Arena& arena, RepoTree const& tree, RepoDetails& details) -> void {
+        ArenaTemp temp = begin_thread_temp_arena();
+        StrRef const command = fmt::tprintf("git -C \"%s\" rev-list --count HEAD 2>nul", tree.root);
+        StrRef const count = read_first_command_line(arena, command);
+        details.commit_count = count.empty() ? StrRef("0") : count;
     }
 
-    auto load_recent_commits(RepoTree const& tree, RepoDetails& details) -> void {
-        char command[1024] = {};
-        fmt::snprintf(
-            command,
+    auto load_recent_commits(Arena& arena, RepoTree const& tree, RepoDetails& details) -> void {
+        ArenaTemp temp = begin_thread_temp_arena();
+        StrRef const command = fmt::tprintf(
             "git -C \"%s\" log --max-count=%llu --format=\"%%h%%x09%%an%%x09%%ar%%x09%%s\" 2>nul",
             tree.root,
             static_cast<unsigned long long>(MAX_REPO_COMMITS)
         );
-
-        FILE* pipe = _popen(command, "r");
+        FILE* pipe = _popen(command.data(), "r");
         if (pipe == nullptr) {
             return;
         }
 
-        char line[512] = {};
+        char* const line_buffer = arena_alloc<char>(*temp.arena(), REPO_COMMAND_LINE_CAPACITY);
         while (details.shown_commit_count < MAX_REPO_COMMITS &&
-               std::fgets(line, sizeof(line), pipe) != nullptr) {
-            trim_line(line);
-            char* author = std::strchr(line, '\t');
-            if (author == nullptr) {
+               std::fgets(line_buffer, static_cast<int>(REPO_COMMAND_LINE_CAPACITY), pipe) !=
+                   nullptr) {
+            StrRef const line = trim_command_line(StrRef(line_buffer));
+            StrRef::SplitOnce const hash_split = line.split_once('\t');
+            if (!hash_split) {
                 continue;
             }
-            *author = '\0';
-            author += 1;
-
-            char* age = std::strchr(author, '\t');
-            if (age == nullptr) {
+            StrRef::SplitOnce const author_split = hash_split.after.split_once('\t');
+            if (!author_split) {
                 continue;
             }
-            *age = '\0';
-            age += 1;
-
-            char* subject = std::strchr(age, '\t');
-            if (subject == nullptr) {
+            StrRef::SplitOnce const age_split = author_split.after.split_once('\t');
+            if (!age_split) {
                 continue;
             }
-            *subject = '\0';
-            subject += 1;
 
             RepoCommit& commit = details.commits[details.shown_commit_count];
-            copy_cstr(commit.hash, sizeof(commit.hash), line);
-            copy_cstr(commit.author, sizeof(commit.author), author);
-            copy_cstr(commit.age, sizeof(commit.age), age);
-            copy_cstr(commit.subject, sizeof(commit.subject), subject);
+            commit.hash = arena_copy_str(arena, hash_split.before);
+            commit.author = arena_copy_str(arena, author_split.before);
+            commit.age = arena_copy_str(arena, age_split.before);
+            commit.subject = arena_copy_str(arena, age_split.after);
             details.shown_commit_count += 1u;
         }
         _pclose(pipe);
     }
 
-    auto load_head_stats(RepoTree const& tree, RepoDetails& details) -> void {
-        char command[1024] = {};
-        fmt::snprintf(
-            command, "git -C \"%s\" show --numstat --format= --no-renames HEAD 2>nul", tree.root
+    auto load_head_stats(Arena& arena, RepoTree const& tree, RepoDetails& details) -> void {
+        ArenaTemp temp = begin_thread_temp_arena();
+        StrRef const command = fmt::tprintf(
+            "git -C \"%s\" show --numstat --format= --no-renames HEAD 2>nul", tree.root
         );
 
         uint64_t insertions = 0u;
         uint64_t deletions = 0u;
-        FILE* pipe = _popen(command, "r");
+        FILE* pipe = _popen(command.data(), "r");
         if (pipe != nullptr) {
-            char line[512] = {};
-            while (std::fgets(line, sizeof(line), pipe) != nullptr) {
+            char* const line = arena_alloc<char>(*temp.arena(), REPO_COMMAND_LINE_CAPACITY);
+            while (std::fgets(line, static_cast<int>(REPO_COMMAND_LINE_CAPACITY), pipe) !=
+                   nullptr) {
                 char* end = nullptr;
                 unsigned long const added = std::strtoul(line, &end, 10);
                 if (end == line || *end != '\t') {
                     continue;
                 }
-                char* deleted_text = end + 1;
+                char* const deleted_text = end + 1;
                 unsigned long const deleted = std::strtoul(deleted_text, &end, 10);
                 if (end == deleted_text) {
                     continue;
@@ -655,116 +590,115 @@ namespace {
             _pclose(pipe);
         }
 
-        fmt::snprintf(
-            details.insertion_count, "+%llu", static_cast<unsigned long long>(insertions)
-        );
-        fmt::snprintf(details.deletion_count, "-%llu", static_cast<unsigned long long>(deletions));
+        details.insertion_count =
+            arena_printf(arena, "+%llu", static_cast<unsigned long long>(insertions));
+        details.deletion_count =
+            arena_printf(arena, "-%llu", static_cast<unsigned long long>(deletions));
     }
 
-    auto load_repo_details(RepoTree const& tree, RepoDetails& details) -> void {
+    auto load_repo_details(Arena& arena, RepoTree const& tree, RepoDetails& details) -> void {
         details = {};
-        repo_root_name(tree, details.name, sizeof(details.name));
-        load_readme_description(tree, details);
+        details.name = arena_copy_str(arena, repo_root_name(tree));
+        load_readme_description(arena, tree, details);
 
-        char command[1024] = {};
-        fmt::snprintf(command, "git -C \"%s\" branch --show-current 2>nul", tree.root);
-        if (!read_first_command_line(command, details.branch, sizeof(details.branch))) {
-            copy_cstr(details.branch, sizeof(details.branch), "HEAD");
+        {
+            ArenaTemp temp = begin_thread_temp_arena();
+            StrRef const command =
+                fmt::tprintf("git -C \"%s\" branch --show-current 2>nul", tree.root);
+            StrRef const branch = read_first_command_line(arena, command);
+            details.branch = branch.empty() ? StrRef("HEAD") : branch;
         }
 
-        load_latest_commit_details(tree, details);
-        load_commit_count(tree, details);
-        load_recent_commits(tree, details);
+        load_latest_commit_details(arena, tree, details);
+        load_commit_count(arena, tree, details);
+        load_recent_commits(arena, tree, details);
 
-        fmt::snprintf(command, "git -C \"%s\" describe --tags --abbrev=0 2>nul", tree.root);
-        if (!read_first_command_line(
-                command, details.latest_release, sizeof(details.latest_release)
-            )) {
-            copy_cstr(details.latest_release, sizeof(details.latest_release), "No tags");
+        {
+            ArenaTemp temp = begin_thread_temp_arena();
+            StrRef const command =
+                fmt::tprintf("git -C \"%s\" describe --tags --abbrev=0 2>nul", tree.root);
+            StrRef const latest_release = read_first_command_line(arena, command);
+            details.latest_release = latest_release.empty() ? StrRef("No tags") : latest_release;
         }
 
-        format_byte_size(
-            repo_package_bytes(tree), details.package_size, sizeof(details.package_size)
-        );
+        details.package_size = format_byte_size(arena, repo_package_bytes(tree));
         load_license_name(tree, details);
 
-        char count_line[32] = {};
-        fmt::snprintf(
-            command, "git -C \"%s\" rev-list --count --since=\"30 days ago\" HEAD 2>nul", tree.root
-        );
-        if (read_first_command_line(command, count_line, sizeof(count_line))) {
-            fmt::snprintf(details.activity, "%s commits / 30d", count_line);
-        } else {
-            copy_cstr(details.activity, sizeof(details.activity), "Unknown");
+        {
+            ArenaTemp temp = begin_thread_temp_arena();
+            StrRef const command = fmt::tprintf(
+                "git -C \"%s\" rev-list --count --since=\"30 days ago\" HEAD 2>nul", tree.root
+            );
+            StrRef const count = read_first_command_line(arena, command);
+            details.activity =
+                count.empty() ? StrRef("Unknown") : arena_printf(arena, "%s commits / 30d", count);
         }
 
-        load_head_stats(tree, details);
-        if (details.last_commit_age[0] == '\0') {
-            copy_cstr(details.last_commit_age, sizeof(details.last_commit_age), "No commits");
+        load_head_stats(arena, tree, details);
+        if (details.last_commit_age.empty()) {
+            details.last_commit_age = "No commits";
         }
     }
 
-    [[nodiscard]] auto find_node_by_path(RepoTree const& tree, char const* path) -> int32_t {
+    [[nodiscard]] auto find_node_by_path(RepoTree const& tree, StrRef path) -> int32_t {
         for (size_t index = 0u; index < tree.node_count; ++index) {
-            if (std::strcmp(tree.nodes[index].path, path) == 0) {
+            if (tree.nodes[index].path == path) {
                 return static_cast<int32_t>(index);
             }
         }
         return -1;
     }
 
-    auto set_commit_if_empty(RepoNode& node, char const* age, char const* message) -> void {
+    auto set_commit_if_empty(Arena& arena, RepoNode& node, StrRef age, StrRef message) -> void {
         if (node.has_commit) {
             return;
         }
-        copy_cstr(node.age, sizeof(node.age), age);
-        copy_cstr(node.message, sizeof(node.message), message);
+        node.age = arena_copy_str(arena, age);
+        node.message = arena_copy_str(arena, message);
         node.has_commit = true;
     }
 
     auto set_node_and_parent_commits(
-        RepoTree& tree, int32_t node_index, char const* age, char const* message
+        Arena& arena, RepoTree& tree, int32_t node_index, StrRef age, StrRef message
     ) -> void {
         for (int32_t index = node_index; index >= 0; index = tree.nodes[index].parent) {
-            set_commit_if_empty(tree.nodes[index], age, message);
+            set_commit_if_empty(arena, tree.nodes[index], age, message);
         }
     }
 
-    auto load_repo_commits(RepoTree& tree) -> void {
-        char command[1024] = {};
-        fmt::snprintf(
-            command,
-            "git -C \"%s\" log --name-only --format=\"commit%%x09%%ar%%x09%%s\" -- 2>nul",
-            tree.root
+    auto load_repo_commits(Arena& arena, RepoTree& tree) -> void {
+        ArenaTemp temp = begin_thread_temp_arena();
+        StrRef const command = fmt::tprintf(
+            "git -C \"%s\" log --name-only --format=\"commit%%x09%%ar%%x09%%s\" -- 2>nul", tree.root
         );
-
-        FILE* pipe = _popen(command, "r");
+        FILE* pipe = _popen(command.data(), "r");
         if (pipe == nullptr) {
             return;
         }
 
-        char age[MAX_REPO_AGE] = {};
-        char message[MAX_REPO_MESSAGE] = {};
-        char line[512] = {};
-        while (std::fgets(line, sizeof(line), pipe) != nullptr) {
-            trim_line(line);
-            if (line[0] == '\0') {
+        StrRef age = {};
+        StrRef message = {};
+        char* const line_buffer = arena_alloc<char>(*temp.arena(), REPO_COMMAND_LINE_CAPACITY);
+        while (std::fgets(line_buffer, static_cast<int>(REPO_COMMAND_LINE_CAPACITY), pipe) !=
+               nullptr) {
+            StrRef const line = trim_command_line(StrRef(line_buffer));
+            if (line.empty()) {
                 continue;
             }
 
-            if (std::strncmp(line, "commit\t", 7u) == 0) {
-                char* const tab = std::strchr(line + 7, '\t');
-                if (tab != nullptr) {
-                    *tab = '\0';
-                    copy_cstr(age, sizeof(age), line + 7);
-                    copy_cstr(message, sizeof(message), tab + 1);
+            StrRef commit = {};
+            if (line.strip_prefix("commit\t", &commit)) {
+                StrRef::SplitOnce const commit_split = commit.split_once('\t');
+                if (commit_split) {
+                    age = arena_copy_str(*temp.arena(), commit_split.before);
+                    message = arena_copy_str(*temp.arena(), commit_split.after);
                 }
                 continue;
             }
 
             int32_t const node_index = find_node_by_path(tree, line);
-            if (node_index >= 0 && age[0] != '\0') {
-                set_node_and_parent_commits(tree, node_index, age, message);
+            if (node_index >= 0 && !age.empty()) {
+                set_node_and_parent_commits(arena, tree, node_index, age, message);
             }
         }
         _pclose(pipe);
@@ -772,44 +706,37 @@ namespace {
         for (size_t index = 0u; index < tree.node_count; ++index) {
             RepoNode& node = tree.nodes[index];
             if (!node.has_commit) {
-                copy_cstr(
-                    node.message,
-                    sizeof(node.message),
-                    node.directory ? "No committed files" : "Untracked"
-                );
-                copy_cstr(node.age, sizeof(node.age), "not committed");
+                node.message = node.directory ? StrRef("No committed files") : StrRef("Untracked");
+                node.age = "not committed";
             }
         }
     }
 
-    auto load_repo_tree(RepoTree& tree) -> void {
+    auto load_repo_tree(Arena& arena, RepoTree& tree) -> void {
         tree = {};
-
-        char root[MAX_REPO_PATH] = {};
-        if (!read_first_command_line("git rev-parse --show-toplevel 2>nul", root, sizeof(root))) {
+        tree.root = read_first_command_line(arena, "git rev-parse --show-toplevel 2>nul");
+        if (tree.root.empty()) {
             return;
         }
-        copy_cstr(tree.root, sizeof(tree.root), root);
 
-        char command[1024] = {};
-        fmt::snprintf(
-            command, "git -C \"%s\" ls-files --cached --others --exclude-standard 2>nul", tree.root
+        ArenaTemp temp = begin_thread_temp_arena();
+        StrRef const command = fmt::tprintf(
+            "git -C \"%s\" ls-files --cached --others --exclude-standard 2>nul", tree.root
         );
-
-        FILE* pipe = _popen(command, "r");
+        FILE* pipe = _popen(command.data(), "r");
         if (pipe == nullptr) {
             return;
         }
-        char path[MAX_REPO_PATH] = {};
-        while (std::fgets(path, sizeof(path), pipe) != nullptr) {
-            trim_line(path);
-            if (path[0] != '\0') {
-                repo_tree_add_path(tree, path);
+        char* const path = arena_alloc<char>(*temp.arena(), MAX_REPO_PATH);
+        while (std::fgets(path, static_cast<int>(MAX_REPO_PATH), pipe) != nullptr) {
+            StrRef const text = trim_command_line(StrRef(path));
+            if (!text.empty()) {
+                repo_tree_add_path(arena, tree, text);
             }
         }
         _pclose(pipe);
 
-        load_repo_commits(tree);
+        load_repo_commits(arena, tree);
         tree.loaded = true;
     }
 
@@ -1394,7 +1321,7 @@ namespace {
                 if (index == 1u) {
                     tab.count = StrRef(details.commit_count);
                     tab.badge_width = std::max(
-                        30.0f, 18.0f + 7.0f * static_cast<float>(std::strlen(details.commit_count))
+                        30.0f, 18.0f + 7.0f * static_cast<float>(details.commit_count.size())
                     );
                     tab.width = 94.0f + tab.badge_width;
                 }
@@ -2210,15 +2137,16 @@ namespace {
         }
     }
 
-    [[nodiscard]] auto write_embedded_icon_font(Runtime* runtime) -> bool {
-        char temp_dir[MAX_PATH] = {};
-        DWORD const temp_dir_capacity = static_cast<DWORD>(sizeof(temp_dir));
+    [[nodiscard]] auto write_embedded_icon_font(Arena& arena, Runtime* runtime) -> bool {
+        ArenaTemp temp = begin_thread_temp_arena();
+        char* const temp_dir = arena_alloc<char>(*temp.arena(), MAX_PATH);
+        DWORD const temp_dir_capacity = static_cast<DWORD>(MAX_PATH);
         DWORD const temp_dir_size = GetTempPathA(temp_dir_capacity, temp_dir);
         if (temp_dir_size == 0u || temp_dir_size >= temp_dir_capacity) {
             return false;
         }
 
-        char font_path[MAX_PATH] = {};
+        char* const font_path = arena_alloc<char>(*temp.arena(), MAX_PATH);
         if (GetTempFileNameA(temp_dir, "gfi", 0u, font_path) == 0u) {
             return false;
         }
@@ -2243,7 +2171,7 @@ namespace {
             return false;
         }
 
-        copy_cstr(runtime->icon_font_path, sizeof(runtime->icon_font_path), font_path);
+        runtime->icon_font_path = arena_copy_cstr(arena, font_path);
         return true;
     }
 
@@ -2263,9 +2191,9 @@ namespace {
         if (font_cache::cache_valid(runtime->cache)) {
             font_cache::destroy_cache(runtime->cache);
         }
-        if (runtime->icon_font_path[0] != '\0') {
-            DeleteFileA(runtime->icon_font_path);
-            runtime->icon_font_path[0] = '\0';
+        if (!runtime->icon_font_path.empty()) {
+            DeleteFileA(runtime->icon_font_path.data());
+            runtime->icon_font_path = {};
         }
         if (font_provider::context_valid(runtime->provider)) {
             font_provider::destroy_context(runtime->provider);
@@ -2292,7 +2220,7 @@ namespace {
 
         font_cache::create_cache(arena, runtime->provider, {}, runtime->cache);
         font_cache::open_system_font(runtime->cache, "Segoe UI", runtime->font);
-        if (!write_embedded_icon_font(runtime)) {
+        if (!write_embedded_icon_font(arena, runtime)) {
             fmt::eprintf("failed to write embedded Codicons font\n");
             return false;
         }
@@ -2529,8 +2457,8 @@ auto main() -> int {
         global_app_state = nullptr;
         return 1;
     }
-    load_repo_tree(*app_state.tree);
-    load_repo_details(*app_state.tree, *app_state.details);
+    load_repo_tree(app_arena, *app_state.tree);
+    load_repo_details(app_arena, *app_state.tree, *app_state.details);
 
     while (app_state.running) {
         MSG message = {};

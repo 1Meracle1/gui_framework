@@ -25,6 +25,7 @@
 namespace {
 
     static_assert(StrRef("framework").substr(5u, 4u) == "work");
+    static_assert(StrRef("alpha").compare_ignore_ascii_case("BRAVO") < 0);
     static_assert(StrRef("FRAMEWORK").equals_ignore_ascii_case("framework"));
     static_assert(StrRef("  text\t").trim() == "text");
 
@@ -125,16 +126,21 @@ namespace {
     }
 
     TEST_CASE(crash_reason_names_are_stable) {
-        TEST_EXPECT(context,
-                    StrRef(base::crash_reason_name(base::CrashReason::ASSERTION_FAILURE)) ==
-                        "assertion failed");
+        TEST_EXPECT(
+            context,
+            StrRef(base::crash_reason_name(base::CrashReason::ASSERTION_FAILURE)) ==
+                "assertion failed"
+        );
         TEST_EXPECT(context, StrRef(base::crash_reason_name(base::CrashReason::PANIC)) == "panic");
-        TEST_EXPECT(context,
-                    StrRef(base::crash_reason_name(base::CrashReason::UNREACHABLE_CODE)) ==
-                        "unreachable code reached");
-        TEST_EXPECT(context,
-                    StrRef(base::crash_reason_name(base::CrashReason::PROCESS_FAULT)) ==
-                        "process fault");
+        TEST_EXPECT(
+            context,
+            StrRef(base::crash_reason_name(base::CrashReason::UNREACHABLE_CODE)) ==
+                "unreachable code reached"
+        );
+        TEST_EXPECT(
+            context,
+            StrRef(base::crash_reason_name(base::CrashReason::PROCESS_FAULT)) == "process fault"
+        );
     }
 
     TEST_CASE(assert_failures_are_reported_as_test_case_failures) {
@@ -250,6 +256,22 @@ namespace {
         TEST_EXPECT(context, stable != nullptr);
         TEST_EXPECT(context, reused == transient);
         TEST_EXPECT(context, arena.used_size() == used_before_temp + 128u);
+    }
+
+    TEST_CASE(arena_copies_strings) {
+        Arena arena;
+        ArenaOptions options = {};
+        options.reserve_size = 256u * 1024u;
+        options.commit_size = 64u * 1024u;
+
+        arena.init(options);
+
+        StrRef const copied = arena_copy_str(arena, StrRef("abcdef").slice(1u, 3u));
+        StrRef const cstr = arena_copy_cstr(arena, StrRef("xyz").prefix(2u));
+
+        TEST_EXPECT(context, copied == "bcd");
+        TEST_EXPECT(context, cstr == "xy");
+        TEST_EXPECT(context, cstr.data()[cstr.size()] == '\0');
     }
 
     TEST_CASE(small_array_pushes_pops_and_clamps_resize_to_capacity) {
@@ -574,8 +596,8 @@ namespace {
         uintptr_t id;
         uintptr_t payload;
 
-        [[nodiscard]] [[maybe_unused]] friend auto operator==(XarFreelistValue const& lhs,
-                                                              XarFreelistValue const& rhs) -> bool {
+        [[nodiscard]] [[maybe_unused]] friend auto
+        operator==(XarFreelistValue const& lhs, XarFreelistValue const& rhs) -> bool {
             return lhs.id == rhs.id && lhs.payload == rhs.payload;
         }
     };
@@ -1020,8 +1042,9 @@ namespace {
         TEST_EXPECT(context, written == 6u);
         TEST_EXPECT(context, buffer.str() == "abcxxx");
 
-        TEST_EXPECT(context,
-                    io::write_full(writer, "overflow", &written) == io::Error::BUFFER_FULL);
+        TEST_EXPECT(
+            context, io::write_full(writer, "overflow", &written) == io::Error::BUFFER_FULL
+        );
         TEST_EXPECT(context, written == 8u);
         TEST_EXPECT(context, buffer.str() == "abcxxxov");
     }
@@ -1075,19 +1098,21 @@ namespace {
             return;
         }
 
-        int const written = fmt::fprintf(file,
-                                         "[%*s][%*s][%.*s][%.*s][%*.*s]",
-                                         6,
-                                         StrRef("abc"),
-                                         -5,
-                                         StrRef("xy"),
-                                         3,
-                                         StrRef("abcdef"),
-                                         -1,
-                                         StrRef("abcdef"),
-                                         8,
-                                         4,
-                                         StrRef("abcdef"));
+        int const written = fmt::fprintf(
+            file,
+            "[%*s][%*s][%.*s][%.*s][%*.*s]",
+            6,
+            StrRef("abc"),
+            -5,
+            StrRef("xy"),
+            3,
+            StrRef("abcdef"),
+            -1,
+            StrRef("abcdef"),
+            8,
+            4,
+            StrRef("abcdef")
+        );
         StrRef const expected = "[   abc][xy   ][abc][abcdef][    abcd]";
 
         TEST_EXPECT(context, written == static_cast<int>(expected.size()));
@@ -1138,7 +1163,8 @@ namespace {
 
         int value = 7;
         int const written = fmt::fprintf(
-            file, "[%+05d][%#x][%#b][%v][%.2f][%p]", -42, 0x2au, 5u, true, 3.5, &value);
+            file, "[%+05d][%#x][%#b][%v][%.2f][%p]", -42, 0x2au, 5u, true, 3.5, &value
+        );
         StrRef const prefix = "[-0042][0x2a][0b101][true][3.50][0x";
 
         TEST_EXPECT(context, written > static_cast<int>(prefix.size()));

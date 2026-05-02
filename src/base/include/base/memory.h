@@ -1,8 +1,10 @@
 #pragma once
 
 #include <base/assert.h>
+#include <base/str_ref.h>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <memory_resource>
 #include <new>
 #include <utility>
@@ -116,4 +118,23 @@ template <typename T, typename... Args>
 [[nodiscard]] auto arena_new(Arena& arena, Args&&... args) -> T* {
     void* const memory = arena.allocate_bytes(sizeof(T), alignof(T));
     return new (memory) T(std::forward<Args>(args)...);
+}
+
+[[nodiscard]] inline auto arena_copy_str(Arena& arena, StrRef text) -> StrRef {
+    if (text.empty()) {
+        return {};
+    }
+
+    char* const data = arena_alloc<char>(arena, text.size());
+    std::memcpy(data, text.data(), text.size());
+    return StrRef(data, text.size());
+}
+
+[[nodiscard]] inline auto arena_copy_cstr(Arena& arena, StrRef text) -> StrRef {
+    char* const data = arena_alloc<char>(arena, text.size() + 1u);
+    if (!text.empty()) {
+        std::memcpy(data, text.data(), text.size());
+    }
+    data[text.size()] = '\0';
+    return StrRef(data, text.size());
 }

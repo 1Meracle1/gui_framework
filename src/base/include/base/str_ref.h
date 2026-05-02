@@ -298,16 +298,29 @@ class StrRef {
         return compare(other) == 0;
     }
 
-    [[nodiscard]] constexpr auto equals_ignore_ascii_case(StrRef other) const -> bool {
-        if (m_size != other.m_size) {
-            return false;
-        }
-        for (size_t index = 0u; index < m_size; ++index) {
-            if (to_ascii_lower(m_data[index]) != to_ascii_lower(other.m_data[index])) {
-                return false;
+    [[nodiscard]] constexpr auto compare_ignore_ascii_case(StrRef other) const -> int {
+        size_t const shared_size = std::min(m_size, other.m_size);
+        for (size_t index = 0u; index < shared_size; ++index) {
+            auto const lhs = to_ascii_lower(m_data[index]);
+            auto const rhs = to_ascii_lower(other.m_data[index]);
+            if (lhs < rhs) {
+                return -1;
+            }
+            if (lhs > rhs) {
+                return 1;
             }
         }
-        return true;
+        if (m_size < other.m_size) {
+            return -1;
+        }
+        if (m_size > other.m_size) {
+            return 1;
+        }
+        return 0;
+    }
+
+    [[nodiscard]] constexpr auto equals_ignore_ascii_case(StrRef other) const -> bool {
+        return compare_ignore_ascii_case(other) == 0;
     }
 
     [[nodiscard]] constexpr auto find(char needle, size_t offset = 0u) const -> size_t {
@@ -706,8 +719,8 @@ class StrRef::SplitIterator {
         return copy;
     }
 
-    [[nodiscard]] friend constexpr auto operator==(SplitIterator const& lhs,
-                                                   SplitIterator const& rhs) -> bool {
+    [[nodiscard]] friend constexpr auto
+    operator==(SplitIterator const& lhs, SplitIterator const& rhs) -> bool {
         if (lhs.m_at_end || rhs.m_at_end) {
             return lhs.m_at_end == rhs.m_at_end;
         }
@@ -717,8 +730,8 @@ class StrRef::SplitIterator {
                lhs.m_next.data() == rhs.m_next.data() && lhs.m_next.size() == rhs.m_next.size();
     }
 
-    [[nodiscard]] friend constexpr auto operator!=(SplitIterator const& lhs,
-                                                   SplitIterator const& rhs) -> bool {
+    [[nodiscard]] friend constexpr auto
+    operator!=(SplitIterator const& lhs, SplitIterator const& rhs) -> bool {
         return !(lhs == rhs);
     }
 
@@ -880,8 +893,8 @@ class StrRef::SplitAsciiWhitespaceIterator {
         return copy;
     }
 
-    [[nodiscard]] friend constexpr auto operator==(SplitAsciiWhitespaceIterator const& lhs,
-                                                   SplitAsciiWhitespaceIterator const& rhs)
+    [[nodiscard]] friend constexpr auto
+    operator==(SplitAsciiWhitespaceIterator const& lhs, SplitAsciiWhitespaceIterator const& rhs)
         -> bool {
         if (lhs.m_at_end || rhs.m_at_end) {
             return lhs.m_at_end == rhs.m_at_end;
@@ -892,8 +905,8 @@ class StrRef::SplitAsciiWhitespaceIterator {
                lhs.m_next.data() == rhs.m_next.data() && lhs.m_next.size() == rhs.m_next.size();
     }
 
-    [[nodiscard]] friend constexpr auto operator!=(SplitAsciiWhitespaceIterator const& lhs,
-                                                   SplitAsciiWhitespaceIterator const& rhs)
+    [[nodiscard]] friend constexpr auto
+    operator!=(SplitAsciiWhitespaceIterator const& lhs, SplitAsciiWhitespaceIterator const& rhs)
         -> bool {
         return !(lhs == rhs);
     }
