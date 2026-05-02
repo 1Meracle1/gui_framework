@@ -230,7 +230,8 @@ namespace gui {
         }
 
         [[nodiscard]] auto boolean_widget(BoxKind kind) -> bool {
-            return kind == BoxKind::CHECKBOX || kind == BoxKind::TOGGLE;
+            return kind == BoxKind::CHECKBOX || kind == BoxKind::TOGGLE ||
+                   kind == BoxKind::RADIO_BUTTON;
         }
 
         [[nodiscard]] auto floating_box(BoxKind kind) -> bool {
@@ -248,8 +249,9 @@ namespace gui {
         [[nodiscard]] auto text_content_box(BoxKind kind) -> bool {
             return kind == BoxKind::LABEL || kind == BoxKind::SELECTABLE_LABEL ||
                    kind == BoxKind::BUTTON || kind == BoxKind::CHECKBOX ||
-                   kind == BoxKind::TOGGLE || kind == BoxKind::SLIDER_FLOAT ||
-                   kind == BoxKind::TREE_NODE || input_text_box(kind);
+                   kind == BoxKind::TOGGLE || kind == BoxKind::RADIO_BUTTON ||
+                   kind == BoxKind::SLIDER_FLOAT || kind == BoxKind::TREE_NODE ||
+                   input_text_box(kind);
         }
 
         [[nodiscard]] auto table_row_box(BoxKind kind) -> bool {
@@ -577,7 +579,7 @@ namespace gui {
         }
 
         [[nodiscard]] auto control_text_offset(BoxKind kind) -> float {
-            if (kind == BoxKind::CHECKBOX) {
+            if (kind == BoxKind::CHECKBOX || kind == BoxKind::RADIO_BUTTON) {
                 return 24.0f;
             }
             if (kind == BoxKind::TOGGLE) {
@@ -1644,16 +1646,17 @@ namespace gui {
             Vec2 const text_dim = text_size(box, text_measure_wrap_width(box));
             bool const is_leaf = box.first_child == INVALID_INDEX;
             Vec2 const image_dim = image_measure_size(box);
-            float const widget_extra_x = box.kind == BoxKind::CHECKBOX       ? 24.0f
-                                         : box.kind == BoxKind::TOGGLE       ? 44.0f
-                                         : box.kind == BoxKind::SLIDER_FLOAT ? 160.0f
-                                         : box.kind == BoxKind::TREE_NODE    ? 12.0f
-                                         : input_text_box(box.kind)          ? 160.0f
-                                                                             : 0.0f;
+            float const widget_extra_x =
+                box.kind == BoxKind::CHECKBOX || box.kind == BoxKind::RADIO_BUTTON ? 24.0f
+                : box.kind == BoxKind::TOGGLE                                      ? 44.0f
+                : box.kind == BoxKind::SLIDER_FLOAT                                ? 160.0f
+                : box.kind == BoxKind::TREE_NODE                                   ? 12.0f
+                : input_text_box(box.kind)                                         ? 160.0f
+                                                                                   : 0.0f;
             float const widget_min_y =
-                box.kind == BoxKind::CHECKBOX || box.kind == BoxKind::TOGGLE ||
-                        box.kind == BoxKind::SLIDER_FLOAT || box.kind == BoxKind::TREE_NODE ||
-                        input_text_box(box.kind)
+                box.kind == BoxKind::CHECKBOX || box.kind == BoxKind::RADIO_BUTTON ||
+                        box.kind == BoxKind::TOGGLE || box.kind == BoxKind::SLIDER_FLOAT ||
+                        box.kind == BoxKind::TREE_NODE || input_text_box(box.kind)
                     ? 20.0f
                     : 0.0f;
             float const icon_width = text_content_box(box.kind) ? icon_text_width(box) : 0.0f;
@@ -3687,6 +3690,22 @@ namespace gui {
             return signal;
         }
 
+        auto apply_radio_button_widget(
+            ContextImpl const* impl, BoxNode& box, size_t* selected_index, size_t index
+        ) -> Signal {
+            ASSERT(selected_index != nullptr);
+            Signal signal = box.signal;
+            signal.activated =
+                signal.clicked_left || (signal.focused && key_pressed(impl, Key::SPACE, false));
+            if (signal.activated && !box_read_only(box) && *selected_index != index) {
+                *selected_index = index;
+                signal.changed = true;
+            }
+            box.widget_value = *selected_index == index ? 1.0f : 0.0f;
+            box.signal = signal;
+            return signal;
+        }
+
         auto apply_slider_widget(
             ContextImpl const* impl, BoxNode& box, float* value, SliderFloatDesc const& desc
         ) -> Signal {
@@ -4276,6 +4295,38 @@ namespace gui {
                     draw::draw_line(draw_context, p0, p1, to_draw_color(check), 2.0f);
                     draw::draw_line(draw_context, p1, p2, to_draw_color(check), 2.0f);
                 }
+            } else if (box.kind == BoxKind::RADIO_BUTTON) {
+                bool const checked = box.widget_value > 0.5f;
+                bool const muted = box_read_only(box) || box_disabled(box);
+                float const side = std::min(14.0f, std::max(0.0f, rect_height(box.rect) - 8.0f));
+                Rect const mark = {
+                    {box.rect.min.x + 5.0f, box.rect.min.y + (rect_height(box.rect) - side) * 0.5f},
+                    {box.rect.min.x + 5.0f + side,
+                     box.rect.min.y + (rect_height(box.rect) + side) * 0.5f}
+                };
+                Color mark_border = checked ? tokens.accent : box.resolved_style.border;
+                if (muted && checked) {
+                    mark_border = box.resolved_style.border;
+                }
+                draw_widget_rect(
+                    draw_context,
+                    mark,
+                    box.resolved_style.background,
+                    mark_border,
+                    box.resolved_style.border_thickness,
+                    side * 0.5f,
+                    opacity
+                );
+                if (checked) {
+                    Color dot = tokens.accent;
+                    if (muted) {
+                        dot.a *= 0.56f;
+                    }
+                    Rect const inner = inset_rect(mark, side * 0.32f);
+                    draw_widget_rect(
+                        draw_context, inner, dot, {}, 0.0f, rect_width(inner) * 0.5f, opacity
+                    );
+                }
             } else if (box.kind == BoxKind::TOGGLE) {
                 float const height = std::min(18.0f, std::max(0.0f, rect_height(box.rect) - 4.0f));
                 float const width = std::min(36.0f, std::max(height, rect_width(box.rect) - 4.0f));
@@ -4740,6 +4791,7 @@ namespace gui {
         theme_kind(theme, BoxKind::TAB_BODY).role = StyleRole::PANEL;
         theme_kind(theme, BoxKind::BUTTON).role = StyleRole::CONTROL;
         theme_kind(theme, BoxKind::CHECKBOX).role = StyleRole::CONTROL;
+        theme_kind(theme, BoxKind::RADIO_BUTTON).role = StyleRole::CONTROL;
         theme_kind(theme, BoxKind::TOGGLE).role = StyleRole::CONTROL;
         theme_kind(theme, BoxKind::SLIDER_FLOAT).role = StyleRole::CONTROL;
         theme_kind(theme, BoxKind::TREE_NODE).role = StyleRole::CONTROL;
@@ -6054,6 +6106,46 @@ namespace gui {
             true
         );
         return apply_bool_widget(impl, impl->boxes[index], value);
+    }
+
+    auto Frame::radio_button(
+        StrRef text_value, size_t* selected_index, size_t radio_index, BoxDesc const& desc
+    ) -> Signal {
+        ContextImpl* const impl = impl_from_frame(*this);
+        size_t const parent = top_parent_index(impl);
+        size_t const index = append_box(
+            impl,
+            BoxKind::RADIO_BUTTON,
+            text_id(impl, parent, BoxKind::RADIO_BUTTON, text_value),
+            {},
+            text_value,
+            desc,
+            true,
+            true
+        );
+        return apply_radio_button_widget(impl, impl->boxes[index], selected_index, radio_index);
+    }
+
+    auto Frame::radio_button(
+        Id id_value,
+        StrRef text_value,
+        size_t* selected_index,
+        size_t radio_index,
+        BoxDesc const& desc
+    ) -> Signal {
+        ContextImpl* const impl = impl_from_frame(*this);
+        size_t const parent = top_parent_index(impl);
+        size_t const index = append_box(
+            impl,
+            BoxKind::RADIO_BUTTON,
+            explicit_id(impl, parent, BoxKind::RADIO_BUTTON, id_value),
+            id_value,
+            text_value,
+            desc,
+            true,
+            true
+        );
+        return apply_radio_button_widget(impl, impl->boxes[index], selected_index, radio_index);
     }
 
     auto Frame::toggle(StrRef text_value, bool* value, BoxDesc const& desc) -> Signal {

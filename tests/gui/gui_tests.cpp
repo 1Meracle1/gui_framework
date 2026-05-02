@@ -2668,6 +2668,74 @@ namespace {
         gui::destroy_context(gui_context);
     }
 
+    TEST_CASE(radio_button_mutates_selected_index) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        size_t selected = 0u;
+        gui::BoxDesc const option_box = {
+            .layout = {.width = gui::px(100.0f), .height = gui::px(20.0f)}
+        };
+        gui::Id const small_id = gui::id("small");
+        gui::Id const large_id = gui::id("large");
+
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {120.0f, 60.0f}});
+        ui.radio_button(small_id, "Small", &selected, 0u, option_box);
+        ui.radio_button(large_id, "Large", &selected, 1u, option_box);
+        gui::end_frame(ui);
+
+        gui::BoxInfo const* small = ui.find_box(small_id, gui::BoxKind::RADIO_BUTTON);
+        gui::BoxInfo const* large = ui.find_box(large_id, gui::BoxKind::RADIO_BUTTON);
+        TEST_EXPECT(context, small != nullptr && large != nullptr);
+        if (small != nullptr && large != nullptr) {
+            TEST_EXPECT(context, small->text == StrRef("Small"));
+            TEST_EXPECT(context, large->text == StrRef("Large"));
+        }
+
+        gui::InputState input = {};
+        input.mouse_pos = {5.0f, 25.0f};
+        input.mouse_down[0u] = true;
+        ui = gui::begin_frame(gui_context, {.size = {120.0f, 60.0f}, .input = input});
+        ui.radio_button(small_id, "Small", &selected, 0u, option_box);
+        gui::Signal signal = ui.radio_button(large_id, "Large", &selected, 1u, option_box);
+        TEST_EXPECT(context, signal.pressed_left);
+        TEST_EXPECT(context, !signal.changed);
+        TEST_EXPECT(context, selected == 0u);
+        gui::end_frame(ui);
+
+        input.mouse_down[0u] = false;
+        ui = gui::begin_frame(gui_context, {.size = {120.0f, 60.0f}, .input = input});
+        ui.radio_button(small_id, "Small", &selected, 0u, option_box);
+        signal = ui.radio_button(large_id, "Large", &selected, 1u, option_box);
+        TEST_EXPECT(context, signal.clicked_left);
+        TEST_EXPECT(context, signal.activated);
+        TEST_EXPECT(context, signal.changed);
+        TEST_EXPECT(context, selected == 1u);
+        gui::end_frame(ui);
+
+        input.mouse_down[0u] = true;
+        ui = gui::begin_frame(gui_context, {.size = {120.0f, 60.0f}, .input = input});
+        ui.radio_button(small_id, "Small", &selected, 0u, option_box);
+        signal = ui.radio_button(large_id, "Large", &selected, 1u, option_box);
+        TEST_EXPECT(context, !signal.changed);
+        TEST_EXPECT(context, selected == 1u);
+        gui::end_frame(ui);
+
+        input.mouse_down[0u] = false;
+        ui = gui::begin_frame(gui_context, {.size = {120.0f, 60.0f}, .input = input});
+        ui.radio_button(small_id, "Small", &selected, 0u, option_box);
+        signal = ui.radio_button(large_id, "Large", &selected, 1u, option_box);
+        TEST_EXPECT(context, signal.activated);
+        TEST_EXPECT(context, !signal.changed);
+        TEST_EXPECT(context, selected == 1u);
+        gui::end_frame(ui);
+
+        gui::destroy_context(gui_context);
+    }
+
     TEST_CASE(slider_uses_explicit_focus_and_keyboard_step) {
         Arena arena = {};
         arena.init();

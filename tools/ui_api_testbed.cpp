@@ -63,6 +63,7 @@ namespace {
         float sample_loading_phase = 0.0f;
         size_t selected_tab = 0u;
         size_t selected_index = 12u;
+        size_t size_mode = 1u;
         size_t preview_table_sort_count = 0u;
         size_t sample_table_sort_count = 0u;
         char name[64] = "Editable text";
@@ -939,6 +940,9 @@ namespace {
                 .layout = {.width = gui::px(110.0f), .height = gui::fill()},
                 .flags = gui::BOX_FLAG_READ_ONLY,
             };
+            gui::BoxDesc const size_radio = {
+                .layout = {.width = gui::px(74.0f), .height = gui::fill()},
+            };
 
             if (tab_view.selected_index() == 1u) {
                 state.sample_loading_phase += delta_time * 0.42f;
@@ -1472,6 +1476,36 @@ namespace {
                                     .max = 2.0f,
                                     .step = 0.05f,
                                 }
+                            );
+                        }
+                        if (auto size = ui.row(gui::id("size_radio_group"), toolbar_group)) {
+                            ui.label(
+                                "Size",
+                                {
+                                    .layout = {.width = gui::px(32.0f), .height = gui::fill()},
+                                    .style = toolbar_label,
+                                }
+                            );
+                            ui.radio_button(
+                                gui::id("size_small_radio"),
+                                "Small",
+                                &state.size_mode,
+                                0u,
+                                size_radio
+                            );
+                            ui.radio_button(
+                                gui::id("size_medium_radio"),
+                                "Med",
+                                &state.size_mode,
+                                1u,
+                                size_radio
+                            );
+                            ui.radio_button(
+                                gui::id("size_large_radio"),
+                                "Large",
+                                &state.size_mode,
+                                2u,
+                                size_radio
                             );
                         }
                         if (auto edit = ui.row(gui::id("control_edit"), toolbar_group)) {

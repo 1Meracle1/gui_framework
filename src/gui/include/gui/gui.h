@@ -422,6 +422,7 @@ namespace gui {
         IMAGE,
         ICON,
         TREE_NODE,
+        RADIO_BUTTON,
         COUNT,
     };
 
@@ -765,6 +766,12 @@ namespace gui {
         auto icon(Id id, render::Texture texture, BoxDesc const& desc = {}) -> Signal;
         auto checkbox(StrRef text, bool* value, BoxDesc const& desc = {}) -> Signal;
         auto checkbox(Id id, StrRef text, bool* value, BoxDesc const& desc = {}) -> Signal;
+        auto
+        radio_button(StrRef text, size_t* selected_index, size_t index, BoxDesc const& desc = {})
+            -> Signal;
+        auto radio_button(
+            Id id, StrRef text, size_t* selected_index, size_t index, BoxDesc const& desc = {}
+        ) -> Signal;
         auto toggle(StrRef text, bool* value, BoxDesc const& desc = {}) -> Signal;
         auto toggle(Id id, StrRef text, bool* value, BoxDesc const& desc = {}) -> Signal;
         auto slider_float(StrRef text, float* value, SliderFloatDesc const& desc = {}) -> Signal;
