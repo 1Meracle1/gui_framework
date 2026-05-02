@@ -1060,10 +1060,10 @@ namespace {
                 {gui::id("nav_code"), "Code", ""},
                 {gui::id("nav_issues"), "Issues", "1.2k"},
                 {gui::id("nav_prs"), "Pull requests", "247"},
-                {gui::id("nav_actions"), "Actions", ">"},
+                {gui::id("nav_actions"), "Actions", ""},
                 {gui::id("nav_projects"), "Projects", "8"},
-                {gui::id("nav_security"), "Security", ">"},
-                {gui::id("nav_insights"), "Insights", ">"},
+                {gui::id("nav_security"), "Security", ""},
+                {gui::id("nav_insights"), "Insights", ""},
                 {gui::id("nav_wiki"), "Wiki", ""},
                 {gui::id("nav_settings"), "Settings", ""},
             };
@@ -1169,7 +1169,23 @@ namespace {
                                 },
                             }
                         )) {
-                        label_color(ui, tab_data.count, 11.0f, selected ? spec.text : spec.muted);
+                        ui.label(
+                            decorative_label_id(),
+                            tab_data.count,
+                            {
+                                .layout =
+                                    {
+                                        .width = gui::text(),
+                                        .height = gui::fill(),
+                                        .margin = gui::insets(0.0f, 2.0f, 0.0f, 0.0f),
+                                    },
+                                .style = {
+                                    .role = gui::StyleRole::NONE,
+                                    .foreground = selected ? spec.text : spec.muted,
+                                    .font_size = 11.0f,
+                                },
+                            }
+                        );
                     }
                 }
             }
@@ -1825,11 +1841,11 @@ namespace {
     auto draw_code_icon(draw::Context context, gui::Rect rect, draw::Color color) -> void {
         float const x = rect.min.x + 20.0f;
         float const y = (rect.min.y + rect.max.y) * 0.5f;
-        draw::draw_line(context, {x - 5.0f, y}, {x - 1.0f, y - 4.0f}, color, 1.4f);
-        draw::draw_line(context, {x - 5.0f, y}, {x - 1.0f, y + 4.0f}, color, 1.4f);
-        draw::draw_line(context, {x + 5.0f, y}, {x + 1.0f, y - 4.0f}, color, 1.4f);
-        draw::draw_line(context, {x + 5.0f, y}, {x + 1.0f, y + 4.0f}, color, 1.4f);
-        draw::draw_line(context, {x + 1.5f, y - 5.0f}, {x - 1.5f, y + 5.0f}, color, 1.1f);
+        draw::draw_line(context, {x - 7.0f, y}, {x - 3.0f, y - 4.0f}, color, 1.3f);
+        draw::draw_line(context, {x - 7.0f, y}, {x - 3.0f, y + 4.0f}, color, 1.3f);
+        draw::draw_line(context, {x + 7.0f, y}, {x + 3.0f, y - 4.0f}, color, 1.3f);
+        draw::draw_line(context, {x + 7.0f, y}, {x + 3.0f, y + 4.0f}, color, 1.3f);
+        draw::draw_line(context, {x + 1.5f, y - 6.0f}, {x - 1.5f, y + 6.0f}, color, 1.1f);
     }
 
     auto draw_nav_dot(draw::Context context, gui::Rect rect, draw::Color color) -> void {
@@ -1844,6 +1860,113 @@ namespace {
         draw::draw_rect(context, {{x, y}, {x + 12.0f, y + 12.0f}}, color, 1.2f, 2.0f);
         draw::draw_line(context, {x + 4.0f, y + 3.0f}, {x + 4.0f, y + 9.0f}, color, 1.0f);
         draw::draw_line(context, {x + 8.0f, y + 3.0f}, {x + 8.0f, y + 9.0f}, color, 1.0f);
+    }
+
+    auto draw_pull_request_icon(draw::Context context, gui::Rect rect, draw::Color color) -> void {
+        float const x = rect.min.x + 20.0f;
+        float const y = (rect.min.y + rect.max.y) * 0.5f;
+        draw::draw_circle(context, {x - 4.0f, y - 5.0f}, 2.6f, color, 1.1f, 12);
+        draw::draw_circle(context, {x + 5.0f, y + 5.0f}, 2.6f, color, 1.1f, 12);
+        draw::draw_line(context, {x - 4.0f, y - 2.0f}, {x - 4.0f, y + 5.0f}, color, 1.1f);
+        draw::draw_line(context, {x - 4.0f, y + 5.0f}, {x + 2.0f, y + 5.0f}, color, 1.1f);
+    }
+
+    auto draw_actions_icon(draw::Context context, gui::Rect rect, draw::Color color) -> void {
+        float const x = rect.min.x + 16.0f;
+        float const y = (rect.min.y + rect.max.y) * 0.5f;
+        draw::draw_triangle(context, {x, y - 7.0f}, {x, y + 7.0f}, {x + 11.0f, y}, color, 1.2f);
+    }
+
+    auto draw_shield_icon(draw::Context context, gui::Rect rect, draw::Color color) -> void {
+        float const x = rect.min.x + 20.0f;
+        float const y = (rect.min.y + rect.max.y) * 0.5f;
+        draw::path_clear(context);
+        draw::path_line_to(context, {x, y - 8.0f});
+        draw::path_line_to(context, {x + 6.0f, y - 5.0f});
+        draw::path_line_to(context, {x + 6.0f, y + 1.0f});
+        draw::path_bezier_quadratic_to(context, {x + 5.0f, y + 6.0f}, {x, y + 8.0f}, 6);
+        draw::path_bezier_quadratic_to(context, {x - 5.0f, y + 6.0f}, {x - 6.0f, y + 1.0f}, 6);
+        draw::path_line_to(context, {x - 6.0f, y - 5.0f});
+        draw::path_stroke(context, color, true, 1.2f);
+    }
+
+    auto draw_insights_icon(draw::Context context, gui::Rect rect, draw::Color color) -> void {
+        float const x = rect.min.x + 14.0f;
+        float const y = (rect.min.y + rect.max.y) * 0.5f;
+        draw::draw_line(context, {x, y + 7.0f}, {x, y - 7.0f}, color, 1.0f);
+        draw::draw_line(context, {x, y + 7.0f}, {x + 14.0f, y + 7.0f}, color, 1.0f);
+        draw::draw_line(context, {x + 3.0f, y + 3.0f}, {x + 6.0f, y}, color, 1.2f);
+        draw::draw_line(context, {x + 6.0f, y}, {x + 9.0f, y + 1.0f}, color, 1.2f);
+        draw::draw_line(context, {x + 9.0f, y + 1.0f}, {x + 13.0f, y - 5.0f}, color, 1.2f);
+    }
+
+    auto draw_book_icon(draw::Context context, gui::Rect rect, draw::Color color) -> void {
+        float const x = rect.min.x + 20.0f;
+        float const y = (rect.min.y + rect.max.y) * 0.5f;
+        draw::path_clear(context);
+        draw::path_line_to(context, {x - 7.0f, y - 6.0f});
+        draw::path_line_to(context, {x - 1.0f, y - 4.0f});
+        draw::path_line_to(context, {x - 1.0f, y + 8.0f});
+        draw::path_line_to(context, {x - 7.0f, y + 6.0f});
+        draw::path_stroke(context, color, true, 1.1f);
+        draw::path_line_to(context, {x + 1.0f, y - 4.0f});
+        draw::path_line_to(context, {x + 7.0f, y - 6.0f});
+        draw::path_line_to(context, {x + 7.0f, y + 6.0f});
+        draw::path_line_to(context, {x + 1.0f, y + 8.0f});
+        draw::path_stroke(context, color, true, 1.1f);
+    }
+
+    auto draw_gear_icon(draw::Context context, gui::Rect rect, draw::Color color) -> void {
+        draw::Vec2 const center = {rect.min.x + 20.0f, (rect.min.y + rect.max.y) * 0.5f};
+        draw::draw_line(
+            context, {center.x, center.y - 8.0f}, {center.x, center.y - 6.0f}, color, 1.1f
+        );
+        draw::draw_line(
+            context, {center.x, center.y + 6.0f}, {center.x, center.y + 8.0f}, color, 1.1f
+        );
+        draw::draw_line(
+            context, {center.x - 8.0f, center.y}, {center.x - 6.0f, center.y}, color, 1.1f
+        );
+        draw::draw_line(
+            context, {center.x + 6.0f, center.y}, {center.x + 8.0f, center.y}, color, 1.1f
+        );
+        draw::draw_line(
+            context,
+            {center.x - 5.6f, center.y - 5.6f},
+            {center.x - 4.2f, center.y - 4.2f},
+            color,
+            1.1f
+        );
+        draw::draw_line(
+            context,
+            {center.x + 4.2f, center.y + 4.2f},
+            {center.x + 5.6f, center.y + 5.6f},
+            color,
+            1.1f
+        );
+        draw::draw_line(
+            context,
+            {center.x + 5.6f, center.y - 5.6f},
+            {center.x + 4.2f, center.y - 4.2f},
+            color,
+            1.1f
+        );
+        draw::draw_line(
+            context,
+            {center.x - 4.2f, center.y + 4.2f},
+            {center.x - 5.6f, center.y + 5.6f},
+            color,
+            1.1f
+        );
+        draw::draw_circle(context, center, 5.0f, color, 1.1f, 18);
+        draw::draw_circle(context, center, 1.7f, color, 1.1f, 12);
+    }
+
+    auto draw_chevron_right(draw::Context context, gui::Rect rect, draw::Color color) -> void {
+        float const x = rect.max.x - 19.0f;
+        float const y = (rect.min.y + rect.max.y) * 0.5f;
+        draw::draw_line(context, {x - 2.0f, y - 4.0f}, {x + 2.0f, y}, color, 1.2f);
+        draw::draw_line(context, {x + 2.0f, y}, {x - 2.0f, y + 4.0f}, color, 1.2f);
     }
 
     auto draw_logo(draw::Context context, gui::Rect rect, RepositorySpec const& spec) -> void {
@@ -1915,44 +2038,28 @@ namespace {
             draw_nav_dot(context, box->rect, muted);
         }
         if (gui::BoxInfo const* box = ui.find_box(gui::id("nav_prs"))) {
-            float const x = box->rect.min.x + 20.0f;
-            float const y = (box->rect.min.y + box->rect.max.y) * 0.5f;
-            draw::draw_circle(context, {x - 4.0f, y - 5.0f}, 2.6f, muted, 1.1f, 12);
-            draw::draw_circle(context, {x + 5.0f, y + 5.0f}, 2.6f, muted, 1.1f, 12);
-            draw::draw_line(context, {x - 4.0f, y - 2.0f}, {x - 4.0f, y + 5.0f}, muted, 1.1f);
-            draw::draw_line(context, {x - 4.0f, y + 5.0f}, {x + 2.0f, y + 5.0f}, muted, 1.1f);
+            draw_pull_request_icon(context, box->rect, muted);
         }
         if (gui::BoxInfo const* box = ui.find_box(gui::id("nav_actions"))) {
-            float const x = box->rect.min.x + 16.0f;
-            float const y = (box->rect.min.y + box->rect.max.y) * 0.5f;
-            draw::draw_triangle(context, {x, y - 7.0f}, {x, y + 7.0f}, {x + 11.0f, y}, muted, 1.2f);
+            draw_actions_icon(context, box->rect, muted);
+            draw_chevron_right(context, box->rect, muted);
         }
         if (gui::BoxInfo const* box = ui.find_box(gui::id("nav_projects"))) {
             draw_small_box_icon(context, box->rect, muted);
         }
         if (gui::BoxInfo const* box = ui.find_box(gui::id("nav_security"))) {
-            draw_nav_dot(context, box->rect, muted);
+            draw_shield_icon(context, box->rect, muted);
+            draw_chevron_right(context, box->rect, muted);
         }
         if (gui::BoxInfo const* box = ui.find_box(gui::id("nav_insights"))) {
-            float const x = box->rect.min.x + 14.0f;
-            float const y = (box->rect.min.y + box->rect.max.y) * 0.5f;
-            draw::draw_line(context, {x, y + 6.0f}, {x, y - 6.0f}, muted, 1.0f);
-            draw::draw_line(context, {x, y + 6.0f}, {x + 12.0f, y + 6.0f}, muted, 1.0f);
-            draw::draw_line(context, {x + 3.0f, y + 2.0f}, {x + 6.0f, y - 1.0f}, muted, 1.2f);
-            draw::draw_line(context, {x + 6.0f, y - 1.0f}, {x + 10.0f, y - 5.0f}, muted, 1.2f);
+            draw_insights_icon(context, box->rect, muted);
+            draw_chevron_right(context, box->rect, muted);
         }
         if (gui::BoxInfo const* box = ui.find_box(gui::id("nav_wiki"))) {
-            float const x = box->rect.min.x + 14.0f;
-            float const y = (box->rect.min.y + box->rect.max.y) * 0.5f - 6.0f;
-            draw::draw_rect(context, {{x, y}, {x + 13.0f, y + 12.0f}}, muted, 1.1f, 1.0f);
-            draw::draw_line(context, {x + 6.5f, y + 1.0f}, {x + 6.5f, y + 13.0f}, muted, 1.0f);
+            draw_book_icon(context, box->rect, muted);
         }
         if (gui::BoxInfo const* box = ui.find_box(gui::id("nav_settings"))) {
-            draw::Vec2 const center = {
-                box->rect.min.x + 20.0f, (box->rect.min.y + box->rect.max.y) * 0.5f
-            };
-            draw::draw_circle(context, center, 6.0f, muted, 1.1f, 16);
-            draw::draw_circle(context, center, 2.0f, muted, 1.1f, 12);
+            draw_gear_icon(context, box->rect, muted);
         }
 
         if (selected_tab == 0u) {
