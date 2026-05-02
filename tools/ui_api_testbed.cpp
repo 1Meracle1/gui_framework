@@ -57,11 +57,13 @@ namespace {
         bool sample_preview = false;
         LiquidGlassTheme theme = LiquidGlassTheme::DARK;
         float scale = 1.25f;
+        float image_preview_zoom = 1.0f;
         float sample_value = 0.5f;
         float sample_loading_phase = 0.0f;
         size_t selected_tab = 0u;
         size_t selected_index = 12u;
         size_t size_mode = 1u;
+        size_t image_preview_sample = 0u;
         size_t preview_table_sort_count = 0u;
         size_t sample_table_sort_count = 0u;
         char name[64] = "Editable text";
@@ -543,7 +545,9 @@ namespace {
         gui::Frame& ui,
         gui::Id id,
         StrRef title,
+        TestbedState& state,
         TextureSample const& sample,
+        size_t sample_index,
         LiquidGlassSpec const& spec
     ) -> void {
         if (auto card = ui.column(
@@ -567,22 +571,37 @@ namespace {
                     .style = {.foreground = spec.tokens.text_muted},
                 }
             );
-            ui.image(
-                sample.texture,
-                {
-                    .box =
-                        {
-                            .layout = {.width = gui::fill(), .height = gui::px(108.0f)},
-                            .style =
-                                {
-                                    .background = gui::rgba(0, 0, 0, 38),
-                                    .radius = 10.0f,
-                                },
+            if (auto preview = ui.overlay(
+                    gui::id("texture_preview"),
+                    {
+                        .layout =
+                            {
+                                .width = gui::fill(),
+                                .height = gui::px(108.0f),
+                                .clip = true,
+                            },
+                        .style = {
+                            .background = gui::rgba(0, 0, 0, 38),
+                            .radius = 10.0f,
                         },
-                    .size = sample.size,
-                    .fit = gui::ImageFit::CONTAIN,
+                    }
+                )) {
+                if (preview.signal().activated) {
+                    state.image_preview_sample = sample_index;
+                    state.image_preview_zoom = 1.0f;
                 }
-            );
+                ui.image(
+                    sample.texture,
+                    {
+                        .box =
+                            {
+                                .layout = {.width = gui::fill(), .height = gui::fill()},
+                            },
+                        .size = sample.size,
+                        .fit = gui::ImageFit::CONTAIN,
+                    }
+                );
+            }
             ui.label(
                 fmt::tprintf(
                     "%ux%u",
@@ -749,6 +768,7 @@ namespace {
         TestbedState& state,
         LiquidGlassSpec const& spec,
         TestbedTextures const& textures,
+        gui::InputState const& input,
         float delta_time
     ) -> void {
         gui::Id const list_id = gui::id("asset_list");
@@ -1124,14 +1144,18 @@ namespace {
                             ui,
                             gui::id("sample_disk_texture"),
                             "Loaded from disk",
+                            state,
                             textures.disk,
+                            1u,
                             spec
                         );
                         draw_texture_sample(
                             ui,
                             gui::id("sample_embedded_texture"),
                             "Embedded in exe",
+                            state,
                             textures.embedded,
+                            2u,
                             spec
                         );
                     }
@@ -2138,6 +2162,143 @@ namespace {
                                 .style = {.foreground = spec.modal_body_foreground},
                             }
                         );
+                    }
+                }
+            }
+
+            if (state.image_preview_sample != 0u) {
+                TextureSample const& sample =
+                    state.image_preview_sample == 2u ? textures.embedded : textures.disk;
+                StrRef const title =
+                    state.image_preview_sample == 2u ? "Embedded in exe" : "Loaded from disk";
+                float const image_width = std::max(1.0f, sample.size.x * state.image_preview_zoom);
+                float const image_height = std::max(1.0f, sample.size.y * state.image_preview_zoom);
+                if (auto modal = ui.modal(
+                        gui::id("image_preview_modal"),
+                        {
+                            .layout =
+                                {
+                                    .padding = gui::insets(12.0f),
+                                    .align_x = gui::Align::CENTER,
+                                    .align_y = gui::Align::CENTER,
+                                },
+                            .debug_name = "image_preview_modal",
+                        }
+                    )) {
+                    if (auto dialog = ui.column(
+                            gui::id("image_preview_dialog"),
+                            {
+                                .layout =
+                                    {
+                                        .width = gui::children(),
+                                        .height = gui::children(),
+                                        .padding = gui::insets(12.0f),
+                                        .gap = 10.0f,
+                                        .align_x = gui::Align::CENTER,
+                                    },
+                                .style =
+                                    {
+                                        .role = gui::StyleRole::PANEL,
+                                        .background = spec.modal_dialog_background,
+                                        .border = spec.modal_dialog_border,
+                                        .border_thickness = 1.0f,
+                                        .radius = 20.0f,
+                                    },
+                                .debug_name = "image_preview_dialog",
+                            }
+                        )) {
+                        if (auto header = ui.row(
+                                gui::id("image_preview_header"),
+                                {
+                                    .layout =
+                                        {
+                                            .width = gui::children(),
+                                            .height = gui::px(30.0f),
+                                            .gap = 8.0f,
+                                            .align_y = gui::Align::CENTER,
+                                        },
+                                    .debug_name = "image_preview_header",
+                                }
+                            )) {
+                            ui.label(
+                                title,
+                                {
+                                    .layout = {.width = gui::text(), .height = gui::fill()},
+                                    .style = {.foreground = tokens.text, .font_size = 14.0f},
+                                }
+                            );
+                            ui.label(
+                                fmt::tprintf("%.0f%%", state.image_preview_zoom * 100.0f),
+                                {
+                                    .layout = {.width = gui::text(), .height = gui::fill()},
+                                    .style = {.foreground = tokens.text_muted},
+                                }
+                            );
+                            if (ui.button(
+                                      gui::id("image_preview_close"),
+                                      CLOSE_GLYPH,
+                                      {
+                                          .layout =
+                                              {
+                                                  .width = gui::px(30.0f),
+                                                  .height = gui::px(30.0f),
+                                                  .padding = gui::insets(0.0f),
+                                              },
+                                          .style =
+                                              {
+                                                  .role = gui::StyleRole::DANGER,
+                                                  .font_size = 15.0f,
+                                              },
+                                      }
+                                )
+                                    .activated) {
+                                state.image_preview_sample = 0u;
+                            }
+                        }
+                        if (auto image = ui.overlay(
+                                gui::id("image_preview_image_frame"),
+                                {
+                                    .layout =
+                                        {
+                                            .width = gui::px(image_width),
+                                            .height = gui::px(image_height),
+                                            .clip = true,
+                                        },
+                                    .style =
+                                        {
+                                            .background = gui::rgba(0, 0, 0, 80),
+                                            .radius = 10.0f,
+                                        },
+                                    .debug_name = "image_preview_image_frame",
+                                }
+                            )) {
+                            gui::Signal const image_signal = image.signal();
+                            if (image_signal.hovered && input.scroll_delta_y != 0.0f) {
+                                state.image_preview_zoom = std::clamp(
+                                    state.image_preview_zoom + input.scroll_delta_y / 288.0f,
+                                    0.25f,
+                                    8.0f
+                                );
+                            }
+                            if (image_signal.activated) {
+                                state.image_preview_zoom = 1.0f;
+                            }
+                            ui.image(
+                                gui::id("image_preview_image"),
+                                sample.texture,
+                                {
+                                    .box =
+                                        {
+                                            .layout =
+                                                {
+                                                    .width = gui::fill(),
+                                                    .height = gui::fill(),
+                                                },
+                                        },
+                                    .size = sample.size,
+                                }
+                            );
+                        }
                     }
                 }
             }
@@ -3165,7 +3326,7 @@ namespace {
         }
         {
             TRACE_SCOPE(trace, "draw_ui");
-            draw_ui(ui, runtime->state, style, runtime->textures, delta_time);
+            draw_ui(ui, runtime->state, style, runtime->textures, input, delta_time);
         }
         {
             TRACE_SCOPE(trace, "end_ui_frame");
@@ -3270,6 +3431,14 @@ namespace {
 
         case WM_MOUSEWHEEL:
             if (global_app_state != nullptr) {
+                POINT point = {
+                    static_cast<LONG>(lparam_x(lparam)),
+                    static_cast<LONG>(lparam_y(lparam)),
+                };
+                BASE_UNUSED(ScreenToClient(hwnd, &point));
+                global_app_state->input.mouse_pos = {
+                    static_cast<float>(point.x), static_cast<float>(point.y)
+                };
                 global_app_state->input.scroll_delta_y +=
                     static_cast<float>(GET_WHEEL_DELTA_WPARAM(wparam)) /
                     static_cast<float>(WHEEL_DELTA) * 36.0f;
@@ -3630,7 +3799,7 @@ namespace {
         textures.embedded = textures.disk;
         gui::Frame ui =
             gui::begin_frame(ui_context, {.size = {640.0f, 400.0f}, .delta_time = 1.0f / 60.0f});
-        draw_ui(ui, state, style, textures, 1.0f / 60.0f);
+        draw_ui(ui, state, style, textures, gui::InputState{}, 1.0f / 60.0f);
         gui::end_frame(ui);
 
         gui::draw::begin_frame(draw_context);
