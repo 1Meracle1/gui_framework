@@ -9,21 +9,29 @@ namespace {
         TEST_EXPECT(context, !gui::render::result_failed(gui::render::Result::OK));
         TEST_EXPECT(context, gui::render::result_failed(gui::render::Result::UNSUPPORTED_PLATFORM));
         TEST_EXPECT(context, gui::render::result_name(gui::render::Result::OK)[0] != '\0');
-        TEST_EXPECT(context,
-                    gui::render::result_name(gui::render::Result::SHADER_CREATION_FAILED)[0] !=
-                        '\0');
-        TEST_EXPECT(context,
-                    gui::render::result_name(gui::render::Result::PIPELINE_CREATION_FAILED)[0] !=
-                        '\0');
-        TEST_EXPECT(context,
-                    gui::render::result_name(gui::render::Result::SHADER_COMPILATION_FAILED)[0] !=
-                        '\0');
-        TEST_EXPECT(context,
-                    gui::render::result_name(gui::render::Result::TEXTURE_CREATION_FAILED)[0] !=
-                        '\0');
-        TEST_EXPECT(context,
-                    gui::render::result_name(gui::render::Result::SAMPLER_CREATION_FAILED)[0] !=
-                        '\0');
+        TEST_EXPECT(
+            context,
+            gui::render::result_name(gui::render::Result::SHADER_CREATION_FAILED)[0] != '\0'
+        );
+        TEST_EXPECT(
+            context,
+            gui::render::result_name(gui::render::Result::PIPELINE_CREATION_FAILED)[0] != '\0'
+        );
+        TEST_EXPECT(
+            context,
+            gui::render::result_name(gui::render::Result::SHADER_COMPILATION_FAILED)[0] != '\0'
+        );
+        TEST_EXPECT(
+            context,
+            gui::render::result_name(gui::render::Result::TEXTURE_CREATION_FAILED)[0] != '\0'
+        );
+        TEST_EXPECT(
+            context,
+            gui::render::result_name(gui::render::Result::SAMPLER_CREATION_FAILED)[0] != '\0'
+        );
+        TEST_EXPECT(
+            context, gui::render::result_name(gui::render::Result::IMAGE_LOAD_FAILED)[0] != '\0'
+        );
         TEST_EXPECT(context, gui::render::backend_name(gui::render::Backend::D3D11)[0] != '\0');
         TEST_EXPECT(context, gui::render::backend_name(gui::render::Backend::D3D12)[0] != '\0');
     }
@@ -177,8 +185,9 @@ namespace {
     }
 
     TEST_CASE(render_blend_modes_include_compositor_foundations) {
-        TEST_EXPECT(context,
-                    gui::render::BlendMode::PREMULTIPLIED_ALPHA != gui::render::BlendMode::ALPHA);
+        TEST_EXPECT(
+            context, gui::render::BlendMode::PREMULTIPLIED_ALPHA != gui::render::BlendMode::ALPHA
+        );
         TEST_EXPECT(context, gui::render::BlendMode::ADDITIVE != gui::render::BlendMode::OPAQUE);
         TEST_EXPECT(context, gui::render::BlendMode::MULTIPLY != gui::render::BlendMode::SCREEN);
     }

@@ -74,8 +74,6 @@ if(WIN32)
     target_link_libraries(ui_api_testbed PRIVATE
         draw::draw
         render::render
-        ole32
-        windowscodecs
     )
     add_custom_command(
         TARGET ui_api_testbed POST_BUILD

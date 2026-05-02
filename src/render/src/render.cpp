@@ -53,6 +53,8 @@ namespace gui::render {
             return "texture creation failed";
         case Result::SAMPLER_CREATION_FAILED:
             return "sampler creation failed";
+        case Result::IMAGE_LOAD_FAILED:
+            return "image load failed";
         }
 
         return "unknown";
@@ -420,10 +422,9 @@ namespace gui::render {
 #endif
     }
 
-    auto create_shader_from_source(Arena& arena,
-                                   Context context,
-                                   ShaderSourceDesc const& desc,
-                                   Shader& out_shader) -> Result {
+    auto create_shader_from_source(
+        Arena& arena, Context context, ShaderSourceDesc const& desc, Shader& out_shader
+    ) -> Result {
         ASSERT(context_valid(context));
         ASSERT(out_shader.handle == nullptr);
         ASSERT(!desc.source.empty());
@@ -512,10 +513,9 @@ namespace gui::render {
 #endif
     }
 
-    auto create_bind_group(Arena& arena,
-                           Context context,
-                           BindGroupDesc const& desc,
-                           BindGroup& out_group) -> Result {
+    auto create_bind_group(
+        Arena& arena, Context context, BindGroupDesc const& desc, BindGroup& out_group
+    ) -> Result {
         ASSERT(context_valid(context));
         ASSERT(out_group.handle == nullptr);
         ASSERT(desc.buffer_count == 0u || desc.buffers != nullptr);

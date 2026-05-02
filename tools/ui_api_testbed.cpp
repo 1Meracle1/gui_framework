@@ -20,10 +20,8 @@
 #include <draw/draw_renderer.h>
 #include <font_cache/font_cache.h>
 #include <font_provider/font_provider.h>
-#include <objbase.h>
 #include <render/render.h>
 #include <ui_api_testbed_embedded_texture.h>
-#include <wincodec.h>
 #include <windows.h>
 #endif
 #include <gui/gui.h>
@@ -2766,247 +2764,45 @@ namespace {
         fmt::eprintf("%s failed: %s\n", operation, font_provider::result_name(result));
     }
 
-    auto log_hresult(char const* operation, HRESULT result) -> void {
-        fmt::eprintf("%s failed: 0x%x\n", operation, static_cast<uint32_t>(result));
-    }
-
-    template <typename T> auto release_com(T*& value) -> void {
-        if (value != nullptr) {
-            value->Release();
-            value = nullptr;
-        }
-    }
-
-    class ComApartment final {
-      public:
-        auto init() -> bool {
-            HRESULT const result = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-            if (result == RPC_E_CHANGED_MODE) {
-                return true;
-            }
-            if (FAILED(result)) {
-                log_hresult("CoInitializeEx", result);
-                return false;
-            }
-            m_initialized = true;
-            return true;
-        }
-
-        ~ComApartment() {
-            if (m_initialized) {
-                CoUninitialize();
-            }
-        }
-
-        ComApartment() = default;
-        ComApartment(ComApartment&&) = delete;
-        ComApartment(ComApartment const&) = delete;
-        auto operator=(ComApartment&&) -> ComApartment& = delete;
-        auto operator=(ComApartment const&) -> ComApartment& = delete;
-
-      private:
-        bool m_initialized = false;
-    };
-
     [[nodiscard]] auto texture_sample_size(render::SizeU32 size) -> gui::Vec2 {
         return {static_cast<float>(size.width), static_cast<float>(size.height)};
     }
 
-    [[nodiscard]] auto testbed_asset_path(wchar_t* path, size_t capacity, wchar_t const* file_name)
+    [[nodiscard]] auto testbed_asset_path(char* path, size_t capacity, wchar_t const* file_name)
         -> bool {
-        DWORD const length = GetModuleFileNameW(nullptr, path, static_cast<DWORD>(capacity));
-        if (length == 0u || static_cast<size_t>(length) >= capacity) {
+        wchar_t wide_path[MAX_PATH] = {};
+        DWORD const length = GetModuleFileNameW(nullptr, wide_path, MAX_PATH);
+        if (length == 0u || length >= MAX_PATH || capacity == 0u ||
+            capacity > static_cast<size_t>(0x7fffffffu)) {
             return false;
         }
 
         size_t dir_length = static_cast<size_t>(length);
-        while (dir_length != 0u && path[dir_length - 1u] != L'\\' &&
-               path[dir_length - 1u] != L'/') {
+        while (dir_length != 0u && wide_path[dir_length - 1u] != L'\\' &&
+               wide_path[dir_length - 1u] != L'/') {
             --dir_length;
         }
 
         size_t const file_length = static_cast<size_t>(lstrlenW(file_name));
-        if (dir_length + file_length >= capacity) {
+        if (dir_length + file_length >= MAX_PATH) {
             return false;
         }
 
         for (size_t index = 0u; index <= file_length; ++index) {
-            path[dir_length + index] = file_name[index];
-        }
-        return true;
-    }
-
-    [[nodiscard]] auto create_texture_from_wic_frame(
-        render::Context context,
-        IWICImagingFactory* factory,
-        IWICBitmapFrameDecode* frame,
-        TextureSample& out_sample
-    ) -> bool {
-        UINT width = 0u;
-        UINT height = 0u;
-        HRESULT result = frame->GetSize(&width, &height);
-        if (FAILED(result)) {
-            log_hresult("IWICBitmapFrameDecode::GetSize", result);
-            return false;
-        }
-        if (width == 0u || height == 0u) {
-            fmt::eprintf("image decode failed: empty image\n");
-            return false;
+            wide_path[dir_length + index] = file_name[index];
         }
 
-        uint64_t const bytes_per_row64 = static_cast<uint64_t>(width) * 4u;
-        uint64_t const byte_size64 = bytes_per_row64 * static_cast<uint64_t>(height);
-        if (bytes_per_row64 > 0xffffffffu || byte_size64 > 0xffffffffu) {
-            fmt::eprintf("image decode failed: image is too large\n");
-            return false;
-        }
-
-        IWICFormatConverter* converter = nullptr;
-        result = factory->CreateFormatConverter(&converter);
-        if (FAILED(result) || converter == nullptr) {
-            log_hresult("IWICImagingFactory::CreateFormatConverter", result);
-            return false;
-        }
-
-        result = converter->Initialize(
-            frame,
-            GUID_WICPixelFormat32bppRGBA,
-            WICBitmapDitherTypeNone,
+        int const written = WideCharToMultiByte(
+            CP_UTF8,
+            WC_ERR_INVALID_CHARS,
+            wide_path,
+            -1,
+            path,
+            static_cast<int>(capacity),
             nullptr,
-            0.0,
-            WICBitmapPaletteTypeCustom
+            nullptr
         );
-        if (FAILED(result)) {
-            log_hresult("IWICFormatConverter::Initialize", result);
-            release_com(converter);
-            return false;
-        }
-
-        ArenaTemp temp = begin_thread_temp_arena();
-        uint32_t const bytes_per_row = static_cast<uint32_t>(bytes_per_row64);
-        uint32_t const byte_size = static_cast<uint32_t>(byte_size64);
-        uint8_t* const pixels = arena_alloc<uint8_t>(*temp.arena(), byte_size);
-        result = converter->CopyPixels(nullptr, bytes_per_row, byte_size, pixels);
-        release_com(converter);
-        if (FAILED(result)) {
-            log_hresult("IWICFormatConverter::CopyPixels", result);
-            return false;
-        }
-
-        render::TextureDesc desc = {};
-        desc.size = {width, height};
-        desc.bytes_per_row = bytes_per_row;
-        desc.rgba_pixels = pixels;
-        render::Result const texture_result =
-            render::create_texture(context, desc, out_sample.texture);
-        if (render::result_failed(texture_result)) {
-            log_render_result("render::create_texture", texture_result);
-            return false;
-        }
-
-        out_sample.size = texture_sample_size(desc.size);
-        return true;
-    }
-
-    [[nodiscard]] auto
-    load_texture_from_file(render::Context context, wchar_t const* path, TextureSample& out_sample)
-        -> bool {
-        IWICImagingFactory* factory = nullptr;
-        HRESULT result = CoCreateInstance(
-            CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory)
-        );
-        if (FAILED(result) || factory == nullptr) {
-            log_hresult("CoCreateInstance(CLSID_WICImagingFactory)", result);
-            return false;
-        }
-
-        IWICBitmapDecoder* decoder = nullptr;
-        result = factory->CreateDecoderFromFilename(
-            path, nullptr, GENERIC_READ, WICDecodeMetadataCacheOnLoad, &decoder
-        );
-        if (FAILED(result) || decoder == nullptr) {
-            log_hresult("IWICImagingFactory::CreateDecoderFromFilename", result);
-            release_com(factory);
-            return false;
-        }
-
-        IWICBitmapFrameDecode* frame = nullptr;
-        result = decoder->GetFrame(0u, &frame);
-        if (FAILED(result) || frame == nullptr) {
-            log_hresult("IWICBitmapDecoder::GetFrame", result);
-            release_com(decoder);
-            release_com(factory);
-            return false;
-        }
-
-        bool const loaded = create_texture_from_wic_frame(context, factory, frame, out_sample);
-        release_com(frame);
-        release_com(decoder);
-        release_com(factory);
-        return loaded;
-    }
-
-    [[nodiscard]] auto load_texture_from_memory(
-        render::Context context, uint8_t const* bytes, size_t byte_count, TextureSample& out_sample
-    ) -> bool {
-        if (bytes == nullptr || byte_count == 0u || byte_count > 0xffffffffu) {
-            return false;
-        }
-
-        IWICImagingFactory* factory = nullptr;
-        HRESULT result = CoCreateInstance(
-            CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory)
-        );
-        if (FAILED(result) || factory == nullptr) {
-            log_hresult("CoCreateInstance(CLSID_WICImagingFactory)", result);
-            return false;
-        }
-
-        IWICStream* stream = nullptr;
-        result = factory->CreateStream(&stream);
-        if (FAILED(result) || stream == nullptr) {
-            log_hresult("IWICImagingFactory::CreateStream", result);
-            release_com(factory);
-            return false;
-        }
-
-        result = stream->InitializeFromMemory(
-            const_cast<uint8_t*>(bytes), static_cast<DWORD>(byte_count)
-        );
-        if (FAILED(result)) {
-            log_hresult("IWICStream::InitializeFromMemory", result);
-            release_com(stream);
-            release_com(factory);
-            return false;
-        }
-
-        IWICBitmapDecoder* decoder = nullptr;
-        result = factory->CreateDecoderFromStream(
-            stream, nullptr, WICDecodeMetadataCacheOnLoad, &decoder
-        );
-        if (FAILED(result) || decoder == nullptr) {
-            log_hresult("IWICImagingFactory::CreateDecoderFromStream", result);
-            release_com(stream);
-            release_com(factory);
-            return false;
-        }
-
-        IWICBitmapFrameDecode* frame = nullptr;
-        result = decoder->GetFrame(0u, &frame);
-        if (FAILED(result) || frame == nullptr) {
-            log_hresult("IWICBitmapDecoder::GetFrame", result);
-            release_com(decoder);
-            release_com(stream);
-            release_com(factory);
-            return false;
-        }
-
-        bool const loaded = create_texture_from_wic_frame(context, factory, frame, out_sample);
-        release_com(frame);
-        release_com(decoder);
-        release_com(stream);
-        release_com(factory);
-        return loaded;
+        return written > 0;
     }
 
     auto destroy_texture_sample(render::Context context, TextureSample& sample) -> void {
@@ -3281,22 +3077,35 @@ namespace {
 
         font_cache::create_cache(arena, runtime->provider, {}, runtime->cache);
         font_cache::open_system_font(runtime->cache, "Segoe UI", runtime->font);
-        wchar_t disk_texture_path[MAX_PATH] = {};
-        if (!testbed_asset_path(disk_texture_path, MAX_PATH, L"ui_api_testbed_texture.png")) {
+        char disk_texture_path[MAX_PATH * 4] = {};
+        if (!testbed_asset_path(
+                disk_texture_path, sizeof(disk_texture_path), L"ui_api_testbed_texture.png"
+            )) {
             fmt::eprintf("ui_api_testbed_texture.png path is too long\n");
             return false;
         }
-        if (!load_texture_from_file(render_context, disk_texture_path, runtime->textures.disk)) {
+        render_result = render::load_image_texture_from_file(
+            render_context, disk_texture_path, runtime->textures.disk.texture
+        );
+        if (render::result_failed(render_result)) {
+            log_render_result("render::load_image_texture_from_file", render_result);
             return false;
         }
-        if (!load_texture_from_memory(
-                render_context,
-                ui_api_testbed_assets::texture_png,
-                ui_api_testbed_assets::texture_png_size,
-                runtime->textures.embedded
-            )) {
+        runtime->textures.disk.size =
+            texture_sample_size(render::texture_size(runtime->textures.disk.texture));
+
+        render_result = render::load_image_texture_from_memory(
+            render_context,
+            ui_api_testbed_assets::texture_png,
+            ui_api_testbed_assets::texture_png_size,
+            runtime->textures.embedded.texture
+        );
+        if (render::result_failed(render_result)) {
+            log_render_result("render::load_image_texture_from_memory", render_result);
             return false;
         }
+        runtime->textures.embedded.size =
+            texture_sample_size(render::texture_size(runtime->textures.embedded.texture));
 
         draw::ContextDesc draw_desc = {};
         draw_desc.font_cache = runtime->cache;
@@ -3592,12 +3401,6 @@ namespace {
     auto run_windowed(TraceOptions trace_options) -> int {
         AppState app_state = {};
         global_app_state = &app_state;
-
-        ComApartment com;
-        if (!com.init()) {
-            global_app_state = nullptr;
-            return 1;
-        }
 
         if (!create_testbed_window(&app_state)) {
             global_app_state = nullptr;
