@@ -11,8 +11,11 @@ namespace gui::font_cache {
         constexpr uint64_t FNV64_OFFSET = 14695981039346656037ull;
         constexpr uint64_t FNV64_PRIME = 1099511628211ull;
 
+        struct CacheImpl;
+
         struct CacheFont {
             CacheFont* next = nullptr;
+            CacheImpl* cache = nullptr;
             font_provider::Font provider_font = {};
         };
 
@@ -25,12 +28,22 @@ namespace gui::font_cache {
             TextRun run = {};
         };
 
+        struct AdvanceEntry {
+            AdvanceEntry* next = nullptr;
+            CacheFont* font = nullptr;
+            uint32_t size_bits = 0u;
+            uint64_t text_hash = 0u;
+            StrRef text = {};
+            float advance = 0.0f;
+        };
+
         struct CacheImpl {
             Arena persistent_arena = {};
             Arena cache_arena = {};
             font_provider::Context provider = {};
             CacheFont* first_font = nullptr;
             CacheEntry** slots = nullptr;
+            AdvanceEntry** advance_slots = nullptr;
             size_t slot_count = 0u;
         };
 
@@ -103,13 +116,14 @@ namespace gui::font_cache {
             impl->first_font = nullptr;
         }
 
-        auto open_provider_font(CacheImpl* impl,
-                                font_provider::FontDesc const& desc,
-                                Font& out_font) -> void {
+        auto
+        open_provider_font(CacheImpl* impl, font_provider::FontDesc const& desc, Font& out_font)
+            -> void {
             font_provider::Font provider_font = {};
             font_provider::open_font(impl->persistent_arena, impl->provider, desc, provider_font);
 
             CacheFont* const font = arena_new<CacheFont>(impl->persistent_arena);
+            font->cache = impl;
             font->provider_font = provider_font;
             font->next = impl->first_font;
             impl->first_font = font;
@@ -126,10 +140,9 @@ namespace gui::font_cache {
         return font.handle != nullptr;
     }
 
-    auto create_cache(Arena& arena,
-                      font_provider::Context provider,
-                      CacheDesc const& desc,
-                      Cache& out_cache) -> void {
+    auto create_cache(
+        Arena& arena, font_provider::Context provider, CacheDesc const& desc, Cache& out_cache
+    ) -> void {
         ASSERT(font_provider::context_valid(provider));
         ASSERT(out_cache.handle == nullptr);
         ASSERT(desc.cache_slot_count != 0u);
@@ -144,8 +157,11 @@ namespace gui::font_cache {
         impl->cache_arena.init(cache_options);
 
         impl->slots = arena_alloc<CacheEntry*>(impl->persistent_arena, desc.cache_slot_count);
+        impl->advance_slots =
+            arena_alloc<AdvanceEntry*>(impl->persistent_arena, desc.cache_slot_count);
         size_t const slot_bytes = sizeof(CacheEntry*) * desc.cache_slot_count;
         std::memset(impl->slots, 0, slot_bytes);
+        std::memset(impl->advance_slots, 0, sizeof(AdvanceEntry*) * desc.cache_slot_count);
         impl->slot_count = desc.cache_slot_count;
         impl->provider = provider;
         out_cache.handle = impl;
@@ -157,6 +173,7 @@ namespace gui::font_cache {
         CacheImpl* const impl = cache_from_handle(cache);
         close_fonts(impl);
         impl->slots = nullptr;
+        impl->advance_slots = nullptr;
         impl->slot_count = 0u;
         impl->cache_arena.destroy();
         impl->persistent_arena.destroy();
@@ -171,6 +188,7 @@ namespace gui::font_cache {
 
         size_t const slot_bytes = sizeof(CacheEntry*) * impl->slot_count;
         std::memset(impl->slots, 0, slot_bytes);
+        std::memset(impl->advance_slots, 0, sizeof(AdvanceEntry*) * impl->slot_count);
         impl->cache_arena.reset();
     }
 
@@ -202,7 +220,37 @@ namespace gui::font_cache {
         CacheFont* const impl = font_from_handle(font);
         ASSERT(impl != nullptr);
 
-        return font_provider::text_advance(impl->provider_font, size, text);
+        if (text.empty()) {
+            return 0.0f;
+        }
+
+        CacheImpl* const cache = impl->cache;
+        if (cache == nullptr || cache->advance_slots == nullptr) {
+            return font_provider::text_advance(impl->provider_font, size, text);
+        }
+
+        uint32_t const size_bits = float_bits(size);
+        uint64_t const hash = text_run_hash(impl, size_bits, text);
+        size_t const slot_index = static_cast<size_t>(hash % cache->slot_count);
+
+        for (AdvanceEntry* entry = cache->advance_slots[slot_index]; entry != nullptr;
+             entry = entry->next) {
+            if (entry->font == impl && entry->size_bits == size_bits && entry->text_hash == hash &&
+                entry->text == text) {
+                return entry->advance;
+            }
+        }
+
+        float const advance = font_provider::text_advance(impl->provider_font, size, text);
+        AdvanceEntry* const entry = arena_new<AdvanceEntry>(cache->cache_arena);
+        entry->font = impl;
+        entry->size_bits = size_bits;
+        entry->text_hash = hash;
+        copy_text(cache->cache_arena, text, entry->text);
+        entry->advance = advance;
+        entry->next = cache->advance_slots[slot_index];
+        cache->advance_slots[slot_index] = entry;
+        return advance;
     }
 
     auto text_run(Cache cache, Font font, float size, StrRef text, TextRun& out_run) -> void {

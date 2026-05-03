@@ -140,6 +140,7 @@ namespace gui {
             StrRef text = {};
             size_t start = 0u;
             size_t end = 0u;
+            float advance = -1.0f;
         };
 
         struct TextEditBuffer {
@@ -667,55 +668,39 @@ namespace gui {
                 return true;
             }
 
-            size_t low = start;
-            size_t high = next_text_offset(text, start);
-            size_t step = 1u;
+            size_t cursor = start;
+            size_t high = start;
+            size_t break_offset = StrRef::NPOS;
+            float break_advance = 0.0f;
+            float advance = 0.0f;
+            float high_advance = 0.0f;
             bool overflow = false;
-            while (true) {
-                float const advance = text_advance(box, text.substr(start, high - start));
-                if (advance > wrap_width) {
+            while (cursor < end) {
+                size_t const next = std::min(next_text_offset(text, cursor), end);
+                float const next_advance =
+                    advance + text_advance(box, text.substr(cursor, next - cursor));
+                if (next_advance > wrap_width) {
+                    high = next;
+                    high_advance = next_advance;
                     overflow = true;
                     break;
                 }
-                if (high >= end) {
-                    break;
+                if (is_ascii_whitespace(text[cursor])) {
+                    break_offset = next;
+                    break_advance = next_advance;
                 }
-                low = high;
-                for (size_t index = 0u; index < step && high < end; ++index) {
-                    high = std::min(next_text_offset(text, high), end);
-                }
-                step *= 2u;
+                advance = next_advance;
+                cursor = next;
             }
 
             if (!overflow) {
-                out_line = {text.substr(start, end - start), start, end};
+                out_line = {text.substr(start, end - start), start, end, advance};
                 offset = newline == StrRef::NPOS ? text.size() : newline + 1u;
                 return true;
             }
 
-            while (next_text_offset(text, low) < high) {
-                size_t middle = previous_text_offset(text, low + (high - low) / 2u);
-                if (middle <= low) {
-                    middle = next_text_offset(text, low);
-                }
-                float const advance = text_advance(box, text.substr(start, middle - start));
-                if (advance > wrap_width) {
-                    high = middle;
-                } else {
-                    low = middle;
-                }
-            }
-
-            size_t const cursor = previous_text_offset(text, high);
-            size_t break_offset = StrRef::NPOS;
-            for (size_t scan = start; scan < cursor; scan = next_text_offset(text, scan)) {
-                if (is_ascii_whitespace(text[scan])) {
-                    break_offset = next_text_offset(text, scan);
-                }
-            }
-
             if (cursor == start) {
-                out_line = {text.substr(start, high - start), start, high};
+                out_line = {text.substr(start, high - start), start, high, high_advance};
                 offset = high;
                 return true;
             }
@@ -723,11 +708,13 @@ namespace gui {
             bool const whitespace = is_ascii_whitespace(text[cursor]);
             size_t line_end = cursor;
             size_t next_offset = whitespace ? high : cursor;
+            float line_advance = advance;
             if (!whitespace && break_offset != StrRef::NPOS && break_offset > start) {
                 line_end = break_offset;
                 next_offset = break_offset;
+                line_advance = break_advance;
             }
-            out_line = {text.substr(start, line_end - start), start, line_end};
+            out_line = {text.substr(start, line_end - start), start, line_end, line_advance};
             offset = next_offset;
             return true;
         }
@@ -759,7 +746,9 @@ namespace gui {
             size_t offset = 0u;
             TextLine line = {};
             while (next_text_line(box, wrap_width, offset, line)) {
-                size.x = std::max(size.x, text_advance(box, line.text));
+                float const advance =
+                    line.advance >= 0.0f ? line.advance : text_advance(box, line.text);
+                size.x = std::max(size.x, advance);
                 line_count += 1u;
             }
             size.y = line_height * static_cast<float>(line_count);
@@ -3268,9 +3257,10 @@ namespace gui {
 
             size_t previous = 0u;
             float previous_x = 0.0f;
+            float advance = 0.0f;
             for (size_t offset = next_text_offset(line.text, 0u); offset <= line.text.size();
                  offset = next_text_offset(line.text, offset)) {
-                float const advance = text_advance(box, line.text.prefix(offset));
+                advance += text_advance(box, line.text.substr(previous, offset - previous));
                 if (text_x < (previous_x + advance) * 0.5f) {
                     return line.start + previous;
                 }
