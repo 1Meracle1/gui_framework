@@ -51,7 +51,7 @@ plain MSVC `cl.exe` skips automatic
 - `src/bench`: custom no-dependency benchmark harness.
 - `tests`: test executables.
 - `benchmarks`: benchmark executables.
-- `tools`: small project utilities and smoke executables.
+- `examples`: small project utilities and smoke executables.
 - `docs`: project guidelines and testing strategy.
 
 Only actual GUI framework functionality belongs in namespace `gui`. Foundation,

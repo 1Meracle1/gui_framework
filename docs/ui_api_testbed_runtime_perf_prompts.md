@@ -49,7 +49,7 @@ Goal: get engine-style timeline zones detailed enough to explain the sampled
 profile without changing normal app behavior.
 
 Scope:
-- keep tracing local to `tools/ui_api_testbed.cpp` unless the smallest useful
+- keep tracing local to `examples/ui_api_testbed.cpp` unless the smallest useful
   debug-only helper clearly belongs in `src/base`
 - compile tracing only for debug builds or keep it inert in release
 - add command-line gated tracing, off by default
@@ -70,7 +70,7 @@ Scope:
 - update the context file with how to run the trace and any overhead caveats
 
 Validation:
-- `clang-format --dry-run --Werror tools\ui_api_testbed.cpp`
+- `clang-format --dry-run --Werror examples\ui_api_testbed.cpp`
 - `.\build.bat windows-msvc-debug ui_api_testbed`
 - run one traced idle sample, save the trace artifact, and record the output in
   the context file
@@ -111,7 +111,7 @@ breaking input, resize, popups, modal state, theme switching, scroll, or text
 editing.
 
 Scope:
-- keep the first implementation local to `tools/ui_api_testbed.cpp`
+- keep the first implementation local to `examples/ui_api_testbed.cpp`
 - redraw immediately after input messages, resize, and state changes that the
   local app can observe
 - sleep or wait for messages when no redraw is needed
@@ -122,7 +122,7 @@ Scope:
 - update the context file with the new redraw policy and measured effect
 
 Validation:
-- `clang-format --dry-run --Werror tools\ui_api_testbed.cpp`
+- `clang-format --dry-run --Werror examples\ui_api_testbed.cpp`
 - `.\build.bat windows-msvc-debug ui_api_testbed`
 - sampled profile or flamegraph before/after comparison
 - traced idle timeline before/after comparison

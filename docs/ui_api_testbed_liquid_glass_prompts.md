@@ -12,7 +12,7 @@ validated with a real `ui_api_testbed` screenshot.
 
 ```text
 Using the shared Liquid Glass context, make the first bounded polish pass on
-tools/ui_api_testbed.cpp.
+examples/ui_api_testbed.cpp.
 
 Goal: improve app hierarchy without changing behavior. Start by running the
 current ui_api_testbed and capturing a baseline screenshot. Compare it to the
@@ -36,7 +36,7 @@ screenshot proves the default window is readable and the toolbar fits.
 
 ```text
 Using the shared Liquid Glass context, improve only the top control row in
-tools/ui_api_testbed.cpp.
+examples/ui_api_testbed.cpp.
 
 Goal: make the controls feel like macOS/iOS 26 functional glass, while keeping
 them legible and compact at 1280x800.
@@ -60,7 +60,7 @@ toolbar fits and every control label/state remains readable.
 
 ```text
 Using the shared Liquid Glass context, improve only the left sidebar and
-virtualized asset list in tools/ui_api_testbed.cpp.
+virtualized asset list in examples/ui_api_testbed.cpp.
 
 Goal: make the sidebar feel like a polished macOS source list sitting on a
 restrained material layer.
@@ -84,7 +84,7 @@ sidebar list is readable, selected row is obvious, and no rows/text are clipped.
 
 ```text
 Using the shared Liquid Glass context, improve the body text panel, preview
-panel, table, and log panel in tools/ui_api_testbed.cpp.
+panel, table, and log panel in examples/ui_api_testbed.cpp.
 
 Goal: move content areas away from flashy glass and toward calm standard
 materials beneath the functional glass chrome.
@@ -106,11 +106,11 @@ multiline input, table text, and log entries are all readable in the screenshot.
 
 ```text
 Using the shared Liquid Glass context, refine the backdrop and any faux
-reflection/highlight drawing in tools/ui_api_testbed.cpp.
+reflection/highlight drawing in examples/ui_api_testbed.cpp.
 
 Goal: keep the Liquid Glass backdrop visually rich enough to show through
 functional glass, but reduce reflection intensity and visual noise compared to
-tools/liquid_glass_testbed.cpp.
+examples/liquid_glass_testbed.cpp.
 
 Scope:
 - draw_liquid_glass_backdrop color balance and alpha
@@ -130,7 +130,7 @@ backdrop supports the UI without distracting from controls or text.
 
 ```text
 Using the shared Liquid Glass context, improve popup and modal presentation in
-tools/ui_api_testbed.cpp.
+examples/ui_api_testbed.cpp.
 
 Goal: make transient UI feel elevated, clear, and app-like without hiding the
 content layer too aggressively.
@@ -153,7 +153,7 @@ regressions, and only finish when both transient states are validated.
 
 ```text
 Using the shared Liquid Glass context, validate and polish the Samples tab in
-tools/ui_api_testbed.cpp.
+examples/ui_api_testbed.cpp.
 
 Goal: make the second tab feel like part of the same Liquid Glass app, not an
 older leftover surface.
@@ -173,7 +173,7 @@ finish when the Samples tab is readable and visually consistent.
 
 ```text
 Using the shared Liquid Glass context, perform a final cleanup pass on
-tools/ui_api_testbed.cpp.
+examples/ui_api_testbed.cpp.
 
 Goal: remove visual inconsistency and code bloat introduced during the gradual
 migration.
@@ -195,7 +195,7 @@ coherent and no text/control overlap is visible.
 
 ```text
 Using the shared Liquid Glass context, add a light Liquid Glass theme to
-tools/ui_api_testbed.cpp without exposing it in the UI yet.
+examples/ui_api_testbed.cpp without exposing it in the UI yet.
 
 Goal: create a polished light counterpart to the current dark theme while
 preserving the same layout, behavior, and local style cleanup from the dark
@@ -224,7 +224,7 @@ text/control overlap is visible.
 
 ```text
 Using the shared Liquid Glass context, add a compact theme switcher to
-tools/ui_api_testbed.cpp that toggles between the existing dark theme and the new
+examples/ui_api_testbed.cpp that toggles between the existing dark theme and the new
 light Liquid Glass theme.
 
 Goal: make theme switching part of the actual UI without disturbing the testbed
@@ -252,7 +252,7 @@ text/control overlap.
 
 ```text
 Using the shared Liquid Glass context, do a cleanup pass after the dark/light
-theme switcher is working in tools/ui_api_testbed.cpp.
+theme switcher is working in examples/ui_api_testbed.cpp.
 
 Goal: remove bloat introduced while adding the light theme and ensure both
 themes are maintainable and visually consistent.
@@ -275,7 +275,7 @@ look coherent and no text/control overlap is visible.
 
 ```text
 Using the shared Liquid Glass context, fix only the preview/content panel corner
-artifact in tools/ui_api_testbed.cpp.
+artifact in examples/ui_api_testbed.cpp.
 
 Goal: make the large preview panel in the Testbed tab have clean, coherent
 bottom-left and bottom-right corners in both dark and light themes. The current
@@ -301,7 +301,7 @@ edge is clean and no text/control overlap is visible.
 
 ```text
 Using the shared Liquid Glass context, replace the header Dark/Light segmented
-theme switcher in tools/ui_api_testbed.cpp with a single compact toggle-style
+theme switcher in examples/ui_api_testbed.cpp with a single compact toggle-style
 control.
 
 Goal: the header should show one small control that switches themes and displays
@@ -326,7 +326,7 @@ header fit, text clipping, and visual consistency.
 
 ```text
 Using the shared Liquid Glass context, fix only the popup and modal close button
-glyph alignment in tools/ui_api_testbed.cpp.
+glyph alignment in examples/ui_api_testbed.cpp.
 
 Goal: the top-right close buttons inside both the floating popup and modal
 dialog should look centered and intentional. The current "x" glyph appears
@@ -351,7 +351,7 @@ overlap.
 
 ```text
 Using the shared Liquid Glass context, polish checkbox rendering and local usage
-in tools/ui_api_testbed.cpp, focusing on the Enabled and Read-only checkboxes.
+in examples/ui_api_testbed.cpp, focusing on the Enabled and Read-only checkboxes.
 
 Goal: make checked, unchecked, read-only, and disabled/read-only checkbox states
 look cleaner in both themes. The current Enabled checkbox looks visually rough,

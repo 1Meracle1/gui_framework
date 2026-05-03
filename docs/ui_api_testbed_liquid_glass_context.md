@@ -5,7 +5,7 @@ Liquid Glass migration for `ui_api_testbed`.
 
 ## Goal
 
-Improve `tools/ui_api_testbed.cpp` until it feels like a polished iOS/macOS 26
+Improve `examples/ui_api_testbed.cpp` until it feels like a polished iOS/macOS 26
 style application using Liquid Glass principles.
 
 Keep the implementation incremental. Each chat should make one bounded visual
@@ -15,7 +15,7 @@ screenshot, fix visible problems, and only finish after the result is validated.
 ## Project Constraints
 
 - Workspace: `D:\dev\cpp\gui_framework`.
-- Primary file for this migration: `tools/ui_api_testbed.cpp`.
+- Primary file for this migration: `examples/ui_api_testbed.cpp`.
 - Do not make framework-level API changes unless the current prompt explicitly
   requires it.
 - Keep changes small and local.
@@ -36,7 +36,7 @@ Use Apple Liquid Glass guidance as the design target:
   transparent.
 - Prefer soft translucent fills, clear borders, larger rounded shapes, and
   restrained shadows.
-- Keep reflections and highlights much lower than `tools/liquid_glass_testbed.cpp`.
+- Keep reflections and highlights much lower than `examples/liquid_glass_testbed.cpp`.
 - Clear glass should appear only over visually rich backdrop areas.
 - Prioritize readable text and predictable app layout over glass spectacle.
 
@@ -172,7 +172,7 @@ Every migration step must do all of the following before final response:
 Run at least:
 
 ```bat
-clang-format --dry-run --Werror tools\ui_api_testbed.cpp
+clang-format --dry-run --Werror examples\ui_api_testbed.cpp
 .\build.bat windows-msvc-debug ui_api_testbed
 ```
 

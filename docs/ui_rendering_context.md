@@ -1,7 +1,7 @@
 # UI Rendering Context
 
 ## Status
-- Planning optimized v2 UI drawing and a windowed `tools/ui_api_testbed.cpp`.
+- Planning optimized v2 UI drawing and a windowed `examples/ui_api_testbed.cpp`.
 - Current `ui_api_testbed` is console-style: creates `gui::Context` and
   `gui::draw::Context`, submits v2 UI, calls `gui::render_frame`, then prints
   draw counts, scroll state, metadata, `find_box`, and `hit_test`.

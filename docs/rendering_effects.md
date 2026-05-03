@@ -22,7 +22,7 @@ screen on the bottom row.
 Use the normal root checks before handing off rendering changes:
 
 ```bat
-clang-format --dry-run --Werror tools\render_effects_testbed.cpp
+clang-format --dry-run --Werror examples\render_effects_testbed.cpp
 .\build.bat
 .\test.bat
 ```

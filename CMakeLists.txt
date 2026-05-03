@@ -32,16 +32,16 @@ add_subdirectory(src/gui)
 cpp_configure_target(gui_framework)
 
 add_executable(gui_framework_info
-    tools/framework_info.cpp
+    examples/framework_info.cpp
 )
 target_link_libraries(gui_framework_info PRIVATE gui::gui)
 cpp_configure_target(gui_framework_info)
 
-add_subdirectory(tools/ui_api_testbed)
+add_subdirectory(examples/ui_api_testbed)
 
 if(WIN32)
     add_executable(render_triangle_testbed
-        tools/render_triangle_testbed.cpp
+        examples/render_triangle_testbed.cpp
     )
     target_compile_definitions(render_triangle_testbed PRIVATE
         WIN32_LEAN_AND_MEAN
@@ -54,7 +54,7 @@ if(WIN32)
     cpp_configure_target(render_triangle_testbed)
 
     add_executable(text_rendering_testbed
-        tools/text_rendering_testbed.cpp
+        examples/text_rendering_testbed.cpp
     )
     target_compile_definitions(text_rendering_testbed PRIVATE
         WIN32_LEAN_AND_MEAN
@@ -68,7 +68,7 @@ if(WIN32)
     cpp_configure_target(text_rendering_testbed)
 
     add_executable(render_effects_testbed
-        tools/render_effects_testbed.cpp
+        examples/render_effects_testbed.cpp
     )
     target_compile_definitions(render_effects_testbed PRIVATE
         WIN32_LEAN_AND_MEAN
@@ -82,7 +82,7 @@ if(WIN32)
     cpp_configure_target(render_effects_testbed)
 
     add_executable(liquid_glass_testbed
-        tools/liquid_glass_testbed.cpp
+        examples/liquid_glass_testbed.cpp
     )
     target_compile_definitions(liquid_glass_testbed PRIVATE
         WIN32_LEAN_AND_MEAN
@@ -96,7 +96,7 @@ if(WIN32)
     cpp_configure_target(liquid_glass_testbed)
 
     add_executable(repository_ui_testbed
-        tools/repository_ui_testbed.cpp
+        examples/repository_ui_testbed.cpp
     )
     set(REPOSITORY_UI_TESTBED_CODICON_FONT
         "${PROJECT_SOURCE_DIR}/third_party/codicons/codicon.ttf"
@@ -146,7 +146,7 @@ if(WIN32)
     cpp_configure_target(repository_ui_testbed)
 
     add_executable(render_dx12_clear_smoke
-        tools/render_dx12_clear_smoke.cpp
+        examples/render_dx12_clear_smoke.cpp
     )
     target_compile_definitions(render_dx12_clear_smoke PRIVATE
         WIN32_LEAN_AND_MEAN
