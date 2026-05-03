@@ -5230,6 +5230,10 @@ namespace gui {
         return id(scope, id(value));
     }
 
+    auto id(StrRef scope, uint64_t value) -> Id {
+        return id(id(scope), value);
+    }
+
     auto context_valid(Context context) -> bool {
         return context.handle != nullptr;
     }

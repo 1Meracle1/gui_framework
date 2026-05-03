@@ -133,6 +133,14 @@ namespace {
         TEST_EXPECT(context, gui::build_compiler()[0] != '\0');
     }
 
+    TEST_CASE(color_and_id_helpers_are_available) {
+        gui::Color const color = gui::color_alpha(gui::rgb(12, 34, 56), 0.25f);
+        expect_color(context, color, {12.0f / 255.0f, 34.0f / 255.0f, 56.0f / 255.0f, 0.25f});
+
+        gui::Id const scoped = gui::id("rows", 7u);
+        TEST_EXPECT(context, scoped.value == gui::id(gui::id("rows"), 7u).value);
+    }
+
     TEST_CASE(context_and_empty_frame_are_valid) {
         Arena arena = {};
         arena.init();

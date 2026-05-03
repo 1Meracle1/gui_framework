@@ -532,6 +532,11 @@ namespace gui {
         return rgba(r, g, b, 255);
     }
 
+    [[nodiscard]] constexpr auto color_alpha(Color color, float alpha) -> Color {
+        color.a = alpha;
+        return color;
+    }
+
     [[nodiscard]] constexpr auto px(float value) -> Size {
         return {SizeKind::PIXELS, value};
     }
@@ -566,6 +571,7 @@ namespace gui {
     [[nodiscard]] auto id(Id scope, Id value) -> Id;
     [[nodiscard]] auto id(Id scope, StrRef value) -> Id;
     [[nodiscard]] auto id(Id scope, uint64_t value) -> Id;
+    [[nodiscard]] auto id(StrRef scope, uint64_t value) -> Id;
     [[nodiscard]] auto context_valid(Context context) -> bool;
     [[nodiscard]] auto default_theme() -> ThemeDesc;
     [[nodiscard]] auto theme_role(ThemeDesc& theme, StyleRole role) -> ThemeStyle&;

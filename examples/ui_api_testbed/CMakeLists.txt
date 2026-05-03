@@ -12,10 +12,29 @@ add_custom_command(
     VERBATIM
 )
 
+set(UI_API_TESTBED_RELOAD_SOURCES
+    app.cpp
+    app.h
+    ui_backdrop.cpp
+    ui_backdrop.h
+    ui_common.cpp
+    ui_common.h
+    ui_dialogs.cpp
+    ui_dialogs.h
+    ui_main_tab.cpp
+    ui_main_tab.h
+    ui_root.cpp
+    ui_root.h
+    ui_sample_tab.cpp
+    ui_sample_tab.h
+    ui_theme.cpp
+    ui_theme.h
+    ui_types.h
+)
+
 if(WIN32)
     add_library(ui_api_testbed_module SHARED
-        app.cpp
-        app.h
+        ${UI_API_TESTBED_RELOAD_SOURCES}
         "${CMAKE_CURRENT_BINARY_DIR}/generated/ui_api_testbed_embedded_texture.h"
     )
     gui_write_hot_reload_manifest(
@@ -64,8 +83,12 @@ if(WIN32)
     target_sources(ui_api_testbed PRIVATE
         "${CMAKE_CURRENT_BINARY_DIR}/generated/ui_api_testbed_hot_reload_manifest.h"
         trace.cpp
-        $<$<NOT:$<CONFIG:Debug>>:${CMAKE_CURRENT_SOURCE_DIR}/app.cpp>
     )
+    foreach(source IN LISTS UI_API_TESTBED_RELOAD_SOURCES)
+        target_sources(ui_api_testbed PRIVATE
+            "$<$<NOT:$<CONFIG:Debug>>:${CMAKE_CURRENT_SOURCE_DIR}/${source}>"
+        )
+    endforeach()
     target_compile_definitions(ui_api_testbed PRIVATE
         UI_API_TESTBED_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
         UI_API_TESTBED_BINARY_DIR="${PROJECT_BINARY_DIR}"
@@ -86,7 +109,7 @@ if(WIN32)
     )
 else()
     target_sources(ui_api_testbed PRIVATE
-        app.cpp
+        ${UI_API_TESTBED_RELOAD_SOURCES}
     )
 endif()
 cpp_configure_target(ui_api_testbed)

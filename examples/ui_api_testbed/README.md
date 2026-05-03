@@ -7,6 +7,8 @@ reloadable module inputs:
 
 - `examples/ui_api_testbed/app.cpp`
 - `examples/ui_api_testbed/app.h`
+- `examples/ui_api_testbed/ui_*.cpp`
+- `examples/ui_api_testbed/ui_*.h`
 - `examples/assets/ui_api_testbed_texture.png`
 
 Changing one of those files makes the running host execute:
