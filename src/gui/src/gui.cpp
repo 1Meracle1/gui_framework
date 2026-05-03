@@ -192,6 +192,7 @@ namespace gui {
             uint64_t frame_index = 0u;
             bool building = false;
             bool active_scroll_horizontal = false;
+            bool redraw_requested = false;
         };
 
         [[nodiscard]] auto next_text_offset(StrRef text, size_t offset) -> size_t;
@@ -3743,58 +3744,77 @@ namespace gui {
             }
         }
 
-        [[nodiscard]] auto text_selection_scroll_state(ContextImpl* impl, BoxNode const& box)
+        [[nodiscard]] auto
+        text_selection_scroll_state(ContextImpl* impl, BoxNode const& box, Axis axis)
             -> StateEntry* {
-            if (box.scroll_state != nullptr &&
-                (box.scroll_state->scroll_max_x > 0.0f || box.scroll_state->scroll_max_y > 0.0f)) {
-                return box.scroll_state;
+            if (box.scroll_state != nullptr) {
+                float const max = axis == Axis::X ? box.scroll_state->scroll_max_x
+                                                  : box.scroll_state->scroll_max_y;
+                if (max > 0.0f) {
+                    return box.scroll_state;
+                }
             }
 
             for (size_t index = box.parent_index; index != INVALID_INDEX;
                  index = impl->boxes[index].parent_index) {
                 BoxNode& parent = impl->boxes[index];
-                if (parent.scroll_state != nullptr && (parent.scroll_state->scroll_max_x > 0.0f ||
-                                                       parent.scroll_state->scroll_max_y > 0.0f)) {
-                    return parent.scroll_state;
+                if (parent.scroll_state != nullptr) {
+                    float const max = axis == Axis::X ? parent.scroll_state->scroll_max_x
+                                                      : parent.scroll_state->scroll_max_y;
+                    if (max > 0.0f) {
+                        return parent.scroll_state;
+                    }
                 }
             }
-            return box.scroll_state;
+            return nullptr;
         }
 
         auto request_pointer_text_selection_scroll(ContextImpl* impl, BoxNode const& box) -> void {
-            StateEntry* const scroll_state = text_selection_scroll_state(impl, box);
-            if (!box.signal.active || !impl->frame_desc.input.mouse_down[0u] ||
-                scroll_state == nullptr || scroll_state->last_frame == 0u) {
+            if (!box.signal.active || !impl->frame_desc.input.mouse_down[0u]) {
                 return;
             }
 
             float const mouse_y = impl->frame_desc.input.mouse_pos.y;
             float const mouse_x = impl->frame_desc.input.mouse_pos.x;
-            Rect const rect = scroll_state->rect;
-            float direction_y = 0.0f;
-            if (mouse_y < rect.min.y) {
-                direction_y = -1.0f;
-            } else if (mouse_y > rect.max.y) {
-                direction_y = 1.0f;
-            }
-            float direction_x = 0.0f;
-            if (mouse_x < rect.min.x) {
-                direction_x = -1.0f;
-            } else if (mouse_x > rect.max.x) {
-                direction_x = 1.0f;
-            }
-
             float const frame_time =
                 impl->frame_desc.delta_time > 0.0f ? impl->frame_desc.delta_time : 1.0f / 60.0f;
             float const step =
                 text_line_height(box) * TEXT_SELECTION_AUTOSCROLL_LINES_PER_SECOND * frame_time;
-            if (direction_y != 0.0f && scroll_state->scroll_max_y > 0.0f) {
-                scroll_state->scroll_request_y = scroll_state->scroll_y + direction_y * step;
-                scroll_state->scroll_request_set = true;
+
+            StateEntry* const y_state = text_selection_scroll_state(impl, box, Axis::Y);
+            if (y_state != nullptr && y_state->last_frame != 0u) {
+                Rect const rect = y_state->rect;
+                float direction_y = 0.0f;
+                if (mouse_y < rect.min.y) {
+                    direction_y = -1.0f;
+                } else if (mouse_y > rect.max.y) {
+                    direction_y = 1.0f;
+                }
+                float const y =
+                    std::clamp(y_state->scroll_y + direction_y * step, 0.0f, y_state->scroll_max_y);
+                if (y != y_state->scroll_y) {
+                    y_state->scroll_request_y = y;
+                    y_state->scroll_request_set = true;
+                    impl->redraw_requested = true;
+                }
             }
-            if (direction_x != 0.0f && scroll_state->scroll_max_x > 0.0f) {
-                scroll_state->scroll_request_x = scroll_state->scroll_x + direction_x * step;
-                scroll_state->scroll_request_x_set = true;
+
+            StateEntry* const x_state = text_selection_scroll_state(impl, box, Axis::X);
+            if (x_state != nullptr && x_state->last_frame != 0u) {
+                Rect const rect = x_state->rect;
+                float direction_x = 0.0f;
+                if (mouse_x < rect.min.x) {
+                    direction_x = -1.0f;
+                } else if (mouse_x > rect.max.x) {
+                    direction_x = 1.0f;
+                }
+                float const x =
+                    std::clamp(x_state->scroll_x + direction_x * step, 0.0f, x_state->scroll_max_x);
+                if (x != x_state->scroll_x) {
+                    x_state->scroll_request_x = x;
+                    x_state->scroll_request_x_set = true;
+                    impl->redraw_requested = true;
+                }
             }
         }
 
@@ -7188,6 +7208,11 @@ namespace gui {
         return nullptr;
     }
 
+    auto Frame::redraw_requested() const -> bool {
+        ContextImpl const* const impl = impl_from_frame(*this);
+        return impl != nullptr && impl->redraw_requested;
+    }
+
     auto begin_frame(Context context, FrameDesc const& desc) -> Frame {
         ContextImpl* const impl = impl_from_context(context);
         ASSERT(impl != nullptr);
@@ -7203,6 +7228,7 @@ namespace gui {
         impl->id_scope = {};
         impl->frame_index += 1u;
         impl->building = true;
+        impl->redraw_requested = false;
 
         BoxNode* const root = impl->boxes;
         *root = {};

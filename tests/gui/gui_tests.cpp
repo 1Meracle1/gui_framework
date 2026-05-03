@@ -4023,6 +4023,7 @@ namespace {
         gui::ScrollState state = ui.scroll_state(field_id);
         TEST_EXPECT(context, state.valid);
         TEST_EXPECT(context, state.y >= 19.0f && state.y <= 21.0f);
+        TEST_EXPECT(context, ui.redraw_requested());
 
         gui::destroy_context(gui_context);
     }
@@ -5268,6 +5269,7 @@ namespace {
         TEST_EXPECT(context, state.valid);
         TEST_EXPECT(context, state.y >= 19.0f && state.y <= 21.0f);
         TEST_EXPECT(context, selection.start < selection.end);
+        TEST_EXPECT(context, ui.redraw_requested());
 
         gui::destroy_context(gui_context);
     }
@@ -5290,7 +5292,7 @@ namespace {
                 BASE_UNUSED(panel);
                 frame.selectable_label(
                     label_id,
-                    "A\nB\nC\nD\nE",
+                    "AAAAAAAAAAAAAAAAAAAA\nB\nC\nD\nE",
                     &selection,
                     {.layout = {.width = gui::fill(), .height = gui::text()}}
                 );
@@ -5321,6 +5323,7 @@ namespace {
         TEST_EXPECT(context, label_state.max_y == 0.0f);
         TEST_EXPECT(context, panel_state.y >= 19.0f && panel_state.y <= 21.0f);
         TEST_EXPECT(context, selection.start < selection.end);
+        TEST_EXPECT(context, ui.redraw_requested());
 
         gui::destroy_context(gui_context);
     }

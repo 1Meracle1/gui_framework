@@ -110,7 +110,8 @@ namespace ui_api_testbed {
     }
 
     constexpr char BODY_TEXT[] =
-        "Lorem ipsum dolor sit amet, consectetur adipiscing elit.m dolor sit amet, consecteturdolor sit amet, consectetur "
+        "Lorem ipsum dolor sit amet, consectetur adipiscing elit.m dolor sit amet, "
+        "consecteturdolor sit amet, consectetur "
         "adipiscing elit.m dolor sit amet, consectetur adipiscing elit.\n"
         "Integer posuere erat a ante venenatis dapibus posuere velit aliquet.\n\n"
         "Donec ullamcorper nulla non metus auctor fringilla.\n"
@@ -2685,7 +2686,9 @@ namespace ui_api_testbed {
             runtime->ui_context
         );
         BASE_UNUSED(runtime->state.multiline_text_buffer.write_string(
-            "Editable multiline textEditable multiline textEditable multiline textEditable multiline textEditable multiline textEditable multiline textEditable multiline textEditable multiline text\nPress Enter for a new line\nTab inserts four spaces"
+            "Editable multiline textEditable multiline textEditable multiline textEditable "
+            "multiline textEditable multiline textEditable multiline textEditable multiline "
+            "textEditable multiline text\nPress Enter for a new line\nTab inserts four spaces"
         ));
         return true;
     }
@@ -2830,7 +2833,7 @@ namespace ui_api_testbed {
         frame_result.draw_counts = draw_command_counts(module->runtime.draw_context);
         reset_thread_temp_arenas();
         frame_result.redraw_pending =
-            module->runtime.state.selected_tab == 1u ||
+            frame_result.frame.redraw_requested() || module->runtime.state.selected_tab == 1u ||
             testbed_state_hash(module->runtime.state) != state_hash_before;
         return frame_result;
     }
