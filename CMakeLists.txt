@@ -16,6 +16,7 @@ set(CLANG_TIDY "" CACHE FILEPATH "Optional explicit clang-tidy executable")
 
 list(APPEND CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/cmake")
 include(cpp_project_options)
+include(hot_reload)
 
 cpp_configure_project()
 
@@ -36,95 +37,7 @@ add_executable(gui_framework_info
 target_link_libraries(gui_framework_info PRIVATE gui::gui)
 cpp_configure_target(gui_framework_info)
 
-set(UI_API_TESTBED_DIR "${PROJECT_SOURCE_DIR}/tools/ui_api_testbed")
-set(UI_API_TESTBED_APP_SOURCE "${UI_API_TESTBED_DIR}/app.cpp")
-set(UI_API_TESTBED_TEXTURE "${PROJECT_SOURCE_DIR}/tools/assets/ui_api_testbed_texture.png")
-set(UI_API_TESTBED_GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
-set(UI_API_TESTBED_EMBEDDED_TEXTURE
-    "${UI_API_TESTBED_GENERATED_DIR}/ui_api_testbed_embedded_texture.h"
-)
-add_custom_command(
-    OUTPUT "${UI_API_TESTBED_EMBEDDED_TEXTURE}"
-    COMMAND "${CMAKE_COMMAND}"
-        -DINPUT=${UI_API_TESTBED_TEXTURE}
-        -DOUTPUT=${UI_API_TESTBED_EMBEDDED_TEXTURE}
-        -DNAMESPACE=ui_api_testbed_assets
-        -DSYMBOL=texture_png
-        -P "${PROJECT_SOURCE_DIR}/cmake/embed_binary.cmake"
-    DEPENDS
-        "${UI_API_TESTBED_TEXTURE}"
-        "${PROJECT_SOURCE_DIR}/cmake/embed_binary.cmake"
-    VERBATIM
-)
-
-if(WIN32)
-    add_library(ui_api_testbed_module SHARED
-        "${UI_API_TESTBED_APP_SOURCE}"
-    )
-    target_sources(ui_api_testbed_module PRIVATE
-        "${UI_API_TESTBED_EMBEDDED_TEXTURE}"
-    )
-    target_include_directories(ui_api_testbed_module PRIVATE
-        "${UI_API_TESTBED_DIR}"
-        "${UI_API_TESTBED_GENERATED_DIR}"
-    )
-    target_compile_definitions(ui_api_testbed_module PRIVATE
-        UI_API_TESTBED_MODULE
-        WIN32_LEAN_AND_MEAN
-        NOMINMAX
-    )
-    target_link_libraries(ui_api_testbed_module PRIVATE
-        gui::gui
-        draw::draw
-        render::render
-    )
-    cpp_configure_target(ui_api_testbed_module)
-endif()
-
-add_executable(ui_api_testbed
-    "${UI_API_TESTBED_DIR}/host.cpp"
-)
-target_sources(ui_api_testbed PRIVATE
-    "${UI_API_TESTBED_EMBEDDED_TEXTURE}"
-)
-target_include_directories(ui_api_testbed PRIVATE
-    "${UI_API_TESTBED_DIR}"
-    "${UI_API_TESTBED_GENERATED_DIR}"
-)
-target_link_libraries(ui_api_testbed PRIVATE
-    gui::gui
-)
-if(WIN32)
-    target_sources(ui_api_testbed PRIVATE
-        "${UI_API_TESTBED_DIR}/module_loader.cpp"
-        "${UI_API_TESTBED_DIR}/trace.cpp"
-        $<$<NOT:$<CONFIG:Debug>>:${UI_API_TESTBED_APP_SOURCE}>
-    )
-    target_compile_definitions(ui_api_testbed PRIVATE
-        UI_API_TESTBED_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
-        UI_API_TESTBED_BINARY_DIR="${CMAKE_CURRENT_BINARY_DIR}"
-        UI_API_TESTBED_BUILD_CONFIG="$<CONFIG>"
-        WIN32_LEAN_AND_MEAN
-        NOMINMAX
-    )
-    target_link_libraries(ui_api_testbed PRIVATE
-        draw::draw
-        render::render
-    )
-    add_custom_command(
-        TARGET ui_api_testbed POST_BUILD
-        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-            "${UI_API_TESTBED_TEXTURE}"
-            "$<TARGET_FILE_DIR:ui_api_testbed>/ui_api_testbed_texture.png"
-        VERBATIM
-    )
-else()
-    target_sources(ui_api_testbed PRIVATE
-        "${UI_API_TESTBED_APP_SOURCE}"
-        "${UI_API_TESTBED_EMBEDDED_TEXTURE}"
-    )
-endif()
-cpp_configure_target(ui_api_testbed)
+add_subdirectory(tools/ui_api_testbed)
 
 if(WIN32)
     add_executable(render_triangle_testbed

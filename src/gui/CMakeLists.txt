@@ -1,5 +1,8 @@
 target_sources(gui_framework PRIVATE
     src/gui.cpp
+    src/hot_reload.cpp
+    src/hot_reload_app.cpp
+    src/hot_reload_overlay.cpp
     src/version.cpp
 )
 

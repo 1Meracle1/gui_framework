@@ -2781,26 +2781,30 @@ namespace ui_api_testbed {
         };
     }
 
-    [[nodiscard]] auto
-    module_create(void* storage, render::Context render_context, void* native_window) -> bool {
+    [[nodiscard]] auto module_create(void* storage, void* user_data) -> bool {
+        auto const* const context = static_cast<ModuleRuntimeContext const*>(user_data);
         auto* const module = new (storage) ModuleRuntime{};
         module->arena.init();
         if (!create_ui_runtime(
-                module->arena, render_context, static_cast<HWND>(native_window), &module->runtime
+                module->arena,
+                context->render_context,
+                static_cast<HWND>(context->native_window),
+                &module->runtime
             )) {
-            destroy_ui_runtime(render_context, &module->runtime);
+            destroy_ui_runtime(context->render_context, &module->runtime);
             module->~ModuleRuntime();
             return false;
         }
         return true;
     }
 
-    auto module_destroy(void* storage, render::Context render_context) -> void {
+    auto module_destroy(void* storage, void* user_data) -> void {
         if (storage == nullptr) {
             return;
         }
+        auto const* const context = static_cast<ModuleRuntimeContext const*>(user_data);
         auto* const module = static_cast<ModuleRuntime*>(storage);
-        destroy_ui_runtime(render_context, &module->runtime);
+        destroy_ui_runtime(context->render_context, &module->runtime);
         module->~ModuleRuntime();
     }
 
@@ -2840,11 +2844,14 @@ namespace ui_api_testbed {
 
     [[nodiscard]] auto ui_api_testbed_module_api() -> ModuleApi const* {
         static ModuleApi const api = {
-            .version = MODULE_API_VERSION,
-            .runtime_size = sizeof(ModuleRuntime),
-            .runtime_alignment = alignof(ModuleRuntime),
-            .create = module_create,
-            .destroy = module_destroy,
+            .hot_reload =
+                {
+                    .version = gui::HOT_RELOAD_API_VERSION,
+                    .runtime_size = sizeof(ModuleRuntime),
+                    .runtime_alignment = alignof(ModuleRuntime),
+                    .create = module_create,
+                    .destroy = module_destroy,
+                },
             .render_frame = module_render_frame,
         };
         return &api;
@@ -2899,8 +2906,7 @@ namespace ui_api_testbed {
 } // namespace ui_api_testbed
 
 #if defined(_WIN32) && defined(UI_API_TESTBED_MODULE)
-extern "C" __declspec(dllexport) auto ui_api_testbed_get_module_api()
-    -> ui_api_testbed::ModuleApi const* {
+GUI_HOT_RELOAD_EXPORT auto ui_api_testbed_get_module_api() -> ui_api_testbed::ModuleApi const* {
     return ui_api_testbed::ui_api_testbed_module_api();
 }
 #endif
