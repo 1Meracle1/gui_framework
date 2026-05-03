@@ -3531,6 +3531,52 @@ namespace gui {
             return ordered_text_selection(clamp_text_selection(next, box.text.size()));
         }
 
+        [[nodiscard]] auto previous_box_rect(BoxNode const& box) -> Rect {
+            return box.state != nullptr && box.state->last_frame != 0u ? box.state->rect : box.rect;
+        }
+
+        [[nodiscard]] auto previous_box_top_layer(ContextImpl const* impl, BoxNode const& box)
+            -> bool {
+            if (floating_box(box.kind)) {
+                return true;
+            }
+            for (size_t index = box.parent_index; index != INVALID_INDEX;
+                 index = impl->boxes[index].parent_index) {
+                if (floating_box(impl->boxes[index].kind)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        [[nodiscard]] auto
+        previous_box_hit_passes_clips(ContextImpl const* impl, BoxNode const& box, Vec2 point)
+            -> bool {
+            bool const top_layer = previous_box_top_layer(impl, box);
+            for (size_t index = box.parent_index; index != INVALID_INDEX;
+                 index = impl->boxes[index].parent_index) {
+                BoxNode const& parent = impl->boxes[index];
+                if (top_layer && !previous_box_top_layer(impl, parent)) {
+                    break;
+                }
+                if (box_clips(parent) && !rect_contains(previous_box_rect(parent), point)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        [[nodiscard]] auto text_selection_outside_click(ContextImpl const* impl, BoxNode const& box)
+            -> bool {
+            if (box.state == nullptr || box.state->last_frame == 0u) {
+                return false;
+            }
+            InputState const& input = impl->frame_desc.input;
+            bool const inside = rect_contains(box.state->rect, input.mouse_pos) &&
+                                previous_box_hit_passes_clips(impl, box, input.mouse_pos);
+            return input.mouse_down[0u] && !impl->previous_input.mouse_down[0u] && !inside;
+        }
+
         [[nodiscard]] auto apply_keyboard_text_selection(
             ContextImpl const* impl, BoxNode const& box, TextSelection selection
         ) -> TextSelection {
@@ -3567,7 +3613,12 @@ namespace gui {
             ASSERT(selection != nullptr);
 
             TextSelection const previous = *selection;
-            TextSelection next = apply_pointer_text_selection(impl, box, previous);
+            bool const outside_click = text_selection_outside_click(impl, box);
+            TextSelection next = outside_click ? TextSelection{} : previous;
+            if (outside_click && box.state != nullptr) {
+                box.state->text_selection_word_active = false;
+            }
+            next = apply_pointer_text_selection(impl, box, next);
             if (next.start != next.end && impl->text_selection_owner_id.value == 0u) {
                 impl->text_selection_owner_id = box.id;
             }
@@ -3941,6 +3992,11 @@ namespace gui {
                 if (signal.focus_gained) {
                     state.text_cursor = text_size;
                     selection = {text_size, text_size};
+                    state.text_selection_word_active = false;
+                }
+                if (text_selection_outside_click(impl, box)) {
+                    selection = {state.text_cursor, state.text_cursor};
+                    state.text_selection_anchor = state.text_cursor;
                     state.text_selection_word_active = false;
                 }
                 TextSelection const pointer_selection =

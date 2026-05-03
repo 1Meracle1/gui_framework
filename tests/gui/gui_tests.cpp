@@ -2930,6 +2930,43 @@ namespace {
         gui::destroy_context(gui_context);
     }
 
+    TEST_CASE(input_text_clears_selection_on_outside_click) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::Id const field_id = gui::id("field");
+        gui::BoxDesc const box = {.layout = {.width = gui::px(120.0f), .height = gui::px(20.0f)}};
+        char buffer[16] = "ABCDE";
+        gui::KeyEvent const select_all[] = {{.key = gui::Key::A, .mods = gui::KEY_MOD_CTRL}};
+        gui::InputState input = {.key_events = select_all, .key_event_count = 1u};
+
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {160.0f, 60.0f}, .input = input});
+        ui.request_focus(field_id);
+        ui.input_text(field_id, "Field", buffer, sizeof(buffer), box);
+        gui::end_frame(ui);
+
+        input = {};
+        input.mouse_pos = {140.0f, 40.0f};
+        input.mouse_down[0u] = true;
+        ui = gui::begin_frame(gui_context, {.size = {160.0f, 60.0f}, .input = input});
+        ui.input_text(field_id, "Field", buffer, sizeof(buffer), box);
+        gui::end_frame(ui);
+
+        gui::KeyEvent const text[] = {{.kind = gui::KeyEventKind::TEXT, .codepoint = 'X'}};
+        input = {.key_events = text, .key_event_count = 1u};
+        ui = gui::begin_frame(gui_context, {.size = {160.0f, 60.0f}, .input = input});
+        gui::Signal const signal = ui.input_text(field_id, "Field", buffer, sizeof(buffer), box);
+        gui::end_frame(ui);
+
+        TEST_EXPECT(context, signal.changed);
+        TEST_EXPECT(context, StrRef(buffer) == StrRef("ABCDEX"));
+
+        gui::destroy_context(gui_context);
+    }
+
     TEST_CASE(input_text_cuts_selected_text_with_ctrl_x) {
         Arena arena = {};
         arena.init();
@@ -3644,6 +3681,45 @@ namespace {
         if (field != nullptr) {
             TEST_EXPECT(context, field->text == StrRef("Hi!\nX"));
         }
+
+        gui::destroy_context(gui_context);
+    }
+
+    TEST_CASE(input_text_multiline_clears_selection_on_outside_click) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::Id const field_id = gui::id("field");
+        gui::BoxDesc const box = {.layout = {.width = gui::px(120.0f), .height = gui::px(40.0f)}};
+        StringBuffer buffer;
+        TEST_EXPECT(context, buffer.write_string("ABCDE") == 5u);
+        gui::KeyEvent const select_all[] = {{.key = gui::Key::A, .mods = gui::KEY_MOD_CTRL}};
+        gui::InputState input = {.key_events = select_all, .key_event_count = 1u};
+
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {160.0f, 80.0f}, .input = input});
+        ui.request_focus(field_id);
+        ui.input_text_multiline(field_id, "Field", &buffer, {.box = box});
+        gui::end_frame(ui);
+
+        input = {};
+        input.mouse_pos = {140.0f, 60.0f};
+        input.mouse_down[0u] = true;
+        ui = gui::begin_frame(gui_context, {.size = {160.0f, 80.0f}, .input = input});
+        ui.input_text_multiline(field_id, "Field", &buffer, {.box = box});
+        gui::end_frame(ui);
+
+        gui::KeyEvent const text[] = {{.kind = gui::KeyEventKind::TEXT, .codepoint = 'X'}};
+        input = {.key_events = text, .key_event_count = 1u};
+        ui = gui::begin_frame(gui_context, {.size = {160.0f, 80.0f}, .input = input});
+        gui::Signal const signal =
+            ui.input_text_multiline(field_id, "Field", &buffer, {.box = box});
+        gui::end_frame(ui);
+
+        TEST_EXPECT(context, signal.changed);
+        TEST_EXPECT(context, buffer.str() == StrRef("ABCDEX"));
 
         gui::destroy_context(gui_context);
     }
@@ -4367,6 +4443,84 @@ namespace {
 
         gui::BoxInfo const* label = ui.box_info(1u);
         TEST_EXPECT(context, label != nullptr && label->kind == gui::BoxKind::SELECTABLE_LABEL);
+
+        gui::destroy_context(gui_context);
+    }
+
+    TEST_CASE(selectable_label_clears_selection_on_outside_click) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::TextSelection selection = {1u, 4u};
+        gui::Id const label_id = gui::id("copyable");
+        gui::BoxDesc const box = {.layout = {.width = gui::px(100.0f), .height = gui::px(20.0f)}};
+
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {120.0f, 40.0f}});
+        ui.selectable_label(label_id, "ABCDE", &selection, box);
+        gui::end_frame(ui);
+
+        gui::InputState input = {};
+        input.mouse_pos = {110.0f, 30.0f};
+        input.mouse_down[0u] = true;
+        ui = gui::begin_frame(gui_context, {.size = {120.0f, 40.0f}, .input = input});
+        gui::Signal const signal = ui.selectable_label(label_id, "ABCDE", &selection, box);
+        gui::end_frame(ui);
+
+        TEST_EXPECT(context, signal.changed);
+        TEST_EXPECT(context, selection.start == 0u);
+        TEST_EXPECT(context, selection.end == 0u);
+
+        gui::destroy_context(gui_context);
+    }
+
+    TEST_CASE(selectable_label_clears_selection_outside_parent_clip) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::TextSelection selection = {1u, 2u};
+        gui::Id const panel_id = gui::id("panel");
+        gui::Id const label_id = gui::id("copyable");
+
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {100.0f, 80.0f}});
+        if (auto panel = ui.scroll_panel(
+                panel_id, {.layout = {.width = gui::px(80.0f), .height = gui::px(20.0f)}}
+            )) {
+            BASE_UNUSED(panel);
+            ui.selectable_label(
+                label_id,
+                "A\nB\nC",
+                &selection,
+                {.layout = {.width = gui::fill(), .height = gui::text()}}
+            );
+        }
+        gui::end_frame(ui);
+
+        gui::InputState input = {};
+        input.mouse_pos = {5.0f, 30.0f};
+        input.mouse_down[0u] = true;
+        ui = gui::begin_frame(gui_context, {.size = {100.0f, 80.0f}, .input = input});
+        if (auto panel = ui.scroll_panel(
+                panel_id, {.layout = {.width = gui::px(80.0f), .height = gui::px(20.0f)}}
+            )) {
+            BASE_UNUSED(panel);
+            gui::Signal const signal = ui.selectable_label(
+                label_id,
+                "A\nB\nC",
+                &selection,
+                {.layout = {.width = gui::fill(), .height = gui::text()}}
+            );
+            TEST_EXPECT(context, signal.changed);
+        }
+        gui::end_frame(ui);
+
+        TEST_EXPECT(context, selection.start == 0u);
+        TEST_EXPECT(context, selection.end == 0u);
 
         gui::destroy_context(gui_context);
     }
