@@ -54,6 +54,8 @@ namespace repository_ui_testbed {
         gui::Frame last_frame = {};
         gui::Id mouse_hit_id = {};
         gui::InputState input = {};
+        HICON app_icon = nullptr;
+        HICON app_icon_small = nullptr;
     };
 
     AppState* global_app_state = nullptr;
@@ -61,6 +63,146 @@ namespace repository_ui_testbed {
     auto request_redraw(AppState* state) -> void {
         if (state != nullptr) {
             state->redraw_pending = true;
+        }
+    }
+
+    [[nodiscard]] auto app_icon_color(uint32_t r, uint32_t g, uint32_t b, uint32_t a) -> uint32_t {
+        return (a << 24u) | (r << 16u) | (g << 8u) | b;
+    }
+
+    [[nodiscard]] auto icon_inside_round_rect(
+        int32_t x,
+        int32_t y,
+        int32_t min_x,
+        int32_t min_y,
+        int32_t max_x,
+        int32_t max_y,
+        int32_t radius
+    ) -> bool {
+        if (x < min_x || y < min_y || x >= max_x || y >= max_y) {
+            return false;
+        }
+
+        int32_t corner_x = x < min_x + radius ? min_x + radius : max_x - radius - 1;
+        int32_t corner_y = y < min_y + radius ? min_y + radius : max_y - radius - 1;
+        if (x >= min_x + radius && x < max_x - radius) {
+            corner_x = x;
+        }
+        if (y >= min_y + radius && y < max_y - radius) {
+            corner_y = y;
+        }
+
+        int32_t const dx = x - corner_x;
+        int32_t const dy = y - corner_y;
+        return dx * dx + dy * dy <= radius * radius;
+    }
+
+    [[nodiscard]] auto
+    icon_inside_circle(int32_t x, int32_t y, int32_t center_x, int32_t center_y, int32_t radius)
+        -> bool {
+        int32_t const dx = x - center_x;
+        int32_t const dy = y - center_y;
+        return dx * dx + dy * dy <= radius * radius;
+    }
+
+    auto draw_app_icon(uint32_t* pixels, int32_t size) -> void {
+        for (int32_t y = 0; y < size; ++y) {
+            for (int32_t x = 0; x < size; ++x) {
+                int32_t const sx = (x * 32) / size;
+                int32_t const sy = (y * 32) / size;
+                uint32_t color = 0u;
+
+                if (icon_inside_round_rect(sx, sy, 1, 1, 31, 31, 7)) {
+                    if (icon_inside_round_rect(sx, sy, 2, 2, 30, 30, 6)) {
+                        color = app_icon_color(
+                            3u + static_cast<uint32_t>((sx * 10) / 31),
+                            3u + static_cast<uint32_t>((sy * 10) / 31),
+                            3u + static_cast<uint32_t>(((sx + sy) * 8) / 62),
+                            255u
+                        );
+                    } else {
+                        color = app_icon_color(45u, 45u, 45u, 255u);
+                    }
+
+                    if ((sx >= 10 && sx <= 12 && sy >= 8 && sy <= 24) ||
+                        (sx >= 11 && sx <= 22 && sy >= 14 && sy <= 16)) {
+                        color = app_icon_color(61u, 185u, 126u, 255u);
+                    }
+                    if (icon_inside_circle(sx, sy, 11, 8, 4)) {
+                        color = app_icon_color(233u, 233u, 233u, 255u);
+                    }
+                    if (icon_inside_circle(sx, sy, 11, 24, 4)) {
+                        color = app_icon_color(61u, 185u, 126u, 255u);
+                    }
+                    if (icon_inside_circle(sx, sy, 22, 15, 4)) {
+                        color = app_icon_color(11u, 120u, 190u, 255u);
+                    }
+                    if ((sx >= 18 && sx <= 25 && sy == 22) || (sx >= 18 && sx <= 23 && sy == 25)) {
+                        color = app_icon_color(136u, 136u, 142u, 255u);
+                    }
+                }
+
+                pixels[static_cast<size_t>(y * size + x)] = color;
+            }
+        }
+    }
+
+    [[nodiscard]] auto create_app_icon(int32_t size) -> HICON {
+        BITMAPV5HEADER bitmap_header = {};
+        bitmap_header.bV5Size = static_cast<DWORD>(sizeof(bitmap_header));
+        bitmap_header.bV5Width = size;
+        bitmap_header.bV5Height = -size;
+        bitmap_header.bV5Planes = 1u;
+        bitmap_header.bV5BitCount = 32u;
+        bitmap_header.bV5Compression = BI_BITFIELDS;
+        bitmap_header.bV5RedMask = 0x00ff0000u;
+        bitmap_header.bV5GreenMask = 0x0000ff00u;
+        bitmap_header.bV5BlueMask = 0x000000ffu;
+        bitmap_header.bV5AlphaMask = 0xff000000u;
+
+        void* bits = nullptr;
+        HBITMAP const color_bitmap = CreateDIBSection(
+            nullptr,
+            reinterpret_cast<BITMAPINFO*>(&bitmap_header),
+            DIB_RGB_COLORS,
+            &bits,
+            nullptr,
+            0u
+        );
+        if (color_bitmap == nullptr || bits == nullptr) {
+            if (color_bitmap != nullptr) {
+                DeleteObject(color_bitmap);
+            }
+            return nullptr;
+        }
+
+        draw_app_icon(static_cast<uint32_t*>(bits), size);
+
+        uint8_t mask_bits[128] = {};
+        HBITMAP const mask_bitmap = CreateBitmap(size, size, 1u, 1u, mask_bits);
+        if (mask_bitmap == nullptr) {
+            DeleteObject(color_bitmap);
+            return nullptr;
+        }
+
+        ICONINFO icon_info = {};
+        icon_info.fIcon = TRUE;
+        icon_info.hbmMask = mask_bitmap;
+        icon_info.hbmColor = color_bitmap;
+        HICON const icon = CreateIconIndirect(&icon_info);
+        DeleteObject(mask_bitmap);
+        DeleteObject(color_bitmap);
+        return icon;
+    }
+
+    auto destroy_app_icons(AppState* app_state) -> void {
+        if (app_state->app_icon != nullptr) {
+            DestroyIcon(app_state->app_icon);
+            app_state->app_icon = nullptr;
+        }
+        if (app_state->app_icon_small != nullptr) {
+            DestroyIcon(app_state->app_icon_small);
+            app_state->app_icon_small = nullptr;
         }
     }
 
@@ -239,17 +381,22 @@ namespace repository_ui_testbed {
 
     [[nodiscard]] auto create_testbed_window(AppState* app_state) -> bool {
         HINSTANCE const instance = GetModuleHandleW(nullptr);
+        app_state->app_icon = create_app_icon(32);
+        app_state->app_icon_small = create_app_icon(16);
 
         WNDCLASSEXW window_class = {};
         window_class.cbSize = static_cast<UINT>(sizeof(window_class));
         window_class.style = CS_HREDRAW | CS_VREDRAW;
         window_class.lpfnWndProc = window_proc;
         window_class.hInstance = instance;
+        window_class.hIcon = app_state->app_icon;
+        window_class.hIconSm = app_state->app_icon_small;
         window_class.hCursor = LoadCursorW(nullptr, MAKEINTRESOURCEW(32512));
         window_class.lpszClassName = WINDOW_CLASS_NAME;
 
         if (RegisterClassExW(&window_class) == 0u) {
             fmt::eprintf("RegisterClassExW failed: %lu\n", GetLastError());
+            destroy_app_icons(app_state);
             return false;
         }
 
@@ -260,6 +407,8 @@ namespace repository_ui_testbed {
         rect.bottom = static_cast<LONG>(INITIAL_WINDOW_HEIGHT);
         if (!AdjustWindowRectEx(&rect, style, FALSE, ex_style)) {
             fmt::eprintf("AdjustWindowRectEx failed: %lu\n", GetLastError());
+            UnregisterClassW(WINDOW_CLASS_NAME, instance);
+            destroy_app_icons(app_state);
             return false;
         }
 
@@ -279,10 +428,18 @@ namespace repository_ui_testbed {
         );
         if (hwnd == nullptr) {
             fmt::eprintf("CreateWindowExW failed: %lu\n", GetLastError());
+            UnregisterClassW(WINDOW_CLASS_NAME, instance);
+            destroy_app_icons(app_state);
             return false;
         }
 
         apply_window_header_theme(hwnd);
+        BASE_UNUSED(
+            SendMessageW(hwnd, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(app_state->app_icon))
+        );
+        BASE_UNUSED(SendMessageW(
+            hwnd, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(app_state->app_icon_small)
+        ));
         app_state->hwnd = hwnd;
         ShowWindow(hwnd, SW_SHOW);
         UpdateWindow(hwnd);
@@ -295,6 +452,7 @@ namespace repository_ui_testbed {
         }
         app_state->hwnd = nullptr;
         UnregisterClassW(WINDOW_CLASS_NAME, GetModuleHandleW(nullptr));
+        destroy_app_icons(app_state);
     }
 
     auto run_windowed() -> int {

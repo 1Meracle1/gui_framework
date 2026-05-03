@@ -80,6 +80,9 @@ target_link_libraries(ui_api_testbed PRIVATE
     gui::gui
 )
 if(WIN32)
+    set_target_properties(ui_api_testbed PROPERTIES
+        WIN32_EXECUTABLE TRUE
+    )
     target_sources(ui_api_testbed PRIVATE
         "${CMAKE_CURRENT_BINARY_DIR}/generated/ui_api_testbed_hot_reload_manifest.h"
         trace.cpp
@@ -99,6 +102,10 @@ if(WIN32)
     target_link_libraries(ui_api_testbed PRIVATE
         draw::draw
         render::render
+        dwmapi
+    )
+    target_link_options(ui_api_testbed PRIVATE
+        /ENTRY:mainCRTStartup
     )
     add_custom_command(
         TARGET ui_api_testbed POST_BUILD

@@ -91,5 +91,8 @@ if(WIN32)
         render::render
         dwmapi
     )
+    target_link_options(repository_ui_testbed PRIVATE
+        /ENTRY:mainCRTStartup
+    )
     cpp_configure_target(repository_ui_testbed)
 endif()
