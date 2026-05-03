@@ -110,7 +110,7 @@ namespace ui_api_testbed {
     }
 
     constexpr char BODY_TEXT[] =
-        "Lorem ipsum dolor sit amet, consectetur adipiscing elit.m dolor sit amet, consectetur "
+        "Lorem ipsum dolor sit amet, consectetur adipiscing elit.m dolor sit amet, consecteturdolor sit amet, consectetur "
         "adipiscing elit.m dolor sit amet, consectetur adipiscing elit.\n"
         "Integer posuere erat a ante venenatis dapibus posuere velit aliquet.\n\n"
         "Donec ullamcorper nulla non metus auctor fringilla.\n"
@@ -1687,7 +1687,7 @@ namespace ui_api_testbed {
                                     {
                                         .width = gui::fill(),
                                         .height = gui::text(),
-                                        .word_wrap = true,
+                                        // .word_wrap = true,
                                     },
                                 .style = {.foreground = tokens.text},
                                 .debug_name = "body_text",
@@ -1788,7 +1788,7 @@ namespace ui_api_testbed {
                                             .height = gui::px(108.0f),
                                             .margin = gui::insets(36.0f, 0.0f, 0.0f, 0.0f),
                                             .padding = gui::insets(9.0f, 12.0f),
-                                            .word_wrap = true,
+                                            // .word_wrap = true,
                                         },
                                     .style =
                                         {
@@ -2685,7 +2685,7 @@ namespace ui_api_testbed {
             runtime->ui_context
         );
         BASE_UNUSED(runtime->state.multiline_text_buffer.write_string(
-            "Editable multiline text\nPress Enter for a new line\nTab inserts four spaces"
+            "Editable multiline textEditable multiline textEditable multiline textEditable multiline textEditable multiline textEditable multiline textEditable multiline textEditable multiline text\nPress Enter for a new line\nTab inserts four spaces"
         ));
         return true;
     }

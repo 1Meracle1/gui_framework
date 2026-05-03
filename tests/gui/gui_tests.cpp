@@ -3638,6 +3638,36 @@ namespace {
         gui::destroy_context(gui_context);
     }
 
+    TEST_CASE(input_text_multiline_scrolls_horizontally_to_keep_caret_visible) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::Id const field_id = gui::id("field");
+        gui::BoxDesc const box = {.layout = {.width = gui::px(40.0f), .height = gui::px(40.0f)}};
+        StringBuffer buffer;
+        TEST_EXPECT(context, buffer.write_string("abcdefghi") == 9u);
+
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {80.0f, 60.0f}});
+        ui.request_focus(field_id);
+        ui.input_text_multiline(field_id, "Field", &buffer, {.box = box});
+        gui::end_frame(ui);
+
+        ui = gui::begin_frame(gui_context, {.size = {80.0f, 60.0f}});
+        ui.input_text_multiline(field_id, "Field", &buffer, {.box = box});
+        gui::end_frame(ui);
+
+        gui::ScrollState state = ui.scroll_state(field_id);
+        TEST_EXPECT(context, state.valid);
+        TEST_EXPECT(context, state.x > 0.0f);
+        TEST_EXPECT(context, state.max_x > 0.0f);
+        TEST_EXPECT(context, state.x <= state.max_x);
+
+        gui::destroy_context(gui_context);
+    }
+
     TEST_CASE(input_text_multiline_expands_and_inserts_newline_without_activation) {
         Arena arena = {};
         arena.init();
@@ -3883,7 +3913,7 @@ namespace {
         gui::destroy_context(gui_context);
     }
 
-    TEST_CASE(input_text_multiline_scroll_moves_hidden_cursor_to_visible_line) {
+    TEST_CASE(input_text_multiline_scroll_allows_hidden_cursor_until_keyboard_reveal) {
         Arena arena = {};
         arena.init();
 
@@ -3920,16 +3950,39 @@ namespace {
         TEST_EXPECT(context, state.valid);
         TEST_EXPECT(context, state.y == 40.0f);
 
-        gui::KeyEvent const events[] = {{.kind = gui::KeyEventKind::TEXT, .codepoint = 'X'}};
+        ui = gui::begin_frame(gui_context, {.size = {100.0f, 60.0f}});
+        ui.input_text_multiline(field_id, "Field", &buffer, {.box = box});
+        gui::end_frame(ui);
+
+        state = ui.scroll_state(field_id);
+        TEST_EXPECT(context, state.valid);
+        TEST_EXPECT(context, state.y == 40.0f);
+
+        gui::KeyEvent const move_events[] = {{.key = gui::Key::LEFT}};
         gui::InputState input = {};
-        input.key_events = events;
+        input.key_events = move_events;
         input.key_event_count = 1u;
 
         ui = gui::begin_frame(gui_context, {.size = {100.0f, 60.0f}, .input = input});
         ui.input_text_multiline(field_id, "Field", &buffer, {.box = box});
         gui::end_frame(ui);
 
-        TEST_EXPECT(context, buffer.str() == StrRef("A\nB\nC\nDX\nE"));
+        state = ui.scroll_state(field_id);
+        TEST_EXPECT(context, state.valid);
+        TEST_EXPECT(context, state.y == 60.0f);
+
+        gui::KeyEvent const text_events[] = {{.kind = gui::KeyEventKind::TEXT, .codepoint = 'X'}};
+        input.key_events = text_events;
+        input.key_event_count = 1u;
+
+        ui = gui::begin_frame(gui_context, {.size = {100.0f, 60.0f}, .input = input});
+        ui.input_text_multiline(field_id, "Field", &buffer, {.box = box});
+        gui::end_frame(ui);
+
+        state = ui.scroll_state(field_id);
+        TEST_EXPECT(context, state.valid);
+        TEST_EXPECT(context, state.y == 60.0f);
+        TEST_EXPECT(context, buffer.str() == StrRef("A\nB\nC\nD\nXE"));
 
         gui::destroy_context(gui_context);
     }
@@ -4750,7 +4803,7 @@ namespace {
         gui::destroy_context(gui_context);
     }
 
-    TEST_CASE(selectable_label_does_not_scroll_single_line_overflow_text) {
+    TEST_CASE(selectable_label_scrolls_single_line_overflow_text_horizontally) {
         Arena arena = {};
         arena.init();
 
@@ -4763,12 +4816,12 @@ namespace {
         gui::TextSelection selection = {};
         gui::Id const label_id = gui::id("title");
         gui::Frame ui = gui::begin_frame(gui_context, {.size = {100.0f, 40.0f}});
-        ui.set_scroll_y(label_id, 20.0f);
+        ui.set_scroll_x(label_id, 20.0f);
         ui.selectable_label(
             label_id,
             "Virtualized Assets",
             &selection,
-            {.layout = {.width = gui::px(80.0f), .height = gui::px(10.0f)}}
+            {.layout = {.width = gui::px(80.0f), .height = gui::text()}}
         );
         gui::end_frame(ui);
 
@@ -4776,12 +4829,291 @@ namespace {
         TEST_EXPECT(context, state.valid);
         TEST_EXPECT(context, state.y == 0.0f);
         TEST_EXPECT(context, state.max_y == 0.0f);
+        TEST_EXPECT(context, state.x == 20.0f);
+        TEST_EXPECT(context, state.max_x > 0.0f);
+        TEST_EXPECT(context, state.viewport_width == 80.0f);
+        TEST_EXPECT(context, state.content_width > state.viewport_width);
 
         gui::draw::begin_frame(draw_context);
         gui::render_frame(ui, draw_context);
-        TEST_EXPECT(context, gui::draw::styled_rect_command_count(draw_context) == 0u);
+        TEST_EXPECT(context, gui::draw::styled_rect_command_count(draw_context) == 2u);
+        gui::draw::StyledRectCommand const* track =
+            gui::draw::styled_rect_command(draw_context, 0u);
+        gui::draw::StyledRectCommand const* thumb =
+            gui::draw::styled_rect_command(draw_context, 1u);
+        TEST_EXPECT(context, track != nullptr);
+        TEST_EXPECT(context, thumb != nullptr);
+        if (track != nullptr && thumb != nullptr) {
+            TEST_EXPECT(context, track->rect.min.x == 2.0f);
+            TEST_EXPECT(context, track->rect.max.x == 78.0f);
+            TEST_EXPECT(
+                context,
+                track->rect.max.x - track->rect.min.x > track->rect.max.y - track->rect.min.y
+            );
+            TEST_EXPECT(context, thumb->rect.min.y == track->rect.min.y);
+            TEST_EXPECT(context, thumb->rect.max.y == track->rect.max.y);
+            TEST_EXPECT(context, thumb->rect.min.x >= track->rect.min.x);
+            TEST_EXPECT(context, thumb->rect.max.x <= track->rect.max.x);
+        }
 
         gui::draw::destroy_context(draw_context);
+        gui::destroy_context(gui_context);
+    }
+
+    TEST_CASE(selectable_label_horizontal_scrollbar_uses_clipped_parent_bottom) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::draw::Context draw_context = {};
+        gui::draw::create_context(arena, {}, draw_context);
+
+        gui::TextSelection selection = {};
+        gui::Signal signal = {};
+        gui::Id const panel_id = gui::id("panel");
+        gui::Id const label_id = gui::id("copyable");
+        char const text[] = "abcdefghijklmnopqrst\nabcdefghijklmnopqrst\nabcdefghijklmnopqrst";
+
+        auto add_label = [&](gui::Frame& frame) -> void {
+            if (auto panel = frame.scroll_panel(
+                    panel_id,
+                    {
+                        .layout = {
+                            .width = gui::px(80.0f),
+                            .height = gui::px(40.0f),
+                            .padding = gui::insets(0.0f, 0.0f, 10.0f, 0.0f),
+                        },
+                    }
+                )) {
+                BASE_UNUSED(panel);
+                signal = frame.selectable_label(
+                    label_id,
+                    text,
+                    &selection,
+                    {.layout = {.width = gui::fill(), .height = gui::text()}}
+                );
+            }
+        };
+
+        auto expect_scrollbar_at_panel_bottom = [&]() -> void {
+            TEST_EXPECT(context, gui::draw::styled_rect_command_count(draw_context) == 4u);
+            gui::draw::StyledRectCommand const* track =
+                gui::draw::styled_rect_command(draw_context, 0u);
+            gui::draw::StyledRectCommand const* thumb =
+                gui::draw::styled_rect_command(draw_context, 1u);
+            TEST_EXPECT(context, track != nullptr);
+            TEST_EXPECT(context, thumb != nullptr);
+            if (track != nullptr && thumb != nullptr) {
+                TEST_EXPECT(context, track->rect.min.y == 32.0f);
+                TEST_EXPECT(context, track->rect.max.y == 38.0f);
+                TEST_EXPECT(context, track->clip_rect.max.y == 40.0f);
+                TEST_EXPECT(context, thumb->rect.min.y == track->rect.min.y);
+                TEST_EXPECT(context, thumb->rect.max.y == track->rect.max.y);
+            }
+        };
+
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {100.0f, 60.0f}});
+        add_label(ui);
+        gui::end_frame(ui);
+
+        gui::draw::begin_frame(draw_context);
+        gui::render_frame(ui, draw_context);
+        expect_scrollbar_at_panel_bottom();
+
+        ui = gui::begin_frame(gui_context, {.size = {100.0f, 60.0f}});
+        ui.scroll_to_end(panel_id);
+        add_label(ui);
+        gui::end_frame(ui);
+
+        gui::draw::begin_frame(draw_context);
+        gui::render_frame(ui, draw_context);
+        expect_scrollbar_at_panel_bottom();
+
+        selection = {1u, 2u};
+        gui::InputState input = {};
+        input.mouse_pos = {70.0f, 35.0f};
+        input.mouse_down[0u] = true;
+        ui = gui::begin_frame(gui_context, {.size = {100.0f, 60.0f}, .input = input});
+        add_label(ui);
+        gui::end_frame(ui);
+
+        gui::ScrollState label_state = ui.scroll_state(label_id);
+        TEST_EXPECT(context, label_state.valid);
+        TEST_EXPECT(context, label_state.max_x > 0.0f);
+        TEST_EXPECT(context, label_state.x == label_state.max_x);
+        TEST_EXPECT(context, selection.start == 1u);
+        TEST_EXPECT(context, selection.end == 2u);
+        TEST_EXPECT(context, !signal.pressed_left);
+        TEST_EXPECT(context, !signal.changed);
+
+        gui::draw::destroy_context(draw_context);
+        gui::destroy_context(gui_context);
+    }
+
+    TEST_CASE(selectable_label_horizontal_scrollbar_click_scrolls_without_changing_selection) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::TextSelection selection = {1u, 2u};
+        gui::Id const label_id = gui::id("title");
+        gui::BoxDesc const box = {.layout = {.width = gui::px(80.0f), .height = gui::text()}};
+
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {100.0f, 40.0f}});
+        ui.selectable_label(label_id, "Virtualized Assets", &selection, box);
+        gui::end_frame(ui);
+
+        gui::InputState input = {};
+        input.mouse_pos = {70.0f, 22.0f};
+        input.mouse_down[0u] = true;
+        ui = gui::begin_frame(gui_context, {.size = {100.0f, 40.0f}, .input = input});
+        gui::Signal const signal =
+            ui.selectable_label(label_id, "Virtualized Assets", &selection, box);
+        gui::end_frame(ui);
+
+        gui::ScrollState state = ui.scroll_state(label_id);
+        TEST_EXPECT(context, state.valid);
+        TEST_EXPECT(context, state.max_x > 0.0f);
+        TEST_EXPECT(context, state.x == state.max_x);
+        TEST_EXPECT(context, selection.start == 1u);
+        TEST_EXPECT(context, selection.end == 2u);
+        TEST_EXPECT(context, !signal.pressed_left);
+        TEST_EXPECT(context, !signal.changed);
+
+        gui::destroy_context(gui_context);
+    }
+
+    TEST_CASE(selectable_label_wheel_scrolls_one_axis_at_a_time) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        auto add_label = [](gui::Frame& frame, gui::Id label_id) -> gui::ScrollState {
+            gui::TextSelection selection = {};
+            frame.selectable_label(
+                label_id,
+                "abcdefghijklmnopqrst\nabcdefghijklmnopqrst\nabcdefghijklmnopqrst",
+                &selection,
+                {.layout = {.width = gui::px(80.0f), .height = gui::px(40.0f)}}
+            );
+            return frame.scroll_state(label_id);
+        };
+
+        gui::Id const vertical_id = gui::id("vertical");
+        gui::InputState input = {};
+        input.mouse_pos = {10.0f, 10.0f};
+        input.scroll_delta_y = -12.0f;
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {100.0f, 60.0f}, .input = input});
+        BASE_UNUSED(add_label(ui, vertical_id));
+        gui::end_frame(ui);
+
+        gui::ScrollState state = ui.scroll_state(vertical_id);
+        TEST_EXPECT(context, state.valid);
+        TEST_EXPECT(context, state.y == 12.0f);
+        TEST_EXPECT(context, state.x == 0.0f);
+
+        gui::Id const horizontal_id = gui::id("horizontal");
+        input.key_mods = gui::KEY_MOD_SHIFT;
+        ui = gui::begin_frame(gui_context, {.size = {100.0f, 60.0f}, .input = input});
+        BASE_UNUSED(add_label(ui, horizontal_id));
+        gui::end_frame(ui);
+
+        state = ui.scroll_state(horizontal_id);
+        TEST_EXPECT(context, state.valid);
+        TEST_EXPECT(context, state.y == 0.0f);
+        TEST_EXPECT(context, state.x == 12.0f);
+
+        gui::destroy_context(gui_context);
+    }
+
+    TEST_CASE(selectable_label_wheel_prefers_parent_vertical_scroll_without_shift) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        auto add_panel_label = [](gui::Frame& frame, gui::Id panel_id, gui::Id label_id) -> void {
+            gui::TextSelection selection = {};
+            if (auto panel = frame.scroll_panel(
+                    panel_id, {.layout = {.width = gui::px(80.0f), .height = gui::px(40.0f)}}
+                )) {
+                BASE_UNUSED(panel);
+                frame.selectable_label(
+                    label_id,
+                    "abcdefghijklmnopqrst\nabcdefghijklmnopqrst\nabcdefghijklmnopqrst",
+                    &selection,
+                    {.layout = {.width = gui::fill(), .height = gui::text()}}
+                );
+            }
+        };
+
+        gui::Id const panel_id = gui::id("panel");
+        gui::Id const label_id = gui::id("label");
+        gui::InputState input = {};
+        input.mouse_pos = {10.0f, 10.0f};
+        input.scroll_delta_y = -12.0f;
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {100.0f, 60.0f}, .input = input});
+        add_panel_label(ui, panel_id, label_id);
+        gui::end_frame(ui);
+
+        gui::ScrollState panel_state = ui.scroll_state(panel_id);
+        gui::ScrollState label_state = ui.scroll_state(label_id);
+        TEST_EXPECT(context, panel_state.valid);
+        TEST_EXPECT(context, label_state.valid);
+        TEST_EXPECT(context, panel_state.y == 12.0f);
+        TEST_EXPECT(context, label_state.x == 0.0f);
+
+        gui::Id const shift_panel_id = gui::id("shift_panel");
+        gui::Id const shift_label_id = gui::id("shift_label");
+        input.key_mods = gui::KEY_MOD_SHIFT;
+        ui = gui::begin_frame(gui_context, {.size = {100.0f, 60.0f}, .input = input});
+        add_panel_label(ui, shift_panel_id, shift_label_id);
+        gui::end_frame(ui);
+
+        panel_state = ui.scroll_state(shift_panel_id);
+        label_state = ui.scroll_state(shift_label_id);
+        TEST_EXPECT(context, panel_state.valid);
+        TEST_EXPECT(context, label_state.valid);
+        TEST_EXPECT(context, panel_state.y == 0.0f);
+        TEST_EXPECT(context, label_state.x == 12.0f);
+
+        gui::destroy_context(gui_context);
+    }
+
+    TEST_CASE(selectable_label_wheel_scrolls_horizontally_when_no_vertical_overflow) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::TextSelection selection = {};
+        gui::Id const label_id = gui::id("title");
+        gui::InputState input = {};
+        input.mouse_pos = {10.0f, 10.0f};
+        input.scroll_delta_y = -12.0f;
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {100.0f, 60.0f}, .input = input});
+        ui.selectable_label(
+            label_id,
+            "abcdefghijklmnopqrst",
+            &selection,
+            {.layout = {.width = gui::px(80.0f), .height = gui::text()}}
+        );
+        gui::end_frame(ui);
+
+        gui::ScrollState state = ui.scroll_state(label_id);
+        TEST_EXPECT(context, state.valid);
+        TEST_EXPECT(context, state.max_y == 0.0f);
+        TEST_EXPECT(context, state.y == 0.0f);
+        TEST_EXPECT(context, state.x == 12.0f);
+
         gui::destroy_context(gui_context);
     }
 
@@ -4984,7 +5316,9 @@ namespace {
         gui::ScrollState panel_state = ui.scroll_state(panel_id);
         gui::ScrollState label_state = ui.scroll_state(label_id);
         TEST_EXPECT(context, panel_state.valid);
-        TEST_EXPECT(context, !label_state.valid);
+        TEST_EXPECT(context, label_state.valid);
+        TEST_EXPECT(context, label_state.y == 0.0f);
+        TEST_EXPECT(context, label_state.max_y == 0.0f);
         TEST_EXPECT(context, panel_state.y >= 19.0f && panel_state.y <= 21.0f);
         TEST_EXPECT(context, selection.start < selection.end);
 

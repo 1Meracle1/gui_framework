@@ -191,6 +191,23 @@ namespace {
         }
     }
 
+    [[nodiscard]] auto current_key_mods() -> gui::KeyMods {
+        gui::KeyMods mods = gui::KEY_MOD_NONE;
+        if ((GetKeyState(VK_SHIFT) & 0x8000) != 0) {
+            mods |= gui::KEY_MOD_SHIFT;
+        }
+        if ((GetKeyState(VK_CONTROL) & 0x8000) != 0) {
+            mods |= gui::KEY_MOD_CTRL;
+        }
+        if ((GetKeyState(VK_MENU) & 0x8000) != 0) {
+            mods |= gui::KEY_MOD_ALT;
+        }
+        if ((GetKeyState(VK_LWIN) & 0x8000) != 0 || (GetKeyState(VK_RWIN) & 0x8000) != 0) {
+            mods |= gui::KEY_MOD_SUPER;
+        }
+        return mods;
+    }
+
     [[nodiscard]] auto frame_ready(gui::Frame const& frame) -> bool {
         return frame.box_info_count() != 0u;
     }
@@ -2284,6 +2301,7 @@ namespace {
                     (static_cast<float>(GET_WHEEL_DELTA_WPARAM(wparam)) /
                      static_cast<float>(WHEEL_DELTA)) *
                     72.0f;
+                global_app_state->input.key_mods = current_key_mods();
                 request_redraw(global_app_state);
             }
             return 0;
@@ -2498,6 +2516,7 @@ auto main() -> int {
         size_t const selected_tab_before = app_state.selected_tab;
         uint64_t const open_hash_before = repo_tree_open_hash(*app_state.tree);
         app_state.redraw_pending = false;
+        app_state.input.key_mods = current_key_mods();
 
         gui::Frame ui = gui::begin_frame(
             runtime.ui_context,

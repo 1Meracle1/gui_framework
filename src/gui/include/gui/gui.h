@@ -208,6 +208,7 @@ namespace gui {
         bool mouse_double_clicked[3] = {};
         bool mouse_triple_clicked[3] = {};
         float scroll_delta_y = 0.0f;
+        KeyMods key_mods = KEY_MOD_NONE;
         KeyEvent const* key_events = nullptr;
         size_t key_event_count = 0u;
     };
@@ -259,6 +260,10 @@ namespace gui {
         float max_y = 0.0f;
         float viewport_height = 0.0f;
         float content_height = 0.0f;
+        float x = 0.0f;
+        float max_x = 0.0f;
+        float viewport_width = 0.0f;
+        float content_width = 0.0f;
         bool valid = false;
     };
 
@@ -821,6 +826,7 @@ namespace gui {
             -> TreeNodeScope;
 
         [[nodiscard]] auto scroll_state(Id id) const -> ScrollState;
+        auto set_scroll_x(Id id, float x) -> void;
         auto set_scroll_y(Id id, float y) -> void;
         auto scroll_to_end(Id id) -> void;
         auto scroll_to_index(Id id, size_t index, ScrollReveal reveal = ScrollReveal::KEEP_VISIBLE)

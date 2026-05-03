@@ -321,6 +321,7 @@ namespace ui_api_testbed {
                 global_app_state->input.scroll_delta_y +=
                     static_cast<float>(GET_WHEEL_DELTA_WPARAM(wparam)) /
                     static_cast<float>(WHEEL_DELTA) * 36.0f;
+                global_app_state->input.key_mods = current_key_mods();
                 request_redraw(global_app_state);
             }
             return 0;
@@ -1026,6 +1027,7 @@ namespace ui_api_testbed {
                 float const delta_time = static_cast<float>(ticks - previous_ticks) * 0.001f;
                 previous_ticks = ticks;
                 app_state.redraw_pending = false;
+                app_state.input.key_mods = current_key_mods();
                 gui::InputState module_input = app_state.input;
 #if BASE_DEBUG
                 if (hot_reload_overlay_ready) {
