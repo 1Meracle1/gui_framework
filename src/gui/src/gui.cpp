@@ -16,6 +16,7 @@ namespace gui {
         inline constexpr float SCROLLBAR_MARGIN = 2.0f;
         inline constexpr float SCROLLBAR_WIDTH = 6.0f;
         inline constexpr float SCROLLBAR_MIN_THUMB_HEIGHT = 12.0f;
+        inline constexpr float TEXT_SELECTION_AUTOSCROLL_LINES_PER_SECOND = 60.0f;
         inline constexpr float TEXT_RASTER_PADDING = 2.0f;
 
         struct TextUndoEntry {
@@ -1035,6 +1036,10 @@ namespace gui {
         auto set_scroll_state(ContextImpl* impl, BoxNode& box, Id id_value) -> void {
             Id const key = scroll_state_key(id_value);
             box.scroll_state = key.value != 0u ? state_entry(impl, key) : box.state;
+        }
+
+        [[nodiscard]] auto selectable_label_owns_scroll(LayoutDesc const& layout) -> bool {
+            return layout.height.kind != SizeKind::AUTO && layout.height.kind != SizeKind::TEXT;
         }
 
         [[nodiscard]] auto box_disabled(BoxNode const& box) -> bool {
@@ -3359,6 +3364,77 @@ namespace gui {
             return line_index;
         }
 
+        auto request_text_cursor_visible(BoxNode const& box, size_t cursor) -> void {
+            if (box.scroll_state == nullptr || box.scroll_state->last_frame == 0u) {
+                return;
+            }
+
+            float const viewport = std::max(
+                0.0f, rect_height(box.scroll_state->rect) - inset_height(box.layout.padding)
+            );
+            if (viewport <= 0.0f) {
+                return;
+            }
+
+            float const line_height = text_line_height(box);
+            float const cursor_y =
+                line_height *
+                static_cast<float>(text_cursor_line_index(
+                    box, box.text, std::min(cursor, box.text.size()), box.scroll_state->rect
+                ));
+            float const scroll_y = box.scroll_state->scroll_y;
+            if (cursor_y < scroll_y) {
+                box.scroll_state->scroll_request_y = cursor_y;
+                box.scroll_state->scroll_request_set = true;
+            } else if (cursor_y + line_height > scroll_y + viewport) {
+                box.scroll_state->scroll_request_y = cursor_y + line_height - viewport;
+                box.scroll_state->scroll_request_set = true;
+            }
+        }
+
+        [[nodiscard]] auto text_selection_scroll_state(ContextImpl* impl, BoxNode const& box)
+            -> StateEntry* {
+            if (box.scroll_state != nullptr && box.scroll_state->scroll_max_y > 0.0f) {
+                return box.scroll_state;
+            }
+
+            for (size_t index = box.parent_index; index != INVALID_INDEX;
+                 index = impl->boxes[index].parent_index) {
+                BoxNode& parent = impl->boxes[index];
+                if (parent.scroll_state != nullptr && parent.scroll_state->scroll_max_y > 0.0f) {
+                    return parent.scroll_state;
+                }
+            }
+            return box.scroll_state;
+        }
+
+        auto request_pointer_text_selection_scroll(ContextImpl* impl, BoxNode const& box) -> void {
+            StateEntry* const scroll_state = text_selection_scroll_state(impl, box);
+            if (!box.signal.active || !impl->frame_desc.input.mouse_down[0u] ||
+                scroll_state == nullptr || scroll_state->last_frame == 0u) {
+                return;
+            }
+
+            float const mouse_y = impl->frame_desc.input.mouse_pos.y;
+            Rect const rect = scroll_state->rect;
+            float direction = 0.0f;
+            if (mouse_y < rect.min.y) {
+                direction = -1.0f;
+            } else if (mouse_y > rect.max.y) {
+                direction = 1.0f;
+            }
+            if (direction == 0.0f) {
+                return;
+            }
+
+            float const frame_time =
+                impl->frame_desc.delta_time > 0.0f ? impl->frame_desc.delta_time : 1.0f / 60.0f;
+            float const step =
+                text_line_height(box) * TEXT_SELECTION_AUTOSCROLL_LINES_PER_SECOND * frame_time;
+            scroll_state->scroll_request_y = scroll_state->scroll_y + direction * step;
+            scroll_state->scroll_request_set = true;
+        }
+
         [[nodiscard]] auto
         text_cursor_position(ContextImpl const* impl, BoxNode const& box, size_t cursor) -> Vec2 {
             Vec2 const pos = text_position(impl, box);
@@ -3407,6 +3483,7 @@ namespace gui {
 
             size_t const cursor =
                 text_index_from_mouse(impl, box, impl->frame_desc.input.mouse_pos);
+            request_pointer_text_selection_scroll(impl, box);
             if (signal.pressed_left || triple_clicked || double_clicked) {
                 impl->text_selection_owner_id = box.id;
             }
@@ -3837,31 +3914,11 @@ namespace gui {
         }
 
         auto request_multiline_cursor_visible(BoxNode const& box) -> void {
-            if (!multiline_input_text_box(box.kind) || box.scroll_state == nullptr ||
-                box.state == nullptr || box.scroll_state->last_frame == 0u) {
+            if (!multiline_input_text_box(box.kind) || box.state == nullptr) {
                 return;
             }
 
-            float const viewport = std::max(
-                0.0f, rect_height(box.scroll_state->rect) - inset_height(box.layout.padding)
-            );
-            if (viewport <= 0.0f) {
-                return;
-            }
-
-            float const line_height = text_line_height(box);
-            size_t const cursor = std::min(box.state->text_cursor, box.text.size());
-            float const cursor_y = line_height * static_cast<float>(text_cursor_line_index(
-                                                     box, box.text, cursor, box.scroll_state->rect
-                                                 ));
-            float const scroll_y = box.scroll_state->scroll_y;
-            if (cursor_y < scroll_y) {
-                box.scroll_state->scroll_request_y = cursor_y;
-                box.scroll_state->scroll_request_set = true;
-            } else if (cursor_y + line_height > scroll_y + viewport) {
-                box.scroll_state->scroll_request_y = cursor_y + line_height - viewport;
-                box.scroll_state->scroll_request_set = true;
-            }
+            request_text_cursor_visible(box, box.state->text_cursor);
         }
 
         auto apply_input_text_widget(
@@ -4090,7 +4147,9 @@ namespace gui {
             }
             signal.activated = !multiline && signal.focused && key_pressed(impl, Key::ENTER, false);
             box.text = copy_frame_str(impl, text_edit_text(buffer));
-            request_multiline_cursor_visible(box);
+            if (!signal.active || !impl->frame_desc.input.mouse_down[0u]) {
+                request_multiline_cursor_visible(box);
+            }
             apply_text_selection_owner(impl, box, box.text_selection);
             box.signal = signal;
             return signal;
@@ -6037,7 +6096,7 @@ namespace gui {
         size_t const parent = top_parent_index(impl);
         BoxDesc label_desc = desc;
         label_desc.layout.clip = true;
-        label_desc.layout.scroll_y = true;
+        label_desc.layout.scroll_y = selectable_label_owns_scroll(label_desc.layout);
         size_t const index = append_box(
             impl,
             BoxKind::SELECTABLE_LABEL,
@@ -6048,7 +6107,9 @@ namespace gui {
             true,
             false
         );
-        impl->boxes[index].scroll_state = impl->boxes[index].state;
+        if (label_desc.layout.scroll_y) {
+            impl->boxes[index].scroll_state = impl->boxes[index].state;
+        }
         return apply_selectable_label(impl, impl->boxes[index], selection);
     }
 
@@ -6059,7 +6120,7 @@ namespace gui {
         size_t const parent = top_parent_index(impl);
         BoxDesc label_desc = desc;
         label_desc.layout.clip = true;
-        label_desc.layout.scroll_y = true;
+        label_desc.layout.scroll_y = selectable_label_owns_scroll(label_desc.layout);
         Id const authored_id = scoped_id(impl, id_value);
         size_t const index = append_box(
             impl,
@@ -6071,7 +6132,9 @@ namespace gui {
             true,
             false
         );
-        set_scroll_state(impl, impl->boxes[index], authored_id);
+        if (label_desc.layout.scroll_y) {
+            set_scroll_state(impl, impl->boxes[index], authored_id);
+        }
         return apply_selectable_label(impl, impl->boxes[index], selection);
     }
 

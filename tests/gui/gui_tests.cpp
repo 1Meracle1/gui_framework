@@ -3858,6 +3858,46 @@ namespace {
         gui::destroy_context(gui_context);
     }
 
+    TEST_CASE(input_text_multiline_drag_selection_scrolls_beyond_bounds) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::Id const field_id = gui::id("field");
+        gui::BoxDesc const box = {.layout = {.width = gui::px(80.0f), .height = gui::px(40.0f)}};
+        StringBuffer buffer;
+        TEST_EXPECT(context, buffer.write_string("A\nB\nC\nD\nE") == 9u);
+
+        gui::KeyEvent const home[] = {{.key = gui::Key::HOME}};
+        gui::InputState input = {};
+        input.key_events = home;
+        input.key_event_count = 1u;
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {100.0f, 60.0f}, .input = input});
+        ui.request_focus(field_id);
+        ui.input_text_multiline(field_id, "Field", &buffer, {.box = box});
+        gui::end_frame(ui);
+
+        input = {};
+        input.mouse_pos = {5.0f, 5.0f};
+        input.mouse_down[0u] = true;
+        ui = gui::begin_frame(gui_context, {.size = {100.0f, 60.0f}, .input = input});
+        ui.input_text_multiline(field_id, "Field", &buffer, {.box = box});
+        gui::end_frame(ui);
+
+        input.mouse_pos = {5.0f, 45.0f};
+        ui = gui::begin_frame(gui_context, {.size = {100.0f, 60.0f}, .input = input});
+        ui.input_text_multiline(field_id, "Field", &buffer, {.box = box});
+        gui::end_frame(ui);
+
+        gui::ScrollState state = ui.scroll_state(field_id);
+        TEST_EXPECT(context, state.valid);
+        TEST_EXPECT(context, state.y >= 19.0f && state.y <= 21.0f);
+
+        gui::destroy_context(gui_context);
+    }
+
     TEST_CASE(explicit_ids_disambiguate_same_text_widgets) {
         Arena arena = {};
         arena.init();
@@ -4707,6 +4747,92 @@ namespace {
         TEST_EXPECT(context, selection.end == 2u);
         TEST_EXPECT(context, !signal.pressed_left);
         TEST_EXPECT(context, !signal.changed);
+
+        gui::destroy_context(gui_context);
+    }
+
+    TEST_CASE(selectable_label_drag_selection_scrolls_beyond_bounds) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::TextSelection selection = {};
+        gui::Id const label_id = gui::id("copyable");
+        gui::BoxDesc const box = {.layout = {.width = gui::px(80.0f), .height = gui::px(40.0f)}};
+
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {100.0f, 60.0f}});
+        ui.selectable_label(label_id, "A\nB\nC\nD\nE", &selection, box);
+        gui::end_frame(ui);
+
+        gui::InputState input = {};
+        input.mouse_pos = {5.0f, 5.0f};
+        input.mouse_down[0u] = true;
+        ui = gui::begin_frame(gui_context, {.size = {100.0f, 60.0f}, .input = input});
+        ui.selectable_label(label_id, "A\nB\nC\nD\nE", &selection, box);
+        gui::end_frame(ui);
+
+        input.mouse_pos = {5.0f, 45.0f};
+        ui = gui::begin_frame(gui_context, {.size = {100.0f, 60.0f}, .input = input});
+        ui.selectable_label(label_id, "A\nB\nC\nD\nE", &selection, box);
+        gui::end_frame(ui);
+
+        gui::ScrollState state = ui.scroll_state(label_id);
+        TEST_EXPECT(context, state.valid);
+        TEST_EXPECT(context, state.y >= 19.0f && state.y <= 21.0f);
+        TEST_EXPECT(context, selection.start < selection.end);
+
+        gui::destroy_context(gui_context);
+    }
+
+    TEST_CASE(selectable_label_drag_selection_scrolls_parent_panel_beyond_bounds) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::TextSelection selection = {};
+        gui::Id const panel_id = gui::id("panel");
+        gui::Id const label_id = gui::id("copyable");
+
+        auto add_label = [&](gui::Frame& frame) -> void {
+            if (auto panel = frame.scroll_panel(
+                    panel_id, {.layout = {.width = gui::px(80.0f), .height = gui::px(40.0f)}}
+                )) {
+                BASE_UNUSED(panel);
+                frame.selectable_label(
+                    label_id,
+                    "A\nB\nC\nD\nE",
+                    &selection,
+                    {.layout = {.width = gui::fill(), .height = gui::text()}}
+                );
+            }
+        };
+
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {100.0f, 60.0f}});
+        add_label(ui);
+        gui::end_frame(ui);
+
+        gui::InputState input = {};
+        input.mouse_pos = {5.0f, 5.0f};
+        input.mouse_down[0u] = true;
+        ui = gui::begin_frame(gui_context, {.size = {100.0f, 60.0f}, .input = input});
+        add_label(ui);
+        gui::end_frame(ui);
+
+        input.mouse_pos = {5.0f, 45.0f};
+        ui = gui::begin_frame(gui_context, {.size = {100.0f, 60.0f}, .input = input});
+        add_label(ui);
+        gui::end_frame(ui);
+
+        gui::ScrollState panel_state = ui.scroll_state(panel_id);
+        gui::ScrollState label_state = ui.scroll_state(label_id);
+        TEST_EXPECT(context, panel_state.valid);
+        TEST_EXPECT(context, !label_state.valid);
+        TEST_EXPECT(context, panel_state.y >= 19.0f && panel_state.y <= 21.0f);
+        TEST_EXPECT(context, selection.start < selection.end);
 
         gui::destroy_context(gui_context);
     }
