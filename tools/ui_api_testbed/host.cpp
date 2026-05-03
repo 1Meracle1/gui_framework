@@ -19,8 +19,11 @@
 #include "trace.h"
 
 #include <algorithm>
+#include <base/string_buffer.h>
 #include <cstring>
 #include <draw/draw_renderer.h>
+#include <font_cache/font_cache.h>
+#include <font_provider/font_provider.h>
 #include <render/render.h>
 #include <windows.h>
 #endif
@@ -29,6 +32,9 @@
 namespace ui_api_testbed {
 
 #if defined(_WIN32)
+    namespace draw = gui::draw;
+    namespace font_cache = gui::font_cache;
+    namespace font_provider = gui::font_provider;
     namespace render = gui::render;
 
     constexpr wchar_t WINDOW_CLASS_NAME[] = L"gui_framework_ui_api_testbed";
@@ -420,6 +426,407 @@ namespace ui_api_testbed {
     }
 
 #if BASE_DEBUG
+    struct HotReloadOverlayRenderer {
+        font_provider::Context provider = {};
+        font_cache::Cache cache = {};
+        font_cache::Font font = {};
+        gui::Context ui_context = {};
+        draw::Context draw_context = {};
+        draw::Renderer draw_renderer = {};
+        gui::TextSelection log_selection = {};
+        StringBuffer log_text = {};
+        HWND hwnd = nullptr;
+    };
+
+    struct HotReloadOverlayState {
+        ReloadPhase observed_phase = ReloadPhase::IDLE;
+        size_t observed_text_size = 0u;
+        size_t observed_line_count = 0u;
+        bool observed_truncated = false;
+        bool visible = false;
+        bool hidden_failure = false;
+        bool follow_tail = true;
+        bool capture_input = false;
+        bool mouse_capture = false;
+        bool last_mouse_down = false;
+    };
+
+    struct HotReloadOverlayMetrics {
+        draw::Rect panel = {};
+        draw::Rect log = {};
+        draw::Rect close = {};
+        bool valid = false;
+    };
+
+    auto log_font_result(char const* operation, font_provider::Result result) -> void {
+        fmt::eprintf("%s failed: %s\n", operation, font_provider::result_name(result));
+    }
+
+    auto set_hot_reload_clipboard_text(void* user_data, StrRef text) -> void {
+        auto* const overlay = static_cast<HotReloadOverlayRenderer*>(user_data);
+        if (overlay == nullptr || overlay->hwnd == nullptr || !OpenClipboard(overlay->hwnd)) {
+            return;
+        }
+
+        int const wide_count = MultiByteToWideChar(
+            CP_UTF8, MB_ERR_INVALID_CHARS, text.data(), static_cast<int>(text.size()), nullptr, 0
+        );
+        if (wide_count <= 0) {
+            CloseClipboard();
+            return;
+        }
+
+        HGLOBAL const memory =
+            GlobalAlloc(GMEM_MOVEABLE, sizeof(wchar_t) * (static_cast<size_t>(wide_count) + 1u));
+        if (memory == nullptr) {
+            CloseClipboard();
+            return;
+        }
+
+        auto* const wide_text = static_cast<wchar_t*>(GlobalLock(memory));
+        if (wide_text == nullptr) {
+            GlobalFree(memory);
+            CloseClipboard();
+            return;
+        }
+        MultiByteToWideChar(
+            CP_UTF8,
+            MB_ERR_INVALID_CHARS,
+            text.data(),
+            static_cast<int>(text.size()),
+            wide_text,
+            wide_count
+        );
+        wide_text[wide_count] = L'\0';
+        GlobalUnlock(memory);
+
+        EmptyClipboard();
+        if (SetClipboardData(CF_UNICODETEXT, memory) == nullptr) {
+            GlobalFree(memory);
+        }
+        CloseClipboard();
+    }
+
+    auto destroy_hot_reload_overlay_renderer(
+        render::Context render_context, HotReloadOverlayRenderer* overlay
+    ) -> void {
+        if (overlay == nullptr) {
+            return;
+        }
+
+        if (draw::renderer_valid(overlay->draw_renderer)) {
+            draw::destroy_renderer(render_context, overlay->draw_renderer);
+        }
+        if (draw::context_valid(overlay->draw_context)) {
+            draw::destroy_context(overlay->draw_context);
+        }
+        if (gui::context_valid(overlay->ui_context)) {
+            gui::destroy_context(overlay->ui_context);
+        }
+        if (font_cache::cache_valid(overlay->cache)) {
+            font_cache::destroy_cache(overlay->cache);
+        }
+        if (font_provider::context_valid(overlay->provider)) {
+            font_provider::destroy_context(overlay->provider);
+        }
+        overlay->log_text.destroy();
+        overlay->font = {};
+        overlay->hwnd = nullptr;
+    }
+
+    [[nodiscard]] auto create_hot_reload_overlay_renderer(
+        Arena& arena, render::Context render_context, HWND hwnd, HotReloadOverlayRenderer* overlay
+    ) -> bool {
+        overlay->hwnd = hwnd;
+        render::Result render_result =
+            draw::create_renderer(arena, render_context, {}, overlay->draw_renderer);
+        if (render::result_failed(render_result)) {
+            log_host_render_result("draw::create_renderer", render_result);
+            return false;
+        }
+
+        font_provider::Result font_result =
+            font_provider::create_context(arena, {}, overlay->provider);
+        if (font_provider::result_failed(font_result)) {
+            log_font_result("font_provider::create_context", font_result);
+            destroy_hot_reload_overlay_renderer(render_context, overlay);
+            return false;
+        }
+
+        font_cache::create_cache(arena, overlay->provider, {}, overlay->cache);
+        font_cache::open_system_font(overlay->cache, "Consolas", overlay->font);
+
+        draw::ContextDesc draw_desc = {};
+        draw_desc.font_cache = overlay->cache;
+        draw::create_context(arena, draw_desc, overlay->draw_context);
+
+        gui::ThemeDesc theme = gui::default_theme();
+        theme.tokens.accent = gui::rgba(78, 140, 255, 255);
+        theme.root = {
+            .foreground = gui::rgba(196, 200, 208, 235),
+            .font = overlay->font,
+            .font_size = 12.0f,
+        };
+        gui::create_context(
+            arena,
+            {
+                .theme = &theme,
+                .set_clipboard_text = set_hot_reload_clipboard_text,
+                .clipboard_user_data = overlay,
+            },
+            overlay->ui_context
+        );
+        BASE_UNUSED(overlay->log_text.init(RELOAD_LOG_CAPACITY + RELOAD_LOG_LINE_COUNT));
+        return true;
+    }
+
+    [[nodiscard]] auto reload_phase_title(ReloadPhase phase) -> StrRef {
+        switch (phase) {
+        case ReloadPhase::COMPILING:
+            return "Hot reload: compiling";
+        case ReloadPhase::RELOADING:
+            return "Hot reload: reloading DLL";
+        case ReloadPhase::FAILED:
+            return "Hot reload: failed";
+        case ReloadPhase::COMPLETE:
+            return "Hot reload: complete";
+        case ReloadPhase::IDLE:
+            return "Hot reload";
+        }
+        return "Hot reload";
+    }
+
+    [[nodiscard]] auto rect_contains(draw::Rect rect, gui::Vec2 pos) -> bool {
+        return pos.x >= rect.min.x && pos.x <= rect.max.x && pos.y >= rect.min.y &&
+               pos.y <= rect.max.y;
+    }
+
+    [[nodiscard]] auto hot_reload_overlay_active(ReloadPhase phase) -> bool {
+        return phase == ReloadPhase::COMPILING || phase == ReloadPhase::RELOADING;
+    }
+
+    [[nodiscard]] auto hot_reload_overlay_metrics(render::SizeU32 window_size)
+        -> HotReloadOverlayMetrics {
+        float const window_width = static_cast<float>(window_size.width);
+        float const window_height = static_cast<float>(window_size.height);
+        if (window_width < 80.0f || window_height < 80.0f) {
+            return {};
+        }
+
+        float const panel_width = std::min(860.0f, std::max(160.0f, window_width - 32.0f));
+        float const panel_height = std::min(380.0f, std::max(96.0f, window_height - 32.0f));
+        draw::Rect const panel = {{16.0f, 16.0f}, {16.0f + panel_width, 16.0f + panel_height}};
+        draw::Rect const log = {
+            {panel.min.x + 14.0f, panel.min.y + 40.0f}, {panel.max.x - 14.0f, panel.max.y - 12.0f}
+        };
+        return {
+            .panel = panel,
+            .log = log,
+            .close =
+                {{panel.max.x - 36.0f, panel.min.y + 10.0f},
+                 {panel.max.x - 12.0f, panel.min.y + 34.0f}},
+            .valid = true,
+        };
+    }
+
+    [[nodiscard]] auto update_hot_reload_overlay_state(
+        HotReloadOverlayState* state,
+        ReloadOverlay overlay,
+        bool module_visible,
+        render::SizeU32 window_size,
+        gui::InputState* input
+    ) -> bool {
+        if (overlay.phase != ReloadPhase::FAILED) {
+            state->hidden_failure = false;
+        }
+        if (hot_reload_overlay_active(overlay.phase) && state->observed_phase != overlay.phase) {
+            state->follow_tail = true;
+        }
+
+        HotReloadOverlayMetrics const metrics = hot_reload_overlay_metrics(window_size);
+        bool visible =
+            module_visible && !(overlay.phase == ReloadPhase::FAILED && state->hidden_failure);
+        bool changed = visible != state->visible || overlay.phase != state->observed_phase ||
+                       overlay.text_size != state->observed_text_size ||
+                       overlay.line_count != state->observed_line_count ||
+                       overlay.truncated != state->observed_truncated;
+
+        if (visible && metrics.valid) {
+            bool const panel_hovered = rect_contains(metrics.panel, input->mouse_pos);
+            bool const mouse_pressed = input->mouse_down[0u] && !state->last_mouse_down;
+            if (mouse_pressed && panel_hovered) {
+                state->mouse_capture = true;
+            }
+            if (!input->mouse_down[0u]) {
+                state->mouse_capture = false;
+            }
+            state->capture_input = panel_hovered || state->mouse_capture;
+
+            if (overlay.phase == ReloadPhase::FAILED && mouse_pressed &&
+                rect_contains(metrics.close, input->mouse_pos)) {
+                state->hidden_failure = true;
+                visible = false;
+                changed = true;
+                state->capture_input = true;
+                input->mouse_down[0u] = false;
+                input->mouse_double_clicked[0u] = false;
+                input->mouse_triple_clicked[0u] = false;
+            } else if (input->scroll_delta_y > 0.0f && panel_hovered) {
+                state->follow_tail = false;
+            }
+        } else {
+            state->capture_input = false;
+            state->mouse_capture = false;
+        }
+
+        state->last_mouse_down = input->mouse_down[0u];
+        state->visible = visible;
+        state->observed_phase = overlay.phase;
+        state->observed_text_size = overlay.text_size;
+        state->observed_line_count = overlay.line_count;
+        state->observed_truncated = overlay.truncated;
+        return changed;
+    }
+
+    auto update_hot_reload_log_text(HotReloadOverlayRenderer* renderer, ReloadOverlay overlay)
+        -> void {
+        renderer->log_text.reset();
+        if (overlay.truncated) {
+            BASE_UNUSED(renderer->log_text.write_string("output truncated\n"));
+        }
+        for (size_t index = 0u; index < overlay.line_count; ++index) {
+            ReloadLogLine const& line = overlay.lines[index];
+            BASE_UNUSED(renderer->log_text.write_bytes(overlay.text + line.offset, line.size));
+            BASE_UNUSED(renderer->log_text.write_byte('\n'));
+        }
+    }
+
+    auto build_hot_reload_overlay_commands(
+        HotReloadOverlayRenderer* renderer,
+        render::SizeU32 window_size,
+        ReloadOverlay overlay,
+        HotReloadOverlayState* state,
+        gui::InputState const& input,
+        float delta_time
+    ) -> void {
+        draw::begin_frame(renderer->draw_context);
+
+        HotReloadOverlayMetrics const metrics = hot_reload_overlay_metrics(window_size);
+        if (!metrics.valid || !state->visible) {
+            draw::end_frame(renderer->draw_context);
+            return;
+        }
+        update_hot_reload_log_text(renderer, overlay);
+
+        draw::BoxStyle panel_style = {};
+        panel_style.fill_color = {0.025f, 0.027f, 0.032f, 0.90f};
+        panel_style.border_color = {1.0f, 1.0f, 1.0f, 0.16f};
+        panel_style.border_thickness = 1.0f;
+        panel_style.radius = 8.0f;
+        panel_style.shadow = {
+            .offset = {0.0f, 10.0f},
+            .blur_radius = 24.0f,
+            .color = {0.0f, 0.0f, 0.0f, 0.30f},
+        };
+        draw::draw_rect_styled(renderer->draw_context, metrics.panel, panel_style);
+
+        draw::Color title_color = {0.94f, 0.96f, 1.0f, 0.96f};
+        if (overlay.phase == ReloadPhase::FAILED) {
+            title_color = {1.0f, 0.34f, 0.34f, 0.98f};
+        }
+        draw::draw_text(
+            renderer->draw_context,
+            {metrics.panel.min.x + 14.0f, metrics.panel.min.y + 12.0f},
+            {.font = renderer->font, .size = 14.0f, .color = title_color},
+            reload_phase_title(overlay.phase),
+            nullptr
+        );
+
+        if (overlay.phase == ReloadPhase::FAILED) {
+            draw::BoxStyle close_style = {};
+            close_style.fill_color = {0.35f, 0.08f, 0.08f, 0.72f};
+            close_style.border_color = {1.0f, 0.42f, 0.42f, 0.38f};
+            close_style.border_thickness = 1.0f;
+            close_style.radius = 5.0f;
+            draw::draw_rect_styled(renderer->draw_context, metrics.close, close_style);
+            draw::Color const close_color = {1.0f, 0.78f, 0.78f, 0.92f};
+            draw::draw_line(
+                renderer->draw_context,
+                {metrics.close.min.x + 7.0f, metrics.close.min.y + 7.0f},
+                {metrics.close.max.x - 7.0f, metrics.close.max.y - 7.0f},
+                close_color,
+                1.6f
+            );
+            draw::draw_line(
+                renderer->draw_context,
+                {metrics.close.max.x - 7.0f, metrics.close.min.y + 7.0f},
+                {metrics.close.min.x + 7.0f, metrics.close.max.y - 7.0f},
+                close_color,
+                1.6f
+            );
+        }
+
+        gui::Id const log_id = gui::id("hot_reload_log");
+        gui::Frame ui = gui::begin_frame(
+            renderer->ui_context,
+            {
+                .size =
+                    {
+                        static_cast<float>(window_size.width),
+                        static_cast<float>(window_size.height),
+                    },
+                .delta_time = delta_time,
+                .input = input,
+            }
+        );
+        if (state->follow_tail) {
+            ui.scroll_to_end(log_id);
+        }
+        ui.selectable_label(
+            log_id,
+            renderer->log_text.str(),
+            &renderer->log_selection,
+            {
+                .layout =
+                    {
+                        .width = gui::px(metrics.log.max.x - metrics.log.min.x),
+                        .height = gui::px(metrics.log.max.y - metrics.log.min.y),
+                        .margin = gui::insets(metrics.log.min.y, 0.0f, 0.0f, metrics.log.min.x),
+                        .word_wrap = true,
+                    },
+                .style =
+                    {
+                        .role = gui::StyleRole::TEXT,
+                        .foreground = gui::rgba(196, 200, 208, 235),
+                        .font = renderer->font,
+                        .font_size = 12.0f,
+                    },
+                .debug_name = "hot_reload_log",
+            }
+        );
+        gui::end_frame(ui);
+        gui::render_frame(ui, renderer->draw_context);
+        gui::ScrollState const scroll = ui.scroll_state(log_id);
+        if (scroll.valid) {
+            state->follow_tail = scroll.y >= scroll.max_y - 1.0f;
+        }
+
+        draw::end_frame(renderer->draw_context);
+    }
+
+    [[nodiscard]] auto render_hot_reload_overlay(
+        HotReloadOverlayRenderer* overlay,
+        render::Context render_context,
+        render::Window render_window
+    ) -> render::Result {
+        render::WindowRenderPassDesc pass_desc = {};
+        pass_desc.window = render_window;
+        pass_desc.load_op = render::LoadOp::LOAD;
+        return draw::render_commands_to_window(
+            overlay->draw_renderer, render_context, pass_desc, overlay->draw_context
+        );
+    }
+
     [[nodiscard]] auto trace_idle_wait_ms(
         TraceOptions const& options,
         ManualTrace const& trace,
@@ -483,10 +890,23 @@ namespace ui_api_testbed {
             return 1;
         }
 
+#if BASE_DEBUG
+        HotReloadOverlayRenderer hot_reload_overlay = {};
+        HotReloadOverlayState hot_reload_overlay_state = {};
+        bool const hot_reload_overlay_ready = create_hot_reload_overlay_renderer(
+            app_arena, render_context, app_state.hwnd, &hot_reload_overlay
+        );
+#endif
+
         TestbedModule module = {};
         init_testbed_module_storage(&module, app_arena);
         if (!load_testbed_module(&module, render_context, app_state.hwnd)) {
             destroy_testbed_module(&module, render_context);
+#if BASE_DEBUG
+            if (hot_reload_overlay_ready) {
+                destroy_hot_reload_overlay_renderer(render_context, &hot_reload_overlay);
+            }
+#endif
             render::destroy_window(render_window);
             render::destroy_context(render_context);
             destroy_testbed_window(&app_state);
@@ -564,6 +984,25 @@ namespace ui_api_testbed {
                     app_state.mouse_hit_id = {};
                     app_state.redraw_pending = true;
                 }
+#if BASE_DEBUG
+                ReloadOverlay reload_overlay = {};
+                bool hot_reload_overlay_visible = false;
+                if (hot_reload_overlay_ready) {
+                    reload_overlay = testbed_module_reload_overlay(module);
+                    bool const module_overlay_visible =
+                        testbed_module_reload_overlay_visible(module);
+                    if (update_hot_reload_overlay_state(
+                            &hot_reload_overlay_state,
+                            reload_overlay,
+                            module_overlay_visible,
+                            render::window_size(render_window),
+                            &app_state.input
+                        )) {
+                        app_state.redraw_pending = true;
+                    }
+                    hot_reload_overlay_visible = hot_reload_overlay_state.visible;
+                }
+#endif
 
                 if (!app_state.redraw_pending) {
                     TRACE_SCOPE(&trace, "idle_wait");
@@ -587,6 +1026,26 @@ namespace ui_api_testbed {
                 float const delta_time = static_cast<float>(ticks - previous_ticks) * 0.001f;
                 previous_ticks = ticks;
                 app_state.redraw_pending = false;
+                gui::InputState module_input = app_state.input;
+#if BASE_DEBUG
+                if (hot_reload_overlay_ready) {
+                    build_hot_reload_overlay_commands(
+                        &hot_reload_overlay,
+                        render::window_size(render_window),
+                        reload_overlay,
+                        &hot_reload_overlay_state,
+                        app_state.input,
+                        delta_time
+                    );
+                    if (hot_reload_overlay_state.capture_input) {
+                        module_input.scroll_delta_y = 0.0f;
+                        module_input.mouse_down[0u] = false;
+                        module_input.mouse_double_clicked[0u] = false;
+                        module_input.mouse_triple_clicked[0u] = false;
+                        module_input.key_event_count = 0u;
+                    }
+                }
+#endif
                 FrameResult frame_result = {};
                 {
                     TRACE_SCOPE(&trace, "module_render_frame");
@@ -595,7 +1054,7 @@ namespace ui_api_testbed {
                         render_context,
                         render_window,
                         render::window_size(render_window),
-                        app_state.input,
+                        module_input,
                         delta_time
                     );
                 }
@@ -610,6 +1069,18 @@ namespace ui_api_testbed {
                     );
                     break;
                 }
+
+#if BASE_DEBUG
+                if (hot_reload_overlay_ready && hot_reload_overlay_visible) {
+                    result = render_hot_reload_overlay(
+                        &hot_reload_overlay, render_context, render_window
+                    );
+                    if (render::result_failed(result)) {
+                        log_host_render_result("render_hot_reload_overlay", result);
+                        break;
+                    }
+                }
+#endif
 
                 {
                     TRACE_SCOPE(&trace, "present");
@@ -642,6 +1113,11 @@ namespace ui_api_testbed {
         BASE_UNUSED(trace_options);
 #endif
         destroy_testbed_module(&module, render_context);
+#if BASE_DEBUG
+        if (hot_reload_overlay_ready) {
+            destroy_hot_reload_overlay_renderer(render_context, &hot_reload_overlay);
+        }
+#endif
         render::destroy_window(render_window);
         render::destroy_context(render_context);
         destroy_testbed_window(&app_state);

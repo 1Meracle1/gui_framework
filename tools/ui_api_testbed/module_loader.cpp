@@ -3,6 +3,7 @@
 #if defined(_WIN32)
 #include "app.h"
 
+#include <algorithm>
 #include <base/config.h>
 #include <base/fmt.h>
 #include <cstdint>
@@ -35,6 +36,14 @@ namespace ui_api_testbed {
     [[nodiscard]] auto wide_length(wchar_t const* text) -> size_t {
         size_t size = 0u;
         while (text[size] != L'\0') {
+            ++size;
+        }
+        return size;
+    }
+
+    [[nodiscard]] auto text_length(char const* text) -> size_t {
+        size_t size = 0u;
+        while (text[size] != '\0') {
             ++size;
         }
         return size;
@@ -111,6 +120,122 @@ namespace ui_api_testbed {
         return CompareFileTime(&a, &b) == 0;
     }
 
+    auto set_reload_phase(TestbedModule* module, ReloadPhase phase) -> void {
+        module->reload_phase = phase;
+        module->reload_phase_ticks = GetTickCount64();
+    }
+
+    auto reset_reload_log(TestbedModule* module) -> void {
+        module->reload_log_size = 0u;
+        module->reload_log_line_count = 0u;
+        module->reload_log_line_open = false;
+        module->reload_log_truncated = false;
+    }
+
+    [[nodiscard]] auto append_reload_log_line(TestbedModule* module, bool is_stderr)
+        -> ReloadLogLine* {
+        if (module->reload_log_line_count >= RELOAD_LOG_LINE_COUNT) {
+            module->reload_log_truncated = true;
+            return nullptr;
+        }
+
+        ReloadLogLine* const line = module->reload_log_lines + module->reload_log_line_count;
+        *line = {
+            .offset = static_cast<uint32_t>(module->reload_log_size),
+            .size = 0u,
+            .is_stderr = is_stderr,
+        };
+        module->reload_log_line_count += 1u;
+        module->reload_log_line_open = true;
+        return line;
+    }
+
+    auto append_reload_output(TestbedModule* module, bool is_stderr, char const* text, size_t size)
+        -> void {
+        for (size_t index = 0u; index < size; ++index) {
+            char const c = text[index];
+            if (c == '\r') {
+                continue;
+            }
+
+            if (!module->reload_log_line_open || module->reload_log_line_count == 0u ||
+                module->reload_log_lines[module->reload_log_line_count - 1u].is_stderr !=
+                    is_stderr) {
+                if (append_reload_log_line(module, is_stderr) == nullptr) {
+                    return;
+                }
+            }
+
+            if (c == '\n') {
+                module->reload_log_line_open = false;
+                continue;
+            }
+
+            if (module->reload_log_size >= RELOAD_LOG_CAPACITY) {
+                module->reload_log_truncated = true;
+                return;
+            }
+
+            module->reload_log[module->reload_log_size] = c;
+            module->reload_log_size += 1u;
+            module->reload_log_lines[module->reload_log_line_count - 1u].size += 1u;
+        }
+    }
+
+    auto append_reload_output(TestbedModule* module, bool is_stderr, char const* text) -> void {
+        append_reload_output(module, is_stderr, text, text_length(text));
+    }
+
+    auto read_rebuild_pipe(TestbedModule* module, HANDLE pipe, bool is_stderr) -> void {
+        if (pipe == nullptr) {
+            return;
+        }
+
+        for (;;) {
+            DWORD available = 0u;
+            if (!PeekNamedPipe(pipe, nullptr, 0u, nullptr, &available, nullptr) ||
+                available == 0u) {
+                return;
+            }
+
+            char buffer[4096] = {};
+            DWORD const read_size = std::min<DWORD>(available, static_cast<DWORD>(sizeof(buffer)));
+            DWORD bytes_read = 0u;
+            if (!ReadFile(pipe, buffer, read_size, &bytes_read, nullptr) || bytes_read == 0u) {
+                return;
+            }
+            append_reload_output(module, is_stderr, buffer, static_cast<size_t>(bytes_read));
+        }
+    }
+
+    auto read_rebuild_output(TestbedModule* module) -> void {
+        read_rebuild_pipe(module, module->rebuild_stdout, false);
+        read_rebuild_pipe(module, module->rebuild_stderr, true);
+    }
+
+    auto close_handle(HANDLE* handle) -> void {
+        if (*handle != nullptr) {
+            CloseHandle(*handle);
+            *handle = nullptr;
+        }
+    }
+
+    [[nodiscard]] auto create_rebuild_pipe(HANDLE* out_read, HANDLE* out_write) -> bool {
+        SECURITY_ATTRIBUTES attributes = {};
+        attributes.nLength = sizeof(attributes);
+        attributes.bInheritHandle = TRUE;
+
+        if (!CreatePipe(out_read, out_write, &attributes, 0u)) {
+            return false;
+        }
+        if (!SetHandleInformation(*out_read, HANDLE_FLAG_INHERIT, 0u)) {
+            close_handle(out_read);
+            close_handle(out_write);
+            return false;
+        }
+        return true;
+    }
+
     auto refresh_watched_files(TestbedModule* module) -> void {
         for (size_t index = 0u; index < WATCHED_RELOAD_FILE_COUNT; ++index) {
             wchar_t path[MAX_PATH * 4] = {};
@@ -150,6 +275,8 @@ namespace ui_api_testbed {
         if (module->rebuild_process.hThread != nullptr) {
             CloseHandle(module->rebuild_process.hThread);
         }
+        close_handle(&module->rebuild_stdout);
+        close_handle(&module->rebuild_stderr);
         module->rebuild_process = {};
         module->rebuild_running = false;
     }
@@ -194,26 +321,64 @@ namespace ui_api_testbed {
             return false;
         }
 
+        reset_reload_log(module);
+        set_reload_phase(module, ReloadPhase::COMPILING);
+        append_reload_output(module, false, "ui_api_testbed: rebuilding hot module\n");
+
+        HANDLE stdout_read = nullptr;
+        HANDLE stdout_write = nullptr;
+        HANDLE stderr_read = nullptr;
+        HANDLE stderr_write = nullptr;
+        if (!create_rebuild_pipe(&stdout_read, &stdout_write) ||
+            !create_rebuild_pipe(&stderr_read, &stderr_write)) {
+            close_handle(&stdout_read);
+            close_handle(&stdout_write);
+            close_handle(&stderr_read);
+            close_handle(&stderr_write);
+            set_reload_phase(module, ReloadPhase::FAILED);
+            fmt::eprintf("ui_api_testbed: failed to create rebuild output pipe\n");
+            append_reload_output(
+                module, true, "ui_api_testbed: failed to capture rebuild output\n"
+            );
+            return false;
+        }
+
         STARTUPINFOW startup = {};
         startup.cb = sizeof(startup);
+        startup.dwFlags = STARTF_USESTDHANDLES;
+        startup.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+        if (startup.hStdInput == INVALID_HANDLE_VALUE) {
+            startup.hStdInput = nullptr;
+        }
+        startup.hStdOutput = stdout_write;
+        startup.hStdError = stderr_write;
+
         BOOL const created = CreateProcessW(
             nullptr,
             command,
             nullptr,
             nullptr,
-            FALSE,
+            TRUE,
             CREATE_NO_WINDOW,
             nullptr,
             nullptr,
             &startup,
             &module->rebuild_process
         );
+        close_handle(&stdout_write);
+        close_handle(&stderr_write);
         if (!created) {
             fmt::eprintf("ui_api_testbed: failed to start module rebuild: %lu\n", GetLastError());
+            append_reload_output(module, true, "ui_api_testbed: failed to start module rebuild\n");
+            close_handle(&stdout_read);
+            close_handle(&stderr_read);
             module->rebuild_process = {};
+            set_reload_phase(module, ReloadPhase::FAILED);
             return false;
         }
 
+        module->rebuild_stdout = stdout_read;
+        module->rebuild_stderr = stderr_read;
         module->rebuild_running = true;
         module->rebuild_requested = false;
         fmt::printf("ui_api_testbed: rebuilding hot module\n");
@@ -350,21 +515,35 @@ namespace ui_api_testbed {
         if (!module->rebuild_running) {
             return false;
         }
+        read_rebuild_output(module);
         DWORD const wait = WaitForSingleObject(module->rebuild_process.hProcess, 0u);
         if (wait == WAIT_TIMEOUT) {
             return false;
         }
 
+        read_rebuild_output(module);
         DWORD exit_code = 1u;
         BASE_UNUSED(GetExitCodeProcess(module->rebuild_process.hProcess, &exit_code));
         close_rebuild_process(module);
         if (exit_code != 0u) {
             fmt::eprintf("ui_api_testbed: hot module rebuild failed: %lu\n", exit_code);
+            append_reload_output(module, true, "ui_api_testbed: hot module rebuild failed\n");
+            set_reload_phase(module, ReloadPhase::FAILED);
             return false;
         }
 
+        append_reload_output(module, false, "ui_api_testbed: build finished; reloading DLL\n");
+        set_reload_phase(module, ReloadPhase::RELOADING);
         refresh_watched_files(module);
-        return reload_module(module, render_context, hwnd, false);
+        bool const reloaded = reload_module(module, render_context, hwnd, false);
+        append_reload_output(
+            module,
+            !reloaded,
+            reloaded ? "ui_api_testbed: hot reload complete\n"
+                     : "ui_api_testbed: DLL reload failed\n"
+        );
+        set_reload_phase(module, reloaded ? ReloadPhase::COMPLETE : ReloadPhase::FAILED);
+        return reloaded;
     }
 
     [[nodiscard]] auto
@@ -372,7 +551,9 @@ namespace ui_api_testbed {
         if (!start_rebuild(module)) {
             return false;
         }
-        WaitForSingleObject(module->rebuild_process.hProcess, INFINITE);
+        while (WaitForSingleObject(module->rebuild_process.hProcess, 16u) == WAIT_TIMEOUT) {
+            read_rebuild_output(module);
+        }
         return finish_rebuild(module, render_context, hwnd);
     }
 #endif
@@ -430,7 +611,10 @@ namespace ui_api_testbed {
     auto destroy_testbed_module(TestbedModule* module, render::Context render_context) -> void {
 #if BASE_DEBUG
         if (module->rebuild_running) {
-            WaitForSingleObject(module->rebuild_process.hProcess, INFINITE);
+            while (WaitForSingleObject(module->rebuild_process.hProcess, 16u) == WAIT_TIMEOUT) {
+                read_rebuild_output(module);
+            }
+            read_rebuild_output(module);
             close_rebuild_process(module);
         }
         if (module->runtime_valid) {
@@ -461,6 +645,33 @@ namespace ui_api_testbed {
         return module.storage;
 #endif
     }
+
+#if BASE_DEBUG
+    [[nodiscard]] auto testbed_module_reload_overlay(TestbedModule const& module) -> ReloadOverlay {
+        return {
+            .phase = module.reload_phase,
+            .text = module.reload_log,
+            .text_size = module.reload_log_size,
+            .lines = module.reload_log_lines,
+            .line_count = module.reload_log_line_count,
+            .truncated = module.reload_log_truncated,
+        };
+    }
+
+    [[nodiscard]] auto testbed_module_reload_overlay_visible(TestbedModule const& module) -> bool {
+        if (module.rebuild_running || module.reload_phase == ReloadPhase::COMPILING ||
+            module.reload_phase == ReloadPhase::RELOADING) {
+            return true;
+        }
+        if (module.reload_phase == ReloadPhase::FAILED) {
+            return true;
+        }
+        if (module.reload_phase == ReloadPhase::IDLE) {
+            return false;
+        }
+        return GetTickCount64() - module.reload_phase_ticks <= RELOAD_OVERLAY_HOLD_MS;
+    }
+#endif
 
 } // namespace ui_api_testbed
 #endif
