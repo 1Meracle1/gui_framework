@@ -178,6 +178,7 @@ if(BUILD_TESTS)
     add_executable(code_editor_model_tests
         tests/code_editor/editor_model_tests.cpp
         examples/code_editor/editor_model.cpp
+        examples/code_editor/text_buffer.cpp
     )
     target_include_directories(code_editor_model_tests PRIVATE
         "${PROJECT_SOURCE_DIR}/examples/code_editor"

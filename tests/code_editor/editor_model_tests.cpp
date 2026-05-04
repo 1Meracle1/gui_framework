@@ -30,6 +30,14 @@ namespace {
         }
     }
 
+    auto insert_expected_byte(char* text, size_t& size, size_t offset, char ch) -> void {
+        for (size_t index = size; index > offset; --index) {
+            text[index] = text[index - 1u];
+        }
+        text[offset] = ch;
+        size += 1u;
+    }
+
     auto send_text(
         code_editor::EditorState& editor,
         StrRef text,
@@ -73,6 +81,230 @@ namespace {
         editor.preferred_column = end_column;
         editor.selection_mode = mode;
         editor.selection_active = true;
+    }
+
+    TEST_CASE(text_buffer_set_normalizes_loaded_text) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorText text = {};
+        code_editor::text_buffer_init(text, arena);
+
+        code_editor::text_buffer_set(text, "");
+        TEST_EXPECT(context, code_editor::text_buffer_line_count(text) == 1u);
+        TEST_EXPECT(context, code_editor::text_buffer_line_size(text, 0u) == 0u);
+
+        code_editor::text_buffer_set(text, "a\n");
+        TEST_EXPECT(context, code_editor::text_buffer_line_count(text) == 1u);
+        TEST_EXPECT(context, code_editor::text_buffer_copy(text, arena) == "a");
+
+        code_editor::text_buffer_set(text, "a\r\nb");
+        TEST_EXPECT(context, code_editor::text_buffer_line_count(text) == 2u);
+        TEST_EXPECT(
+            context,
+            code_editor::text_buffer_line_text(code_editor::text_buffer_line(text, 0u)) == "a"
+        );
+        TEST_EXPECT(
+            context,
+            code_editor::text_buffer_line_text(code_editor::text_buffer_line(text, 1u)) == "b"
+        );
+    }
+
+    TEST_CASE(text_buffer_insert_can_create_trailing_empty_line) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorText text = {};
+        code_editor::text_buffer_init(text, arena);
+        code_editor::text_buffer_set(text, "a");
+
+        code_editor::text_buffer_insert(text, code_editor::text_buffer_size(text), "\n");
+
+        TEST_EXPECT(context, code_editor::text_buffer_line_count(text) == 2u);
+        TEST_EXPECT(
+            context,
+            code_editor::text_buffer_line_text(code_editor::text_buffer_line(text, 0u)) == "a"
+        );
+        TEST_EXPECT(context, code_editor::text_buffer_line_size(text, 1u) == 0u);
+        TEST_EXPECT(context, code_editor::text_buffer_copy(text, arena) == "a\n");
+    }
+
+    TEST_CASE(text_buffer_line_materializes_across_pieces) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorText text = {};
+        code_editor::text_buffer_init(text, arena);
+        code_editor::text_buffer_set(text, "abcd");
+
+        code_editor::text_buffer_insert(text, 2u, "XY");
+
+        TEST_EXPECT(context, code_editor::text_buffer_line_count(text) == 1u);
+        code_editor::EditorLine const line = code_editor::text_buffer_line(text, 0u);
+        TEST_EXPECT(context, code_editor::text_buffer_line_text(line) == "abXYcd");
+        TEST_EXPECT(context, line.text == text.line_cache.data());
+    }
+
+    TEST_CASE(text_buffer_erase_splits_and_joins_lines) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorText text = {};
+        code_editor::text_buffer_init(text, arena);
+        code_editor::text_buffer_set(text, "ab\ncd");
+
+        size_t const newline = code_editor::text_buffer_position_to_offset(text, {0u, 2u});
+        code_editor::text_buffer_erase(text, newline, newline + 1u);
+
+        TEST_EXPECT(context, code_editor::text_buffer_line_count(text) == 1u);
+        TEST_EXPECT(
+            context,
+            code_editor::text_buffer_line_text(code_editor::text_buffer_line(text, 0u)) == "abcd"
+        );
+    }
+
+    TEST_CASE(text_buffer_many_inserts_keep_tree_order) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorText text = {};
+        code_editor::text_buffer_init(text, arena);
+        code_editor::text_buffer_set(text, "");
+
+        char expected[64] = {};
+        size_t expected_size = 0u;
+        for (size_t index = 0u; index < 24u; ++index) {
+            char const ch = static_cast<char>('a' + index);
+            size_t const offset = expected_size == 0u ? 0u : (index * 7u) % (expected_size + 1u);
+            code_editor::text_buffer_insert(text, offset, StrRef(&ch, 1u));
+            insert_expected_byte(expected, expected_size, offset, ch);
+        }
+
+        TEST_EXPECT(context, code_editor::text_buffer_size(text) == expected_size);
+        TEST_EXPECT(
+            context, code_editor::text_buffer_copy(text, arena) == StrRef(expected, expected_size)
+        );
+    }
+
+    TEST_CASE(text_buffer_erase_across_multiple_pieces) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorText text = {};
+        code_editor::text_buffer_init(text, arena);
+        code_editor::text_buffer_set(text, "0123456789");
+
+        code_editor::text_buffer_insert(text, 2u, "AA");
+        code_editor::text_buffer_insert(text, 7u, "BB");
+        code_editor::text_buffer_insert(text, code_editor::text_buffer_size(text), "CC");
+        code_editor::text_buffer_erase(text, 3u, 13u);
+
+        TEST_EXPECT(context, code_editor::text_buffer_copy(text, arena) == "01A9CC");
+    }
+
+    TEST_CASE(text_buffer_line_lookup_after_many_edits) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorText text = {};
+        code_editor::text_buffer_init(text, arena);
+        code_editor::text_buffer_set(text, "0\n1\n2\n3");
+
+        for (size_t line = 0u; line < 4u; ++line) {
+            char const ch = static_cast<char>('a' + line);
+            size_t const offset = code_editor::text_buffer_position_to_offset(text, {line, 1u});
+            code_editor::text_buffer_insert(text, offset, StrRef(&ch, 1u));
+        }
+        code_editor::text_buffer_insert(text, code_editor::text_buffer_size(text), "\n");
+
+        TEST_EXPECT(context, code_editor::text_buffer_line_count(text) == 5u);
+        TEST_EXPECT(
+            context,
+            code_editor::text_buffer_line_text(code_editor::text_buffer_line(text, 0u)) == "0a"
+        );
+        TEST_EXPECT(
+            context,
+            code_editor::text_buffer_line_text(code_editor::text_buffer_line(text, 1u)) == "1b"
+        );
+        TEST_EXPECT(
+            context,
+            code_editor::text_buffer_line_text(code_editor::text_buffer_line(text, 2u)) == "2c"
+        );
+        TEST_EXPECT(
+            context,
+            code_editor::text_buffer_line_text(code_editor::text_buffer_line(text, 3u)) == "3d"
+        );
+        TEST_EXPECT(context, code_editor::text_buffer_line_size(text, 4u) == 0u);
+    }
+
+    TEST_CASE(text_buffer_positions_cross_piece_boundaries) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorText text = {};
+        code_editor::text_buffer_init(text, arena);
+        code_editor::text_buffer_set(text, "ab\ncd");
+
+        code_editor::text_buffer_insert(text, 1u, "XY");
+        code_editor::text_buffer_insert(text, 6u, "Z");
+
+        TEST_EXPECT(context, code_editor::text_buffer_copy(text, arena) == "aXYb\ncZd");
+        TEST_EXPECT(context, code_editor::text_buffer_position_to_offset(text, {0u, 3u}) == 3u);
+        TEST_EXPECT(context, code_editor::text_buffer_position_to_offset(text, {1u, 2u}) == 7u);
+
+        code_editor::EditorTextPosition position =
+            code_editor::text_buffer_offset_to_position(text, 7u);
+        TEST_EXPECT(context, position.line == 1u);
+        TEST_EXPECT(context, position.column == 2u);
+    }
+
+    TEST_CASE(text_buffer_clone_after_edits_is_independent) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorText text = {};
+        code_editor::text_buffer_init(text, arena);
+        code_editor::text_buffer_set(text, "abc\ndef");
+        code_editor::text_buffer_insert(text, 3u, "X");
+        code_editor::text_buffer_erase(text, 1u, 2u);
+
+        code_editor::EditorText clone = {};
+        code_editor::text_buffer_clone(text, clone);
+        code_editor::text_buffer_insert(text, 0u, "S");
+        code_editor::text_buffer_insert(clone, code_editor::text_buffer_size(clone), "T");
+
+        TEST_EXPECT(context, code_editor::text_buffer_copy(text, arena) == "SacX\ndef");
+        TEST_EXPECT(context, code_editor::text_buffer_copy(clone, arena) == "acX\ndefT");
+    }
+
+    TEST_CASE(text_buffer_full_copy_after_split_merge_operations) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorText text = {};
+        code_editor::text_buffer_init(text, arena);
+        code_editor::text_buffer_set(text, "abcdef");
+
+        code_editor::text_buffer_insert(text, 3u, "XY");
+        code_editor::text_buffer_erase(text, 3u, 5u);
+        code_editor::text_buffer_insert(text, 6u, "Z");
+        code_editor::text_buffer_erase(text, 0u, 1u);
+
+        TEST_EXPECT(context, code_editor::text_buffer_copy(text, arena) == "bcdefZ");
+        TEST_EXPECT(context, code_editor::text_buffer_copy_range(text, arena, 1u, 4u) == "cde");
+    }
+
+    TEST_CASE(editor_state_hash_tracks_text_buffer_edits) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "abc");
+
+        uint64_t const before = code_editor::editor_state_hash(editor);
+        code_editor::text_buffer_insert(editor.text, 1u, "X");
+
+        TEST_EXPECT(context, code_editor::editor_state_hash(editor) != before);
     }
 
     TEST_CASE(editor_loads_more_than_old_line_cap) {

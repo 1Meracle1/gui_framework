@@ -2,12 +2,10 @@
 
 #include <algorithm>
 #include <cmath>
-#include <cstring>
 #include <utility>
 
 namespace code_editor {
 
-    inline constexpr size_t MIN_EDITOR_LINE_CAPACITY = 16u;
     inline constexpr size_t INVALID_INDEX = static_cast<size_t>(-1);
 
     struct EditorUndoEntry {
@@ -52,92 +50,26 @@ namespace code_editor {
     same_editor_file(StrRef lhs_name, StrRef lhs_path, StrRef rhs_name, StrRef rhs_path) -> bool;
 
     [[nodiscard]] auto editor_line_count(EditorState const& editor) -> size_t {
-        return editor.text.lines.size();
+        return text_buffer_line_count(editor.text);
     }
 
-    [[nodiscard]] auto editor_line(EditorState& editor, size_t index) -> EditorLine& {
+    [[nodiscard]] auto editor_line(EditorState const& editor, size_t index) -> EditorLine {
         DEBUG_ASSERT(index < editor_line_count(editor));
-        return editor.text.lines[index];
+        return text_buffer_line(editor.text, index);
     }
 
-    [[nodiscard]] auto editor_line(EditorState const& editor, size_t index) -> EditorLine const& {
-        DEBUG_ASSERT(index < editor_line_count(editor));
-        return editor.text.lines[index];
+    [[nodiscard]] auto editor_line_text(EditorLine line) -> StrRef {
+        return text_buffer_line_text(line);
     }
 
-    [[nodiscard]] auto editor_line_text(EditorLine const& line) -> StrRef {
-        return StrRef(line.text, line.size);
-    }
-
-    [[nodiscard]] auto grown_line_capacity(size_t capacity, size_t needed_size) -> size_t {
-        size_t grown = std::max(capacity, MIN_EDITOR_LINE_CAPACITY);
-        while (grown < needed_size) {
-            grown *= 2u;
-        }
-        return grown;
-    }
-
-    auto ensure_text_line_capacity(EditorText& text_owner, EditorLine& line, size_t needed_size)
-        -> void {
-        if (needed_size <= line.capacity) {
-            return;
-        }
-
-        DEBUG_ASSERT(text_owner.arena != nullptr);
-        size_t const capacity = grown_line_capacity(line.capacity, needed_size);
-        char* const text = arena_alloc<char>(*text_owner.arena, capacity + 1u);
-        if (line.size != 0u) {
-            std::memcpy(text, line.text, line.size);
-        }
-        text[line.size] = '\0';
-        line.text = text;
-        line.capacity = capacity;
-    }
-
-    auto ensure_line_capacity(EditorState& editor, EditorLine& line, size_t needed_size) -> void {
-        ensure_text_line_capacity(editor.text, line, needed_size);
-    }
-
-    auto set_text_line(EditorText& text_owner, EditorLine& line, StrRef text) -> void {
-        ensure_text_line_capacity(text_owner, line, text.size());
-        if (text.size() != 0u) {
-            std::memcpy(line.text, text.data(), text.size());
-        }
-        line.size = text.size();
-        if (line.text != nullptr) {
-            line.text[line.size] = '\0';
-        }
-    }
-
-    auto set_line(EditorState& editor, EditorLine& line, StrRef text) -> void {
-        set_text_line(editor.text, line, text);
-    }
-
-    [[nodiscard]] auto make_line(EditorState& editor, StrRef text) -> EditorLine {
-        EditorLine line = {};
-        set_line(editor, line, text);
-        return line;
-    }
-
-    [[nodiscard]] auto make_text_line(EditorText& text_owner, StrRef text) -> EditorLine {
-        EditorLine line = {};
-        set_text_line(text_owner, line, text);
-        return line;
-    }
-
-    auto set_text(EditorText& text_owner, StrRef text) -> void {
-        DEBUG_ASSERT(text_owner.arena != nullptr);
-        text_owner.lines.clear();
-        for (StrRef line : text.lines()) {
-            bool const ok = text_owner.lines.push_back(make_text_line(text_owner, line));
-            DEBUG_ASSERT(ok);
-            (void)ok;
-        }
-
-        if (text_owner.lines.empty()) {
-            bool const ok = text_owner.lines.push_back(make_text_line(text_owner, ""));
-            DEBUG_ASSERT(ok);
-            (void)ok;
+    auto insert_line(EditorState& editor, size_t line, StrRef text) -> void {
+        size_t const insert_at = std::min(line, editor_line_count(editor));
+        bool const append = insert_at == editor_line_count(editor);
+        size_t const offset = !append ? text_buffer_position_to_offset(editor.text, {insert_at, 0u})
+                                      : text_buffer_size(editor.text);
+        text_buffer_insert(editor.text, offset, "\n");
+        if (!text.empty()) {
+            text_buffer_insert(editor.text, offset + (append ? 1u : 0u), text);
         }
     }
 
@@ -147,7 +79,7 @@ namespace code_editor {
             editor.undo_stack = nullptr;
             editor.redo_stack = nullptr;
         }
-        set_text(editor.text, text);
+        text_buffer_set(editor.text, text);
         editor.cursor_line = 0u;
         editor.cursor_column = 0u;
         editor.preferred_column = 0u;
@@ -174,29 +106,11 @@ namespace code_editor {
     }
 
     auto init_text_storage(EditorText& text, Arena& arena) -> void {
-        if (text.arena != nullptr) {
-            return;
-        }
-        text.arena = &arena;
-        bool const ok = text.lines.init(0u, arena.resource());
-        DEBUG_ASSERT(ok);
-        (void)ok;
+        text_buffer_init(text, arena);
     }
 
     auto clone_text(EditorText const& source, EditorText& target) -> void {
-        DEBUG_ASSERT(source.arena != nullptr);
-        init_text_storage(target, *source.arena);
-        target.lines.clear();
-        for (EditorLine const& line : source.lines) {
-            bool const ok = target.lines.push_back(make_text_line(target, editor_line_text(line)));
-            DEBUG_ASSERT(ok);
-            (void)ok;
-        }
-        if (target.lines.empty()) {
-            bool const ok = target.lines.push_back(make_text_line(target, ""));
-            DEBUG_ASSERT(ok);
-            (void)ok;
-        }
+        text_buffer_clone(source, target);
     }
 
     auto move_editor_to_pane(EditorState& editor, EditorPane& pane) -> void {
@@ -325,7 +239,8 @@ namespace code_editor {
     }
 
     auto init_editor(Arena& arena, EditorState& editor, StrRef text) -> void {
-        if (editor.text.arena == nullptr) {
+        bool const first_init = editor.text.arena == nullptr;
+        if (first_init) {
             editor.arena = &arena;
             init_text_storage(editor.text, arena);
 
@@ -341,7 +256,7 @@ namespace code_editor {
             DEBUG_ASSERT(open_ok);
             (void)open_ok;
         }
-        if (editor_line_count(editor) == 0u) {
+        if (first_init) {
             set_editor_text(editor, text);
             editor.scratch_text = text;
         }
@@ -405,12 +320,12 @@ namespace code_editor {
     }
 
     [[nodiscard]] auto pane_line_count(EditorPane const& pane) -> size_t {
-        return pane.text.lines.size();
+        return text_buffer_line_count(pane.text);
     }
 
     [[nodiscard]] auto pane_line_size(EditorPane const& pane, size_t line) -> size_t {
         DEBUG_ASSERT(line < pane_line_count(pane));
-        return pane.text.lines[line].size;
+        return text_buffer_line_size(pane.text, line);
     }
 
     auto clamp_pane_cursor(EditorPane& pane) -> void {
@@ -815,33 +730,8 @@ namespace code_editor {
     }
 
     [[nodiscard]] auto copy_editor_text(EditorState& editor) -> StrRef {
-        size_t size = 0u;
-        size_t const count = editor_line_count(editor);
-        for (size_t index = 0u; index < count; ++index) {
-            size += editor_line(editor, index).size;
-        }
-        if (count > 1u) {
-            size += count - 1u;
-        }
-        if (size == 0u) {
-            return {};
-        }
-
         DEBUG_ASSERT(editor.text.arena != nullptr);
-        char* const text = arena_alloc<char>(*editor.text.arena, size + 1u);
-        char* out = text;
-        for (size_t index = 0u; index < count; ++index) {
-            EditorLine const& line = editor_line(editor, index);
-            if (line.size != 0u) {
-                std::memcpy(out, line.text, line.size);
-                out += line.size;
-            }
-            if (index + 1u < count) {
-                *out++ = '\n';
-            }
-        }
-        *out = '\0';
-        return StrRef(text, size);
+        return text_buffer_copy(editor.text, *editor.text.arena);
     }
 
     auto push_editor_snapshot(EditorState& editor, EditorUndoEntry*& stack) -> void {
@@ -912,30 +802,23 @@ namespace code_editor {
         remember_open_file(editor, SCRATCH_FILE_NAME, {});
     }
 
-    auto insert_line(EditorState& editor, size_t line, StrRef text) -> void {
-        size_t const insert_at = std::min(line, editor_line_count(editor));
-        EditorLine const new_line = make_line(editor, text);
-        EditorLine* const slot = editor.text.lines.append_nothing();
-        DEBUG_ASSERT(slot != nullptr);
-        for (size_t index = editor_line_count(editor) - 1u; index > insert_at; --index) {
-            editor.text.lines[index] = editor.text.lines[index - 1u];
-        }
-        editor.text.lines[insert_at] = new_line;
-    }
-
-    auto remove_line(EditorState& editor, size_t line) -> void {
-        DEBUG_ASSERT(line < editor_line_count(editor));
-        editor.text.lines.ordered_remove(line);
-    }
-
     [[nodiscard]] auto line_size(EditorState const& editor, size_t line) -> size_t {
-        return editor_line(editor, line).size;
+        return text_buffer_line_size(editor.text, line);
     }
 
     struct EditorPosition {
         size_t line = 0u;
         size_t column = 0u;
     };
+
+    [[nodiscard]] auto text_position(EditorPosition position) -> EditorTextPosition {
+        return {position.line, position.column};
+    }
+
+    [[nodiscard]] auto position_offset(EditorState const& editor, EditorPosition position)
+        -> size_t {
+        return text_buffer_position_to_offset(editor.text, text_position(position));
+    }
 
     [[nodiscard]] auto position_less(EditorPosition lhs, EditorPosition rhs) -> bool {
         return lhs.line < rhs.line || (lhs.line == rhs.line && lhs.column < rhs.column);
@@ -1315,30 +1198,30 @@ namespace code_editor {
             return;
         }
 
-        EditorLine& first = editor_line(editor, start.line);
-        if (start.line == end.line) {
-            size_t const tail_size = first.size - end.column;
-            std::memmove(first.text + start.column, first.text + end.column, tail_size);
-            first.size -= end.column - start.column;
-            first.text[first.size] = '\0';
-        } else {
-            EditorLine const& last = editor_line(editor, end.line);
-            size_t const tail_size = last.size - end.column;
-            ensure_line_capacity(editor, first, start.column + tail_size);
-            if (tail_size != 0u) {
-                std::memcpy(first.text + start.column, last.text + end.column, tail_size);
-            }
-            first.size = start.column + tail_size;
-            if (first.text != nullptr) {
-                first.text[first.size] = '\0';
-            }
-            size_t const remove_count = end.line - start.line;
-            for (size_t index = 0u; index < remove_count; ++index) {
-                remove_line(editor, start.line + 1u);
-            }
+        text_buffer_erase(
+            editor.text, position_offset(editor, start), position_offset(editor, end)
+        );
+        set_cursor(editor, start.line, start.column);
+    }
+
+    auto delete_line_at(EditorState& editor, size_t line) -> void {
+        line = std::min(line, editor_line_count(editor) - 1u);
+        if (editor_line_count(editor) == 1u) {
+            text_buffer_erase(editor.text, 0u, text_buffer_size(editor.text));
+            return;
         }
 
-        set_cursor(editor, start.line, start.column);
+        EditorPosition start = {line, 0u};
+        EditorPosition end = {};
+        if (line + 1u < editor_line_count(editor)) {
+            end = {line + 1u, 0u};
+        } else {
+            start = {line - 1u, line_size(editor, line - 1u)};
+            end = {line, line_size(editor, line)};
+        }
+        text_buffer_erase(
+            editor.text, position_offset(editor, start), position_offset(editor, end)
+        );
     }
 
     [[nodiscard]] auto erase_selection(EditorState& editor) -> bool {
@@ -1353,11 +1236,11 @@ namespace code_editor {
                                    : selection.end_line + 1u;
             size_t count = std::min(end, editor_line_count(editor)) - first;
             while (count != 0u && editor_line_count(editor) > 1u) {
-                remove_line(editor, std::min(first, editor_line_count(editor) - 1u));
+                delete_line_at(editor, std::min(first, editor_line_count(editor) - 1u));
                 count -= 1u;
             }
             if (count != 0u) {
-                set_line(editor, editor_line(editor, 0u), "");
+                text_buffer_erase(editor.text, 0u, text_buffer_size(editor.text));
             }
             set_cursor(editor, std::min(first, editor_line_count(editor) - 1u), 0u);
             return true;
@@ -1385,55 +1268,21 @@ namespace code_editor {
         if (!selection.active) {
             return {};
         }
-        EditorLine const& first = editor_line(editor, selection.start_line);
-        if (selection.start_line == selection.end_line) {
-            return editor_line_text(first).substr(
-                selection.start_column, selection.end_column - selection.start_column
-            );
-        }
-
-        size_t size = first.size - selection.start_column + 1u + selection.end_column;
-        for (size_t line = selection.start_line + 1u; line < selection.end_line; ++line) {
-            size += editor_line(editor, line).size + 1u;
-        }
-
         DEBUG_ASSERT(editor.text.arena != nullptr);
-        char* const text = arena_alloc<char>(*editor.text.arena, size + 1u);
-        char* out = text;
-        size_t const first_size = first.size - selection.start_column;
-        if (first_size != 0u) {
-            std::memcpy(out, first.text + selection.start_column, first_size);
-            out += first_size;
-        }
-        *out++ = '\n';
-        for (size_t line = selection.start_line + 1u; line < selection.end_line; ++line) {
-            EditorLine const& current = editor_line(editor, line);
-            if (current.size != 0u) {
-                std::memcpy(out, current.text, current.size);
-                out += current.size;
-            }
-            *out++ = '\n';
-        }
-        EditorLine const& last = editor_line(editor, selection.end_line);
-        if (selection.end_column != 0u) {
-            std::memcpy(out, last.text, selection.end_column);
-            out += selection.end_column;
-        }
-        *out = '\0';
-        return StrRef(text, static_cast<size_t>(out - text));
+        return text_buffer_copy_range(
+            editor.text,
+            *editor.text.arena,
+            position_offset(editor, {selection.start_line, selection.start_column}),
+            position_offset(editor, {selection.end_line, selection.end_column})
+        );
     }
 
     auto insert_char(EditorState& editor, char value) -> void {
         (void)erase_selection(editor);
-        EditorLine& line = editor_line(editor, editor.cursor_line);
-        ensure_line_capacity(editor, line, line.size + 1u);
-        size_t const tail_size = line.size - editor.cursor_column;
-        std::memmove(
-            line.text + editor.cursor_column + 1u, line.text + editor.cursor_column, tail_size
+        char const text[] = {value};
+        text_buffer_insert(
+            editor.text, position_offset(editor, cursor_position(editor)), StrRef(text, 1u)
         );
-        line.text[editor.cursor_column] = value;
-        line.size += 1u;
-        line.text[line.size] = '\0';
         editor.cursor_column += 1u;
         editor.preferred_column = editor.cursor_column;
         clear_selection(editor);
@@ -1459,32 +1308,20 @@ namespace code_editor {
 
     auto insert_newline(EditorState& editor) -> void {
         (void)erase_selection(editor);
-        size_t const cursor_line = editor.cursor_line;
-        size_t const cursor_column = editor.cursor_column;
-        EditorLine const& line = editor_line(editor, cursor_line);
-        size_t const tail_size = line.size - cursor_column;
-        char const* const tail = tail_size != 0u ? line.text + cursor_column : "";
-        insert_line(editor, cursor_line + 1u, StrRef(tail, tail_size));
-
-        EditorLine& current = editor_line(editor, cursor_line);
-        current.size = cursor_column;
-        if (current.text != nullptr) {
-            current.text[current.size] = '\0';
-        }
-        set_cursor(editor, cursor_line + 1u, 0u);
+        text_buffer_insert(editor.text, position_offset(editor, cursor_position(editor)), "\n");
+        set_cursor(editor, editor.cursor_line + 1u, 0u);
     }
 
     auto backspace(EditorState& editor) -> void {
         if (erase_selection(editor)) {
             return;
         }
-        EditorLine& line = editor_line(editor, editor.cursor_line);
         if (editor.cursor_column != 0u) {
-            size_t const from = editor.cursor_column;
-            size_t const tail_size = line.size - from;
-            std::memmove(line.text + from - 1u, line.text + from, tail_size);
-            line.size -= 1u;
-            line.text[line.size] = '\0';
+            EditorPosition const end = cursor_position(editor);
+            EditorPosition const start = previous_position(editor, end);
+            text_buffer_erase(
+                editor.text, position_offset(editor, start), position_offset(editor, end)
+            );
             editor.cursor_column -= 1u;
             editor.preferred_column = editor.cursor_column;
             clear_selection(editor);
@@ -1495,18 +1332,12 @@ namespace code_editor {
         }
 
         size_t const current_line = editor.cursor_line;
-        EditorLine& previous = editor_line(editor, current_line - 1u);
-        EditorLine const& current = editor_line(editor, current_line);
-        size_t const column = previous.size;
-        ensure_line_capacity(editor, previous, previous.size + current.size);
-        if (current.size != 0u) {
-            std::memcpy(previous.text + previous.size, current.text, current.size);
-        }
-        previous.size += current.size;
-        if (previous.text != nullptr) {
-            previous.text[previous.size] = '\0';
-        }
-        remove_line(editor, current_line);
+        size_t const column = line_size(editor, current_line - 1u);
+        text_buffer_erase(
+            editor.text,
+            position_offset(editor, {current_line - 1u, column}),
+            position_offset(editor, {current_line, 0u})
+        );
         set_cursor(editor, current_line - 1u, column);
     }
 
@@ -1514,16 +1345,14 @@ namespace code_editor {
         if (erase_selection(editor)) {
             return;
         }
-        EditorLine& line = editor_line(editor, editor.cursor_line);
-        if (editor.cursor_column >= line.size) {
+        if (editor.cursor_column >= line_size(editor, editor.cursor_line)) {
             return;
         }
-        size_t const tail_size = line.size - editor.cursor_column - 1u;
-        std::memmove(
-            line.text + editor.cursor_column, line.text + editor.cursor_column + 1u, tail_size
+        EditorPosition const start = cursor_position(editor);
+        EditorPosition const end = next_position(editor, start);
+        text_buffer_erase(
+            editor.text, position_offset(editor, start), position_offset(editor, end)
         );
-        line.size -= 1u;
-        line.text[line.size] = '\0';
         clamp_cursor(editor);
         clear_selection(editor);
     }
@@ -1547,11 +1376,7 @@ namespace code_editor {
     }
 
     auto delete_line(EditorState& editor) -> void {
-        if (editor_line_count(editor) > 1u) {
-            remove_line(editor, editor.cursor_line);
-        } else {
-            set_line(editor, editor_line(editor, 0u), "");
-        }
+        delete_line_at(editor, editor.cursor_line);
         clamp_cursor(editor);
         clear_selection(editor);
     }
@@ -1859,27 +1684,30 @@ namespace code_editor {
         save_editor_undo(editor);
         for (size_t line_index = selection.start_line; line_index <= selection.end_line;
              ++line_index) {
-            EditorLine& line = editor_line(editor, line_index);
+            EditorLine const line = editor_line(editor, line_index);
             size_t const start = line_index == selection.start_line ? selection.start_column : 0u;
             size_t const end = line_index == selection.end_line ? selection.end_column : line.size;
-            for (size_t index = start; index < end; ++index) {
-                line.text[index] = transform(line.text[index]);
+            if (end <= start) {
+                continue;
             }
+            DEBUG_ASSERT(editor.text.arena != nullptr);
+            char* const replacement = arena_alloc<char>(*editor.text.arena, end - start);
+            for (size_t index = start; index < end; ++index) {
+                replacement[index - start] = transform(line.text[index]);
+            }
+            size_t const offset = position_offset(editor, {line_index, start});
+            text_buffer_erase(editor.text, offset, position_offset(editor, {line_index, end}));
+            text_buffer_insert(editor.text, offset, StrRef(replacement, end - start));
         }
         set_cursor(editor, selection.start_line, selection.start_column);
     }
 
     auto indent_line(EditorState& editor, size_t line_index) -> void {
-        EditorLine& line = editor_line(editor, line_index);
-        ensure_line_capacity(editor, line, line.size + 4u);
-        std::memmove(line.text + 4u, line.text, line.size);
-        std::memcpy(line.text, "    ", 4u);
-        line.size += 4u;
-        line.text[line.size] = '\0';
+        text_buffer_insert(editor.text, position_offset(editor, {line_index, 0u}), "    ");
     }
 
     auto unindent_line(EditorState& editor, size_t line_index) -> void {
-        EditorLine& line = editor_line(editor, line_index);
+        EditorLine const line = editor_line(editor, line_index);
         size_t count = 0u;
         if (line.size != 0u && line.text[0u] == '\t') {
             count = 1u;
@@ -1891,9 +1719,11 @@ namespace code_editor {
         if (count == 0u) {
             return;
         }
-        std::memmove(line.text, line.text + count, line.size - count);
-        line.size -= count;
-        line.text[line.size] = '\0';
+        text_buffer_erase(
+            editor.text,
+            position_offset(editor, {line_index, 0u}),
+            position_offset(editor, {line_index, count})
+        );
     }
 
     auto indent_selection(EditorState& editor, bool indent) -> void {
@@ -2691,12 +2521,11 @@ namespace code_editor {
     }
 
     [[nodiscard]] auto hash_text(uint64_t hash, EditorText const& text) -> uint64_t {
-        size_t const count = text.lines.size();
-        hash = hash_bytes(hash, &count, sizeof(count));
-        for (EditorLine const& line : text.lines) {
-            hash = hash_bytes(hash, &line.size, sizeof(line.size));
-            hash = hash_bytes(hash, line.text, line.size);
-        }
+        size_t const size = text_buffer_size(text);
+        size_t const line_count = text_buffer_line_count(text);
+        hash = hash_bytes(hash, &size, sizeof(size));
+        hash = hash_bytes(hash, &line_count, sizeof(line_count));
+        hash = hash_bytes(hash, &text.revision, sizeof(text.revision));
         return hash;
     }
 

@@ -11,6 +11,8 @@ set(CODE_EDITOR_RELOAD_SOURCES
     shared.h
     syntax.cpp
     syntax.h
+    text_buffer.cpp
+    text_buffer.h
 )
 
 if(WIN32)

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "shared.h"
+#include "text_buffer.h"
 
 #include <base/memory.h>
 #include <base/str_ref.h>
@@ -29,17 +30,6 @@ namespace code_editor {
     inline constexpr size_t FILE_SEARCH_TEXT_CAPACITY = 128u;
     inline constexpr size_t FILE_SEARCH_RESULT_LIMIT = 16u;
     inline constexpr size_t FILE_SEARCH_NO_FILE = static_cast<size_t>(-1);
-
-    struct EditorLine {
-        char* text = nullptr;
-        size_t size = 0u;
-        size_t capacity = 0u;
-    };
-
-    struct EditorText {
-        Vec<EditorLine> lines = {};
-        Arena* arena = nullptr;
-    };
 
     struct EditorSelectionRange {
         size_t start_line = 0u;
@@ -183,9 +173,8 @@ namespace code_editor {
         EditorState& editor, gui::InputState const& input, EditorClipboard clipboard = {}
     ) -> void;
     [[nodiscard]] auto editor_line_count(EditorState const& editor) -> size_t;
-    [[nodiscard]] auto editor_line(EditorState& editor, size_t index) -> EditorLine&;
-    [[nodiscard]] auto editor_line(EditorState const& editor, size_t index) -> EditorLine const&;
-    [[nodiscard]] auto editor_line_text(EditorLine const& line) -> StrRef;
+    [[nodiscard]] auto editor_line(EditorState const& editor, size_t index) -> EditorLine;
+    [[nodiscard]] auto editor_line_text(EditorLine line) -> StrRef;
     [[nodiscard]] auto editor_selection_range(EditorState const& editor) -> EditorSelectionRange;
     [[nodiscard]] auto editor_file_search_text(EditorState const& editor) -> StrRef;
     [[nodiscard]] auto file_search_entry_text(FileTreeEntry const& entry) -> StrRef;
