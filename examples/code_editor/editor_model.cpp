@@ -105,6 +105,7 @@ namespace code_editor {
         editor.pending_g = false;
         editor.pending_d = false;
         editor.pending_r = false;
+        editor.pending_z = false;
         editor.pending_line_number = 0u;
         editor.pending_line_number_active = false;
         editor.file_search_open = false;
@@ -1548,6 +1549,7 @@ namespace code_editor {
         editor.pending_d = false;
         editor.pending_g = false;
         editor.pending_r = false;
+        editor.pending_z = false;
         editor.pending_line_number = 0u;
         editor.pending_line_number_active = false;
         set_cursor(editor, insert_at, 0u);
@@ -1704,6 +1706,7 @@ namespace code_editor {
         editor.pending_d = false;
         editor.pending_g = false;
         editor.pending_r = false;
+        editor.pending_z = false;
     }
 
     auto close_file_search(EditorState& editor) -> void {
@@ -1913,12 +1916,22 @@ namespace code_editor {
         editor.pending_d = false;
         editor.pending_g = false;
         editor.pending_r = false;
+        editor.pending_z = false;
         clear_pending_line_number(editor);
         set_cursor(editor, position.line, position.column);
     }
 
     auto enter_insert_mode(EditorState& editor, size_t column) -> void {
         enter_insert_at(editor, {editor.cursor_line, column});
+    }
+
+    auto center_cursor(EditorState& editor, gui::Rect rect) -> void {
+        gui::Rect const content = editor_content_rect(rect);
+        float const visible_height = std::max(1.0f, content.max.y - content.min.y);
+        float const line_height = editor_line_height(editor);
+        float const cursor_center = (static_cast<float>(editor.cursor_line) + 0.5f) * line_height;
+        editor.scroll_y = cursor_center - visible_height * 0.5f;
+        clamp_scroll(editor, rect);
     }
 
     [[nodiscard]] auto visual_selecting(EditorState const& editor) -> bool {
@@ -2122,6 +2135,13 @@ namespace code_editor {
             editor.pending_g = false;
             if (ch == 'g') {
                 move_cursor_to(editor, {0u, 0u}, visual_selecting(editor));
+            }
+            return;
+        }
+        if (editor.pending_z) {
+            editor.pending_z = false;
+            if (ch == 'z') {
+                center_cursor(editor, editor.split_nodes[editor.focused_split].rect);
             }
             return;
         }
@@ -2360,6 +2380,9 @@ namespace code_editor {
         case 'g':
             editor.pending_g = true;
             break;
+        case 'z':
+            editor.pending_z = true;
+            break;
         case 'G':
             if (has_line_number) {
                 move_cursor_to(
@@ -2520,6 +2543,7 @@ namespace code_editor {
             editor.pending_d = false;
             editor.pending_g = false;
             editor.pending_r = false;
+            editor.pending_z = false;
             clear_pending_line_number(editor);
             clamp_cursor(editor);
             clear_selection(editor);
@@ -2961,6 +2985,7 @@ namespace code_editor {
         hash = hash_bytes(hash, &editor.pending_g, sizeof(editor.pending_g));
         hash = hash_bytes(hash, &editor.pending_d, sizeof(editor.pending_d));
         hash = hash_bytes(hash, &editor.pending_r, sizeof(editor.pending_r));
+        hash = hash_bytes(hash, &editor.pending_z, sizeof(editor.pending_z));
         hash = hash_bytes(hash, &editor.pending_line_number, sizeof(editor.pending_line_number));
         hash = hash_bytes(
             hash, &editor.pending_line_number_active, sizeof(editor.pending_line_number_active)

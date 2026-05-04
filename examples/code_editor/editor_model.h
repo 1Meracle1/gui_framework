@@ -177,6 +177,7 @@ namespace code_editor {
         bool pending_g = false;
         bool pending_d = false;
         bool pending_r = false;
+        bool pending_z = false;
         bool close_current_requested = false;
         bool close_app_requested = false;
         bool pane_loaded = false;
