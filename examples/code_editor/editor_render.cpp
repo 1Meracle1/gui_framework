@@ -217,6 +217,14 @@ namespace code_editor {
         return nullptr;
     }
 
+    auto set_open_file_deleted(EditorState& editor, StrRef name, StrRef path, bool deleted)
+        -> void {
+        OpenFile* const file = find_open_file(editor, name, path);
+        if (file != nullptr) {
+            file->file_deleted_on_disk = deleted;
+        }
+    }
+
     auto store_current_open_file(EditorState& editor) -> void {
         if (editor.current_file_name.empty() || editor.text.arena == nullptr) {
             return;
@@ -233,6 +241,7 @@ namespace code_editor {
         file->text_valid = true;
         file->dirty = editor.dirty;
         file->external_change_pending = editor.external_change_pending;
+        file->file_deleted_on_disk = editor.file_deleted_on_disk;
     }
 
     auto load_open_file_buffer(EditorState& editor, OpenFile const& file) -> void {
@@ -243,6 +252,7 @@ namespace code_editor {
         editor.file_write_stamp = file.file_write_stamp;
         editor.dirty = file.dirty;
         editor.external_change_pending = file.external_change_pending;
+        editor.file_deleted_on_disk = file.file_deleted_on_disk;
         remember_open_file(editor, file.name, file.path);
     }
 
@@ -280,6 +290,7 @@ namespace code_editor {
         editor.file_write_stamp = file_write_stamp(path);
         editor.dirty = false;
         editor.external_change_pending = false;
+        editor.file_deleted_on_disk = false;
         remember_open_file(editor, name, path);
         store_current_open_file(editor);
         return true;
@@ -308,6 +319,7 @@ namespace code_editor {
         pane.mouse_was_down = false;
         pane.dirty = false;
         pane.external_change_pending = false;
+        pane.file_deleted_on_disk = false;
     }
 
     auto sync_current_file_to_matching_panes(EditorState& editor) -> void {
@@ -334,6 +346,7 @@ namespace code_editor {
             pane->file_write_stamp = editor.file_write_stamp;
             pane->dirty = editor.dirty;
             pane->external_change_pending = editor.external_change_pending;
+            pane->file_deleted_on_disk = editor.file_deleted_on_disk;
         }
     }
 
@@ -348,6 +361,7 @@ namespace code_editor {
         uint64_t const stamp = file_write_stamp(editor.current_file_path);
         set_editor_text(editor, text);
         editor.file_write_stamp = stamp;
+        editor.file_deleted_on_disk = false;
         sync_current_file_to_matching_panes(editor);
         store_current_open_file(editor);
         return true;
@@ -364,6 +378,7 @@ namespace code_editor {
         uint64_t const stamp = file_write_stamp(editor.current_file_path);
         editor.file_write_stamp = stamp != 0u ? stamp : editor.file_write_stamp;
         mark_editor_saved(editor);
+        editor.file_deleted_on_disk = false;
         sync_current_file_to_matching_panes(editor);
         store_current_open_file(editor);
         return true;
@@ -417,11 +432,13 @@ namespace code_editor {
         uint64_t const stamp = file_write_stamp(editor.current_file_path);
         editor.file_write_stamp = stamp != 0u ? stamp : editor.file_write_stamp;
         mark_editor_saved(editor);
+        editor.file_deleted_on_disk = false;
 
         OpenFile* const file = find_open_file(editor, old_name, old_path);
         if (file != nullptr) {
             file->name = editor.current_file_name;
             file->path = editor.current_file_path;
+            file->file_deleted_on_disk = false;
         }
         sync_current_file_to_matching_panes(editor);
         store_current_open_file(editor);
@@ -439,7 +456,11 @@ namespace code_editor {
             editor.save_path_error = EditorSavePathError::EXISTS;
             return;
         }
-        if (find_open_file(editor, {}, resolved) != nullptr) {
+        OpenFile const* const open_file = find_open_file(editor, {}, resolved);
+        if (open_file != nullptr &&
+            !same_file(
+                open_file->name, open_file->path, editor.current_file_name, editor.current_file_path
+            )) {
             editor.save_path_error = EditorSavePathError::EXISTS;
             return;
         }
@@ -473,8 +494,17 @@ namespace code_editor {
         }
         uint64_t const stamp = file_write_stamp(editor.current_file_path);
         if (stamp == 0u) {
+            if (editor.file_write_stamp != 0u) {
+                editor.file_deleted_on_disk = true;
+                editor.external_change_pending = false;
+                set_open_file_deleted(
+                    editor, editor.current_file_name, editor.current_file_path, true
+                );
+            }
             return;
         }
+        editor.file_deleted_on_disk = false;
+        set_open_file_deleted(editor, editor.current_file_name, editor.current_file_path, false);
         if (editor.file_write_stamp == 0u) {
             editor.file_write_stamp = stamp;
             return;
@@ -490,14 +520,21 @@ namespace code_editor {
         BASE_UNUSED(reload_current_file_from_disk(editor));
     }
 
-    auto update_pane_file_change(EditorPane& pane) -> void {
+    auto update_pane_file_change(EditorState& editor, EditorPane& pane) -> void {
         if (pane.current_file_path.empty() || pane.text.arena == nullptr) {
             return;
         }
         uint64_t const stamp = file_write_stamp(pane.current_file_path);
         if (stamp == 0u) {
+            if (pane.file_write_stamp != 0u) {
+                pane.file_deleted_on_disk = true;
+                pane.external_change_pending = false;
+                set_open_file_deleted(editor, pane.current_file_name, pane.current_file_path, true);
+            }
             return;
         }
+        pane.file_deleted_on_disk = false;
+        set_open_file_deleted(editor, pane.current_file_name, pane.current_file_path, false);
         if (pane.file_write_stamp == 0u) {
             pane.file_write_stamp = stamp;
             return;
@@ -513,6 +550,7 @@ namespace code_editor {
         StrRef text = {};
         if (read_tree_file_display_text(*pane.text.arena, pane.current_file_path, text)) {
             reset_pane_text(pane, text, stamp);
+            set_open_file_deleted(editor, pane.current_file_name, pane.current_file_path, false);
         }
     }
 
@@ -540,8 +578,13 @@ namespace code_editor {
         }
         uint64_t const stamp = file_write_stamp(file.path);
         if (stamp == 0u) {
+            if (file.file_write_stamp != 0u) {
+                file.file_deleted_on_disk = true;
+                file.external_change_pending = false;
+            }
             return;
         }
+        file.file_deleted_on_disk = false;
         if (file.file_write_stamp == 0u) {
             file.file_write_stamp = stamp;
             return;
@@ -562,6 +605,7 @@ namespace code_editor {
             file.text_valid = true;
             file.dirty = false;
             file.external_change_pending = false;
+            file.file_deleted_on_disk = false;
         }
     }
 
@@ -574,7 +618,7 @@ namespace code_editor {
             }
             EditorPane* const pane = editor.panes[index];
             if (pane != nullptr && pane->kind == EditorPaneKind::CODE) {
-                update_pane_file_change(*pane);
+                update_pane_file_change(editor, *pane);
             }
         }
         for (OpenFile& file : editor.open_files) {
@@ -927,7 +971,7 @@ namespace code_editor {
 
         set_editor_split_rect(editor, split, box->rect);
         focus_editor_split(editor, split);
-        bool const popup_open = editor.external_change_pending;
+        bool const popup_open = editor.external_change_pending || editor.file_deleted_on_disk;
         gui::InputState const surface_input = popup_open ? gui::InputState{} : input;
         bool const clicked = draw_editor_surface_rect(
             draw_context,
@@ -1013,6 +1057,13 @@ namespace code_editor {
         draw::pop_clip_rect(draw_context);
     }
 
+    auto draw_deleted_open_file_tab_marks(
+        draw::Context draw_context,
+        gui::Frame const& ui,
+        EditorState const& editor,
+        Palette const& palette
+    ) -> void;
+
     auto draw_editor_surface(
         draw::Context draw_context,
         font_cache::Font editor_font,
@@ -1022,6 +1073,7 @@ namespace code_editor {
         gui::InputState const& input,
         Palette const& palette
     ) -> void {
+        draw_deleted_open_file_tab_marks(draw_context, ui, editor, palette);
         size_t const initial_focus = editor.focused_split;
         size_t target_focus = initial_focus;
         draw_editor_split_surface(
@@ -1335,6 +1387,25 @@ namespace code_editor {
             }
         }
         return file.dirty;
+    }
+
+    [[nodiscard]] auto open_file_deleted(EditorState const& editor, OpenFile const& file) -> bool {
+        if (same_file(file.name, file.path, editor.current_file_name, editor.current_file_path) &&
+            editor_focused_pane_kind(editor) == EditorPaneKind::CODE) {
+            return editor.file_deleted_on_disk;
+        }
+        size_t const focused_pane = editor_focused_pane(editor);
+        for (size_t index = 0u; index < editor.panes.size(); ++index) {
+            if (index == focused_pane) {
+                continue;
+            }
+            EditorPane const* const pane = editor.panes[index];
+            if (pane != nullptr && pane->kind == EditorPaneKind::CODE &&
+                same_file(file.name, file.path, pane->current_file_name, pane->current_file_path)) {
+                return pane->file_deleted_on_disk;
+            }
+        }
+        return file.file_deleted_on_disk;
     }
 
     [[nodiscard]] auto selected_open_file_index(EditorState const& editor, size_t& out_index)
@@ -1745,6 +1816,10 @@ namespace code_editor {
         bool closed = false;
     };
 
+    [[nodiscard]] auto open_file_tab_label_id(size_t index) -> gui::Id {
+        return gui::id("open_file_tab_label", index);
+    }
+
     [[nodiscard]] auto draw_open_file_tab(
         gui::Frame& ui,
         EditorState& editor,
@@ -1754,6 +1829,7 @@ namespace code_editor {
     ) -> OpenFileTabSignal {
         OpenFileTabSignal result = {};
         bool const selected = open_file_selected(editor, file);
+        bool const deleted = open_file_deleted(editor, file);
         if (auto tab = ui.row(
                 gui::id("open_file_tab", index),
                 {
@@ -1776,11 +1852,14 @@ namespace code_editor {
             StrRef const label =
                 open_file_dirty(editor, file) ? fmt::tprintf("*%s", file.name) : file.name;
             ui.label(
+                open_file_tab_label_id(index),
                 label,
                 {
                     .layout = {.width = gui::text(), .height = gui::fill()},
                     .style = {
-                        .foreground = selected ? palette.text : palette.muted,
+                        .foreground = deleted    ? palette.preprocessor
+                                      : selected ? palette.text
+                                                 : palette.muted,
                         .font_size = editor_scaled_font_size(editor, OPEN_TAB_FONT_SIZE),
                     },
                 }
@@ -1813,6 +1892,42 @@ namespace code_editor {
         return result;
     }
 
+    auto draw_deleted_open_file_tab_marks(
+        draw::Context draw_context,
+        gui::Frame const& ui,
+        EditorState const& editor,
+        Palette const& palette
+    ) -> void {
+        gui::BoxInfo const* const tabs =
+            ui.find_box(gui::id("open_file_tabs"), gui::BoxKind::SCROLL_PANEL);
+        if (tabs == nullptr) {
+            return;
+        }
+        draw::push_clip_rect(
+            draw_context,
+            {{tabs->rect.min.x, tabs->rect.min.y}, {tabs->rect.max.x, tabs->rect.max.y}}
+        );
+        for (size_t index = 0u; index < editor.open_files.size(); ++index) {
+            if (!open_file_deleted(editor, editor.open_files[index])) {
+                continue;
+            }
+            gui::BoxInfo const* const label =
+                ui.find_box(open_file_tab_label_id(index), gui::BoxKind::LABEL);
+            if (label == nullptr) {
+                continue;
+            }
+            float const y = std::round((label->rect.min.y + label->rect.max.y) * 0.5f + 1.0f);
+            draw::draw_line(
+                draw_context,
+                {label->rect.min.x, y},
+                {label->rect.max.x, y},
+                to_draw_color(palette.preprocessor),
+                1.4f
+            );
+        }
+        draw::pop_clip_rect(draw_context);
+    }
+
     [[nodiscard]] auto file_change_key_pressed(gui::InputState const& input, char key) -> bool {
         if (input.key_events == nullptr) {
             return false;
@@ -1830,10 +1945,118 @@ namespace code_editor {
         return false;
     }
 
+    auto draw_file_deleted_popup(gui::Frame& ui, EditorState& editor, Palette const& palette)
+        -> void {
+        if (!editor.file_deleted_on_disk || editor.save_path_open) {
+            return;
+        }
+
+        bool close = false;
+        bool save_as = false;
+        if (auto popup = ui.popup(
+                gui::id("file_deleted_popup"),
+                {
+                    .layout =
+                        {
+                            .width = gui::px(500.0f),
+                            .height = gui::children(),
+                            .padding = gui::insets(18.0f),
+                            .gap = 14.0f,
+                            .align_x = gui::Align::STRETCH,
+                        },
+                    .style =
+                        {
+                            .background = palette.panel_raised,
+                            .border = gui::color_alpha(palette.preprocessor, 0.72f),
+                            .border_thickness = 1.0f,
+                            .radius = 6.0f,
+                            .shadow =
+                                {
+                                    .offset = {0.0f, 14.0f},
+                                    .blur_radius = 34.0f,
+                                    .spread = 2.0f,
+                                    .color = gui::rgba(0, 0, 0, 120),
+                                },
+                        },
+                    .debug_name = "file_deleted_popup",
+                }
+            )) {
+            ui.label(
+                "File deleted on disk",
+                {
+                    .layout = {.width = gui::fill(), .height = gui::px(26.0f)},
+                    .style = {
+                        .foreground = palette.text,
+                        .font_size = editor_scaled_font_size(editor, 15.0f),
+                    },
+                }
+            );
+            ui.label(
+                fmt::tprintf(
+                    "%s was deleted on disk.\nClose this buffer or save it as a new file.",
+                    editor.current_file_name
+                ),
+                {
+                    .layout =
+                        {
+                            .width = gui::fill(),
+                            .height = gui::px(42.0f),
+                            .word_wrap = true,
+                        },
+                    .style = {
+                        .foreground = palette.muted,
+                        .font_size = editor_scaled_font_size(editor, 12.5f),
+                    },
+                }
+            );
+            if (auto buttons = ui.row(
+                    gui::id("file_deleted_buttons"),
+                    {
+                        .layout = {
+                            .width = gui::fill(),
+                            .height = gui::px(38.0f),
+                            .gap = 10.0f,
+                            .align_y = gui::Align::CENTER,
+                        },
+                    }
+                )) {
+                gui::BoxDesc const button_desc = {
+                    .layout =
+                        {
+                            .width = gui::fill(),
+                            .height = gui::fill(),
+                            .padding = gui::insets(0.0f, 12.0f),
+                        },
+                    .style = {
+                        .background = palette.panel,
+                        .foreground = palette.text,
+                        .border = palette.border,
+                        .border_thickness = 1.0f,
+                        .radius = 5.0f,
+                        .font_size = editor_scaled_font_size(editor, 12.5f),
+                    },
+                };
+                close = ui.button(gui::id("file_deleted_close"), "Close buffer", button_desc)
+                            .activated ||
+                        close;
+                save_as =
+                    ui.button(gui::id("file_deleted_save_as"), "Save as new file", button_desc)
+                        .activated ||
+                    save_as;
+            }
+        }
+
+        if (close) {
+            close_current_file(editor);
+        } else if (save_as) {
+            open_save_path_popup(editor);
+        }
+    }
+
     auto draw_file_change_popup(
         gui::Frame& ui, EditorState& editor, Palette const& palette, gui::InputState const& input
     ) -> void {
-        if (!editor.external_change_pending) {
+        if (!editor.external_change_pending || editor.file_deleted_on_disk) {
             return;
         }
 
@@ -2043,6 +2266,7 @@ namespace code_editor {
                     focus_editor_split(editor, split);
                 }
                 if (focused) {
+                    draw_file_deleted_popup(ui, editor, palette);
                     draw_file_change_popup(ui, editor, palette, input);
                 }
             }

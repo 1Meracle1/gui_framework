@@ -218,7 +218,10 @@ namespace code_editor {
         float delta_time
     ) -> gui::Frame {
         update_open_file_changes(runtime->editor);
-        if (!runtime->editor.external_change_pending) {
+        bool const popup_open =
+            editor_focused_pane_kind(runtime->editor) == EditorPaneKind::CODE &&
+            (runtime->editor.external_change_pending || runtime->editor.file_deleted_on_disk);
+        if (!popup_open) {
             process_editor_input(
                 runtime->editor,
                 input,

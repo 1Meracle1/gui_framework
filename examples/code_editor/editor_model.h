@@ -70,6 +70,7 @@ namespace code_editor {
         bool text_valid = false;
         bool dirty = false;
         bool external_change_pending = false;
+        bool file_deleted_on_disk = false;
     };
 
     struct FileSearchMatch {
@@ -105,6 +106,7 @@ namespace code_editor {
         bool mouse_was_down = false;
         bool dirty = false;
         bool external_change_pending = false;
+        bool file_deleted_on_disk = false;
     };
 
     enum class EditorSplitKind : uint8_t {
@@ -184,6 +186,7 @@ namespace code_editor {
         bool mouse_was_down = false;
         bool dirty = false;
         bool external_change_pending = false;
+        bool file_deleted_on_disk = false;
     };
 
     struct EditorClipboard {

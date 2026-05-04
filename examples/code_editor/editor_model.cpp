@@ -155,6 +155,7 @@ namespace code_editor {
         pane.mouse_was_down = editor.mouse_was_down;
         pane.dirty = editor.dirty;
         pane.external_change_pending = editor.external_change_pending;
+        pane.file_deleted_on_disk = editor.file_deleted_on_disk;
     }
 
     auto move_pane_to_editor(EditorState& editor, EditorPane& pane) -> void {
@@ -179,6 +180,7 @@ namespace code_editor {
         editor.mouse_was_down = pane.mouse_was_down;
         editor.dirty = pane.dirty;
         editor.external_change_pending = pane.external_change_pending;
+        editor.file_deleted_on_disk = pane.file_deleted_on_disk;
     }
 
     [[nodiscard]] auto pane_for_split(EditorState& editor, size_t split) -> EditorPane* {
@@ -251,6 +253,7 @@ namespace code_editor {
         pane.mouse_was_down = false;
         pane.dirty = editor.dirty;
         pane.external_change_pending = editor.external_change_pending;
+        pane.file_deleted_on_disk = editor.file_deleted_on_disk;
     }
 
     auto init_split_tree(EditorState& editor) -> void {
@@ -340,6 +343,7 @@ namespace code_editor {
             editor.file_write_stamp = pane->file_write_stamp;
             editor.dirty = pane->dirty;
             editor.external_change_pending = pane->external_change_pending;
+            editor.file_deleted_on_disk = pane->file_deleted_on_disk;
             clamp_cursor(editor);
             remember_open_file(editor, editor.current_file_name, editor.current_file_path);
             return true;
@@ -405,6 +409,7 @@ namespace code_editor {
             pane->file_write_stamp = editor.file_write_stamp;
             pane->dirty = editor.dirty;
             pane->external_change_pending = editor.external_change_pending;
+            pane->file_deleted_on_disk = editor.file_deleted_on_disk;
             clamp_pane_cursor(*pane);
         }
     }
@@ -801,6 +806,7 @@ namespace code_editor {
         editor.saved_text = copy_editor_text(editor);
         editor.dirty = false;
         editor.external_change_pending = false;
+        editor.file_deleted_on_disk = false;
     }
 
     auto refresh_editor_dirty(EditorState& editor) -> void {
@@ -2849,6 +2855,7 @@ namespace code_editor {
         hash = hash_bytes(hash, &pane.dirty, sizeof(pane.dirty));
         hash =
             hash_bytes(hash, &pane.external_change_pending, sizeof(pane.external_change_pending));
+        hash = hash_bytes(hash, &pane.file_deleted_on_disk, sizeof(pane.file_deleted_on_disk));
         return hash;
     }
 
@@ -2900,6 +2907,7 @@ namespace code_editor {
         hash = hash_bytes(
             hash, &editor.external_change_pending, sizeof(editor.external_change_pending)
         );
+        hash = hash_bytes(hash, &editor.file_deleted_on_disk, sizeof(editor.file_deleted_on_disk));
         size_t const scratch_text_size = editor.scratch_text.size();
         hash = hash_bytes(hash, &scratch_text_size, sizeof(scratch_text_size));
         hash = hash_bytes(hash, editor.scratch_text.data(), editor.scratch_text.size());
@@ -2924,6 +2932,7 @@ namespace code_editor {
             hash = hash_bytes(
                 hash, &file.external_change_pending, sizeof(file.external_change_pending)
             );
+            hash = hash_bytes(hash, &file.file_deleted_on_disk, sizeof(file.file_deleted_on_disk));
         }
         size_t const tree_root_name_size = editor.tree_root_name.size();
         hash = hash_bytes(hash, &tree_root_name_size, sizeof(tree_root_name_size));
