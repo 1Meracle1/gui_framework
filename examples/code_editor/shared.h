@@ -108,6 +108,9 @@ namespace code_editor {
         StrRef tree_root_name = {};
         StrRef save_root_path = {};
         Slice<FileTreeEntry> tree_files = {};
+        StrRef const* shared_tree_root_name = nullptr;
+        Slice<FileTreeEntry>* shared_tree_files = nullptr;
+        uint64_t const* shared_file_change_generation = nullptr;
         bool initial_sidebar_visible = false;
     };
 

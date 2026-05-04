@@ -19,6 +19,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <utility>
 #if defined(_WIN32)
 #include <code_editor_hot_reload_manifest.h>
 #include <dwmapi.h>
@@ -68,13 +69,25 @@ namespace code_editor {
         uint32_t click_count = 0u;
     };
 
+    struct DirectoryWatcher {
+        HANDLE directory = INVALID_HANDLE_VALUE;
+        HANDLE event = nullptr;
+        OVERLAPPED overlapped = {};
+        uint8_t buffer[64u * 1024u] = {};
+        bool pending = false;
+    };
+
     struct LaunchDesc {
         StrRef initial_text = {};
         StrRef initial_file_name = {};
         StrRef initial_file_path = {};
         StrRef tree_root_name = {};
         StrRef save_root_path = {};
+        Arena tree_arenas[2] = {};
         Vec<FileTreeEntry> tree_files = {};
+        DirectoryWatcher tree_watcher = {};
+        uint32_t tree_arena_index = 0u;
+        uint64_t file_change_generation = 0u;
         bool initial_sidebar_visible = false;
     };
 
@@ -126,6 +139,108 @@ namespace code_editor {
             mods |= gui::KEY_MOD_SUPER;
         }
         return mods;
+    }
+
+    [[nodiscard]] auto watcher_valid(DirectoryWatcher const& watcher) -> bool {
+        return watcher.directory != INVALID_HANDLE_VALUE && watcher.event != nullptr;
+    }
+
+    auto close_directory_watcher(DirectoryWatcher& watcher) -> void {
+        if (watcher.directory != INVALID_HANDLE_VALUE) {
+            if (watcher.pending) {
+                BASE_UNUSED(CancelIoEx(watcher.directory, &watcher.overlapped));
+                DWORD bytes = 0u;
+                BASE_UNUSED(
+                    GetOverlappedResult(watcher.directory, &watcher.overlapped, &bytes, TRUE)
+                );
+            }
+            CloseHandle(watcher.directory);
+        }
+        if (watcher.event != nullptr) {
+            CloseHandle(watcher.event);
+        }
+        watcher = {};
+        watcher.directory = INVALID_HANDLE_VALUE;
+    }
+
+    [[nodiscard]] auto start_directory_watch(DirectoryWatcher& watcher) -> bool {
+        if (!watcher_valid(watcher)) {
+            return false;
+        }
+
+        ResetEvent(watcher.event);
+        watcher.overlapped = {};
+        watcher.overlapped.hEvent = watcher.event;
+        DWORD const filter = FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_DIR_NAME |
+                             FILE_NOTIFY_CHANGE_SIZE | FILE_NOTIFY_CHANGE_LAST_WRITE |
+                             FILE_NOTIFY_CHANGE_CREATION;
+        BOOL const ok = ReadDirectoryChangesW(
+            watcher.directory,
+            watcher.buffer,
+            static_cast<DWORD>(sizeof(watcher.buffer)),
+            TRUE,
+            filter,
+            nullptr,
+            &watcher.overlapped,
+            nullptr
+        );
+        watcher.pending = ok || GetLastError() == ERROR_IO_PENDING;
+        return watcher.pending;
+    }
+
+    [[nodiscard]] auto open_directory_watcher(StrRef path, DirectoryWatcher& watcher) -> bool {
+        close_directory_watcher(watcher);
+        if (path.empty()) {
+            return false;
+        }
+
+        ArenaTemp temp = begin_thread_temp_arena();
+        wchar_t* wide_path = nullptr;
+        int wide_count = 0;
+        if (!base::utf8_to_wide(path, *temp.arena(), wide_path, wide_count)) {
+            return false;
+        }
+        BASE_UNUSED(wide_count);
+
+        watcher.event = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        if (watcher.event == nullptr) {
+            close_directory_watcher(watcher);
+            return false;
+        }
+
+        watcher.directory = CreateFileW(
+            wide_path,
+            FILE_LIST_DIRECTORY,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            nullptr,
+            OPEN_EXISTING,
+            FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OVERLAPPED,
+            nullptr
+        );
+        if (watcher.directory == INVALID_HANDLE_VALUE) {
+            close_directory_watcher(watcher);
+            return false;
+        }
+
+        if (!start_directory_watch(watcher)) {
+            close_directory_watcher(watcher);
+            return false;
+        }
+        return true;
+    }
+
+    [[nodiscard]] auto consume_directory_change(DirectoryWatcher& watcher) -> bool {
+        if (!watcher_valid(watcher) || !watcher.pending ||
+            WaitForSingleObject(watcher.event, 0u) != WAIT_OBJECT_0) {
+            return false;
+        }
+
+        DWORD bytes = 0u;
+        BOOL const ok = GetOverlappedResult(watcher.directory, &watcher.overlapped, &bytes, FALSE);
+        watcher.pending = false;
+        bool const changed = ok || GetLastError() != ERROR_OPERATION_ABORTED;
+        BASE_UNUSED(start_directory_watch(watcher));
+        return changed;
     }
 
     [[nodiscard]] auto close_click(AppState const& state, gui::Vec2 pos, uint64_t ticks) -> bool {
@@ -561,9 +676,20 @@ namespace code_editor {
         return arena_copy_cstr(arena, StrRef(path, size));
     }
 
+    [[nodiscard]] auto old_tree_entry_open(Slice<FileTreeEntry> old_files, StrRef relative_path)
+        -> bool {
+        for (FileTreeEntry const& file : old_files) {
+            if (file.is_directory && file.relative_path == relative_path) {
+                return file.open;
+            }
+        }
+        return false;
+    }
+
     [[nodiscard]] auto append_tree_entry(
         Arena& arena,
         Vec<FileTreeEntry>& files,
+        Slice<FileTreeEntry> old_files,
         StrRef directory,
         StrRef relative_directory,
         StrRef name,
@@ -579,6 +705,7 @@ namespace code_editor {
                    .relative_path = relative_path,
                    .depth = depth,
                    .is_directory = is_directory,
+                   .open = is_directory && old_tree_entry_open(old_files, relative_path),
                });
     }
 
@@ -587,7 +714,8 @@ namespace code_editor {
         StrRef directory,
         StrRef relative_directory,
         Vec<FileTreeEntry>& files,
-        size_t depth
+        size_t depth,
+        Slice<FileTreeEntry> old_files = {}
     ) -> bool {
         StrRef const directory_cstr =
             arena_copy_cstr(arena, path_without_trailing_slash(directory));
@@ -604,7 +732,7 @@ namespace code_editor {
         WIN32_FIND_DATAA find_data = {};
         HANDLE const find = FindFirstFileA(search_path.data(), &find_data);
         if (find == INVALID_HANDLE_VALUE) {
-            return false;
+            return GetLastError() == ERROR_FILE_NOT_FOUND;
         }
 
         do {
@@ -614,7 +742,14 @@ namespace code_editor {
             }
             bool const is_directory = (find_data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0u;
             if (!append_tree_entry(
-                    arena, entries, directory_cstr, relative_directory, name, depth, is_directory
+                    arena,
+                    entries,
+                    old_files,
+                    directory_cstr,
+                    relative_directory,
+                    name,
+                    depth,
+                    is_directory
                 )) {
                 FindClose(find);
                 return false;
@@ -639,9 +774,9 @@ namespace code_editor {
                 return false;
             }
             if (entry.is_directory) {
-                BASE_UNUSED(
-                    read_directory_files(arena, path, entry.relative_path, files, depth + 1u)
-                );
+                BASE_UNUSED(read_directory_files(
+                    arena, path, entry.relative_path, files, depth + 1u, old_files
+                ));
             }
         }
         return true;
@@ -649,11 +784,14 @@ namespace code_editor {
 
     [[nodiscard]] auto prepare_launch(Arena& arena, StrRef initial_path, LaunchDesc& launch)
         -> bool {
-        if (!launch.tree_files.init(32u, arena.resource())) {
+        launch.tree_arenas[0u].init();
+        launch.tree_arenas[1u].init();
+        if (!launch.tree_files.init(32u, launch.tree_arenas[0u].resource())) {
             return false;
         }
         if (initial_path.empty()) {
             launch.save_root_path = current_directory_cstr(arena);
+            launch.tree_root_name = arena_copy_str(arena, path_leaf(launch.save_root_path));
             return true;
         }
 
@@ -667,7 +805,7 @@ namespace code_editor {
             launch.save_root_path = path;
             launch.tree_root_name = arena_copy_str(arena, path_leaf(path));
             launch.initial_sidebar_visible = true;
-            return read_directory_files(arena, path, "", launch.tree_files, 0u);
+            return read_directory_files(launch.tree_arenas[0u], path, "", launch.tree_files, 0u);
         }
 
         if (!read_file_text(arena, full_path, launch.initial_text)) {
@@ -680,9 +818,41 @@ namespace code_editor {
         launch.initial_file_path = path;
         StrRef const parent = path_parent(path);
         launch.save_root_path = parent;
-        if (read_directory_files(arena, parent, "", launch.tree_files, 0u)) {
+        if (read_directory_files(launch.tree_arenas[0u], parent, "", launch.tree_files, 0u)) {
             launch.tree_root_name = arena_copy_str(arena, path_leaf(parent));
         }
+        return true;
+    }
+
+    auto refresh_launch_tree(LaunchDesc& launch) -> void {
+        if (launch.save_root_path.empty()) {
+            return;
+        }
+
+        uint32_t const old_index = launch.tree_arena_index;
+        uint32_t const new_index = 1u - old_index;
+        Arena& arena = launch.tree_arenas[new_index];
+        arena.reset();
+
+        Vec<FileTreeEntry> files = {};
+        if (!files.init(32u, arena.resource()) ||
+            !read_directory_files(
+                arena, launch.save_root_path, "", files, 0u, launch.tree_files.slice()
+            )) {
+            return;
+        }
+
+        launch.tree_files = std::move(files);
+        launch.tree_arenas[old_index].reset();
+        launch.tree_arena_index = new_index;
+    }
+
+    [[nodiscard]] auto process_launch_file_changes(LaunchDesc& launch) -> bool {
+        if (!consume_directory_change(launch.tree_watcher)) {
+            return false;
+        }
+        launch.file_change_generation += 1u;
+        refresh_launch_tree(launch);
         return true;
     }
 
@@ -732,6 +902,8 @@ namespace code_editor {
             return 1;
         }
 
+        bool const watching_files =
+            open_directory_watcher(launch.save_root_path, launch.tree_watcher);
         ModuleRuntimeContext module_context = {
             .render_context = render_context,
             .native_window = app_state.hwnd,
@@ -743,6 +915,10 @@ namespace code_editor {
             .tree_files = launch.tree_files.slice(),
             .initial_sidebar_visible = launch.initial_sidebar_visible,
         };
+        module_context.shared_tree_root_name = &module_context.tree_root_name;
+        module_context.shared_tree_files = &module_context.tree_files;
+        module_context.shared_file_change_generation =
+            watching_files ? &launch.file_change_generation : nullptr;
         gui::HotReloadDesc module_desc = hot_reload_desc(&module_context);
         gui::HotReloadAppModule module = {};
         gui::init_hot_reload_app_module(&module, module_desc, app_arena);
@@ -754,6 +930,7 @@ namespace code_editor {
 #endif
         if (!module_loaded) {
             gui::destroy_hot_reload_app_module(&module, module_desc);
+            close_directory_watcher(launch.tree_watcher);
             render::destroy_window(render_window);
             render::destroy_context(render_context);
             destroy_testbed_window(&app_state);
@@ -792,12 +969,30 @@ namespace code_editor {
                 app_state.mouse_hit_id = {};
                 app_state.redraw_pending = true;
             }
+            if (process_launch_file_changes(launch)) {
+                module_context.tree_root_name = launch.tree_root_name;
+                module_context.tree_files = launch.tree_files.slice();
+                app_state.redraw_pending = true;
+            }
 
             if (!app_state.redraw_pending) {
+                HANDLE wait_handles[1] = {};
+                DWORD wait_handle_count = 0u;
+                if (watcher_valid(launch.tree_watcher)) {
+                    wait_handles[wait_handle_count] = launch.tree_watcher.event;
+                    wait_handle_count += 1u;
+                }
                 DWORD const wait_ms = HOT_RELOAD_POLL_MS;
                 DWORD const wait_result = MsgWaitForMultipleObjectsEx(
-                    0u, nullptr, wait_ms, QS_ALLINPUT, MWMO_INPUTAVAILABLE
+                    wait_handle_count,
+                    wait_handle_count != 0u ? wait_handles : nullptr,
+                    wait_ms,
+                    QS_ALLINPUT,
+                    MWMO_INPUTAVAILABLE
                 );
+                if (wait_handle_count != 0u && wait_result == WAIT_OBJECT_0) {
+                    continue;
+                }
                 if (wait_result == WAIT_TIMEOUT) {
                     app_state.redraw_pending = true;
                 }
@@ -840,6 +1035,7 @@ namespace code_editor {
             }
         }
 
+        close_directory_watcher(launch.tree_watcher);
         gui::destroy_hot_reload_app_module(&module, module_desc);
         render::destroy_window(render_window);
         render::destroy_context(render_context);

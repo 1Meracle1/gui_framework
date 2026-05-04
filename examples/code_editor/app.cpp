@@ -46,6 +46,10 @@ namespace code_editor {
         gui::Context ui_context = {};
         EditorState editor = {};
         void* native_window = nullptr;
+        StrRef const* shared_tree_root_name = nullptr;
+        Slice<FileTreeEntry>* shared_tree_files = nullptr;
+        uint64_t const* shared_file_change_generation = nullptr;
+        uint64_t file_change_generation = 0u;
         float char_width = 8.0f;
     };
 
@@ -55,6 +59,24 @@ namespace code_editor {
 
     static auto log_font_result(char const* operation, font_provider::Result result) -> void {
         fmt::eprintf("%s failed: %s\n", operation, font_provider::result_name(result));
+    }
+
+    [[nodiscard]] static auto sync_shared_file_tree(Runtime& runtime) -> bool {
+        if (runtime.shared_tree_root_name != nullptr) {
+            runtime.editor.tree_root_name = *runtime.shared_tree_root_name;
+        }
+        if (runtime.shared_tree_files != nullptr) {
+            runtime.editor.tree_files = *runtime.shared_tree_files;
+        }
+        if (runtime.shared_file_change_generation == nullptr) {
+            return true;
+        }
+        uint64_t const generation = *runtime.shared_file_change_generation;
+        if (generation == runtime.file_change_generation) {
+            return false;
+        }
+        runtime.file_change_generation = generation;
+        return true;
     }
 
     auto set_windows_clipboard_text(void* user_data, StrRef text) -> void {
@@ -199,6 +221,9 @@ namespace code_editor {
             arena, {.initial_box_capacity = 1024u, .theme = &theme}, runtime->ui_context
         );
         runtime->native_window = context.native_window;
+        runtime->shared_tree_root_name = context.shared_tree_root_name;
+        runtime->shared_tree_files = context.shared_tree_files;
+        runtime->shared_file_change_generation = context.shared_file_change_generation;
         init_editor(arena, runtime->editor, context.initial_text);
         if (!context.initial_file_name.empty()) {
             runtime->editor.current_file_name = context.initial_file_name;
@@ -215,9 +240,12 @@ namespace code_editor {
         Runtime* runtime,
         render::SizeU32 window_size,
         gui::InputState const& input,
-        float delta_time
+        float delta_time,
+        bool files_changed
     ) -> gui::Frame {
-        update_open_file_changes(runtime->editor);
+        if (files_changed) {
+            update_open_file_changes(runtime->editor);
+        }
         bool const popup_open =
             editor_focused_pane_kind(runtime->editor) == EditorPaneKind::CODE &&
             (runtime->editor.external_change_pending || runtime->editor.file_deleted_on_disk);
@@ -338,12 +366,14 @@ namespace code_editor {
         float delta_time
     ) -> FrameResult {
         auto* const module = static_cast<ModuleRuntime*>(storage);
+        bool const files_changed = sync_shared_file_tree(module->runtime);
         uint64_t const state_hash_before = editor_state_hash(module->runtime.editor);
 
         render::begin_frame(render_context);
 
         FrameResult frame_result = {};
-        frame_result.frame = build_ui_commands(&module->runtime, window_size, input, delta_time);
+        frame_result.frame =
+            build_ui_commands(&module->runtime, window_size, input, delta_time, files_changed);
         request_window_close(module->runtime);
         gui::BoxInfo const* const hit_box = frame_result.frame.hit_test(input.mouse_pos);
         frame_result.mouse_hit_id = hit_box != nullptr ? hit_box->id : gui::Id{};

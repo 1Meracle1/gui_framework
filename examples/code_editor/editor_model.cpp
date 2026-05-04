@@ -307,6 +307,7 @@ namespace code_editor {
 
     auto remember_open_file(EditorState& editor, StrRef name, StrRef path) -> void {
         DEBUG_ASSERT(editor.text.arena != nullptr);
+        DEBUG_ASSERT(editor.arena != nullptr);
         if (name.empty()) {
             return;
         }
@@ -315,7 +316,10 @@ namespace code_editor {
                 return;
             }
         }
-        bool const ok = editor.open_files.push_back({name, path});
+        bool const ok = editor.open_files.push_back({
+            arena_copy_cstr(*editor.arena, name),
+            path.empty() ? StrRef() : arena_copy_cstr(*editor.arena, path),
+        });
         DEBUG_ASSERT(ok);
         (void)ok;
     }

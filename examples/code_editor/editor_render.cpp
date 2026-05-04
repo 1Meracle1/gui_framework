@@ -285,8 +285,8 @@ namespace code_editor {
             return false;
         }
         set_editor_text(editor, text);
-        editor.current_file_name = name;
-        editor.current_file_path = path;
+        editor.current_file_name = arena_copy_cstr(*editor.arena, name);
+        editor.current_file_path = arena_copy_cstr(*editor.arena, path);
         editor.file_write_stamp = file_write_stamp(path);
         editor.dirty = false;
         editor.external_change_pending = false;
