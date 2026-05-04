@@ -228,6 +228,7 @@ namespace code_editor {
         if (editor.current_file_name.empty() || editor.text.arena == nullptr) {
             return;
         }
+        store_focused_open_file_view(editor);
         remember_open_file(editor, editor.current_file_name, editor.current_file_path);
         OpenFile* const file =
             find_open_file(editor, editor.current_file_name, editor.current_file_path);
@@ -274,6 +275,7 @@ namespace code_editor {
         editor.set_flag(EditorFlag::DIRTY, file.dirty);
         editor.set_flag(EditorFlag::EXTERNAL_CHANGE_PENDING, file.external_change_pending);
         editor.set_flag(EditorFlag::FILE_DELETED_ON_DISK, file.file_deleted_on_disk);
+        BASE_UNUSED(restore_focused_open_file_view(editor, file.name, file.path));
         remember_open_file(editor, file.name, file.path);
     }
 
@@ -282,6 +284,9 @@ namespace code_editor {
         DEBUG_ASSERT(editor.text.arena != nullptr);
         if (store_current) {
             store_current_open_file(editor);
+        }
+        if (same_file(name, path, editor.current_file_name, editor.current_file_path)) {
+            return true;
         }
         if (load_shared_editor_buffer(editor, name, path)) {
             store_current_open_file(editor);
@@ -312,6 +317,7 @@ namespace code_editor {
         editor.set_flag(EditorFlag::DIRTY, false);
         editor.set_flag(EditorFlag::EXTERNAL_CHANGE_PENDING, false);
         editor.set_flag(EditorFlag::FILE_DELETED_ON_DISK, false);
+        BASE_UNUSED(restore_focused_open_file_view(editor, name, path));
         remember_open_file(editor, name, path);
         store_current_open_file(editor);
         return true;
@@ -1462,16 +1468,32 @@ namespace code_editor {
         return false;
     }
 
+    auto remove_open_file_view(EditorPane& pane, StrRef name, StrRef path) -> void {
+        for (size_t index = 0u; index < pane.open_file_views.size(); ++index) {
+            OpenFileViewState const& view = pane.open_file_views[index];
+            if (same_file(view.name, view.path, name, path)) {
+                pane.open_file_views.ordered_remove(index);
+                return;
+            }
+        }
+    }
+
     auto close_open_file(EditorState& editor, size_t index) -> void {
         if (index >= editor.open_files.size()) {
             return;
         }
 
+        OpenFile const closing = editor.open_files[index];
         bool const selected = open_file_selected(editor, editor.open_files[index]);
         if (selected) {
             save_scratch_file(editor);
         }
         editor.open_files.ordered_remove(index);
+        for (EditorPane* pane : editor.panes) {
+            if (pane != nullptr) {
+                remove_open_file_view(*pane, closing.name, closing.path);
+            }
+        }
         if (!selected) {
             return;
         }

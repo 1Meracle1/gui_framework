@@ -85,6 +85,20 @@ namespace code_editor {
         bool file_deleted_on_disk = false;
     };
 
+    struct OpenFileViewState {
+        StrRef name = {};
+        StrRef path = {};
+        size_t cursor_line = 0u;
+        size_t cursor_column = 0u;
+        size_t preferred_column = 0u;
+        size_t selection_anchor_line = 0u;
+        size_t selection_anchor_column = 0u;
+        EditorSelectionMode selection_mode = EditorSelectionMode::NONE;
+        float scroll_y = 0.0f;
+        bool insert_mode = false;
+        bool selection_active = false;
+    };
+
     struct FileSearchMatch {
         size_t tree_file_index = 0u;
         int32_t score = 0;
@@ -124,6 +138,7 @@ namespace code_editor {
         bool dirty = false;
         bool external_change_pending = false;
         bool file_deleted_on_disk = false;
+        Vec<OpenFileViewState> open_file_views = {};
     };
 
     enum class EditorSplitKind : uint8_t {
@@ -237,6 +252,9 @@ namespace code_editor {
     auto init_editor(Arena& arena, EditorState& editor, StrRef text) -> void;
     auto set_editor_text(EditorState& editor, StrRef text) -> void;
     auto remember_open_file(EditorState& editor, StrRef name, StrRef path) -> void;
+    auto store_focused_open_file_view(EditorState& editor) -> void;
+    [[nodiscard]] auto restore_focused_open_file_view(EditorState& editor, StrRef name, StrRef path)
+        -> bool;
     [[nodiscard]] auto load_shared_editor_buffer(EditorState& editor, StrRef name, StrRef path)
         -> bool;
     auto save_scratch_file(EditorState& editor) -> void;

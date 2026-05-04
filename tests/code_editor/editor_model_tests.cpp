@@ -1495,7 +1495,7 @@ namespace {
         );
     }
 
-    TEST_CASE(editor_shared_buffer_load_restores_state) {
+    TEST_CASE(editor_shared_buffer_load_keeps_pane_view_state_separate) {
         Arena arena = {};
         arena.init();
 
@@ -1507,6 +1507,12 @@ namespace {
         send_text(editor, " wv");
         size_t const left = editor.split_nodes[editor.root_split].first;
         size_t const right = editor.split_nodes[editor.root_split].second;
+
+        editor.cursor_column = 1u;
+        editor.preferred_column = 1u;
+        editor.scroll_y = 5.0f;
+        code_editor::store_focused_open_file_view(editor);
+
         code_editor::focus_editor_split(editor, left);
 
         editor.cursor_column = 3u;
@@ -1524,10 +1530,10 @@ namespace {
             context,
             code_editor::load_shared_editor_buffer(editor, "main.cpp", "C:\\repo\\main.cpp")
         );
-        TEST_EXPECT(context, editor.cursor_column == 4u);
-        TEST_EXPECT(context, editor.preferred_column == 4u);
-        TEST_EXPECT(context, editor.scroll_y == 12.0f);
-        TEST_EXPECT(context, editor.flag(EditorFlag::INSERT_MODE));
+        TEST_EXPECT(context, editor.cursor_column == 1u);
+        TEST_EXPECT(context, editor.preferred_column == 1u);
+        TEST_EXPECT(context, editor.scroll_y == 5.0f);
+        TEST_EXPECT(context, !editor.flag(EditorFlag::INSERT_MODE));
         TEST_EXPECT(
             context, code_editor::editor_line_text(code_editor::editor_line(editor, 0u)) == "abcZ"
         );

@@ -226,6 +226,9 @@ namespace code_editor {
         DEBUG_ASSERT(editor.arena != nullptr);
         EditorPane* const pane = arena_new<EditorPane>(*editor.arena);
         init_text_storage(pane->text, *editor.arena);
+        bool const views_ok = pane->open_file_views.init(0u, editor.arena->resource());
+        DEBUG_ASSERT(views_ok);
+        (void)views_ok;
         bool const ok = editor.panes.push_back(pane);
         DEBUG_ASSERT(ok);
         (void)ok;
@@ -326,6 +329,89 @@ namespace code_editor {
         (void)ok;
     }
 
+    [[nodiscard]] auto find_open_file_view(EditorPane& pane, StrRef name, StrRef path)
+        -> OpenFileViewState* {
+        for (OpenFileViewState& view : pane.open_file_views) {
+            if (same_editor_file(view.name, view.path, name, path)) {
+                return &view;
+            }
+        }
+        return nullptr;
+    }
+
+    auto reset_editor_file_view(EditorState& editor) -> void {
+        editor.cursor_line = 0u;
+        editor.cursor_column = 0u;
+        editor.preferred_column = 0u;
+        editor.selection_anchor_line = 0u;
+        editor.selection_anchor_column = 0u;
+        editor.selection_mode = EditorSelectionMode::NONE;
+        editor.scroll_y = 0.0f;
+        editor.set_flag(EditorFlag::INSERT_MODE, false);
+        editor.set_flag(EditorFlag::SELECTION_ACTIVE, false);
+        editor.set_flag(EditorFlag::MOUSE_SELECTING, false);
+        editor.set_flag(EditorFlag::MOUSE_WAS_DOWN, false);
+    }
+
+    auto store_focused_open_file_view(EditorState& editor) -> void {
+        DEBUG_ASSERT(editor.arena != nullptr);
+        if (editor.current_file_name.empty() || focused_pane_kind(editor) != EditorPaneKind::CODE) {
+            return;
+        }
+        EditorPane* const pane = pane_for_split(editor, editor.focused_split);
+        if (pane == nullptr) {
+            return;
+        }
+
+        OpenFileViewState* view =
+            find_open_file_view(*pane, editor.current_file_name, editor.current_file_path);
+        if (view == nullptr) {
+            view = pane->open_file_views.push_back_and_get_ptr({
+                arena_copy_cstr(*editor.arena, editor.current_file_name),
+                editor.current_file_path.empty()
+                    ? StrRef()
+                    : arena_copy_cstr(*editor.arena, editor.current_file_path),
+            });
+            DEBUG_ASSERT(view != nullptr);
+        }
+        view->cursor_line = editor.cursor_line;
+        view->cursor_column = editor.cursor_column;
+        view->preferred_column = editor.preferred_column;
+        view->selection_anchor_line = editor.selection_anchor_line;
+        view->selection_anchor_column = editor.selection_anchor_column;
+        view->selection_mode = editor.selection_mode;
+        view->scroll_y = editor.scroll_y;
+        view->insert_mode = editor.flag(EditorFlag::INSERT_MODE);
+        view->selection_active = editor.flag(EditorFlag::SELECTION_ACTIVE);
+    }
+
+    [[nodiscard]] auto restore_focused_open_file_view(EditorState& editor, StrRef name, StrRef path)
+        -> bool {
+        reset_editor_file_view(editor);
+        if (focused_pane_kind(editor) != EditorPaneKind::CODE) {
+            return false;
+        }
+        EditorPane* const pane = pane_for_split(editor, editor.focused_split);
+        if (pane == nullptr) {
+            return false;
+        }
+        OpenFileViewState const* const view = find_open_file_view(*pane, name, path);
+        if (view == nullptr) {
+            return false;
+        }
+        editor.cursor_line = view->cursor_line;
+        editor.cursor_column = view->cursor_column;
+        editor.preferred_column = view->preferred_column;
+        editor.selection_anchor_line = view->selection_anchor_line;
+        editor.selection_anchor_column = view->selection_anchor_column;
+        editor.selection_mode = view->selection_mode;
+        editor.scroll_y = view->scroll_y;
+        editor.set_flag(EditorFlag::INSERT_MODE, view->insert_mode);
+        editor.set_flag(EditorFlag::SELECTION_ACTIVE, view->selection_active);
+        clamp_cursor(editor);
+        return true;
+    }
+
     [[nodiscard]] auto load_shared_editor_buffer(EditorState& editor, StrRef name, StrRef path)
         -> bool {
         size_t const focused_pane = focused_pane_index(editor);
@@ -347,15 +433,7 @@ namespace code_editor {
             editor.undo_stack = pane->undo_stack;
             editor.redo_stack = pane->redo_stack;
             editor.file_write_stamp = pane->file_write_stamp;
-            editor.cursor_line = pane->cursor_line;
-            editor.cursor_column = pane->cursor_column;
-            editor.preferred_column = pane->preferred_column;
-            editor.selection_anchor_line = pane->selection_anchor_line;
-            editor.selection_anchor_column = pane->selection_anchor_column;
-            editor.selection_mode = pane->selection_mode;
-            editor.scroll_y = pane->scroll_y;
-            editor.set_flag(EditorFlag::INSERT_MODE, pane->insert_mode);
-            editor.set_flag(EditorFlag::SELECTION_ACTIVE, pane->selection_active);
+            BASE_UNUSED(restore_focused_open_file_view(editor, name, path));
             editor.set_flag(EditorFlag::DIRTY, pane->dirty);
             editor.set_flag(EditorFlag::EXTERNAL_CHANGE_PENDING, pane->external_change_pending);
             editor.set_flag(EditorFlag::FILE_DELETED_ON_DISK, pane->file_deleted_on_disk);
@@ -910,6 +988,7 @@ namespace code_editor {
         editor.current_file_path = {};
         editor.file_write_stamp = 0u;
         remember_open_file(editor, SCRATCH_FILE_NAME, {});
+        BASE_UNUSED(restore_focused_open_file_view(editor, SCRATCH_FILE_NAME, {}));
     }
 
     [[nodiscard]] auto save_root_without_trailing_slash(StrRef path) -> StrRef {
