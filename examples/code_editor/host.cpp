@@ -47,6 +47,7 @@ namespace code_editor {
     namespace render = gui::render;
 
     constexpr wchar_t WINDOW_CLASS_NAME[] = L"gui_framework_code_editor";
+    constexpr int CODE_EDITOR_ICON_ID = 101;
     constexpr DWORD DWM_ATTR_USE_IMMERSIVE_DARK_MODE = 20u;
     constexpr DWORD DWM_ATTR_BORDER_COLOR = 34u;
     constexpr DWORD DWM_ATTR_CAPTION_COLOR = 35u;
@@ -507,6 +508,22 @@ namespace code_editor {
         window_class.style = CS_HREDRAW | CS_VREDRAW | CS_DBLCLKS;
         window_class.lpfnWndProc = window_proc;
         window_class.hInstance = instance;
+        window_class.hIcon = static_cast<HICON>(LoadImageW(
+            instance,
+            MAKEINTRESOURCEW(CODE_EDITOR_ICON_ID),
+            IMAGE_ICON,
+            GetSystemMetrics(SM_CXICON),
+            GetSystemMetrics(SM_CYICON),
+            LR_DEFAULTCOLOR | LR_SHARED
+        ));
+        window_class.hIconSm = static_cast<HICON>(LoadImageW(
+            instance,
+            MAKEINTRESOURCEW(CODE_EDITOR_ICON_ID),
+            IMAGE_ICON,
+            GetSystemMetrics(SM_CXSMICON),
+            GetSystemMetrics(SM_CYSMICON),
+            LR_DEFAULTCOLOR | LR_SHARED
+        ));
         window_class.hCursor = LoadCursorW(nullptr, MAKEINTRESOURCEW(32512));
         window_class.lpszClassName = WINDOW_CLASS_NAME;
 
@@ -528,7 +545,7 @@ namespace code_editor {
         HWND const hwnd = CreateWindowExW(
             0u,
             WINDOW_CLASS_NAME,
-            L"gui_framework code editor testbed",
+            L"Code Editor",
             style,
             CW_USEDEFAULT,
             CW_USEDEFAULT,

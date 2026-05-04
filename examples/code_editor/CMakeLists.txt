@@ -66,6 +66,7 @@ if(WIN32)
     )
     target_sources(code_editor PRIVATE
         "${CMAKE_CURRENT_BINARY_DIR}/generated/code_editor_hot_reload_manifest.h"
+        resources/code_editor.rc
     )
     add_dependencies(code_editor code_editor_module)
     foreach(source IN LISTS CODE_EDITOR_RELOAD_SOURCES)

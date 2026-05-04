@@ -1463,8 +1463,21 @@ namespace code_editor {
         BASE_UNUSED(open_file(editor, file.name, file.path));
     }
 
-    auto draw_file_search_picker(gui::Frame& ui, EditorState& editor, Palette const& palette)
-        -> void {
+    auto draw_file_search_picker(
+        gui::Frame& ui, EditorState& editor, Palette const& palette, float client_height
+    ) -> void {
+        float constexpr modal_margin = 24.0f;
+        float constexpr dialog_padding = 8.0f;
+        float constexpr dialog_gap = 8.0f;
+        float constexpr query_height = 36.0f;
+        float const results_height = std::min(
+            FILE_SEARCH_ROW_HEIGHT * static_cast<float>(FILE_SEARCH_RESULT_LIMIT),
+            std::max(
+                FILE_SEARCH_ROW_HEIGHT,
+                client_height - 2.0f * (modal_margin + dialog_padding) - query_height - dialog_gap
+            )
+        );
+
         FileSearchMatch matches[FILE_SEARCH_RESULT_LIMIT] = {};
         size_t const match_count = collect_file_search_matches(editor, matches);
         editor.file_search_selected =
@@ -1475,9 +1488,9 @@ namespace code_editor {
                 {
                     .layout =
                         {
-                            .padding = gui::insets(42.0f, 24.0f, 24.0f, 24.0f),
+                            .padding = gui::insets(modal_margin),
                             .align_x = gui::Align::CENTER,
-                            .align_y = gui::Align::START,
+                            .align_y = gui::Align::CENTER,
                         },
                     .debug_name = "file_search_modal",
                 }
@@ -1490,8 +1503,8 @@ namespace code_editor {
                                 .width = gui::fill(),
                                 .height = gui::children(),
                                 .max_width = gui::px(860.0f),
-                                .padding = gui::insets(8.0f),
-                                .gap = 8.0f,
+                                .padding = gui::insets(dialog_padding),
+                                .gap = dialog_gap,
                                 .align_x = gui::Align::STRETCH,
                             },
                         .style = {
@@ -1508,7 +1521,7 @@ namespace code_editor {
                             .layout =
                                 {
                                     .width = gui::fill(),
-                                    .height = gui::px(36.0f),
+                                    .height = gui::px(query_height),
                                     .padding = gui::insets(0.0f, 10.0f),
                                     .gap = 6.0f,
                                     .align_y = gui::Align::CENTER,
@@ -1548,13 +1561,12 @@ namespace code_editor {
                     );
                 }
 
-                if (auto results = ui.column(
+                if (auto results = ui.scroll_panel(
                         gui::id("file_search_results"),
                         {
                             .layout = {
                                 .width = gui::fill(),
-                                .height =
-                                    gui::px(FILE_SEARCH_ROW_HEIGHT * FILE_SEARCH_RESULT_LIMIT),
+                                .height = gui::px(results_height),
                                 .align_x = gui::Align::STRETCH,
                             },
                         }
@@ -2327,6 +2339,7 @@ namespace code_editor {
         font_cache::Font icon_font,
         Palette const& palette,
         float client_width,
+        float client_height,
         gui::InputState const& input
     ) -> void {
         if (editor.sidebar_visible) {
@@ -2554,7 +2567,7 @@ namespace code_editor {
             }
 
             if (editor.file_search_open) {
-                draw_file_search_picker(ui, editor, palette);
+                draw_file_search_picker(ui, editor, palette, client_height);
             }
             if (editor.save_path_open) {
                 draw_save_path_picker(ui, editor, palette, input);

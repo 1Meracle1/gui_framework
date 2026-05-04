@@ -26,6 +26,7 @@ namespace code_editor {
         gui::font_cache::Font icon_font,
         Palette const& palette,
         float client_width,
+        float client_height,
         gui::InputState const& input
     ) -> void;
 

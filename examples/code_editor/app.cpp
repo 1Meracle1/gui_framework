@@ -288,6 +288,7 @@ namespace code_editor {
             runtime->icon_font,
             palette,
             static_cast<float>(window_size.width),
+            static_cast<float>(window_size.height),
             input
         );
         gui::end_frame(ui);
