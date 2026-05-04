@@ -512,6 +512,49 @@ namespace {
         TEST_EXPECT(context, editor.file_search_open_file == 1u);
     }
 
+    TEST_CASE(editor_colon_opens_completes_and_closes_command_line) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "");
+
+        send_text(editor, ":");
+        TEST_EXPECT(context, editor.command_line_active);
+        TEST_EXPECT(context, code_editor::editor_command_text(editor).empty());
+
+        press_key(editor, gui::Key::TAB);
+        TEST_EXPECT(context, code_editor::editor_command_text(editor) == "write");
+
+        press_key(editor, gui::Key::ESCAPE);
+        TEST_EXPECT(context, !editor.command_line_active);
+
+        send_text(editor, ":");
+        press_key(editor, gui::Key::BACKSPACE);
+        TEST_EXPECT(context, !editor.command_line_active);
+    }
+
+    TEST_CASE(editor_colon_commands_run_editor_actions) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "");
+
+        send_text(editor, ":w");
+        press_key(editor, gui::Key::ENTER);
+        TEST_EXPECT(context, editor.save_requested);
+        TEST_EXPECT(context, !editor.command_line_active);
+
+        send_text(editor, ":buffer-close");
+        press_key(editor, gui::Key::ENTER);
+        TEST_EXPECT(context, editor.close_current_requested);
+
+        send_text(editor, ":open");
+        press_key(editor, gui::Key::ENTER);
+        TEST_EXPECT(context, editor.file_search_open);
+    }
+
     TEST_CASE(editor_ctrl_plus_minus_changes_font_size) {
         Arena arena = {};
         arena.init();

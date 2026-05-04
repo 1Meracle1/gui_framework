@@ -8,6 +8,13 @@
 namespace code_editor {
 
     inline constexpr size_t INVALID_INDEX = static_cast<size_t>(-1);
+    inline constexpr EditorCommand EDITOR_COMMANDS[] = {
+        {"write", "w", "Save the current file."},
+        {"quit", "q", "Close the focused split."},
+        {"buffer-close", "bc", "Close the current buffer."},
+        {"open", "o", "Open a file from the indexed tree."},
+        {"toggle-sidebar", "tree", "Toggle the file tree sidebar."},
+    };
 
     struct EditorUndoEntry {
         EditorUndoEntry* previous = nullptr;
@@ -104,6 +111,7 @@ namespace code_editor {
         editor.file_search_open_file = FILE_SEARCH_NO_FILE;
         editor.command_line_active = false;
         editor.command_text_size = 0u;
+        editor.command_selected = 0u;
         editor.command_text[0u] = '\0';
         editor.save_requested = false;
         editor.save_path_open = false;
@@ -1522,6 +1530,22 @@ namespace code_editor {
         return StrRef(editor.file_search_text, editor.file_search_text_size);
     }
 
+    [[nodiscard]] auto editor_command_text(EditorState const& editor) -> StrRef {
+        return StrRef(editor.command_text, editor.command_text_size);
+    }
+
+    [[nodiscard]] auto editor_command_count() -> size_t {
+        return sizeof(EDITOR_COMMANDS) / sizeof(EDITOR_COMMANDS[0u]);
+    }
+
+    [[nodiscard]] auto editor_command(size_t index) -> EditorCommand {
+        return index < editor_command_count() ? EDITOR_COMMANDS[index] : EditorCommand{};
+    }
+
+    [[nodiscard]] auto editor_selected_command(EditorState const& editor) -> EditorCommand {
+        return editor_command(std::min(editor.command_selected, editor_command_count() - 1u));
+    }
+
     [[nodiscard]] auto file_search_entry_text(FileTreeEntry const& entry) -> StrRef {
         return !entry.relative_path.empty() ? entry.relative_path : entry.name;
     }
@@ -1644,7 +1668,86 @@ namespace code_editor {
     auto clear_command_line(EditorState& editor) -> void {
         editor.command_line_active = false;
         editor.command_text_size = 0u;
+        editor.command_selected = 0u;
         editor.command_text[0u] = '\0';
+    }
+
+    auto select_command_match(EditorState& editor) -> void {
+        StrRef const text = editor_command_text(editor).trim();
+        if (text.empty()) {
+            editor.command_selected =
+                std::min(editor.command_selected, editor_command_count() - 1u);
+            return;
+        }
+        for (size_t index = 0u; index < editor_command_count(); ++index) {
+            EditorCommand const command = editor_command(index);
+            if (command.name.starts_with_ignore_ascii_case(text) ||
+                command.alias.starts_with_ignore_ascii_case(text)) {
+                editor.command_selected = index;
+                return;
+            }
+        }
+    }
+
+    auto set_command_text(EditorState& editor, StrRef text) -> void {
+        editor.command_text_size = text.copy_to(editor.command_text, COMMAND_TEXT_CAPACITY - 1u);
+        editor.command_text[editor.command_text_size] = '\0';
+    }
+
+    auto complete_command_line(EditorState& editor) -> void {
+        EditorCommand const selected = editor_selected_command(editor);
+        if (editor_command_text(editor).equals_ignore_ascii_case(selected.name)) {
+            editor.command_selected = (editor.command_selected + 1u) % editor_command_count();
+        }
+        set_command_text(editor, editor_selected_command(editor).name);
+    }
+
+    auto open_command_line(EditorState& editor) -> void {
+        clear_command_line(editor);
+        editor.command_line_active = true;
+        editor.file_search_open = false;
+        editor.file_search_open_file = FILE_SEARCH_NO_FILE;
+        editor.save_path_open = false;
+        editor.save_path_error = EditorSavePathError::NONE;
+    }
+
+    auto run_editor_command(EditorState& editor, size_t index) -> void {
+        switch (index) {
+        case 0u:
+            editor.save_requested = true;
+            break;
+        case 1u:
+            close_focused_split(editor);
+            break;
+        case 2u:
+            editor.close_current_requested = true;
+            break;
+        case 3u:
+            open_file_search(editor);
+            break;
+        case 4u:
+            toggle_filesystem_panel(editor);
+            break;
+        default:
+            break;
+        }
+    }
+
+    auto run_command_line(EditorState& editor) -> void {
+        StrRef const text = editor_command_text(editor).trim();
+        if (text.empty()) {
+            clear_command_line(editor);
+            return;
+        }
+        for (size_t index = 0u; index < editor_command_count(); ++index) {
+            EditorCommand const command = editor_command(index);
+            if (text.equals_ignore_ascii_case(command.name) ||
+                text.equals_ignore_ascii_case(command.alias)) {
+                run_editor_command(editor, index);
+                break;
+            }
+        }
+        clear_command_line(editor);
     }
 
     auto handle_command_line_event(EditorState& editor, gui::KeyEvent const& event) -> void {
@@ -1656,6 +1759,7 @@ namespace code_editor {
                 editor.command_text[editor.command_text_size] = static_cast<char>(event.codepoint);
                 editor.command_text_size += 1u;
                 editor.command_text[editor.command_text_size] = '\0';
+                select_command_match(editor);
             }
             return;
         }
@@ -1664,11 +1768,18 @@ namespace code_editor {
             return;
         }
 
-        if (event.key == gui::Key::ESCAPE || event.key == gui::Key::ENTER) {
+        if (event.key == gui::Key::ESCAPE) {
             clear_command_line(editor);
+        } else if (event.key == gui::Key::ENTER) {
+            run_command_line(editor);
+        } else if (event.key == gui::Key::TAB) {
+            complete_command_line(editor);
         } else if (event.key == gui::Key::BACKSPACE && editor.command_text_size != 0u) {
             editor.command_text_size -= 1u;
             editor.command_text[editor.command_text_size] = '\0';
+            select_command_match(editor);
+        } else if (event.key == gui::Key::BACKSPACE) {
+            clear_command_line(editor);
         }
     }
 
@@ -2072,8 +2183,7 @@ namespace code_editor {
         EditorSelectionRange const selection = editor_selection_range(editor);
         switch (ch) {
         case ':':
-            clear_command_line(editor);
-            editor.command_line_active = true;
+            open_command_line(editor);
             break;
         case ' ':
             editor.pending_leader = true;
@@ -2737,6 +2847,7 @@ namespace code_editor {
             hash_bytes(hash, &editor.file_search_open_file, sizeof(editor.file_search_open_file));
         hash = hash_bytes(hash, &editor.command_line_active, sizeof(editor.command_line_active));
         hash = hash_bytes(hash, &editor.command_text_size, sizeof(editor.command_text_size));
+        hash = hash_bytes(hash, &editor.command_selected, sizeof(editor.command_selected));
         hash = hash_bytes(hash, editor.command_text, editor.command_text_size);
         hash = hash_bytes(hash, &editor.save_requested, sizeof(editor.save_requested));
         hash = hash_bytes(hash, &editor.save_path_open, sizeof(editor.save_path_open));

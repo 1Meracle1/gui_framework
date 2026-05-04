@@ -33,6 +33,12 @@ namespace code_editor {
     inline constexpr size_t SAVE_PATH_TEXT_CAPACITY = 1024u;
     inline constexpr size_t COMMAND_TEXT_CAPACITY = 256u;
 
+    struct EditorCommand {
+        StrRef name = {};
+        StrRef alias = {};
+        StrRef description = {};
+    };
+
     struct EditorSelectionRange {
         size_t start_line = 0u;
         size_t start_column = 0u;
@@ -150,6 +156,7 @@ namespace code_editor {
         char command_text[COMMAND_TEXT_CAPACITY] = {};
         size_t file_search_text_size = 0u;
         size_t command_text_size = 0u;
+        size_t command_selected = 0u;
         size_t file_search_selected = 0u;
         size_t file_search_open_file = FILE_SEARCH_NO_FILE;
         size_t pending_line_number = 0u;
@@ -211,6 +218,10 @@ namespace code_editor {
     [[nodiscard]] auto editor_line_text(EditorLine line) -> StrRef;
     [[nodiscard]] auto editor_selection_range(EditorState const& editor) -> EditorSelectionRange;
     [[nodiscard]] auto editor_file_search_text(EditorState const& editor) -> StrRef;
+    [[nodiscard]] auto editor_command_text(EditorState const& editor) -> StrRef;
+    [[nodiscard]] auto editor_command_count() -> size_t;
+    [[nodiscard]] auto editor_command(size_t index) -> EditorCommand;
+    [[nodiscard]] auto editor_selected_command(EditorState const& editor) -> EditorCommand;
     [[nodiscard]] auto file_search_entry_text(FileTreeEntry const& entry) -> StrRef;
     [[nodiscard]] auto
     collect_file_search_matches(EditorState const& editor, Slice<FileSearchMatch> matches)

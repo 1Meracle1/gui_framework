@@ -39,6 +39,8 @@ namespace code_editor {
     inline constexpr float OPEN_TAB_CLOSE_SIZE = 18.0f;
     inline constexpr float OPEN_TAB_FONT_SIZE = 13.0f;
     inline constexpr float FILE_SEARCH_ROW_HEIGHT = 27.0f;
+    inline constexpr float COMMAND_OVERLAY_HEIGHT = 88.0f;
+    inline constexpr float COMMAND_LIST_HEIGHT = 30.0f;
     inline constexpr char OVERWRITE_FILE_KEY = 'o';
     inline constexpr char RELOAD_FILE_KEY = 'r';
     inline constexpr char TREE_ARROW_OPEN[] = "\xEE\x9C\x8D";
@@ -942,6 +944,75 @@ namespace code_editor {
         }
     }
 
+    auto draw_command_overlay(
+        draw::Context draw_context,
+        font_cache::Font editor_font,
+        EditorState const& editor,
+        gui::Frame const& ui,
+        Palette const& palette
+    ) -> void {
+        if (!editor.command_line_active) {
+            return;
+        }
+
+        gui::BoxInfo const* const body = ui.find_box(gui::id("body"), gui::BoxKind::ROW);
+        if (body == nullptr) {
+            return;
+        }
+
+        float const pad = 8.0f;
+        float const y0 =
+            std::max(body->rect.min.y + pad, body->rect.max.y - COMMAND_OVERLAY_HEIGHT - pad);
+        draw::Rect const panel = {
+            {body->rect.min.x + pad, y0},
+            {body->rect.max.x - pad, body->rect.max.y - pad},
+        };
+        draw::draw_rect_filled(draw_context, panel, to_draw_color(palette.panel), 6.0f);
+        draw::draw_rect(draw_context, panel, to_draw_color(palette.border), 1.0f, 6.0f);
+        draw::push_clip_rect(draw_context, panel);
+
+        float const font_size = editor_scaled_font_size(editor, 12.0f);
+        draw::TextStyle text_style = {
+            .font = editor_font,
+            .size = font_size,
+            .color = to_draw_color(palette.text),
+        };
+        EditorCommand const selected = editor_selected_command(editor);
+        float const text_x = panel.min.x + 12.0f;
+        float const text_y = panel.min.y + 10.0f;
+        draw::draw_text(draw_context, {text_x, text_y}, text_style, selected.description, nullptr);
+        if (!selected.alias.empty()) {
+            draw::draw_text(
+                draw_context,
+                {text_x, text_y + 18.0f},
+                text_style,
+                fmt::tprintf("Aliases: %s", selected.alias),
+                nullptr
+            );
+        }
+
+        float x = panel.min.x + 8.0f;
+        float const y = panel.max.y - COMMAND_LIST_HEIGHT + 3.0f;
+        for (size_t index = 0u; index < editor_command_count(); ++index) {
+            EditorCommand const command = editor_command(index);
+            float const width =
+                font_cache::text_advance(editor_font, font_size, command.name) + 16.0f;
+            bool const active = index == editor.command_selected;
+            if (active) {
+                draw::Rect const item = {{x, y}, {x + width, y + 22.0f}};
+                draw::draw_rect_filled(
+                    draw_context, item, to_draw_color(palette.cursor_line), 4.0f
+                );
+                draw::draw_rect(draw_context, item, to_draw_color(palette.cursor), 1.0f, 4.0f);
+            }
+            text_style.color = to_draw_color(active ? palette.text : palette.muted);
+            draw::draw_text(draw_context, {x + 8.0f, y + 3.0f}, text_style, command.name, nullptr);
+            x += width + 8.0f;
+        }
+
+        draw::pop_clip_rect(draw_context);
+    }
+
     auto draw_editor_surface(
         draw::Context draw_context,
         font_cache::Font editor_font,
@@ -966,6 +1037,7 @@ namespace code_editor {
             target_focus
         );
         focus_editor_split(editor, target_focus);
+        draw_command_overlay(draw_context, editor_font, editor, ui, palette);
     }
 
     auto draw_tree_guide(gui::Frame& ui, Palette const& palette) -> void {
