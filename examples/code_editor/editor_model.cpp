@@ -96,26 +96,26 @@ namespace code_editor {
         editor.selection_anchor_line = 0u;
         editor.selection_anchor_column = 0u;
         editor.selection_mode = EditorSelectionMode::NONE;
-        editor.selection_active = false;
-        editor.mouse_selecting = false;
+        editor.set_flag(EditorFlag::SELECTION_ACTIVE, false);
+        editor.set_flag(EditorFlag::MOUSE_SELECTING, false);
         editor.scroll_y = 0.0f;
-        editor.pending_leader = false;
-        editor.pending_buffer = false;
-        editor.pending_window = false;
-        editor.pending_g = false;
-        editor.pending_d = false;
-        editor.pending_r = false;
-        editor.pending_z = false;
+        editor.set_flag(EditorFlag::PENDING_LEADER, false);
+        editor.set_flag(EditorFlag::PENDING_BUFFER, false);
+        editor.set_flag(EditorFlag::PENDING_WINDOW, false);
+        editor.set_flag(EditorFlag::PENDING_G, false);
+        editor.set_flag(EditorFlag::PENDING_D, false);
+        editor.set_flag(EditorFlag::PENDING_R, false);
+        editor.set_flag(EditorFlag::PENDING_Z, false);
         editor.pending_line_number = 0u;
-        editor.pending_line_number_active = false;
-        editor.file_search_open = false;
+        editor.set_flag(EditorFlag::PENDING_LINE_NUMBER_ACTIVE, false);
+        editor.set_flag(EditorFlag::FILE_SEARCH_OPEN, false);
         editor.file_search_open_file = FILE_SEARCH_NO_FILE;
-        editor.command_line_active = false;
+        editor.set_flag(EditorFlag::COMMAND_LINE_ACTIVE, false);
         editor.command_text_size = 0u;
         editor.command_selected = 0u;
         editor.command_text[0u] = '\0';
-        editor.save_requested = false;
-        editor.save_path_open = false;
+        editor.set_flag(EditorFlag::SAVE_REQUESTED, false);
+        editor.set_flag(EditorFlag::SAVE_PATH_OPEN, false);
         editor.save_path_error = EditorSavePathError::NONE;
         if (clear_dirty) {
             mark_editor_saved(editor);
@@ -150,13 +150,13 @@ namespace code_editor {
         pane.selection_anchor_column = editor.selection_anchor_column;
         pane.selection_mode = editor.selection_mode;
         pane.scroll_y = editor.scroll_y;
-        pane.insert_mode = editor.insert_mode;
-        pane.selection_active = editor.selection_active;
-        pane.mouse_selecting = editor.mouse_selecting;
-        pane.mouse_was_down = editor.mouse_was_down;
-        pane.dirty = editor.dirty;
-        pane.external_change_pending = editor.external_change_pending;
-        pane.file_deleted_on_disk = editor.file_deleted_on_disk;
+        pane.insert_mode = editor.flag(EditorFlag::INSERT_MODE);
+        pane.selection_active = editor.flag(EditorFlag::SELECTION_ACTIVE);
+        pane.mouse_selecting = editor.flag(EditorFlag::MOUSE_SELECTING);
+        pane.mouse_was_down = editor.flag(EditorFlag::MOUSE_WAS_DOWN);
+        pane.dirty = editor.flag(EditorFlag::DIRTY);
+        pane.external_change_pending = editor.flag(EditorFlag::EXTERNAL_CHANGE_PENDING);
+        pane.file_deleted_on_disk = editor.flag(EditorFlag::FILE_DELETED_ON_DISK);
     }
 
     auto move_pane_to_editor(EditorState& editor, EditorPane& pane) -> void {
@@ -175,13 +175,13 @@ namespace code_editor {
         editor.selection_anchor_column = pane.selection_anchor_column;
         editor.selection_mode = pane.selection_mode;
         editor.scroll_y = pane.scroll_y;
-        editor.insert_mode = pane.insert_mode;
-        editor.selection_active = pane.selection_active;
-        editor.mouse_selecting = pane.mouse_selecting;
-        editor.mouse_was_down = pane.mouse_was_down;
-        editor.dirty = pane.dirty;
-        editor.external_change_pending = pane.external_change_pending;
-        editor.file_deleted_on_disk = pane.file_deleted_on_disk;
+        editor.set_flag(EditorFlag::INSERT_MODE, pane.insert_mode);
+        editor.set_flag(EditorFlag::SELECTION_ACTIVE, pane.selection_active);
+        editor.set_flag(EditorFlag::MOUSE_SELECTING, pane.mouse_selecting);
+        editor.set_flag(EditorFlag::MOUSE_WAS_DOWN, pane.mouse_was_down);
+        editor.set_flag(EditorFlag::DIRTY, pane.dirty);
+        editor.set_flag(EditorFlag::EXTERNAL_CHANGE_PENDING, pane.external_change_pending);
+        editor.set_flag(EditorFlag::FILE_DELETED_ON_DISK, pane.file_deleted_on_disk);
     }
 
     [[nodiscard]] auto pane_for_split(EditorState& editor, size_t split) -> EditorPane* {
@@ -202,23 +202,23 @@ namespace code_editor {
     }
 
     auto store_focused_pane(EditorState& editor) -> void {
-        if (!editor.pane_loaded) {
+        if (!editor.flag(EditorFlag::PANE_LOADED)) {
             return;
         }
         EditorPane* const pane = pane_for_split(editor, editor.focused_split);
         DEBUG_ASSERT(pane != nullptr);
         move_editor_to_pane(editor, *pane);
-        editor.pane_loaded = false;
+        editor.set_flag(EditorFlag::PANE_LOADED, false);
     }
 
     auto load_focused_pane(EditorState& editor) -> void {
-        if (editor.pane_loaded) {
+        if (editor.flag(EditorFlag::PANE_LOADED)) {
             return;
         }
         EditorPane* const pane = pane_for_split(editor, editor.focused_split);
         DEBUG_ASSERT(pane != nullptr);
         move_pane_to_editor(editor, *pane);
-        editor.pane_loaded = true;
+        editor.set_flag(EditorFlag::PANE_LOADED, true);
     }
 
     [[nodiscard]] auto new_pane(EditorState& editor) -> EditorPane* {
@@ -248,13 +248,13 @@ namespace code_editor {
         pane.selection_anchor_column = editor.selection_anchor_column;
         pane.selection_mode = editor.selection_mode;
         pane.scroll_y = editor.scroll_y;
-        pane.insert_mode = editor.insert_mode;
-        pane.selection_active = editor.selection_active;
+        pane.insert_mode = editor.flag(EditorFlag::INSERT_MODE);
+        pane.selection_active = editor.flag(EditorFlag::SELECTION_ACTIVE);
         pane.mouse_selecting = false;
         pane.mouse_was_down = false;
-        pane.dirty = editor.dirty;
-        pane.external_change_pending = editor.external_change_pending;
-        pane.file_deleted_on_disk = editor.file_deleted_on_disk;
+        pane.dirty = editor.flag(EditorFlag::DIRTY);
+        pane.external_change_pending = editor.flag(EditorFlag::EXTERNAL_CHANGE_PENDING);
+        pane.file_deleted_on_disk = editor.flag(EditorFlag::FILE_DELETED_ON_DISK);
     }
 
     auto init_split_tree(EditorState& editor) -> void {
@@ -270,7 +270,7 @@ namespace code_editor {
         (void)ok;
         editor.root_split = 0u;
         editor.focused_split = 0u;
-        editor.pane_loaded = false;
+        editor.set_flag(EditorFlag::PANE_LOADED, false);
         load_focused_pane(editor);
     }
 
@@ -346,9 +346,9 @@ namespace code_editor {
             editor.undo_stack = pane->undo_stack;
             editor.redo_stack = pane->redo_stack;
             editor.file_write_stamp = pane->file_write_stamp;
-            editor.dirty = pane->dirty;
-            editor.external_change_pending = pane->external_change_pending;
-            editor.file_deleted_on_disk = pane->file_deleted_on_disk;
+            editor.set_flag(EditorFlag::DIRTY, pane->dirty);
+            editor.set_flag(EditorFlag::EXTERNAL_CHANGE_PENDING, pane->external_change_pending);
+            editor.set_flag(EditorFlag::FILE_DELETED_ON_DISK, pane->file_deleted_on_disk);
             clamp_cursor(editor);
             remember_open_file(editor, editor.current_file_name, editor.current_file_path);
             return true;
@@ -388,7 +388,8 @@ namespace code_editor {
     }
 
     auto sync_shared_panes(EditorState& editor) -> void {
-        if (!editor.pane_loaded || focused_pane_kind(editor) != EditorPaneKind::CODE) {
+        if (!editor.flag(EditorFlag::PANE_LOADED) ||
+            focused_pane_kind(editor) != EditorPaneKind::CODE) {
             return;
         }
 
@@ -414,9 +415,9 @@ namespace code_editor {
             pane->undo_stack = editor.undo_stack;
             pane->redo_stack = editor.redo_stack;
             pane->file_write_stamp = editor.file_write_stamp;
-            pane->dirty = editor.dirty;
-            pane->external_change_pending = editor.external_change_pending;
-            pane->file_deleted_on_disk = editor.file_deleted_on_disk;
+            pane->dirty = editor.flag(EditorFlag::DIRTY);
+            pane->external_change_pending = editor.flag(EditorFlag::EXTERNAL_CHANGE_PENDING);
+            pane->file_deleted_on_disk = editor.flag(EditorFlag::FILE_DELETED_ON_DISK);
             clamp_pane_cursor(*pane);
         }
     }
@@ -530,7 +531,7 @@ namespace code_editor {
 
     auto ensure_filesystem_panel(EditorState& editor) -> void {
         if (filesystem_panel_visible(editor) || editor.split_nodes.empty()) {
-            editor.sidebar_visible = filesystem_panel_visible(editor);
+            editor.set_flag(EditorFlag::SIDEBAR_VISIBLE, filesystem_panel_visible(editor));
             return;
         }
 
@@ -575,7 +576,7 @@ namespace code_editor {
         if (old_focus == root) {
             editor.focused_split = old_child;
         }
-        editor.sidebar_visible = true;
+        editor.set_flag(EditorFlag::SIDEBAR_VISIBLE, true);
     }
 
     auto close_filesystem_panels(EditorState& editor) -> void {
@@ -585,7 +586,7 @@ namespace code_editor {
             close_focused_split(editor);
             split = find_leaf_by_kind(editor, editor.root_split, EditorPaneKind::FILESYSTEM);
         }
-        editor.sidebar_visible = false;
+        editor.set_flag(EditorFlag::SIDEBAR_VISIBLE, false);
         if (focused_pane_kind(editor) == EditorPaneKind::FILESYSTEM) {
             focus_first_code_split(editor);
         }
@@ -648,7 +649,7 @@ namespace code_editor {
         }
         if (focused_pane_kind(editor) == EditorPaneKind::CODE &&
             leaf_count_by_kind(editor, editor.root_split, EditorPaneKind::CODE) <= 1u) {
-            editor.close_app_requested = true;
+            editor.set_flag(EditorFlag::CLOSE_APP_REQUESTED, true);
             return;
         }
         if (editor.focused_split == editor.root_split) {
@@ -680,11 +681,11 @@ namespace code_editor {
         DEBUG_ASSERT(closed_pane < editor.panes.size());
         editor.panes[closed_pane] = nullptr;
 
-        editor.pane_loaded = false;
+        editor.set_flag(EditorFlag::PANE_LOADED, false);
         editor.focused_split = first_leaf(editor, parent);
         load_focused_pane(editor);
         clamp_cursor(editor);
-        editor.sidebar_visible = filesystem_panel_visible(editor);
+        editor.set_flag(EditorFlag::SIDEBAR_VISIBLE, filesystem_panel_visible(editor));
     }
 
     [[nodiscard]] auto rect_valid(gui::Rect rect) -> bool {
@@ -801,7 +802,7 @@ namespace code_editor {
         editor.focused_split = target;
         load_focused_pane(editor);
         clamp_cursor(editor);
-        editor.sidebar_visible = filesystem_panel_visible(editor);
+        editor.set_flag(EditorFlag::SIDEBAR_VISIBLE, filesystem_panel_visible(editor));
     }
 
     [[nodiscard]] auto copy_editor_text(EditorState& editor) -> StrRef {
@@ -814,18 +815,18 @@ namespace code_editor {
             return;
         }
         editor.saved_text = copy_editor_text(editor);
-        editor.dirty = false;
-        editor.external_change_pending = false;
-        editor.file_deleted_on_disk = false;
+        editor.set_flag(EditorFlag::DIRTY, false);
+        editor.set_flag(EditorFlag::EXTERNAL_CHANGE_PENDING, false);
+        editor.set_flag(EditorFlag::FILE_DELETED_ON_DISK, false);
     }
 
     auto refresh_editor_dirty(EditorState& editor) -> void {
         if (editor.text.arena == nullptr) {
             return;
         }
-        editor.dirty = copy_editor_text(editor) != editor.saved_text;
-        if (!editor.dirty) {
-            editor.external_change_pending = false;
+        editor.set_flag(EditorFlag::DIRTY, copy_editor_text(editor) != editor.saved_text);
+        if (!editor.flag(EditorFlag::DIRTY)) {
+            editor.set_flag(EditorFlag::EXTERNAL_CHANGE_PENDING, false);
         }
     }
 
@@ -840,7 +841,7 @@ namespace code_editor {
         entry->selection_anchor_line = editor.selection_anchor_line;
         entry->selection_anchor_column = editor.selection_anchor_column;
         entry->selection_mode = editor.selection_mode;
-        entry->selection_active = editor.selection_active;
+        entry->selection_active = editor.flag(EditorFlag::SELECTION_ACTIVE);
         entry->previous = stack;
         stack = entry;
     }
@@ -848,7 +849,7 @@ namespace code_editor {
     auto save_editor_undo(EditorState& editor) -> void {
         push_editor_snapshot(editor, editor.undo_stack);
         editor.redo_stack = nullptr;
-        editor.dirty = true;
+        editor.set_flag(EditorFlag::DIRTY, true);
     }
 
     auto restore_editor_snapshot(EditorState& editor, EditorUndoEntry const& entry) -> void {
@@ -859,7 +860,7 @@ namespace code_editor {
         editor.selection_anchor_line = entry.selection_anchor_line;
         editor.selection_anchor_column = entry.selection_anchor_column;
         editor.selection_mode = entry.selection_mode;
-        editor.selection_active = entry.selection_active;
+        editor.set_flag(EditorFlag::SELECTION_ACTIVE, entry.selection_active);
         clamp_cursor(editor);
     }
 
@@ -927,10 +928,10 @@ namespace code_editor {
     }
 
     auto open_save_path_popup(EditorState& editor) -> void {
-        editor.save_requested = false;
-        editor.save_path_open = true;
+        editor.set_flag(EditorFlag::SAVE_REQUESTED, false);
+        editor.set_flag(EditorFlag::SAVE_PATH_OPEN, true);
         editor.save_path_error = EditorSavePathError::NONE;
-        editor.file_search_open = false;
+        editor.set_flag(EditorFlag::FILE_SEARCH_OPEN, false);
         editor.file_search_open_file = FILE_SEARCH_NO_FILE;
         clear_save_path_text(editor);
 
@@ -945,7 +946,7 @@ namespace code_editor {
     }
 
     auto close_save_path_popup(EditorState& editor) -> void {
-        editor.save_path_open = false;
+        editor.set_flag(EditorFlag::SAVE_PATH_OPEN, false);
         editor.save_path_error = EditorSavePathError::NONE;
     }
 
@@ -957,7 +958,7 @@ namespace code_editor {
             open_save_path_popup(editor);
             return;
         }
-        editor.save_requested = true;
+        editor.set_flag(EditorFlag::SAVE_REQUESTED, true);
     }
 
     [[nodiscard]] auto line_size(EditorState const& editor, size_t line) -> size_t {
@@ -1021,7 +1022,7 @@ namespace code_editor {
         editor.selection_anchor_line = editor.cursor_line;
         editor.selection_anchor_column = editor.cursor_column;
         editor.selection_mode = EditorSelectionMode::NONE;
-        editor.selection_active = false;
+        editor.set_flag(EditorFlag::SELECTION_ACTIVE, false);
     }
 
     auto clamp_selection(EditorState& editor) -> void {
@@ -1029,13 +1030,16 @@ namespace code_editor {
             clamp_position(editor, {editor.selection_anchor_line, editor.selection_anchor_column});
         editor.selection_anchor_line = anchor.line;
         editor.selection_anchor_column = anchor.column;
-        editor.selection_active =
+        editor.set_flag(
+            EditorFlag::SELECTION_ACTIVE,
             editor.selection_mode != EditorSelectionMode::NONE ||
-            (editor.selection_active && !same_position(anchor, cursor_position(editor)));
+                (editor.flag(EditorFlag::SELECTION_ACTIVE) &&
+                 !same_position(anchor, cursor_position(editor)))
+        );
     }
 
     auto move_cursor_to(EditorState& editor, EditorPosition position, bool select) -> void {
-        if (select && !editor.selection_active) {
+        if (select && !editor.flag(EditorFlag::SELECTION_ACTIVE)) {
             editor.selection_anchor_line = editor.cursor_line;
             editor.selection_anchor_column = editor.cursor_column;
         }
@@ -1044,15 +1048,18 @@ namespace code_editor {
         editor.cursor_column = position.column;
         editor.preferred_column = editor.cursor_column;
         if (select) {
-            editor.selection_active = editor.selection_mode != EditorSelectionMode::NONE ||
-                                      !same_position(selection_anchor(editor), position);
+            editor.set_flag(
+                EditorFlag::SELECTION_ACTIVE,
+                editor.selection_mode != EditorSelectionMode::NONE ||
+                    !same_position(selection_anchor(editor), position)
+            );
         } else {
             clear_selection(editor);
         }
     }
 
     [[nodiscard]] auto editor_selection_range(EditorState const& editor) -> EditorSelectionRange {
-        if (!editor.selection_active) {
+        if (!editor.flag(EditorFlag::SELECTION_ACTIVE)) {
             return {};
         }
 
@@ -1133,7 +1140,7 @@ namespace code_editor {
         EditorPosition position = {
             line, std::min(editor.preferred_column, line_size(editor, line))
         };
-        if (select && !editor.selection_active) {
+        if (select && !editor.flag(EditorFlag::SELECTION_ACTIVE)) {
             editor.selection_anchor_line = editor.cursor_line;
             editor.selection_anchor_column = editor.cursor_column;
         }
@@ -1141,8 +1148,11 @@ namespace code_editor {
         editor.cursor_line = position.line;
         editor.cursor_column = position.column;
         if (select) {
-            editor.selection_active = editor.selection_mode != EditorSelectionMode::NONE ||
-                                      !same_position(selection_anchor(editor), position);
+            editor.set_flag(
+                EditorFlag::SELECTION_ACTIVE,
+                editor.selection_mode != EditorSelectionMode::NONE ||
+                    !same_position(selection_anchor(editor), position)
+            );
         } else {
             clear_selection(editor);
         }
@@ -1418,7 +1428,9 @@ namespace code_editor {
         editor.cursor_column = line_size(editor, editor.cursor_line);
         editor.preferred_column = editor.cursor_column;
         editor.selection_mode = EditorSelectionMode::NONE;
-        editor.selection_active = editor.cursor_line != 0u || editor.cursor_column != 0u;
+        editor.set_flag(
+            EditorFlag::SELECTION_ACTIVE, editor.cursor_line != 0u || editor.cursor_column != 0u
+        );
     }
 
     [[nodiscard]] auto copy_selected_text(EditorState& editor) -> StrRef {
@@ -1542,16 +1554,16 @@ namespace code_editor {
     auto open_line(EditorState& editor, size_t line) -> void {
         size_t const insert_at = std::min(line, editor_line_count(editor));
         insert_line(editor, insert_at, "");
-        editor.insert_mode = true;
-        editor.pending_leader = false;
-        editor.pending_buffer = false;
-        editor.pending_window = false;
-        editor.pending_d = false;
-        editor.pending_g = false;
-        editor.pending_r = false;
-        editor.pending_z = false;
+        editor.set_flag(EditorFlag::INSERT_MODE, true);
+        editor.set_flag(EditorFlag::PENDING_LEADER, false);
+        editor.set_flag(EditorFlag::PENDING_BUFFER, false);
+        editor.set_flag(EditorFlag::PENDING_WINDOW, false);
+        editor.set_flag(EditorFlag::PENDING_D, false);
+        editor.set_flag(EditorFlag::PENDING_G, false);
+        editor.set_flag(EditorFlag::PENDING_R, false);
+        editor.set_flag(EditorFlag::PENDING_Z, false);
         editor.pending_line_number = 0u;
-        editor.pending_line_number_active = false;
+        editor.set_flag(EditorFlag::PENDING_LINE_NUMBER_ACTIVE, false);
         set_cursor(editor, insert_at, 0u);
     }
 
@@ -1693,29 +1705,29 @@ namespace code_editor {
     }
 
     auto open_file_search(EditorState& editor) -> void {
-        editor.file_search_open = true;
+        editor.set_flag(EditorFlag::FILE_SEARCH_OPEN, true);
         editor.file_search_text_size = 0u;
         editor.file_search_text[0u] = '\0';
         editor.file_search_selected = 0u;
         editor.file_search_open_file = FILE_SEARCH_NO_FILE;
-        editor.save_path_open = false;
+        editor.set_flag(EditorFlag::SAVE_PATH_OPEN, false);
         editor.save_path_error = EditorSavePathError::NONE;
-        editor.pending_leader = false;
-        editor.pending_buffer = false;
-        editor.pending_window = false;
-        editor.pending_d = false;
-        editor.pending_g = false;
-        editor.pending_r = false;
-        editor.pending_z = false;
+        editor.set_flag(EditorFlag::PENDING_LEADER, false);
+        editor.set_flag(EditorFlag::PENDING_BUFFER, false);
+        editor.set_flag(EditorFlag::PENDING_WINDOW, false);
+        editor.set_flag(EditorFlag::PENDING_D, false);
+        editor.set_flag(EditorFlag::PENDING_G, false);
+        editor.set_flag(EditorFlag::PENDING_R, false);
+        editor.set_flag(EditorFlag::PENDING_Z, false);
     }
 
     auto close_file_search(EditorState& editor) -> void {
-        editor.file_search_open = false;
+        editor.set_flag(EditorFlag::FILE_SEARCH_OPEN, false);
         editor.file_search_selected = 0u;
     }
 
     auto clear_command_line(EditorState& editor) -> void {
-        editor.command_line_active = false;
+        editor.set_flag(EditorFlag::COMMAND_LINE_ACTIVE, false);
         editor.command_text_size = 0u;
         editor.command_selected = 0u;
         editor.command_text[0u] = '\0';
@@ -1753,10 +1765,10 @@ namespace code_editor {
 
     auto open_command_line(EditorState& editor) -> void {
         clear_command_line(editor);
-        editor.command_line_active = true;
-        editor.file_search_open = false;
+        editor.set_flag(EditorFlag::COMMAND_LINE_ACTIVE, true);
+        editor.set_flag(EditorFlag::FILE_SEARCH_OPEN, false);
         editor.file_search_open_file = FILE_SEARCH_NO_FILE;
-        editor.save_path_open = false;
+        editor.set_flag(EditorFlag::SAVE_PATH_OPEN, false);
         editor.save_path_error = EditorSavePathError::NONE;
     }
 
@@ -1769,7 +1781,7 @@ namespace code_editor {
             close_focused_split(editor);
             break;
         case 2u:
-            editor.close_current_requested = true;
+            editor.set_flag(EditorFlag::CLOSE_CURRENT_REQUESTED, true);
             break;
         case 3u:
             open_file_search(editor);
@@ -1905,18 +1917,18 @@ namespace code_editor {
 
     auto clear_pending_line_number(EditorState& editor) -> void {
         editor.pending_line_number = 0u;
-        editor.pending_line_number_active = false;
+        editor.set_flag(EditorFlag::PENDING_LINE_NUMBER_ACTIVE, false);
     }
 
     auto enter_insert_at(EditorState& editor, EditorPosition position) -> void {
-        editor.insert_mode = true;
-        editor.pending_leader = false;
-        editor.pending_buffer = false;
-        editor.pending_window = false;
-        editor.pending_d = false;
-        editor.pending_g = false;
-        editor.pending_r = false;
-        editor.pending_z = false;
+        editor.set_flag(EditorFlag::INSERT_MODE, true);
+        editor.set_flag(EditorFlag::PENDING_LEADER, false);
+        editor.set_flag(EditorFlag::PENDING_BUFFER, false);
+        editor.set_flag(EditorFlag::PENDING_WINDOW, false);
+        editor.set_flag(EditorFlag::PENDING_D, false);
+        editor.set_flag(EditorFlag::PENDING_G, false);
+        editor.set_flag(EditorFlag::PENDING_R, false);
+        editor.set_flag(EditorFlag::PENDING_Z, false);
         clear_pending_line_number(editor);
         set_cursor(editor, position.line, position.column);
     }
@@ -1946,7 +1958,7 @@ namespace code_editor {
         editor.selection_mode = mode;
         editor.selection_anchor_line = editor.cursor_line;
         editor.selection_anchor_column = editor.cursor_column;
-        editor.selection_active = true;
+        editor.set_flag(EditorFlag::SELECTION_ACTIVE, true);
     }
 
     [[nodiscard]] auto can_delete_char(EditorState const& editor) -> bool;
@@ -2115,14 +2127,14 @@ namespace code_editor {
     auto
     handle_normal_char(EditorState& editor, char ch, gui::KeyMods mods, EditorClipboard clipboard)
         -> void {
-        if (editor.pending_r) {
-            editor.pending_r = false;
+        if (editor.flag(EditorFlag::PENDING_R)) {
+            editor.set_flag(EditorFlag::PENDING_R, false);
             replace_selection_with_char(editor, ch);
             return;
         }
 
-        if (editor.pending_d) {
-            editor.pending_d = false;
+        if (editor.flag(EditorFlag::PENDING_D)) {
+            editor.set_flag(EditorFlag::PENDING_D, false);
             if (ch == 'd') {
                 if (can_delete_line(editor)) {
                     save_editor_undo(editor);
@@ -2131,29 +2143,29 @@ namespace code_editor {
             }
             return;
         }
-        if (editor.pending_g) {
-            editor.pending_g = false;
+        if (editor.flag(EditorFlag::PENDING_G)) {
+            editor.set_flag(EditorFlag::PENDING_G, false);
             if (ch == 'g') {
                 move_cursor_to(editor, {0u, 0u}, visual_selecting(editor));
             }
             return;
         }
-        if (editor.pending_z) {
-            editor.pending_z = false;
+        if (editor.flag(EditorFlag::PENDING_Z)) {
+            editor.set_flag(EditorFlag::PENDING_Z, false);
             if (ch == 'z') {
                 center_cursor(editor, editor.split_nodes[editor.focused_split].rect);
             }
             return;
         }
-        if (editor.pending_buffer) {
-            editor.pending_buffer = false;
+        if (editor.flag(EditorFlag::PENDING_BUFFER)) {
+            editor.set_flag(EditorFlag::PENDING_BUFFER, false);
             if (ch == 'd') {
-                editor.close_current_requested = true;
+                editor.set_flag(EditorFlag::CLOSE_CURRENT_REQUESTED, true);
             }
             return;
         }
-        if (editor.pending_window) {
-            editor.pending_window = false;
+        if (editor.flag(EditorFlag::PENDING_WINDOW)) {
+            editor.set_flag(EditorFlag::PENDING_WINDOW, false);
             switch (ch) {
             case 'v':
                 split_focused(editor, EditorSplitKind::VERTICAL);
@@ -2187,19 +2199,19 @@ namespace code_editor {
             }
             return;
         }
-        if (editor.pending_leader) {
+        if (editor.flag(EditorFlag::PENDING_LEADER)) {
             if (ch == ' ') {
                 return;
             }
-            editor.pending_leader = false;
+            editor.set_flag(EditorFlag::PENDING_LEADER, false);
             if (ch == 'e') {
                 toggle_filesystem_panel(editor);
             } else if (ch == 'f') {
                 open_file_search(editor);
             } else if (ch == 'b') {
-                editor.pending_buffer = true;
+                editor.set_flag(EditorFlag::PENDING_BUFFER, true);
             } else if (ch == 'w') {
-                editor.pending_window = true;
+                editor.set_flag(EditorFlag::PENDING_WINDOW, true);
             }
             return;
         }
@@ -2212,7 +2224,7 @@ namespace code_editor {
 
         if (focused_pane_kind(editor) == EditorPaneKind::FILESYSTEM) {
             if (ch == ' ') {
-                editor.pending_leader = true;
+                editor.set_flag(EditorFlag::PENDING_LEADER, true);
             }
             return;
         }
@@ -2237,10 +2249,10 @@ namespace code_editor {
         }
 
         size_t const line_number = editor.pending_line_number;
-        bool const has_line_number = editor.pending_line_number_active;
+        bool const has_line_number = editor.flag(EditorFlag::PENDING_LINE_NUMBER_ACTIVE);
         if (ch >= '0' && ch <= '9' && (has_line_number || ch != '0')) {
             editor.pending_line_number = line_number * 10u + static_cast<size_t>(ch - '0');
-            editor.pending_line_number_active = true;
+            editor.set_flag(EditorFlag::PENDING_LINE_NUMBER_ACTIVE, true);
             return;
         }
         clear_pending_line_number(editor);
@@ -2252,7 +2264,7 @@ namespace code_editor {
             open_command_line(editor);
             break;
         case ' ':
-            editor.pending_leader = true;
+            editor.set_flag(EditorFlag::PENDING_LEADER, true);
             break;
         case 'h':
             move_left(editor, select);
@@ -2313,7 +2325,7 @@ namespace code_editor {
             open_line(editor, selection.active ? selection.start_line : editor.cursor_line);
             break;
         case 'r':
-            editor.pending_r = true;
+            editor.set_flag(EditorFlag::PENDING_R, true);
             break;
         case 'R':
             replace_selection_with_clipboard(editor, clipboard);
@@ -2378,10 +2390,10 @@ namespace code_editor {
             move_big_word_end(editor, select);
             break;
         case 'g':
-            editor.pending_g = true;
+            editor.set_flag(EditorFlag::PENDING_G, true);
             break;
         case 'z':
-            editor.pending_z = true;
+            editor.set_flag(EditorFlag::PENDING_Z, true);
             break;
         case 'G':
             if (has_line_number) {
@@ -2394,7 +2406,7 @@ namespace code_editor {
             break;
         case 'd':
             if (!delete_selection(editor, clipboard, true)) {
-                editor.pending_d = true;
+                editor.set_flag(EditorFlag::PENDING_D, true);
             }
             break;
         case 'c':
@@ -2412,23 +2424,24 @@ namespace code_editor {
     }
 
     [[nodiscard]] auto can_backspace(EditorState const& editor) -> bool {
-        return editor.selection_active || editor.cursor_column != 0u || editor.cursor_line != 0u;
+        return editor.flag(EditorFlag::SELECTION_ACTIVE) || editor.cursor_column != 0u ||
+               editor.cursor_line != 0u;
     }
 
     [[nodiscard]] auto can_delete_char(EditorState const& editor) -> bool {
-        return editor.selection_active ||
+        return editor.flag(EditorFlag::SELECTION_ACTIVE) ||
                editor.cursor_column < line_size(editor, editor.cursor_line);
     }
 
     [[nodiscard]] auto can_backspace_word(EditorState const& editor) -> bool {
-        return editor.selection_active ||
+        return editor.flag(EditorFlag::SELECTION_ACTIVE) ||
                !same_position(
                    previous_word_position(editor, cursor_position(editor)), cursor_position(editor)
                );
     }
 
     [[nodiscard]] auto can_delete_word(EditorState const& editor) -> bool {
-        return editor.selection_active ||
+        return editor.flag(EditorFlag::SELECTION_ACTIVE) ||
                !same_position(
                    next_word_position(editor, cursor_position(editor)), cursor_position(editor)
                );
@@ -2536,14 +2549,14 @@ namespace code_editor {
             return;
         }
         if (event.key == gui::Key::ESCAPE) {
-            editor.insert_mode = false;
-            editor.pending_leader = false;
-            editor.pending_buffer = false;
-            editor.pending_window = false;
-            editor.pending_d = false;
-            editor.pending_g = false;
-            editor.pending_r = false;
-            editor.pending_z = false;
+            editor.set_flag(EditorFlag::INSERT_MODE, false);
+            editor.set_flag(EditorFlag::PENDING_LEADER, false);
+            editor.set_flag(EditorFlag::PENDING_BUFFER, false);
+            editor.set_flag(EditorFlag::PENDING_WINDOW, false);
+            editor.set_flag(EditorFlag::PENDING_D, false);
+            editor.set_flag(EditorFlag::PENDING_G, false);
+            editor.set_flag(EditorFlag::PENDING_R, false);
+            editor.set_flag(EditorFlag::PENDING_Z, false);
             clear_pending_line_number(editor);
             clamp_cursor(editor);
             clear_selection(editor);
@@ -2555,12 +2568,12 @@ namespace code_editor {
             );
             return;
         }
-        if (!editor.insert_mode) {
+        if (!editor.flag(EditorFlag::INSERT_MODE)) {
             clear_pending_line_number(editor);
         }
         if (focused_pane_kind(editor) == EditorPaneKind::FILESYSTEM) {
             if (event.key == gui::Key::SPACE) {
-                editor.pending_leader = true;
+                editor.set_flag(EditorFlag::PENDING_LEADER, true);
             }
             return;
         }
@@ -2595,7 +2608,7 @@ namespace code_editor {
             return;
         }
 
-        if (editor.insert_mode) {
+        if (editor.flag(EditorFlag::INSERT_MODE)) {
             if (handle_navigation_key(editor, event)) {
                 return;
             }
@@ -2645,7 +2658,7 @@ namespace code_editor {
         }
         switch (event.key) {
         case gui::Key::SPACE:
-            editor.pending_leader = true;
+            editor.set_flag(EditorFlag::PENDING_LEADER, true);
             break;
         case gui::Key::DELETE_KEY:
             if ((event.mods & gui::KEY_MOD_CTRL) != 0u) {
@@ -2672,17 +2685,17 @@ namespace code_editor {
         if (input.key_events == nullptr) {
             return;
         }
-        if (editor.save_path_open) {
+        if (editor.flag(EditorFlag::SAVE_PATH_OPEN)) {
             return;
         }
 
         for (size_t index = 0u; index < input.key_event_count; ++index) {
             gui::KeyEvent const& event = input.key_events[index];
-            if (editor.command_line_active) {
+            if (editor.flag(EditorFlag::COMMAND_LINE_ACTIVE)) {
                 handle_command_line_event(editor, event);
                 continue;
             }
-            if (editor.file_search_open) {
+            if (editor.flag(EditorFlag::FILE_SEARCH_OPEN)) {
                 handle_file_search_event(editor, event);
                 continue;
             }
@@ -2692,7 +2705,7 @@ namespace code_editor {
                 }
                 if (event.codepoint >= 32u && event.codepoint <= 126u) {
                     char const ch = static_cast<char>(event.codepoint);
-                    if (editor.insert_mode) {
+                    if (editor.flag(EditorFlag::INSERT_MODE)) {
                         save_editor_undo(editor);
                         insert_char(editor, ch);
                     } else {
@@ -2704,7 +2717,7 @@ namespace code_editor {
             }
         }
         clamp_cursor(editor);
-        if (editor.dirty) {
+        if (editor.flag(EditorFlag::DIRTY)) {
             refresh_editor_dirty(editor);
         }
         sync_shared_panes(editor);
@@ -2784,7 +2797,7 @@ namespace code_editor {
         editor.cursor_column = end.column;
         editor.preferred_column = editor.cursor_column;
         editor.selection_mode = EditorSelectionMode::NONE;
-        editor.selection_active = !same_position(start, end);
+        editor.set_flag(EditorFlag::SELECTION_ACTIVE, !same_position(start, end));
     }
 
     [[nodiscard]] auto word_range_at_position(
@@ -2903,25 +2916,22 @@ namespace code_editor {
             hash, &editor.selection_anchor_column, sizeof(editor.selection_anchor_column)
         );
         hash = hash_bytes(hash, &editor.selection_mode, sizeof(editor.selection_mode));
-        hash = hash_bytes(hash, &editor.selection_active, sizeof(editor.selection_active));
+        auto const& flag_words = editor.flags.words();
+        hash =
+            hash_bytes(hash, flag_words.data(), flag_words.size() * sizeof(EditorFlags::WordType));
         hash = hash_bytes(hash, &editor.font_size, sizeof(editor.font_size));
         hash = hash_bytes(hash, &editor.scroll_y, sizeof(editor.scroll_y));
         hash =
             hash_bytes(hash, &editor.sidebar_width_percent, sizeof(editor.sidebar_width_percent));
-        hash = hash_bytes(hash, &editor.sidebar_resizing, sizeof(editor.sidebar_resizing));
-        hash = hash_bytes(hash, &editor.file_search_open, sizeof(editor.file_search_open));
         hash =
             hash_bytes(hash, &editor.file_search_text_size, sizeof(editor.file_search_text_size));
         hash = hash_bytes(hash, editor.file_search_text, editor.file_search_text_size);
         hash = hash_bytes(hash, &editor.file_search_selected, sizeof(editor.file_search_selected));
         hash =
             hash_bytes(hash, &editor.file_search_open_file, sizeof(editor.file_search_open_file));
-        hash = hash_bytes(hash, &editor.command_line_active, sizeof(editor.command_line_active));
         hash = hash_bytes(hash, &editor.command_text_size, sizeof(editor.command_text_size));
         hash = hash_bytes(hash, &editor.command_selected, sizeof(editor.command_selected));
         hash = hash_bytes(hash, editor.command_text, editor.command_text_size);
-        hash = hash_bytes(hash, &editor.save_requested, sizeof(editor.save_requested));
-        hash = hash_bytes(hash, &editor.save_path_open, sizeof(editor.save_path_open));
         hash = hash_bytes(hash, &editor.save_path_error, sizeof(editor.save_path_error));
         size_t const save_path_text_size = cstr_len(editor.save_path_text);
         hash = hash_bytes(hash, &save_path_text_size, sizeof(save_path_text_size));
@@ -2936,11 +2946,6 @@ namespace code_editor {
         hash = hash_bytes(hash, &saved_text_size, sizeof(saved_text_size));
         hash = hash_bytes(hash, editor.saved_text.data(), editor.saved_text.size());
         hash = hash_bytes(hash, &editor.file_write_stamp, sizeof(editor.file_write_stamp));
-        hash = hash_bytes(hash, &editor.dirty, sizeof(editor.dirty));
-        hash = hash_bytes(
-            hash, &editor.external_change_pending, sizeof(editor.external_change_pending)
-        );
-        hash = hash_bytes(hash, &editor.file_deleted_on_disk, sizeof(editor.file_deleted_on_disk));
         size_t const scratch_text_size = editor.scratch_text.size();
         hash = hash_bytes(hash, &scratch_text_size, sizeof(scratch_text_size));
         hash = hash_bytes(hash, editor.scratch_text.data(), editor.scratch_text.size());
@@ -2973,27 +2978,10 @@ namespace code_editor {
         size_t const save_root_path_size = editor.save_root_path.size();
         hash = hash_bytes(hash, &save_root_path_size, sizeof(save_root_path_size));
         hash = hash_bytes(hash, editor.save_root_path.data(), editor.save_root_path.size());
-        hash = hash_bytes(hash, &editor.insert_mode, sizeof(editor.insert_mode));
-        hash = hash_bytes(hash, &editor.sidebar_visible, sizeof(editor.sidebar_visible));
-        hash = hash_bytes(hash, &editor.tree_open, sizeof(editor.tree_open));
         for (FileTreeEntry const& entry : editor.tree_files) {
             hash = hash_bytes(hash, &entry.open, sizeof(entry.open));
         }
-        hash = hash_bytes(hash, &editor.pending_leader, sizeof(editor.pending_leader));
-        hash = hash_bytes(hash, &editor.pending_buffer, sizeof(editor.pending_buffer));
-        hash = hash_bytes(hash, &editor.pending_window, sizeof(editor.pending_window));
-        hash = hash_bytes(hash, &editor.pending_g, sizeof(editor.pending_g));
-        hash = hash_bytes(hash, &editor.pending_d, sizeof(editor.pending_d));
-        hash = hash_bytes(hash, &editor.pending_r, sizeof(editor.pending_r));
-        hash = hash_bytes(hash, &editor.pending_z, sizeof(editor.pending_z));
         hash = hash_bytes(hash, &editor.pending_line_number, sizeof(editor.pending_line_number));
-        hash = hash_bytes(
-            hash, &editor.pending_line_number_active, sizeof(editor.pending_line_number_active)
-        );
-        hash = hash_bytes(
-            hash, &editor.close_current_requested, sizeof(editor.close_current_requested)
-        );
-        hash = hash_bytes(hash, &editor.close_app_requested, sizeof(editor.close_app_requested));
         hash = hash_bytes(hash, &editor.root_split, sizeof(editor.root_split));
         hash = hash_bytes(hash, &editor.focused_split, sizeof(editor.focused_split));
         EditorPaneKind const active_kind = focused_pane_kind(editor);

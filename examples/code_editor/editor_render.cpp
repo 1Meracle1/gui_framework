@@ -55,7 +55,7 @@ namespace code_editor {
     auto
     update_sidebar_resize(EditorState& editor, float client_width, gui::InputState const& input)
         -> void {
-        if (!editor.sidebar_resizing) {
+        if (!editor.flag(EditorFlag::SIDEBAR_RESIZING)) {
             return;
         }
 
@@ -65,7 +65,7 @@ namespace code_editor {
             client_width * SIDEBAR_MAX_WIDTH_PERCENT
         );
         editor.sidebar_width_percent = width / std::max(1.0f, client_width);
-        editor.sidebar_resizing = input.mouse_down[0u];
+        editor.set_flag(EditorFlag::SIDEBAR_RESIZING, input.mouse_down[0u]);
     }
 
     [[nodiscard]] auto file_write_stamp(StrRef path) -> uint64_t {
@@ -238,9 +238,9 @@ namespace code_editor {
         file->saved_text = editor.saved_text;
         file->file_write_stamp = editor.file_write_stamp;
         file->text_valid = true;
-        file->dirty = editor.dirty;
-        file->external_change_pending = editor.external_change_pending;
-        file->file_deleted_on_disk = editor.file_deleted_on_disk;
+        file->dirty = editor.flag(EditorFlag::DIRTY);
+        file->external_change_pending = editor.flag(EditorFlag::EXTERNAL_CHANGE_PENDING);
+        file->file_deleted_on_disk = editor.flag(EditorFlag::FILE_DELETED_ON_DISK);
     }
 
     auto load_open_file_buffer(EditorState& editor, OpenFile const& file) -> void {
@@ -249,9 +249,9 @@ namespace code_editor {
         editor.current_file_path = file.path;
         editor.saved_text = file.saved_text;
         editor.file_write_stamp = file.file_write_stamp;
-        editor.dirty = file.dirty;
-        editor.external_change_pending = file.external_change_pending;
-        editor.file_deleted_on_disk = file.file_deleted_on_disk;
+        editor.set_flag(EditorFlag::DIRTY, file.dirty);
+        editor.set_flag(EditorFlag::EXTERNAL_CHANGE_PENDING, file.external_change_pending);
+        editor.set_flag(EditorFlag::FILE_DELETED_ON_DISK, file.file_deleted_on_disk);
         remember_open_file(editor, file.name, file.path);
     }
 
@@ -287,9 +287,9 @@ namespace code_editor {
         editor.current_file_name = arena_copy_cstr(*editor.arena, name);
         editor.current_file_path = arena_copy_cstr(*editor.arena, path);
         editor.file_write_stamp = file_write_stamp(path);
-        editor.dirty = false;
-        editor.external_change_pending = false;
-        editor.file_deleted_on_disk = false;
+        editor.set_flag(EditorFlag::DIRTY, false);
+        editor.set_flag(EditorFlag::EXTERNAL_CHANGE_PENDING, false);
+        editor.set_flag(EditorFlag::FILE_DELETED_ON_DISK, false);
         remember_open_file(editor, name, path);
         store_current_open_file(editor);
         return true;
@@ -343,9 +343,9 @@ namespace code_editor {
             pane->undo_stack = editor.undo_stack;
             pane->redo_stack = editor.redo_stack;
             pane->file_write_stamp = editor.file_write_stamp;
-            pane->dirty = editor.dirty;
-            pane->external_change_pending = editor.external_change_pending;
-            pane->file_deleted_on_disk = editor.file_deleted_on_disk;
+            pane->dirty = editor.flag(EditorFlag::DIRTY);
+            pane->external_change_pending = editor.flag(EditorFlag::EXTERNAL_CHANGE_PENDING);
+            pane->file_deleted_on_disk = editor.flag(EditorFlag::FILE_DELETED_ON_DISK);
         }
     }
 
@@ -360,7 +360,7 @@ namespace code_editor {
         uint64_t const stamp = file_write_stamp(editor.current_file_path);
         set_editor_text(editor, text);
         editor.file_write_stamp = stamp;
-        editor.file_deleted_on_disk = false;
+        editor.set_flag(EditorFlag::FILE_DELETED_ON_DISK, false);
         sync_current_file_to_matching_panes(editor);
         store_current_open_file(editor);
         return true;
@@ -377,7 +377,7 @@ namespace code_editor {
         uint64_t const stamp = file_write_stamp(editor.current_file_path);
         editor.file_write_stamp = stamp != 0u ? stamp : editor.file_write_stamp;
         mark_editor_saved(editor);
-        editor.file_deleted_on_disk = false;
+        editor.set_flag(EditorFlag::FILE_DELETED_ON_DISK, false);
         sync_current_file_to_matching_panes(editor);
         store_current_open_file(editor);
         return true;
@@ -431,7 +431,7 @@ namespace code_editor {
         uint64_t const stamp = file_write_stamp(editor.current_file_path);
         editor.file_write_stamp = stamp != 0u ? stamp : editor.file_write_stamp;
         mark_editor_saved(editor);
-        editor.file_deleted_on_disk = false;
+        editor.set_flag(EditorFlag::FILE_DELETED_ON_DISK, false);
 
         OpenFile* const file = find_open_file(editor, old_name, old_path);
         if (file != nullptr) {
@@ -471,10 +471,10 @@ namespace code_editor {
     }
 
     auto handle_editor_save_request(EditorState& editor) -> void {
-        if (!editor.save_requested) {
+        if (!editor.flag(EditorFlag::SAVE_REQUESTED)) {
             return;
         }
-        editor.save_requested = false;
+        editor.set_flag(EditorFlag::SAVE_REQUESTED, false);
         if (editor_focused_pane_kind(editor) != EditorPaneKind::CODE) {
             return;
         }
@@ -494,15 +494,15 @@ namespace code_editor {
         uint64_t const stamp = file_write_stamp(editor.current_file_path);
         if (stamp == 0u) {
             if (editor.file_write_stamp != 0u) {
-                editor.file_deleted_on_disk = true;
-                editor.external_change_pending = false;
+                editor.set_flag(EditorFlag::FILE_DELETED_ON_DISK, true);
+                editor.set_flag(EditorFlag::EXTERNAL_CHANGE_PENDING, false);
                 set_open_file_deleted(
                     editor, editor.current_file_name, editor.current_file_path, true
                 );
             }
             return;
         }
-        editor.file_deleted_on_disk = false;
+        editor.set_flag(EditorFlag::FILE_DELETED_ON_DISK, false);
         set_open_file_deleted(editor, editor.current_file_name, editor.current_file_path, false);
         if (editor.file_write_stamp == 0u) {
             editor.file_write_stamp = stamp;
@@ -511,9 +511,9 @@ namespace code_editor {
         if (stamp == editor.file_write_stamp) {
             return;
         }
-        if (editor.dirty) {
+        if (editor.flag(EditorFlag::DIRTY)) {
             editor.file_write_stamp = stamp;
-            editor.external_change_pending = true;
+            editor.set_flag(EditorFlag::EXTERNAL_CHANGE_PENDING, true);
             return;
         }
         BASE_UNUSED(reload_current_file_from_disk(editor));
@@ -762,26 +762,26 @@ namespace code_editor {
         Palette const& palette,
         bool apply_key_reveal
     ) -> bool {
-        bool const scrolled = !editor.sidebar_resizing && input.scroll_delta_y != 0.0f &&
-                              point_in_rect(rect, input.mouse_pos);
+        bool const scrolled = !editor.flag(EditorFlag::SIDEBAR_RESIZING) &&
+                              input.scroll_delta_y != 0.0f && point_in_rect(rect, input.mouse_pos);
         bool const hovered = point_in_rect(rect, input.mouse_pos);
-        bool const mouse_pressed = input.mouse_down[0u] && !editor.mouse_was_down;
+        bool const mouse_pressed = input.mouse_down[0u] && !editor.flag(EditorFlag::MOUSE_WAS_DOWN);
         bool const double_clicked =
-            !editor.sidebar_resizing && hovered && input.mouse_double_clicked[0u];
+            !editor.flag(EditorFlag::SIDEBAR_RESIZING) && hovered && input.mouse_double_clicked[0u];
         bool const triple_clicked =
-            !editor.sidebar_resizing && hovered && input.mouse_triple_clicked[0u];
-        bool const clicked = !editor.sidebar_resizing && mouse_pressed && hovered;
-        bool const dragged =
-            !editor.sidebar_resizing && editor.mouse_selecting && input.mouse_down[0u];
+            !editor.flag(EditorFlag::SIDEBAR_RESIZING) && hovered && input.mouse_triple_clicked[0u];
+        bool const clicked = !editor.flag(EditorFlag::SIDEBAR_RESIZING) && mouse_pressed && hovered;
+        bool const dragged = !editor.flag(EditorFlag::SIDEBAR_RESIZING) &&
+                             editor.flag(EditorFlag::MOUSE_SELECTING) && input.mouse_down[0u];
         if (scrolled) {
             editor.scroll_y -= input.scroll_delta_y;
         }
         if (triple_clicked) {
             select_line_from_mouse(editor, rect, input.mouse_pos, char_width);
-            editor.mouse_selecting = false;
+            editor.set_flag(EditorFlag::MOUSE_SELECTING, false);
         } else if (double_clicked) {
             select_word_from_mouse(editor, rect, input.mouse_pos, char_width);
-            editor.mouse_selecting = false;
+            editor.set_flag(EditorFlag::MOUSE_SELECTING, false);
         } else if (clicked) {
             update_cursor_from_mouse(
                 editor,
@@ -790,14 +790,14 @@ namespace code_editor {
                 char_width,
                 (input.key_mods & gui::KEY_MOD_SHIFT) != 0u
             );
-            editor.mouse_selecting = true;
+            editor.set_flag(EditorFlag::MOUSE_SELECTING, true);
         } else if (dragged) {
             update_cursor_from_mouse(editor, rect, input.mouse_pos, char_width, true);
         }
         if (!input.mouse_down[0u]) {
-            editor.mouse_selecting = false;
+            editor.set_flag(EditorFlag::MOUSE_SELECTING, false);
         }
-        editor.mouse_was_down = input.mouse_down[0u];
+        editor.set_flag(EditorFlag::MOUSE_WAS_DOWN, input.mouse_down[0u]);
         if (clicked || dragged || double_clicked || triple_clicked || apply_key_reveal) {
             reveal_cursor(editor, rect);
         } else {
@@ -844,7 +844,7 @@ namespace code_editor {
                 content.max.x,
                 palette
             );
-            if (!editor.insert_mode && line == editor.cursor_line) {
+            if (!editor.flag(EditorFlag::INSERT_MODE) && line == editor.cursor_line) {
                 size_t const cursor_column =
                     text_line.size == 0u ? 0u : std::min(editor.cursor_column, text_line.size - 1u);
                 float const cursor_x0 =
@@ -889,7 +889,7 @@ namespace code_editor {
             std::round(text_x + char_width * static_cast<float>(editor.cursor_column));
         float const cursor_y =
             content.min.y + static_cast<float>(editor.cursor_line) * line_height - editor.scroll_y;
-        if (editor.insert_mode && cursor_y + line_height >= content.min.y &&
+        if (editor.flag(EditorFlag::INSERT_MODE) && cursor_y + line_height >= content.min.y &&
             cursor_y < content.max.y) {
             draw::draw_rect_filled(
                 draw_context,
@@ -970,7 +970,8 @@ namespace code_editor {
 
         set_editor_split_rect(editor, split, box->rect);
         focus_editor_split(editor, split);
-        bool const popup_open = editor.external_change_pending || editor.file_deleted_on_disk;
+        bool const popup_open = editor.flag(EditorFlag::EXTERNAL_CHANGE_PENDING) ||
+                                editor.flag(EditorFlag::FILE_DELETED_ON_DISK);
         gui::InputState const surface_input = popup_open ? gui::InputState{} : input;
         bool const clicked = draw_editor_surface_rect(
             draw_context,
@@ -994,7 +995,7 @@ namespace code_editor {
         gui::Frame const& ui,
         Palette const& palette
     ) -> void {
-        if (!editor.command_line_active) {
+        if (!editor.flag(EditorFlag::COMMAND_LINE_ACTIVE)) {
             return;
         }
 
@@ -1257,6 +1258,7 @@ namespace code_editor {
                     },
                 }
             )) {
+            bool tree_open = editor.flag(EditorFlag::TREE_OPEN);
             draw_tree_folder(
                 ui,
                 editor,
@@ -1265,9 +1267,10 @@ namespace code_editor {
                 editor.tree_root_name,
                 editor.tree_root_name,
                 0u,
-                &editor.tree_open
+                &tree_open
             );
-            if (editor.tree_open) {
+            editor.set_flag(EditorFlag::TREE_OPEN, tree_open);
+            if (tree_open) {
                 size_t closed_depth = static_cast<size_t>(-1);
                 for (FileTreeEntry& entry : editor.tree_files) {
                     if (closed_depth != static_cast<size_t>(-1)) {
@@ -1321,6 +1324,7 @@ namespace code_editor {
             if (editor.tree_root_name.empty()) {
                 return;
             }
+            bool tree_open = editor.flag(EditorFlag::TREE_OPEN);
             draw_tree_folder(
                 ui,
                 editor,
@@ -1329,9 +1333,10 @@ namespace code_editor {
                 editor.tree_root_name,
                 editor.tree_root_name,
                 0u,
-                &editor.tree_open
+                &tree_open
             );
-            if (editor.tree_open) {
+            editor.set_flag(EditorFlag::TREE_OPEN, tree_open);
+            if (tree_open) {
                 size_t closed_depth = static_cast<size_t>(-1);
                 for (FileTreeEntry& entry : editor.tree_files) {
                     if (closed_depth != static_cast<size_t>(-1)) {
@@ -1358,7 +1363,7 @@ namespace code_editor {
             )) {
             gui::Signal const signal = resizer.signal();
             if (signal.pressed_left) {
-                editor.sidebar_resizing = true;
+                editor.set_flag(EditorFlag::SIDEBAR_RESIZING, true);
                 editor.sidebar_resize_grab_x =
                     input.mouse_pos.x - sidebar_width(editor, client_width);
             }
@@ -1372,7 +1377,7 @@ namespace code_editor {
     [[nodiscard]] auto open_file_dirty(EditorState const& editor, OpenFile const& file) -> bool {
         if (same_file(file.name, file.path, editor.current_file_name, editor.current_file_path) &&
             editor_focused_pane_kind(editor) == EditorPaneKind::CODE) {
-            return editor.dirty;
+            return editor.flag(EditorFlag::DIRTY);
         }
         size_t const focused_pane = editor_focused_pane(editor);
         for (size_t index = 0u; index < editor.panes.size(); ++index) {
@@ -1391,7 +1396,7 @@ namespace code_editor {
     [[nodiscard]] auto open_file_deleted(EditorState const& editor, OpenFile const& file) -> bool {
         if (same_file(file.name, file.path, editor.current_file_name, editor.current_file_path) &&
             editor_focused_pane_kind(editor) == EditorPaneKind::CODE) {
-            return editor.file_deleted_on_disk;
+            return editor.flag(EditorFlag::FILE_DELETED_ON_DISK);
         }
         size_t const focused_pane = editor_focused_pane(editor);
         for (size_t index = 0u; index < editor.panes.size(); ++index) {
@@ -1608,7 +1613,7 @@ namespace code_editor {
                             if (row.signal().clicked_left) {
                                 editor.file_search_selected = index;
                                 open_file_search_match(editor, matches[index].tree_file_index);
-                                editor.file_search_open = false;
+                                editor.set_flag(EditorFlag::FILE_SEARCH_OPEN, false);
                             }
                             ui.label(
                                 selected ? ">" : "",
@@ -1681,7 +1686,7 @@ namespace code_editor {
     auto draw_save_path_picker(
         gui::Frame& ui, EditorState& editor, Palette const& palette, gui::InputState const& input
     ) -> void {
-        if (!editor.save_path_open) {
+        if (!editor.flag(EditorFlag::SAVE_PATH_OPEN)) {
             return;
         }
 
@@ -1958,7 +1963,8 @@ namespace code_editor {
 
     auto draw_file_deleted_popup(gui::Frame& ui, EditorState& editor, Palette const& palette)
         -> void {
-        if (!editor.file_deleted_on_disk || editor.save_path_open) {
+        if (!editor.flag(EditorFlag::FILE_DELETED_ON_DISK) ||
+            editor.flag(EditorFlag::SAVE_PATH_OPEN)) {
             return;
         }
 
@@ -2067,7 +2073,8 @@ namespace code_editor {
     auto draw_file_change_popup(
         gui::Frame& ui, EditorState& editor, Palette const& palette, gui::InputState const& input
     ) -> void {
-        if (!editor.external_change_pending || editor.file_deleted_on_disk) {
+        if (!editor.flag(EditorFlag::EXTERNAL_CHANGE_PENDING) ||
+            editor.flag(EditorFlag::FILE_DELETED_ON_DISK)) {
             return;
         }
 
@@ -2341,13 +2348,13 @@ namespace code_editor {
         float client_height,
         gui::InputState const& input
     ) -> void {
-        if (editor.sidebar_visible) {
+        if (editor.flag(EditorFlag::SIDEBAR_VISIBLE)) {
             ensure_filesystem_panel(editor);
         }
         update_sidebar_resize(editor, client_width, input);
-        if (editor.close_current_requested) {
+        if (editor.flag(EditorFlag::CLOSE_CURRENT_REQUESTED)) {
             close_current_file(editor);
-            editor.close_current_requested = false;
+            editor.set_flag(EditorFlag::CLOSE_CURRENT_REQUESTED, false);
         }
         if (editor.file_search_open_file != FILE_SEARCH_NO_FILE) {
             size_t const tree_file_index = editor.file_search_open_file;
@@ -2355,14 +2362,16 @@ namespace code_editor {
             open_file_search_match(editor, tree_file_index);
         }
         remember_open_file(editor, editor.current_file_name, editor.current_file_path);
-        char const* mode = editor.insert_mode ? "INSERT" : "NORMAL";
-        if (!editor.insert_mode && editor.selection_mode == EditorSelectionMode::CHARACTER) {
+        char const* mode = editor.flag(EditorFlag::INSERT_MODE) ? "INSERT" : "NORMAL";
+        if (!editor.flag(EditorFlag::INSERT_MODE) &&
+            editor.selection_mode == EditorSelectionMode::CHARACTER) {
             mode = "VISUAL";
-        } else if (!editor.insert_mode && editor.selection_mode == EditorSelectionMode::LINE) {
+        } else if (!editor.flag(EditorFlag::INSERT_MODE) &&
+                   editor.selection_mode == EditorSelectionMode::LINE) {
             mode = "V-LINE";
         }
         gui::Color const mode_color =
-            editor.insert_mode ? palette.mode_insert : palette.mode_normal;
+            editor.flag(EditorFlag::INSERT_MODE) ? palette.mode_insert : palette.mode_normal;
 
         if (auto shell = ui.column(
                 gui::id("app_shell"),
@@ -2550,7 +2559,7 @@ namespace code_editor {
                     },
                 };
                 if (auto command = ui.row(gui::id("command_line"), command_panel)) {
-                    if (editor.command_line_active) {
+                    if (editor.flag(EditorFlag::COMMAND_LINE_ACTIVE)) {
                         ui.label(
                             fmt::tprintf(":%s", editor.command_text),
                             {
@@ -2565,10 +2574,10 @@ namespace code_editor {
                 }
             }
 
-            if (editor.file_search_open) {
+            if (editor.flag(EditorFlag::FILE_SEARCH_OPEN)) {
                 draw_file_search_picker(ui, editor, palette, client_height);
             }
-            if (editor.save_path_open) {
+            if (editor.flag(EditorFlag::SAVE_PATH_OPEN)) {
                 draw_save_path_picker(ui, editor, palette, input);
             }
             handle_editor_save_request(editor);

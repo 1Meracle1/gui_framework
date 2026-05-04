@@ -5,6 +5,8 @@
 
 namespace {
 
+    using code_editor::EditorFlag;
+
     struct ClipboardCapture {
         char text[128] = {};
         size_t text_size = 0u;
@@ -80,7 +82,7 @@ namespace {
         editor.cursor_column = end_column;
         editor.preferred_column = end_column;
         editor.selection_mode = mode;
-        editor.selection_active = true;
+        editor.set_flag(EditorFlag::SELECTION_ACTIVE, true);
     }
 
     TEST_CASE(text_buffer_set_normalizes_loaded_text) {
@@ -342,13 +344,13 @@ namespace {
         code_editor::EditorState editor = {};
         code_editor::init_editor(arena, editor, "abc");
         editor.cursor_column = 3u;
-        editor.insert_mode = true;
+        editor.set_flag(EditorFlag::INSERT_MODE, true);
 
         send_text(editor, "x");
-        TEST_EXPECT(context, editor.dirty);
+        TEST_EXPECT(context, editor.flag(EditorFlag::DIRTY));
 
         press_key(editor, gui::Key::Z, gui::KEY_MOD_CTRL);
-        TEST_EXPECT(context, !editor.dirty);
+        TEST_EXPECT(context, !editor.flag(EditorFlag::DIRTY));
         TEST_EXPECT(
             context, code_editor::editor_line_text(code_editor::editor_line(editor, 0u)) == "abc"
         );
@@ -366,7 +368,7 @@ namespace {
         code_editor::init_editor(arena, editor, text.str());
         editor.cursor_column = code_editor::editor_line(editor, 0u).size;
         editor.preferred_column = editor.cursor_column;
-        editor.insert_mode = true;
+        editor.set_flag(EditorFlag::INSERT_MODE, true);
         send_text(editor, "z");
 
         StrRef const line = code_editor::editor_line_text(code_editor::editor_line(editor, 0u));
@@ -380,7 +382,7 @@ namespace {
 
         code_editor::EditorState editor = {};
         code_editor::init_editor(arena, editor, "");
-        editor.insert_mode = true;
+        editor.set_flag(EditorFlag::INSERT_MODE, true);
         for (size_t index = 0u; index < 130u; ++index) {
             press_key(editor, gui::Key::ENTER);
         }
@@ -403,7 +405,7 @@ namespace {
         code_editor::init_editor(arena, editor, text.str());
         editor.cursor_line = 1u;
         editor.cursor_column = 0u;
-        editor.insert_mode = true;
+        editor.set_flag(EditorFlag::INSERT_MODE, true);
         press_key(editor, gui::Key::BACKSPACE);
 
         StrRef const line = code_editor::editor_line_text(code_editor::editor_line(editor, 0u));
@@ -428,7 +430,7 @@ namespace {
         TEST_EXPECT(context, editor.cursor_line == 0u);
         TEST_EXPECT(context, editor.cursor_column == 5u);
 
-        editor.insert_mode = true;
+        editor.set_flag(EditorFlag::INSERT_MODE, true);
         press_key(editor, gui::Key::BACKSPACE);
 
         TEST_EXPECT(
@@ -444,12 +446,12 @@ namespace {
         code_editor::EditorState editor = {};
         code_editor::init_editor(arena, editor, "");
 
-        TEST_EXPECT(context, !editor.sidebar_visible);
+        TEST_EXPECT(context, !editor.flag(EditorFlag::SIDEBAR_VISIBLE));
         press_key(editor, gui::Key::SPACE);
         send_text(editor, " e");
-        TEST_EXPECT(context, editor.sidebar_visible);
+        TEST_EXPECT(context, editor.flag(EditorFlag::SIDEBAR_VISIBLE));
         send_text(editor, " e");
-        TEST_EXPECT(context, !editor.sidebar_visible);
+        TEST_EXPECT(context, !editor.flag(EditorFlag::SIDEBAR_VISIBLE));
     }
 
     TEST_CASE(editor_insert_mode_space_e_does_not_toggle_sidebar) {
@@ -458,10 +460,10 @@ namespace {
 
         code_editor::EditorState editor = {};
         code_editor::init_editor(arena, editor, "");
-        editor.insert_mode = true;
+        editor.set_flag(EditorFlag::INSERT_MODE, true);
         send_text(editor, " e");
 
-        TEST_EXPECT(context, !editor.sidebar_visible);
+        TEST_EXPECT(context, !editor.flag(EditorFlag::SIDEBAR_VISIBLE));
         TEST_EXPECT(
             context, code_editor::editor_line_text(code_editor::editor_line(editor, 0u)) == " e"
         );
@@ -495,7 +497,7 @@ namespace {
         editor.tree_files = Slice<code_editor::FileTreeEntry>(tree);
 
         send_text(editor, " f");
-        TEST_EXPECT(context, editor.file_search_open);
+        TEST_EXPECT(context, editor.flag(EditorFlag::FILE_SEARCH_OPEN));
         send_text(editor, "fc");
 
         code_editor::FileSearchMatch matches[code_editor::FILE_SEARCH_RESULT_LIMIT] = {};
@@ -508,7 +510,7 @@ namespace {
         );
 
         press_key(editor, gui::Key::ENTER);
-        TEST_EXPECT(context, !editor.file_search_open);
+        TEST_EXPECT(context, !editor.flag(EditorFlag::FILE_SEARCH_OPEN));
         TEST_EXPECT(context, editor.file_search_open_file == 1u);
     }
 
@@ -520,18 +522,18 @@ namespace {
         code_editor::init_editor(arena, editor, "");
 
         send_text(editor, ":");
-        TEST_EXPECT(context, editor.command_line_active);
+        TEST_EXPECT(context, editor.flag(EditorFlag::COMMAND_LINE_ACTIVE));
         TEST_EXPECT(context, code_editor::editor_command_text(editor).empty());
 
         press_key(editor, gui::Key::TAB);
         TEST_EXPECT(context, code_editor::editor_command_text(editor) == "write");
 
         press_key(editor, gui::Key::ESCAPE);
-        TEST_EXPECT(context, !editor.command_line_active);
+        TEST_EXPECT(context, !editor.flag(EditorFlag::COMMAND_LINE_ACTIVE));
 
         send_text(editor, ":");
         press_key(editor, gui::Key::BACKSPACE);
-        TEST_EXPECT(context, !editor.command_line_active);
+        TEST_EXPECT(context, !editor.flag(EditorFlag::COMMAND_LINE_ACTIVE));
     }
 
     TEST_CASE(editor_colon_commands_run_editor_actions) {
@@ -542,31 +544,31 @@ namespace {
         code_editor::init_editor(arena, editor, "");
 
         press_key(editor, gui::Key::S, gui::KEY_MOD_CTRL);
-        TEST_EXPECT(context, editor.save_path_open);
-        TEST_EXPECT(context, !editor.save_requested);
+        TEST_EXPECT(context, editor.flag(EditorFlag::SAVE_PATH_OPEN));
+        TEST_EXPECT(context, !editor.flag(EditorFlag::SAVE_REQUESTED));
 
         code_editor::close_save_path_popup(editor);
         send_text(editor, ":w");
         press_key(editor, gui::Key::ENTER);
-        TEST_EXPECT(context, editor.save_path_open);
-        TEST_EXPECT(context, !editor.save_requested);
-        TEST_EXPECT(context, !editor.command_line_active);
+        TEST_EXPECT(context, editor.flag(EditorFlag::SAVE_PATH_OPEN));
+        TEST_EXPECT(context, !editor.flag(EditorFlag::SAVE_REQUESTED));
+        TEST_EXPECT(context, !editor.flag(EditorFlag::COMMAND_LINE_ACTIVE));
 
         code_editor::close_save_path_popup(editor);
         editor.current_file_name = "file.cpp";
         editor.current_file_path = "C:\\src\\file.cpp";
         send_text(editor, ":w");
         press_key(editor, gui::Key::ENTER);
-        TEST_EXPECT(context, editor.save_requested);
-        TEST_EXPECT(context, !editor.command_line_active);
+        TEST_EXPECT(context, editor.flag(EditorFlag::SAVE_REQUESTED));
+        TEST_EXPECT(context, !editor.flag(EditorFlag::COMMAND_LINE_ACTIVE));
 
         send_text(editor, ":buffer-close");
         press_key(editor, gui::Key::ENTER);
-        TEST_EXPECT(context, editor.close_current_requested);
+        TEST_EXPECT(context, editor.flag(EditorFlag::CLOSE_CURRENT_REQUESTED));
 
         send_text(editor, ":open");
         press_key(editor, gui::Key::ENTER);
-        TEST_EXPECT(context, editor.file_search_open);
+        TEST_EXPECT(context, editor.flag(EditorFlag::FILE_SEARCH_OPEN));
     }
 
     TEST_CASE(editor_ctrl_plus_minus_changes_font_size) {
@@ -594,7 +596,7 @@ namespace {
 
         code_editor::EditorState editor = {};
         code_editor::init_editor(arena, editor, "");
-        editor.insert_mode = true;
+        editor.set_flag(EditorFlag::INSERT_MODE, true);
 
         send_text(editor, "+-=", gui::KEY_MOD_CTRL);
 
@@ -609,7 +611,7 @@ namespace {
 
         code_editor::EditorState editor = {};
         code_editor::init_editor(arena, editor, "abcd");
-        editor.insert_mode = true;
+        editor.set_flag(EditorFlag::INSERT_MODE, true);
         editor.cursor_column = 1u;
         editor.preferred_column = 1u;
 
@@ -639,7 +641,7 @@ namespace {
 
         code_editor::EditorState editor = {};
         code_editor::init_editor(arena, editor, "abc\ndef");
-        editor.insert_mode = true;
+        editor.set_flag(EditorFlag::INSERT_MODE, true);
         editor.cursor_line = 1u;
         editor.cursor_column = 0u;
 
@@ -661,7 +663,7 @@ namespace {
         ClipboardCapture clipboard = {};
         code_editor::EditorState editor = {};
         code_editor::init_editor(arena, editor, "alpha beta");
-        editor.insert_mode = true;
+        editor.set_flag(EditorFlag::INSERT_MODE, true);
         editor.cursor_column = code_editor::editor_line(editor, 0u).size;
         editor.preferred_column = editor.cursor_column;
 
@@ -720,7 +722,7 @@ namespace {
 
         code_editor::EditorState editor = {};
         code_editor::init_editor(arena, editor, "Hi");
-        editor.insert_mode = true;
+        editor.set_flag(EditorFlag::INSERT_MODE, true);
         editor.cursor_column = 2u;
         editor.preferred_column = 2u;
 
@@ -795,7 +797,7 @@ namespace {
 
         code_editor::EditorState editor = {};
         code_editor::init_editor(arena, editor, "one two_three + four");
-        editor.insert_mode = true;
+        editor.set_flag(EditorFlag::INSERT_MODE, true);
         editor.cursor_column = code_editor::editor_line(editor, 0u).size;
         editor.preferred_column = editor.cursor_column;
 
@@ -896,23 +898,23 @@ namespace {
 
         select_editor_range(editor, 0u, 1u, 0u, 2u);
         send_text(editor, "i");
-        TEST_EXPECT(context, editor.insert_mode);
+        TEST_EXPECT(context, editor.flag(EditorFlag::INSERT_MODE));
         TEST_EXPECT(context, editor.cursor_line == 0u);
         TEST_EXPECT(context, editor.cursor_column == 1u);
 
-        editor.insert_mode = false;
+        editor.set_flag(EditorFlag::INSERT_MODE, false);
         select_editor_range(editor, 0u, 1u, 0u, 2u);
         send_text(editor, "a");
-        TEST_EXPECT(context, editor.insert_mode);
+        TEST_EXPECT(context, editor.flag(EditorFlag::INSERT_MODE));
         TEST_EXPECT(context, editor.cursor_column == 2u);
 
-        editor.insert_mode = false;
+        editor.set_flag(EditorFlag::INSERT_MODE, false);
         editor.cursor_line = 1u;
         editor.cursor_column = 1u;
         send_text(editor, "I");
         TEST_EXPECT(context, editor.cursor_column == 0u);
 
-        editor.insert_mode = false;
+        editor.set_flag(EditorFlag::INSERT_MODE, false);
         editor.cursor_line = 1u;
         editor.cursor_column = 1u;
         send_text(editor, "A");
@@ -929,7 +931,7 @@ namespace {
         send_text(below, "o");
 
         TEST_EXPECT(context, code_editor::editor_line_count(below) == 4u);
-        TEST_EXPECT(context, below.insert_mode);
+        TEST_EXPECT(context, below.flag(EditorFlag::INSERT_MODE));
         TEST_EXPECT(context, below.cursor_line == 3u);
         TEST_EXPECT(
             context, code_editor::editor_line_text(code_editor::editor_line(below, 3u)).empty()
@@ -941,7 +943,7 @@ namespace {
         send_text(above, "O");
 
         TEST_EXPECT(context, code_editor::editor_line_count(above) == 4u);
-        TEST_EXPECT(context, above.insert_mode);
+        TEST_EXPECT(context, above.flag(EditorFlag::INSERT_MODE));
         TEST_EXPECT(context, above.cursor_line == 1u);
         TEST_EXPECT(
             context, code_editor::editor_line_text(code_editor::editor_line(above, 1u)).empty()
@@ -1010,7 +1012,7 @@ namespace {
         code_editor::set_editor_text(editor, "abcd");
         select_editor_range(editor, 0u, 1u, 0u, 3u);
         send_text(editor, "c", gui::KEY_MOD_NONE, clip);
-        TEST_EXPECT(context, editor.insert_mode);
+        TEST_EXPECT(context, editor.flag(EditorFlag::INSERT_MODE));
         TEST_EXPECT(context, StrRef(clipboard.text, clipboard.text_size) == "bc");
         send_text(editor, "Q");
         TEST_EXPECT(
@@ -1043,7 +1045,7 @@ namespace {
         send_text(editor, "c", gui::KEY_MOD_ALT, clip);
 
         TEST_EXPECT(context, clipboard.call_count == 0u);
-        TEST_EXPECT(context, editor.insert_mode);
+        TEST_EXPECT(context, editor.flag(EditorFlag::INSERT_MODE));
         TEST_EXPECT(
             context, code_editor::editor_line_text(code_editor::editor_line(editor, 0u)) == "ad"
         );
@@ -1169,7 +1171,7 @@ namespace {
 
         code_editor::EditorState editor = {};
         code_editor::init_editor(arena, editor, "one two three");
-        editor.insert_mode = true;
+        editor.set_flag(EditorFlag::INSERT_MODE, true);
         editor.cursor_column = code_editor::editor_line(editor, 0u).size;
         editor.preferred_column = editor.cursor_column;
 
@@ -1191,9 +1193,9 @@ namespace {
 
         send_text(editor, " bd");
 
-        TEST_EXPECT(context, editor.close_current_requested);
-        TEST_EXPECT(context, !editor.pending_leader);
-        TEST_EXPECT(context, !editor.pending_buffer);
+        TEST_EXPECT(context, editor.flag(EditorFlag::CLOSE_CURRENT_REQUESTED));
+        TEST_EXPECT(context, !editor.flag(EditorFlag::PENDING_LEADER));
+        TEST_EXPECT(context, !editor.flag(EditorFlag::PENDING_BUFFER));
     }
 
     TEST_CASE(editor_space_w_v_and_s_create_splits) {
@@ -1218,8 +1220,8 @@ namespace {
 
         TEST_EXPECT(context, code_editor::editor_split_leaf_count(editor) == 3u);
         TEST_EXPECT(context, code_editor::editor_focused_pane(editor) == 2u);
-        TEST_EXPECT(context, !editor.pending_leader);
-        TEST_EXPECT(context, !editor.pending_window);
+        TEST_EXPECT(context, !editor.flag(EditorFlag::PENDING_LEADER));
+        TEST_EXPECT(context, !editor.flag(EditorFlag::PENDING_WINDOW));
     }
 
     TEST_CASE(editor_space_w_hjkl_moves_between_split_rects) {
@@ -1312,7 +1314,7 @@ namespace {
             code_editor::editor_split_pane_kind(editor, right) ==
                 code_editor::EditorPaneKind::FILESYSTEM
         );
-        TEST_EXPECT(context, editor.sidebar_visible);
+        TEST_EXPECT(context, editor.flag(EditorFlag::SIDEBAR_VISIBLE));
     }
 
     TEST_CASE(editor_filesystem_panel_participates_in_window_navigation) {
@@ -1324,7 +1326,7 @@ namespace {
 
         send_text(editor, " e");
 
-        TEST_EXPECT(context, editor.sidebar_visible);
+        TEST_EXPECT(context, editor.flag(EditorFlag::SIDEBAR_VISIBLE));
         TEST_EXPECT(context, code_editor::editor_split_leaf_count(editor) == 2u);
         TEST_EXPECT(context, editor.split_nodes[editor.root_split].ratio > 0.15f);
         TEST_EXPECT(context, editor.split_nodes[editor.root_split].ratio < 0.20f);
@@ -1380,11 +1382,11 @@ namespace {
 
         send_text(editor, " wq");
         TEST_EXPECT(context, code_editor::editor_split_leaf_count(editor) == 2u);
-        TEST_EXPECT(context, editor.sidebar_visible);
+        TEST_EXPECT(context, editor.flag(EditorFlag::SIDEBAR_VISIBLE));
 
         send_text(editor, " wq");
         TEST_EXPECT(context, code_editor::editor_split_leaf_count(editor) == 1u);
-        TEST_EXPECT(context, !editor.sidebar_visible);
+        TEST_EXPECT(context, !editor.flag(EditorFlag::SIDEBAR_VISIBLE));
         TEST_EXPECT(
             context,
             code_editor::editor_focused_pane_kind(editor) == code_editor::EditorPaneKind::CODE
@@ -1400,8 +1402,8 @@ namespace {
 
         send_text(editor, " wq");
         TEST_EXPECT(context, code_editor::editor_split_leaf_count(editor) == 1u);
-        TEST_EXPECT(context, editor.close_app_requested);
-        editor.close_app_requested = false;
+        TEST_EXPECT(context, editor.flag(EditorFlag::CLOSE_APP_REQUESTED));
+        editor.set_flag(EditorFlag::CLOSE_APP_REQUESTED, false);
 
         send_text(editor, " wv");
         TEST_EXPECT(context, code_editor::editor_split_leaf_count(editor) == 2u);
@@ -1411,7 +1413,7 @@ namespace {
 
         send_text(editor, " wq");
         TEST_EXPECT(context, code_editor::editor_split_leaf_count(editor) == 1u);
-        TEST_EXPECT(context, editor.close_app_requested);
+        TEST_EXPECT(context, editor.flag(EditorFlag::CLOSE_APP_REQUESTED));
     }
 
     TEST_CASE(editor_space_w_q_closes_non_empty_split) {
@@ -1438,7 +1440,7 @@ namespace {
         code_editor::init_editor(arena, editor, "");
 
         send_text(editor, " e");
-        TEST_EXPECT(context, editor.sidebar_visible);
+        TEST_EXPECT(context, editor.flag(EditorFlag::SIDEBAR_VISIBLE));
         TEST_EXPECT(context, code_editor::editor_split_leaf_count(editor) == 2u);
         TEST_EXPECT(
             context,
@@ -1447,7 +1449,7 @@ namespace {
 
         send_text(editor, " wq");
 
-        TEST_EXPECT(context, editor.close_app_requested);
+        TEST_EXPECT(context, editor.flag(EditorFlag::CLOSE_APP_REQUESTED));
         TEST_EXPECT(context, code_editor::editor_split_leaf_count(editor) == 2u);
     }
 
@@ -1467,9 +1469,9 @@ namespace {
         code_editor::set_editor_split_rect(editor, right, {{100.0f, 0.0f}, {200.0f, 100.0f}});
 
         TEST_EXPECT(context, editor.cursor_column == 2u);
-        editor.insert_mode = true;
+        editor.set_flag(EditorFlag::INSERT_MODE, true);
         send_text(editor, "Z");
-        editor.insert_mode = false;
+        editor.set_flag(EditorFlag::INSERT_MODE, false);
 
         send_text(editor, " wh");
 
@@ -1507,7 +1509,7 @@ namespace {
 
         code_editor::EditorState editor = {};
         code_editor::init_editor(arena, editor, "");
-        editor.insert_mode = true;
+        editor.set_flag(EditorFlag::INSERT_MODE, true);
 
         send_text(editor, " wv");
 

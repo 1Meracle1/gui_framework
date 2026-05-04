@@ -3,6 +3,8 @@
 #include "shared.h"
 #include "text_buffer.h"
 
+#include <base/assert.h>
+#include <base/bit_set.h>
 #include <base/memory.h>
 #include <base/str_ref.h>
 #include <base/vec.h>
@@ -124,7 +126,51 @@ namespace code_editor {
         gui::Rect rect = {};
     };
 
+    enum class EditorFlag : uint8_t {
+        INSERT_MODE,
+        SIDEBAR_VISIBLE,
+        SIDEBAR_RESIZING,
+        TREE_OPEN,
+        FILE_SEARCH_OPEN,
+        COMMAND_LINE_ACTIVE,
+        SAVE_REQUESTED,
+        SAVE_PATH_OPEN,
+        PENDING_LINE_NUMBER_ACTIVE,
+        PENDING_LEADER,
+        PENDING_BUFFER,
+        PENDING_WINDOW,
+        PENDING_G,
+        PENDING_D,
+        PENDING_R,
+        PENDING_Z,
+        CLOSE_CURRENT_REQUESTED,
+        CLOSE_APP_REQUESTED,
+        PANE_LOADED,
+        SELECTION_ACTIVE,
+        MOUSE_SELECTING,
+        MOUSE_WAS_DOWN,
+        DIRTY,
+        EXTERNAL_CHANGE_PENDING,
+        FILE_DELETED_ON_DISK,
+        COUNT,
+    };
+
+    using EditorFlags = BitSet<
+        EditorFlag,
+        static_cast<size_t>(EditorFlag::COUNT),
+        EditorFlag::INSERT_MODE,
+        uint32_t>;
+
     struct EditorState {
+        [[nodiscard]] auto flag(EditorFlag flag) const -> bool {
+            return flags[flag];
+        }
+
+        auto set_flag(EditorFlag flag, bool enabled) -> void {
+            bool const ok = flags.set(flag, enabled);
+            DEBUG_ASSERT(ok);
+        }
+
         EditorText text = {};
         StrRef current_file_name = SCRATCH_FILE_NAME;
         StrRef current_file_path = {};
@@ -162,31 +208,7 @@ namespace code_editor {
         size_t file_search_open_file = FILE_SEARCH_NO_FILE;
         size_t pending_line_number = 0u;
         EditorSavePathError save_path_error = EditorSavePathError::NONE;
-        bool insert_mode = false;
-        bool sidebar_visible = false;
-        bool sidebar_resizing = false;
-        bool tree_open = true;
-        bool file_search_open = false;
-        bool command_line_active = false;
-        bool save_requested = false;
-        bool save_path_open = false;
-        bool pending_line_number_active = false;
-        bool pending_leader = false;
-        bool pending_buffer = false;
-        bool pending_window = false;
-        bool pending_g = false;
-        bool pending_d = false;
-        bool pending_r = false;
-        bool pending_z = false;
-        bool close_current_requested = false;
-        bool close_app_requested = false;
-        bool pane_loaded = false;
-        bool selection_active = false;
-        bool mouse_selecting = false;
-        bool mouse_was_down = false;
-        bool dirty = false;
-        bool external_change_pending = false;
-        bool file_deleted_on_disk = false;
+        EditorFlags flags = {EditorFlag::TREE_OPEN};
     };
 
     struct EditorClipboard {

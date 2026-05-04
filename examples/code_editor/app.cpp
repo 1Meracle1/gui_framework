@@ -231,7 +231,7 @@ namespace code_editor {
         runtime->editor.tree_root_name = context.tree_root_name;
         runtime->editor.save_root_path = context.save_root_path;
         runtime->editor.tree_files = context.tree_files;
-        runtime->editor.sidebar_visible = context.initial_sidebar_visible;
+        runtime->editor.set_flag(EditorFlag::SIDEBAR_VISIBLE, context.initial_sidebar_visible);
         return true;
     }
 
@@ -245,9 +245,9 @@ namespace code_editor {
         if (files_changed) {
             update_open_file_changes(runtime->editor);
         }
-        bool const popup_open =
-            editor_focused_pane_kind(runtime->editor) == EditorPaneKind::CODE &&
-            (runtime->editor.external_change_pending || runtime->editor.file_deleted_on_disk);
+        bool const popup_open = editor_focused_pane_kind(runtime->editor) == EditorPaneKind::CODE &&
+                                (runtime->editor.flag(EditorFlag::EXTERNAL_CHANGE_PENDING) ||
+                                 runtime->editor.flag(EditorFlag::FILE_DELETED_ON_DISK));
         if (!popup_open) {
             process_editor_input(
                 runtime->editor,
@@ -293,7 +293,8 @@ namespace code_editor {
 
         draw::begin_frame(runtime->draw_context);
         gui::render_frame(ui, runtime->draw_context);
-        if (!runtime->editor.file_search_open && !runtime->editor.save_path_open) {
+        if (!runtime->editor.flag(EditorFlag::FILE_SEARCH_OPEN) &&
+            !runtime->editor.flag(EditorFlag::SAVE_PATH_OPEN)) {
             draw_editor_surface(
                 runtime->draw_context,
                 runtime->editor_font,
@@ -314,10 +315,10 @@ namespace code_editor {
     };
 
     auto request_window_close(Runtime& runtime) -> void {
-        if (!runtime.editor.close_app_requested) {
+        if (!runtime.editor.flag(EditorFlag::CLOSE_APP_REQUESTED)) {
             return;
         }
-        runtime.editor.close_app_requested = false;
+        runtime.editor.set_flag(EditorFlag::CLOSE_APP_REQUESTED, false);
         if (runtime.native_window != nullptr) {
             PostMessageW(static_cast<HWND>(runtime.native_window), WM_CLOSE, 0u, 0l);
         }
