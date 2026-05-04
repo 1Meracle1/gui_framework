@@ -321,6 +321,12 @@ namespace code_editor {
         BASE_UNUSED(open_file(editor, file.name, file.path));
     }
 
+    auto focus_code_split_for_open(EditorState& editor) -> void {
+        if (editor_focused_pane_kind(editor) != EditorPaneKind::CODE) {
+            focus_first_code_split(editor);
+        }
+    }
+
     auto reset_pane_text(EditorPane& pane, StrRef text, uint64_t stamp) -> void {
         text_buffer_set(pane.text, text);
         pane.undo_stack = nullptr;
@@ -1162,7 +1168,7 @@ namespace code_editor {
                 draw_tree_guide(ui, palette);
             }
             if (row.signal().clicked_left) {
-                focus_first_code_split(editor);
+                focus_code_split_for_open(editor);
                 open_tree_file(editor, file);
             }
             bool const selected = editor.current_file_path == file.path;
@@ -1496,7 +1502,7 @@ namespace code_editor {
         if (file.is_directory) {
             return;
         }
-        focus_first_code_split(editor);
+        focus_code_split_for_open(editor);
         BASE_UNUSED(open_file(editor, file.name, file.path));
     }
 
@@ -1504,9 +1510,7 @@ namespace code_editor {
         if (open_file_index >= editor.open_files.size()) {
             return;
         }
-        if (editor_focused_pane_kind(editor) != EditorPaneKind::CODE) {
-            focus_first_code_split(editor);
-        }
+        focus_code_split_for_open(editor);
         OpenFile const file = editor.open_files[open_file_index];
         BASE_UNUSED(open_file(editor, file.name, file.path));
     }
@@ -2529,7 +2533,7 @@ namespace code_editor {
                         if (closed_index != static_cast<size_t>(-1)) {
                             close_open_file(editor, closed_index);
                         } else if (selected_index != static_cast<size_t>(-1)) {
-                            focus_first_code_split(editor);
+                            focus_code_split_for_open(editor);
                             OpenFile const file = editor.open_files[selected_index];
                             BASE_UNUSED(open_file(editor, file.name, file.path));
                         }
