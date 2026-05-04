@@ -73,6 +73,7 @@ namespace code_editor {
         StrRef initial_file_name = {};
         StrRef initial_file_path = {};
         StrRef tree_root_name = {};
+        StrRef save_root_path = {};
         Vec<FileTreeEntry> tree_files = {};
         bool initial_sidebar_visible = false;
     };
@@ -215,6 +216,8 @@ namespace code_editor {
             return gui::Key::C;
         case 'D':
             return gui::Key::D;
+        case 'S':
+            return gui::Key::S;
         case 'U':
             return gui::Key::U;
         case 'V':
@@ -519,6 +522,13 @@ namespace code_editor {
                                                    : StrRef();
     }
 
+    [[nodiscard]] auto current_directory_cstr(Arena& arena) -> StrRef {
+        char buffer[MAX_PATH * 4] = {};
+        DWORD const size = GetCurrentDirectoryA(static_cast<DWORD>(sizeof(buffer)), buffer);
+        return size != 0u && size < sizeof(buffer) ? arena_copy_cstr(arena, StrRef(buffer, size))
+                                                   : StrRef();
+    }
+
     [[nodiscard]] auto append_buffer(char* buffer, size_t capacity, size_t& size, StrRef text)
         -> bool {
         if (text.size() >= capacity || size > capacity - text.size() - 1u) {
@@ -643,6 +653,7 @@ namespace code_editor {
             return false;
         }
         if (initial_path.empty()) {
+            launch.save_root_path = current_directory_cstr(arena);
             return true;
         }
 
@@ -653,6 +664,7 @@ namespace code_editor {
 
         StrRef const path = path_without_trailing_slash(full_path);
         if (path_is_directory(full_path)) {
+            launch.save_root_path = path;
             launch.tree_root_name = arena_copy_str(arena, path_leaf(path));
             launch.initial_sidebar_visible = true;
             return read_directory_files(arena, path, "", launch.tree_files, 0u);
@@ -667,6 +679,7 @@ namespace code_editor {
         launch.initial_file_name = arena_copy_str(arena, path_leaf(path));
         launch.initial_file_path = path;
         StrRef const parent = path_parent(path);
+        launch.save_root_path = parent;
         if (read_directory_files(arena, parent, "", launch.tree_files, 0u)) {
             launch.tree_root_name = arena_copy_str(arena, path_leaf(parent));
         }
@@ -726,6 +739,7 @@ namespace code_editor {
             .initial_file_name = launch.initial_file_name,
             .initial_file_path = launch.initial_file_path,
             .tree_root_name = launch.tree_root_name,
+            .save_root_path = launch.save_root_path,
             .tree_files = launch.tree_files.slice(),
             .initial_sidebar_visible = launch.initial_sidebar_visible,
         };
@@ -780,14 +794,13 @@ namespace code_editor {
             }
 
             if (!app_state.redraw_pending) {
-#if BASE_DEBUG
                 DWORD const wait_ms = HOT_RELOAD_POLL_MS;
-#else
-                DWORD const wait_ms = INFINITE;
-#endif
-                BASE_UNUSED(MsgWaitForMultipleObjectsEx(
+                DWORD const wait_result = MsgWaitForMultipleObjectsEx(
                     0u, nullptr, wait_ms, QS_ALLINPUT, MWMO_INPUTAVAILABLE
-                ));
+                );
+                if (wait_result == WAIT_TIMEOUT) {
+                    app_state.redraw_pending = true;
+                }
                 continue;
             }
 

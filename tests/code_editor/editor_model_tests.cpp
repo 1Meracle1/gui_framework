@@ -335,6 +335,25 @@ namespace {
         TEST_EXPECT(context, editor.current_file_path.empty());
     }
 
+    TEST_CASE(editor_undo_to_saved_text_clears_dirty) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "abc");
+        editor.cursor_column = 3u;
+        editor.insert_mode = true;
+
+        send_text(editor, "x");
+        TEST_EXPECT(context, editor.dirty);
+
+        press_key(editor, gui::Key::Z, gui::KEY_MOD_CTRL);
+        TEST_EXPECT(context, !editor.dirty);
+        TEST_EXPECT(
+            context, code_editor::editor_line_text(code_editor::editor_line(editor, 0u)) == "abc"
+        );
+    }
+
     TEST_CASE(editor_loads_and_edits_line_past_old_column_cap) {
         Arena arena = {};
         arena.init();

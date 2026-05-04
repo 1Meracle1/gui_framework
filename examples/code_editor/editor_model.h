@@ -30,6 +30,7 @@ namespace code_editor {
     inline constexpr size_t FILE_SEARCH_TEXT_CAPACITY = 128u;
     inline constexpr size_t FILE_SEARCH_RESULT_LIMIT = 16u;
     inline constexpr size_t FILE_SEARCH_NO_FILE = static_cast<size_t>(-1);
+    inline constexpr size_t SAVE_PATH_TEXT_CAPACITY = 1024u;
 
     struct EditorSelectionRange {
         size_t start_line = 0u;
@@ -46,9 +47,22 @@ namespace code_editor {
         LINE,
     };
 
+    enum class EditorSavePathError : uint8_t {
+        NONE,
+        EMPTY,
+        EXISTS,
+        WRITE_FAILED,
+    };
+
     struct OpenFile {
         StrRef name = {};
         StrRef path = {};
+        StrRef text = {};
+        StrRef saved_text = {};
+        uint64_t file_write_stamp = 0u;
+        bool text_valid = false;
+        bool dirty = false;
+        bool external_change_pending = false;
     };
 
     struct FileSearchMatch {
@@ -67,8 +81,10 @@ namespace code_editor {
         StrRef current_file_name = SCRATCH_FILE_NAME;
         StrRef current_file_path = {};
         StrRef scratch_text = {};
+        StrRef saved_text = {};
         EditorUndoEntry* undo_stack = nullptr;
         EditorUndoEntry* redo_stack = nullptr;
+        uint64_t file_write_stamp = 0u;
         size_t cursor_line = 0u;
         size_t cursor_column = 0u;
         size_t preferred_column = 0u;
@@ -80,6 +96,8 @@ namespace code_editor {
         bool selection_active = false;
         bool mouse_selecting = false;
         bool mouse_was_down = false;
+        bool dirty = false;
+        bool external_change_pending = false;
     };
 
     enum class EditorSplitKind : uint8_t {
@@ -104,6 +122,8 @@ namespace code_editor {
         StrRef current_file_path = {};
         StrRef scratch_text = {};
         StrRef tree_root_name = {};
+        StrRef save_root_path = {};
+        StrRef saved_text = {};
         Arena* arena = nullptr;
         Vec<EditorPane*> panes = {};
         Vec<EditorSplitNode> split_nodes = {};
@@ -111,6 +131,7 @@ namespace code_editor {
         Slice<FileTreeEntry> tree_files = {};
         EditorUndoEntry* undo_stack = nullptr;
         EditorUndoEntry* redo_stack = nullptr;
+        uint64_t file_write_stamp = 0u;
         size_t root_split = 0u;
         size_t focused_split = 0u;
         size_t cursor_line = 0u;
@@ -124,15 +145,19 @@ namespace code_editor {
         float sidebar_width_percent = SIDEBAR_DEFAULT_WIDTH_PERCENT;
         float sidebar_resize_grab_x = 0.0f;
         char file_search_text[FILE_SEARCH_TEXT_CAPACITY] = {};
+        char save_path_text[SAVE_PATH_TEXT_CAPACITY] = {};
         size_t file_search_text_size = 0u;
         size_t file_search_selected = 0u;
         size_t file_search_open_file = FILE_SEARCH_NO_FILE;
         size_t pending_line_number = 0u;
+        EditorSavePathError save_path_error = EditorSavePathError::NONE;
         bool insert_mode = false;
         bool sidebar_visible = false;
         bool sidebar_resizing = false;
         bool tree_open = true;
         bool file_search_open = false;
+        bool save_requested = false;
+        bool save_path_open = false;
         bool pending_line_number_active = false;
         bool pending_leader = false;
         bool pending_buffer = false;
@@ -145,6 +170,8 @@ namespace code_editor {
         bool selection_active = false;
         bool mouse_selecting = false;
         bool mouse_was_down = false;
+        bool dirty = false;
+        bool external_change_pending = false;
     };
 
     struct EditorClipboard {
@@ -160,6 +187,9 @@ namespace code_editor {
         -> bool;
     auto save_scratch_file(EditorState& editor) -> void;
     auto open_scratch_file(EditorState& editor) -> void;
+    auto mark_editor_saved(EditorState& editor) -> void;
+    auto open_save_path_popup(EditorState& editor) -> void;
+    auto close_save_path_popup(EditorState& editor) -> void;
     auto ensure_filesystem_panel(EditorState& editor) -> void;
     auto focus_first_code_split(EditorState& editor) -> void;
     auto focus_editor_split(EditorState& editor, size_t split) -> void;

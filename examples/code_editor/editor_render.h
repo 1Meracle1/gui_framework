@@ -9,6 +9,7 @@
 
 namespace code_editor {
 
+    auto update_open_file_changes(EditorState& editor) -> void;
     auto draw_editor_surface(
         gui::draw::Context draw_context,
         gui::font_cache::Font editor_font,

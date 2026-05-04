@@ -106,6 +106,7 @@ namespace code_editor {
         StrRef initial_file_name = {};
         StrRef initial_file_path = {};
         StrRef tree_root_name = {};
+        StrRef save_root_path = {};
         Slice<FileTreeEntry> tree_files = {};
         bool initial_sidebar_visible = false;
     };

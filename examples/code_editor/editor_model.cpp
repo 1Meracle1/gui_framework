@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <utility>
 
 namespace code_editor {
@@ -23,6 +24,7 @@ namespace code_editor {
     auto clamp_cursor(EditorState& editor) -> void;
     auto sync_shared_panes(EditorState& editor) -> void;
     auto close_focused_split(EditorState& editor) -> void;
+    auto refresh_editor_dirty(EditorState& editor) -> void;
     [[nodiscard]] auto split_in_direction(EditorState const& editor, char direction) -> size_t;
 
     [[nodiscard]] auto split_valid(EditorState const& editor, size_t split) -> bool {
@@ -73,7 +75,8 @@ namespace code_editor {
         }
     }
 
-    auto set_editor_text_impl(EditorState& editor, StrRef text, bool clear_undo) -> void {
+    auto set_editor_text_impl(EditorState& editor, StrRef text, bool clear_undo, bool clear_dirty)
+        -> void {
         DEBUG_ASSERT(editor.text.arena != nullptr);
         if (clear_undo) {
             editor.undo_stack = nullptr;
@@ -99,10 +102,16 @@ namespace code_editor {
         editor.pending_line_number_active = false;
         editor.file_search_open = false;
         editor.file_search_open_file = FILE_SEARCH_NO_FILE;
+        editor.save_requested = false;
+        editor.save_path_open = false;
+        editor.save_path_error = EditorSavePathError::NONE;
+        if (clear_dirty) {
+            mark_editor_saved(editor);
+        }
     }
 
     auto set_editor_text(EditorState& editor, StrRef text) -> void {
-        set_editor_text_impl(editor, text, true);
+        set_editor_text_impl(editor, text, true, true);
     }
 
     auto init_text_storage(EditorText& text, Arena& arena) -> void {
@@ -118,8 +127,10 @@ namespace code_editor {
         pane.current_file_name = editor.current_file_name;
         pane.current_file_path = editor.current_file_path;
         pane.scratch_text = editor.scratch_text;
+        pane.saved_text = editor.saved_text;
         pane.undo_stack = editor.undo_stack;
         pane.redo_stack = editor.redo_stack;
+        pane.file_write_stamp = editor.file_write_stamp;
         pane.cursor_line = editor.cursor_line;
         pane.cursor_column = editor.cursor_column;
         pane.preferred_column = editor.preferred_column;
@@ -131,6 +142,8 @@ namespace code_editor {
         pane.selection_active = editor.selection_active;
         pane.mouse_selecting = editor.mouse_selecting;
         pane.mouse_was_down = editor.mouse_was_down;
+        pane.dirty = editor.dirty;
+        pane.external_change_pending = editor.external_change_pending;
     }
 
     auto move_pane_to_editor(EditorState& editor, EditorPane& pane) -> void {
@@ -138,8 +151,10 @@ namespace code_editor {
         editor.current_file_name = pane.current_file_name;
         editor.current_file_path = pane.current_file_path;
         editor.scratch_text = pane.scratch_text;
+        editor.saved_text = pane.saved_text;
         editor.undo_stack = pane.undo_stack;
         editor.redo_stack = pane.redo_stack;
+        editor.file_write_stamp = pane.file_write_stamp;
         editor.cursor_line = pane.cursor_line;
         editor.cursor_column = pane.cursor_column;
         editor.preferred_column = pane.preferred_column;
@@ -151,6 +166,8 @@ namespace code_editor {
         editor.selection_active = pane.selection_active;
         editor.mouse_selecting = pane.mouse_selecting;
         editor.mouse_was_down = pane.mouse_was_down;
+        editor.dirty = pane.dirty;
+        editor.external_change_pending = pane.external_change_pending;
     }
 
     [[nodiscard]] auto pane_for_split(EditorState& editor, size_t split) -> EditorPane* {
@@ -206,8 +223,10 @@ namespace code_editor {
         pane.current_file_name = editor.current_file_name;
         pane.current_file_path = editor.current_file_path;
         pane.scratch_text = editor.scratch_text;
+        pane.saved_text = editor.saved_text;
         pane.undo_stack = editor.undo_stack;
         pane.redo_stack = editor.redo_stack;
+        pane.file_write_stamp = editor.file_write_stamp;
         pane.cursor_line = editor.cursor_line;
         pane.cursor_column = editor.cursor_column;
         pane.preferred_column = editor.preferred_column;
@@ -219,6 +238,8 @@ namespace code_editor {
         pane.selection_active = editor.selection_active;
         pane.mouse_selecting = false;
         pane.mouse_was_down = false;
+        pane.dirty = editor.dirty;
+        pane.external_change_pending = editor.external_change_pending;
     }
 
     auto init_split_tree(EditorState& editor) -> void {
@@ -302,8 +323,12 @@ namespace code_editor {
             editor.current_file_name = pane->current_file_name;
             editor.current_file_path = pane->current_file_path;
             editor.scratch_text = pane->scratch_text;
+            editor.saved_text = pane->saved_text;
             editor.undo_stack = pane->undo_stack;
             editor.redo_stack = pane->redo_stack;
+            editor.file_write_stamp = pane->file_write_stamp;
+            editor.dirty = pane->dirty;
+            editor.external_change_pending = pane->external_change_pending;
             clamp_cursor(editor);
             remember_open_file(editor, editor.current_file_name, editor.current_file_path);
             return true;
@@ -363,8 +388,12 @@ namespace code_editor {
             }
             clone_text(editor.text, pane->text);
             pane->scratch_text = editor.scratch_text;
+            pane->saved_text = editor.saved_text;
             pane->undo_stack = editor.undo_stack;
             pane->redo_stack = editor.redo_stack;
+            pane->file_write_stamp = editor.file_write_stamp;
+            pane->dirty = editor.dirty;
+            pane->external_change_pending = editor.external_change_pending;
             clamp_pane_cursor(*pane);
         }
     }
@@ -734,6 +763,25 @@ namespace code_editor {
         return text_buffer_copy(editor.text, *editor.text.arena);
     }
 
+    auto mark_editor_saved(EditorState& editor) -> void {
+        if (editor.text.arena == nullptr) {
+            return;
+        }
+        editor.saved_text = copy_editor_text(editor);
+        editor.dirty = false;
+        editor.external_change_pending = false;
+    }
+
+    auto refresh_editor_dirty(EditorState& editor) -> void {
+        if (editor.text.arena == nullptr) {
+            return;
+        }
+        editor.dirty = copy_editor_text(editor) != editor.saved_text;
+        if (!editor.dirty) {
+            editor.external_change_pending = false;
+        }
+    }
+
     auto push_editor_snapshot(EditorState& editor, EditorUndoEntry*& stack) -> void {
         DEBUG_ASSERT(editor.text.arena != nullptr);
         EditorUndoEntry* const entry = arena_new<EditorUndoEntry>(*editor.text.arena);
@@ -753,10 +801,11 @@ namespace code_editor {
     auto save_editor_undo(EditorState& editor) -> void {
         push_editor_snapshot(editor, editor.undo_stack);
         editor.redo_stack = nullptr;
+        editor.dirty = true;
     }
 
     auto restore_editor_snapshot(EditorState& editor, EditorUndoEntry const& entry) -> void {
-        set_editor_text_impl(editor, StrRef(entry.text, entry.text_size), false);
+        set_editor_text_impl(editor, StrRef(entry.text, entry.text_size), false, false);
         editor.cursor_line = entry.cursor_line;
         editor.cursor_column = entry.cursor_column;
         editor.preferred_column = editor.cursor_column;
@@ -778,6 +827,7 @@ namespace code_editor {
         EditorUndoEntry const* const entry = from;
         from = entry->previous;
         restore_editor_snapshot(editor, *entry);
+        refresh_editor_dirty(editor);
         return true;
     }
 
@@ -792,6 +842,7 @@ namespace code_editor {
     auto save_scratch_file(EditorState& editor) -> void {
         if (editor.current_file_path.empty()) {
             editor.scratch_text = copy_editor_text(editor);
+            mark_editor_saved(editor);
         }
     }
 
@@ -799,7 +850,56 @@ namespace code_editor {
         set_editor_text(editor, editor.scratch_text);
         editor.current_file_name = SCRATCH_FILE_NAME;
         editor.current_file_path = {};
+        editor.file_write_stamp = 0u;
         remember_open_file(editor, SCRATCH_FILE_NAME, {});
+    }
+
+    [[nodiscard]] auto save_root_without_trailing_slash(StrRef path) -> StrRef {
+        while (path.size() > 1u && (path.back() == '\\' || path.back() == '/') &&
+               !(path.size() == 3u && path[1u] == ':')) {
+            path.remove_suffix(1u);
+        }
+        return path;
+    }
+
+    auto clear_save_path_text(EditorState& editor) -> void {
+        editor.save_path_text[0u] = '\0';
+    }
+
+    [[nodiscard]] auto append_save_path_text(EditorState& editor, StrRef text) -> bool {
+        size_t const size = cstr_len(editor.save_path_text);
+        if (text.size() >= SAVE_PATH_TEXT_CAPACITY ||
+            size > SAVE_PATH_TEXT_CAPACITY - text.size() - 1u) {
+            return false;
+        }
+        if (!text.empty()) {
+            std::memcpy(editor.save_path_text + size, text.data(), text.size());
+        }
+        editor.save_path_text[size + text.size()] = '\0';
+        return true;
+    }
+
+    auto open_save_path_popup(EditorState& editor) -> void {
+        editor.save_requested = false;
+        editor.save_path_open = true;
+        editor.save_path_error = EditorSavePathError::NONE;
+        editor.file_search_open = false;
+        editor.file_search_open_file = FILE_SEARCH_NO_FILE;
+        clear_save_path_text(editor);
+
+        StrRef const root = save_root_without_trailing_slash(editor.save_root_path);
+        BASE_UNUSED(append_save_path_text(editor, root));
+        if (!root.empty() && !root.ends_with('\\') && !root.ends_with('/')) {
+            BASE_UNUSED(append_save_path_text(editor, "\\"));
+        }
+        if (editor.current_file_name != SCRATCH_FILE_NAME) {
+            BASE_UNUSED(append_save_path_text(editor, editor.current_file_name));
+        }
+    }
+
+    auto close_save_path_popup(EditorState& editor) -> void {
+        editor.save_path_open = false;
+        editor.save_path_error = EditorSavePathError::NONE;
     }
 
     [[nodiscard]] auto line_size(EditorState const& editor, size_t line) -> size_t {
@@ -1523,6 +1623,8 @@ namespace code_editor {
         editor.file_search_text[0u] = '\0';
         editor.file_search_selected = 0u;
         editor.file_search_open_file = FILE_SEARCH_NO_FILE;
+        editor.save_path_open = false;
+        editor.save_path_error = EditorSavePathError::NONE;
         editor.pending_leader = false;
         editor.pending_buffer = false;
         editor.pending_window = false;
@@ -2244,6 +2346,10 @@ namespace code_editor {
             }
             return;
         }
+        if (shortcut_key(event, gui::Key::S)) {
+            editor.save_requested = true;
+            return;
+        }
         if (shortcut_key(event, gui::Key::A)) {
             select_all(editor);
             return;
@@ -2348,6 +2454,9 @@ namespace code_editor {
         if (input.key_events == nullptr) {
             return;
         }
+        if (editor.save_path_open) {
+            return;
+        }
 
         for (size_t index = 0u; index < input.key_event_count; ++index) {
             gui::KeyEvent const& event = input.key_events[index];
@@ -2373,6 +2482,9 @@ namespace code_editor {
             }
         }
         clamp_cursor(editor);
+        if (editor.dirty) {
+            refresh_editor_dirty(editor);
+        }
         sync_shared_panes(editor);
     }
 
@@ -2547,6 +2659,13 @@ namespace code_editor {
         size_t const path_size = pane.current_file_path.size();
         hash = hash_bytes(hash, &path_size, sizeof(path_size));
         hash = hash_bytes(hash, pane.current_file_path.data(), pane.current_file_path.size());
+        size_t const saved_text_size = pane.saved_text.size();
+        hash = hash_bytes(hash, &saved_text_size, sizeof(saved_text_size));
+        hash = hash_bytes(hash, pane.saved_text.data(), pane.saved_text.size());
+        hash = hash_bytes(hash, &pane.file_write_stamp, sizeof(pane.file_write_stamp));
+        hash = hash_bytes(hash, &pane.dirty, sizeof(pane.dirty));
+        hash =
+            hash_bytes(hash, &pane.external_change_pending, sizeof(pane.external_change_pending));
         return hash;
     }
 
@@ -2574,12 +2693,26 @@ namespace code_editor {
         hash = hash_bytes(hash, &editor.file_search_selected, sizeof(editor.file_search_selected));
         hash =
             hash_bytes(hash, &editor.file_search_open_file, sizeof(editor.file_search_open_file));
+        hash = hash_bytes(hash, &editor.save_requested, sizeof(editor.save_requested));
+        hash = hash_bytes(hash, &editor.save_path_open, sizeof(editor.save_path_open));
+        hash = hash_bytes(hash, &editor.save_path_error, sizeof(editor.save_path_error));
+        size_t const save_path_text_size = cstr_len(editor.save_path_text);
+        hash = hash_bytes(hash, &save_path_text_size, sizeof(save_path_text_size));
+        hash = hash_bytes(hash, editor.save_path_text, save_path_text_size);
         size_t const current_file_name_size = editor.current_file_name.size();
         hash = hash_bytes(hash, &current_file_name_size, sizeof(current_file_name_size));
         hash = hash_bytes(hash, editor.current_file_name.data(), editor.current_file_name.size());
         size_t const current_file_path_size = editor.current_file_path.size();
         hash = hash_bytes(hash, &current_file_path_size, sizeof(current_file_path_size));
         hash = hash_bytes(hash, editor.current_file_path.data(), editor.current_file_path.size());
+        size_t const saved_text_size = editor.saved_text.size();
+        hash = hash_bytes(hash, &saved_text_size, sizeof(saved_text_size));
+        hash = hash_bytes(hash, editor.saved_text.data(), editor.saved_text.size());
+        hash = hash_bytes(hash, &editor.file_write_stamp, sizeof(editor.file_write_stamp));
+        hash = hash_bytes(hash, &editor.dirty, sizeof(editor.dirty));
+        hash = hash_bytes(
+            hash, &editor.external_change_pending, sizeof(editor.external_change_pending)
+        );
         size_t const scratch_text_size = editor.scratch_text.size();
         hash = hash_bytes(hash, &scratch_text_size, sizeof(scratch_text_size));
         hash = hash_bytes(hash, editor.scratch_text.data(), editor.scratch_text.size());
@@ -2592,10 +2725,25 @@ namespace code_editor {
             size_t const path_size = file.path.size();
             hash = hash_bytes(hash, &path_size, sizeof(path_size));
             hash = hash_bytes(hash, file.path.data(), file.path.size());
+            size_t const text_size = file.text.size();
+            hash = hash_bytes(hash, &text_size, sizeof(text_size));
+            hash = hash_bytes(hash, file.text.data(), file.text.size());
+            size_t const file_saved_text_size = file.saved_text.size();
+            hash = hash_bytes(hash, &file_saved_text_size, sizeof(file_saved_text_size));
+            hash = hash_bytes(hash, file.saved_text.data(), file.saved_text.size());
+            hash = hash_bytes(hash, &file.file_write_stamp, sizeof(file.file_write_stamp));
+            hash = hash_bytes(hash, &file.text_valid, sizeof(file.text_valid));
+            hash = hash_bytes(hash, &file.dirty, sizeof(file.dirty));
+            hash = hash_bytes(
+                hash, &file.external_change_pending, sizeof(file.external_change_pending)
+            );
         }
         size_t const tree_root_name_size = editor.tree_root_name.size();
         hash = hash_bytes(hash, &tree_root_name_size, sizeof(tree_root_name_size));
         hash = hash_bytes(hash, editor.tree_root_name.data(), editor.tree_root_name.size());
+        size_t const save_root_path_size = editor.save_root_path.size();
+        hash = hash_bytes(hash, &save_root_path_size, sizeof(save_root_path_size));
+        hash = hash_bytes(hash, editor.save_root_path.data(), editor.save_root_path.size());
         hash = hash_bytes(hash, &editor.insert_mode, sizeof(editor.insert_mode));
         hash = hash_bytes(hash, &editor.sidebar_visible, sizeof(editor.sidebar_visible));
         hash = hash_bytes(hash, &editor.tree_open, sizeof(editor.tree_open));

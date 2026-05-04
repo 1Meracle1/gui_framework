@@ -205,6 +205,7 @@ namespace code_editor {
         }
         runtime->editor.current_file_path = context.initial_file_path;
         runtime->editor.tree_root_name = context.tree_root_name;
+        runtime->editor.save_root_path = context.save_root_path;
         runtime->editor.tree_files = context.tree_files;
         runtime->editor.sidebar_visible = context.initial_sidebar_visible;
         return true;
@@ -216,15 +217,18 @@ namespace code_editor {
         gui::InputState const& input,
         float delta_time
     ) -> gui::Frame {
-        process_editor_input(
-            runtime->editor,
-            input,
-            {
-                .set_clipboard_text = set_windows_clipboard_text,
-                .get_clipboard_text = get_windows_clipboard_text,
-                .user_data = runtime->native_window,
-            }
-        );
+        update_open_file_changes(runtime->editor);
+        if (!runtime->editor.external_change_pending) {
+            process_editor_input(
+                runtime->editor,
+                input,
+                {
+                    .set_clipboard_text = set_windows_clipboard_text,
+                    .get_clipboard_text = get_windows_clipboard_text,
+                    .user_data = runtime->native_window,
+                }
+            );
+        }
         runtime->char_width = std::max(
             1.0f, font_cache::text_advance(runtime->editor_font, runtime->editor.font_size, "M")
         );
@@ -259,7 +263,7 @@ namespace code_editor {
 
         draw::begin_frame(runtime->draw_context);
         gui::render_frame(ui, runtime->draw_context);
-        if (!runtime->editor.file_search_open) {
+        if (!runtime->editor.file_search_open && !runtime->editor.save_path_open) {
             draw_editor_surface(
                 runtime->draw_context,
                 runtime->editor_font,

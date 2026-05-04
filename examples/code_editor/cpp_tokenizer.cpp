@@ -57,6 +57,7 @@ namespace code_editor {
             "alignof",
             "static_assert",
             "final",
+            "friend",
         };
         for (StrRef keyword : KEYWORDS) {
             if (token == keyword) {

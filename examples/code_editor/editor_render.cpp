@@ -2,11 +2,24 @@
 
 #include "syntax.h"
 
+#if defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <sys/stat.h>
+#endif
+
 #include <algorithm>
 #include <base/config.h>
 #include <base/fmt.h>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 
 namespace code_editor {
 
@@ -26,6 +39,8 @@ namespace code_editor {
     inline constexpr float OPEN_TAB_CLOSE_SIZE = 18.0f;
     inline constexpr float OPEN_TAB_FONT_SIZE = 13.0f;
     inline constexpr float FILE_SEARCH_ROW_HEIGHT = 27.0f;
+    inline constexpr char OVERWRITE_FILE_KEY = 'o';
+    inline constexpr char RELOAD_FILE_KEY = 'r';
     inline constexpr char TREE_ARROW_OPEN[] = "\xEE\x9C\x8D";
     inline constexpr char TREE_ARROW_CLOSED[] = "\xEE\x9D\xAC";
 
@@ -52,6 +67,74 @@ namespace code_editor {
         editor.sidebar_resizing = input.mouse_down[0u];
     }
 
+    [[nodiscard]] auto file_write_stamp(StrRef path) -> uint64_t {
+        if (path.empty()) {
+            return 0u;
+        }
+#if defined(_WIN32)
+        WIN32_FILE_ATTRIBUTE_DATA data = {};
+        if (!GetFileAttributesExA(path.data(), GetFileExInfoStandard, &data)) {
+            return 0u;
+        }
+        return (static_cast<uint64_t>(data.ftLastWriteTime.dwHighDateTime) << 32u) |
+               static_cast<uint64_t>(data.ftLastWriteTime.dwLowDateTime);
+#else
+        struct stat data = {};
+        if (stat(path.data(), &data) != 0) {
+            return 0u;
+        }
+        return static_cast<uint64_t>(data.st_mtime) ^ (static_cast<uint64_t>(data.st_size) << 32u);
+#endif
+    }
+
+    [[nodiscard]] auto path_exists(StrRef path) -> bool {
+        if (path.empty()) {
+            return false;
+        }
+#if defined(_WIN32)
+        return GetFileAttributesA(path.data()) != INVALID_FILE_ATTRIBUTES;
+#else
+        struct stat data = {};
+        return stat(path.data(), &data) == 0;
+#endif
+    }
+
+    [[nodiscard]] auto render_path_without_trailing_slash(StrRef path) -> StrRef {
+        while (path.size() > 1u && (path.back() == '\\' || path.back() == '/') &&
+               !(path.size() == 3u && path[1u] == ':')) {
+            path.remove_suffix(1u);
+        }
+        return path;
+    }
+
+    [[nodiscard]] auto render_path_leaf(StrRef path) -> StrRef {
+        path = render_path_without_trailing_slash(path);
+        size_t const slash = path.find_last_of("\\/");
+        if (slash == StrRef::NPOS) {
+            return path;
+        }
+        StrRef const leaf = path.substr(slash + 1u);
+        return leaf.empty() ? path : leaf;
+    }
+
+    [[nodiscard]] auto render_path_is_absolute(StrRef path) -> bool {
+        return path.starts_with('/') || path.starts_with('\\') ||
+               (path.size() >= 2u && path[1u] == ':');
+    }
+
+    [[nodiscard]] auto append_path_buffer(char* buffer, size_t capacity, size_t& size, StrRef text)
+        -> bool {
+        if (text.size() >= capacity || size > capacity - text.size() - 1u) {
+            return false;
+        }
+        if (!text.empty()) {
+            std::memcpy(buffer + size, text.data(), text.size());
+            size += text.size();
+        }
+        buffer[size] = '\0';
+        return true;
+    }
+
     [[nodiscard]] auto open_tree_read_file(StrRef path) -> std::FILE* {
         std::FILE* file = nullptr;
 #if defined(_MSC_VER)
@@ -60,6 +143,18 @@ namespace code_editor {
         }
 #else
         file = std::fopen(path.data(), "rb");
+#endif
+        return file;
+    }
+
+    [[nodiscard]] auto open_tree_write_file(StrRef path) -> std::FILE* {
+        std::FILE* file = nullptr;
+#if defined(_MSC_VER)
+        if (fopen_s(&file, path.data(), "wb") != 0) {
+            return nullptr;
+        }
+#else
+        file = std::fopen(path.data(), "wb");
 #endif
         return file;
     }
@@ -82,9 +177,86 @@ namespace code_editor {
         return ok;
     }
 
-    [[nodiscard]] auto open_file(EditorState& editor, StrRef name, StrRef path) -> bool {
+    [[nodiscard]] auto read_tree_file_display_text(Arena& arena, StrRef path, StrRef& out_text)
+        -> bool {
+        StrRef text = {};
+        if (!read_tree_file_text(arena, path, text)) {
+            return false;
+        }
+        out_text = editor_display_text(arena, text);
+        return true;
+    }
+
+    [[nodiscard]] auto write_tree_file_text(StrRef path, StrRef text) -> bool {
+        std::FILE* const file = open_tree_write_file(path);
+        if (file == nullptr) {
+            return false;
+        }
+        bool const ok =
+            text.empty() || std::fwrite(text.data(), 1u, text.size(), file) == text.size();
+        std::fclose(file);
+        return ok;
+    }
+
+    [[nodiscard]] auto same_file(StrRef lhs_name, StrRef lhs_path, StrRef rhs_name, StrRef rhs_path)
+        -> bool {
+        if (!lhs_path.empty() || !rhs_path.empty()) {
+            return lhs_path == rhs_path;
+        }
+        return lhs_name == rhs_name;
+    }
+
+    [[nodiscard]] auto find_open_file(EditorState& editor, StrRef name, StrRef path) -> OpenFile* {
+        for (OpenFile& file : editor.open_files) {
+            if (same_file(file.name, file.path, name, path)) {
+                return &file;
+            }
+        }
+        return nullptr;
+    }
+
+    auto store_current_open_file(EditorState& editor) -> void {
+        if (editor.current_file_name.empty() || editor.text.arena == nullptr) {
+            return;
+        }
+        remember_open_file(editor, editor.current_file_name, editor.current_file_path);
+        OpenFile* const file =
+            find_open_file(editor, editor.current_file_name, editor.current_file_path);
+        if (file == nullptr) {
+            return;
+        }
+        file->text = text_buffer_copy(editor.text, *editor.text.arena);
+        file->saved_text = editor.saved_text;
+        file->file_write_stamp = editor.file_write_stamp;
+        file->text_valid = true;
+        file->dirty = editor.dirty;
+        file->external_change_pending = editor.external_change_pending;
+    }
+
+    auto load_open_file_buffer(EditorState& editor, OpenFile const& file) -> void {
+        set_editor_text(editor, file.text);
+        editor.current_file_name = file.name;
+        editor.current_file_path = file.path;
+        editor.saved_text = file.saved_text;
+        editor.file_write_stamp = file.file_write_stamp;
+        editor.dirty = file.dirty;
+        editor.external_change_pending = file.external_change_pending;
+        remember_open_file(editor, file.name, file.path);
+    }
+
+    [[nodiscard]] auto
+    open_file(EditorState& editor, StrRef name, StrRef path, bool store_current = true) -> bool {
         DEBUG_ASSERT(editor.text.arena != nullptr);
+        if (store_current) {
+            store_current_open_file(editor);
+        }
         if (load_shared_editor_buffer(editor, name, path)) {
+            store_current_open_file(editor);
+            return true;
+        }
+        OpenFile const* const file = find_open_file(editor, name, path);
+        if (file != nullptr && file->text_valid) {
+            load_open_file_buffer(editor, *file);
             return true;
         }
         if (path.empty()) {
@@ -92,20 +264,320 @@ namespace code_editor {
             return true;
         }
         save_scratch_file(editor);
+        if (editor.current_file_path.empty()) {
+            store_current_open_file(editor);
+        }
         StrRef text = {};
-        if (!read_tree_file_text(*editor.text.arena, path, text)) {
+        if (!read_tree_file_display_text(*editor.text.arena, path, text)) {
             fmt::eprintf("code_editor: failed to read %s\n", path);
             return false;
         }
-        set_editor_text(editor, editor_display_text(*editor.text.arena, text));
+        set_editor_text(editor, text);
         editor.current_file_name = name;
         editor.current_file_path = path;
+        editor.file_write_stamp = file_write_stamp(path);
+        editor.dirty = false;
+        editor.external_change_pending = false;
         remember_open_file(editor, name, path);
+        store_current_open_file(editor);
         return true;
     }
 
     auto open_tree_file(EditorState& editor, FileTreeEntry const& file) -> void {
         BASE_UNUSED(open_file(editor, file.name, file.path));
+    }
+
+    auto reset_pane_text(EditorPane& pane, StrRef text, uint64_t stamp) -> void {
+        text_buffer_set(pane.text, text);
+        pane.undo_stack = nullptr;
+        pane.redo_stack = nullptr;
+        pane.saved_text = text_buffer_copy(pane.text, *pane.text.arena);
+        pane.file_write_stamp = stamp;
+        pane.cursor_line = 0u;
+        pane.cursor_column = 0u;
+        pane.preferred_column = 0u;
+        pane.selection_anchor_line = 0u;
+        pane.selection_anchor_column = 0u;
+        pane.selection_mode = EditorSelectionMode::NONE;
+        pane.scroll_y = 0.0f;
+        pane.insert_mode = false;
+        pane.selection_active = false;
+        pane.mouse_selecting = false;
+        pane.mouse_was_down = false;
+        pane.dirty = false;
+        pane.external_change_pending = false;
+    }
+
+    auto sync_current_file_to_matching_panes(EditorState& editor) -> void {
+        size_t const focused_pane = editor_focused_pane(editor);
+        for (size_t index = 0u; index < editor.panes.size(); ++index) {
+            if (index == focused_pane) {
+                continue;
+            }
+            EditorPane* const pane = editor.panes[index];
+            if (pane == nullptr || pane->kind != EditorPaneKind::CODE ||
+                !same_file(
+                    editor.current_file_name,
+                    editor.current_file_path,
+                    pane->current_file_name,
+                    pane->current_file_path
+                )) {
+                continue;
+            }
+            text_buffer_clone(editor.text, pane->text);
+            pane->scratch_text = editor.scratch_text;
+            pane->saved_text = editor.saved_text;
+            pane->undo_stack = editor.undo_stack;
+            pane->redo_stack = editor.redo_stack;
+            pane->file_write_stamp = editor.file_write_stamp;
+            pane->dirty = editor.dirty;
+            pane->external_change_pending = editor.external_change_pending;
+        }
+    }
+
+    [[nodiscard]] auto reload_current_file_from_disk(EditorState& editor) -> bool {
+        if (editor.current_file_path.empty() || editor.text.arena == nullptr) {
+            return false;
+        }
+        StrRef text = {};
+        if (!read_tree_file_display_text(*editor.text.arena, editor.current_file_path, text)) {
+            return false;
+        }
+        uint64_t const stamp = file_write_stamp(editor.current_file_path);
+        set_editor_text(editor, text);
+        editor.file_write_stamp = stamp;
+        sync_current_file_to_matching_panes(editor);
+        store_current_open_file(editor);
+        return true;
+    }
+
+    [[nodiscard]] auto overwrite_current_file_to_disk(EditorState& editor) -> bool {
+        if (editor.current_file_path.empty() || editor.text.arena == nullptr) {
+            return false;
+        }
+        StrRef const text = text_buffer_copy(editor.text, *editor.text.arena);
+        if (!write_tree_file_text(editor.current_file_path, text)) {
+            return false;
+        }
+        uint64_t const stamp = file_write_stamp(editor.current_file_path);
+        editor.file_write_stamp = stamp != 0u ? stamp : editor.file_write_stamp;
+        mark_editor_saved(editor);
+        sync_current_file_to_matching_panes(editor);
+        store_current_open_file(editor);
+        return true;
+    }
+
+    [[nodiscard]] auto resolve_save_path(EditorState const& editor, char* buffer, size_t capacity)
+        -> StrRef {
+        StrRef const input(editor.save_path_text, cstr_len(editor.save_path_text));
+        if (input.empty()) {
+            return {};
+        }
+
+        size_t size = 0u;
+        if (render_path_is_absolute(input) || editor.save_root_path.empty()) {
+            return append_path_buffer(buffer, capacity, size, input) ? StrRef(buffer, size)
+                                                                     : StrRef();
+        }
+
+        StrRef const root = render_path_without_trailing_slash(editor.save_root_path);
+        if (!append_path_buffer(buffer, capacity, size, root)) {
+            return {};
+        }
+        if (!root.empty() && !root.ends_with('\\') && !root.ends_with('/')) {
+            if (!append_path_buffer(buffer, capacity, size, "\\")) {
+                return {};
+            }
+        }
+        return append_path_buffer(buffer, capacity, size, input) ? StrRef(buffer, size) : StrRef();
+    }
+
+    [[nodiscard]] auto save_current_file_as(EditorState& editor, StrRef path) -> bool {
+        if (path.empty() || editor.text.arena == nullptr || editor.arena == nullptr) {
+            return false;
+        }
+
+        StrRef const text = text_buffer_copy(editor.text, *editor.text.arena);
+        if (!write_tree_file_text(path, text)) {
+            return false;
+        }
+
+        StrRef const old_name = editor.current_file_name;
+        StrRef const old_path = editor.current_file_path;
+        StrRef const saved_path = arena_copy_cstr(*editor.arena, path);
+        StrRef saved_name = arena_copy_str(*editor.arena, render_path_leaf(saved_path));
+        if (saved_name.empty()) {
+            saved_name = saved_path;
+        }
+
+        editor.current_file_name = saved_name;
+        editor.current_file_path = saved_path;
+        uint64_t const stamp = file_write_stamp(editor.current_file_path);
+        editor.file_write_stamp = stamp != 0u ? stamp : editor.file_write_stamp;
+        mark_editor_saved(editor);
+
+        OpenFile* const file = find_open_file(editor, old_name, old_path);
+        if (file != nullptr) {
+            file->name = editor.current_file_name;
+            file->path = editor.current_file_path;
+        }
+        sync_current_file_to_matching_panes(editor);
+        store_current_open_file(editor);
+        return true;
+    }
+
+    auto save_path_from_popup(EditorState& editor) -> void {
+        char path[SAVE_PATH_TEXT_CAPACITY * 2u] = {};
+        StrRef const resolved = resolve_save_path(editor, path, sizeof(path));
+        if (resolved.empty()) {
+            editor.save_path_error = EditorSavePathError::EMPTY;
+            return;
+        }
+        if (path_exists(resolved)) {
+            editor.save_path_error = EditorSavePathError::EXISTS;
+            return;
+        }
+        if (find_open_file(editor, {}, resolved) != nullptr) {
+            editor.save_path_error = EditorSavePathError::EXISTS;
+            return;
+        }
+        if (!save_current_file_as(editor, resolved)) {
+            editor.save_path_error = EditorSavePathError::WRITE_FAILED;
+            return;
+        }
+        close_save_path_popup(editor);
+    }
+
+    auto handle_editor_save_request(EditorState& editor) -> void {
+        if (!editor.save_requested) {
+            return;
+        }
+        editor.save_requested = false;
+        if (editor_focused_pane_kind(editor) != EditorPaneKind::CODE) {
+            return;
+        }
+        if (editor.current_file_path.empty()) {
+            open_save_path_popup(editor);
+            return;
+        }
+        if (!overwrite_current_file_to_disk(editor)) {
+            fmt::eprintf("code_editor: failed to write %s\n", editor.current_file_path);
+        }
+    }
+
+    auto update_current_file_change(EditorState& editor) -> void {
+        if (editor.current_file_path.empty()) {
+            return;
+        }
+        uint64_t const stamp = file_write_stamp(editor.current_file_path);
+        if (stamp == 0u) {
+            return;
+        }
+        if (editor.file_write_stamp == 0u) {
+            editor.file_write_stamp = stamp;
+            return;
+        }
+        if (stamp == editor.file_write_stamp) {
+            return;
+        }
+        if (editor.dirty) {
+            editor.file_write_stamp = stamp;
+            editor.external_change_pending = true;
+            return;
+        }
+        BASE_UNUSED(reload_current_file_from_disk(editor));
+    }
+
+    auto update_pane_file_change(EditorPane& pane) -> void {
+        if (pane.current_file_path.empty() || pane.text.arena == nullptr) {
+            return;
+        }
+        uint64_t const stamp = file_write_stamp(pane.current_file_path);
+        if (stamp == 0u) {
+            return;
+        }
+        if (pane.file_write_stamp == 0u) {
+            pane.file_write_stamp = stamp;
+            return;
+        }
+        if (stamp == pane.file_write_stamp) {
+            return;
+        }
+        if (pane.dirty) {
+            pane.file_write_stamp = stamp;
+            pane.external_change_pending = true;
+            return;
+        }
+        StrRef text = {};
+        if (read_tree_file_display_text(*pane.text.arena, pane.current_file_path, text)) {
+            reset_pane_text(pane, text, stamp);
+        }
+    }
+
+    [[nodiscard]] auto open_file_loaded(EditorState const& editor, OpenFile const& file) -> bool {
+        if (same_file(file.name, file.path, editor.current_file_name, editor.current_file_path)) {
+            return true;
+        }
+        size_t const focused_pane = editor_focused_pane(editor);
+        for (size_t index = 0u; index < editor.panes.size(); ++index) {
+            if (index == focused_pane) {
+                continue;
+            }
+            EditorPane const* const pane = editor.panes[index];
+            if (pane != nullptr && pane->kind == EditorPaneKind::CODE &&
+                same_file(file.name, file.path, pane->current_file_name, pane->current_file_path)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    auto update_open_file_change(EditorState& editor, OpenFile& file) -> void {
+        if (file.path.empty() || open_file_loaded(editor, file) || editor.arena == nullptr) {
+            return;
+        }
+        uint64_t const stamp = file_write_stamp(file.path);
+        if (stamp == 0u) {
+            return;
+        }
+        if (file.file_write_stamp == 0u) {
+            file.file_write_stamp = stamp;
+            return;
+        }
+        if (stamp == file.file_write_stamp) {
+            return;
+        }
+        if (file.dirty) {
+            file.file_write_stamp = stamp;
+            file.external_change_pending = true;
+            return;
+        }
+        StrRef text = {};
+        if (read_tree_file_display_text(*editor.arena, file.path, text)) {
+            file.text = text;
+            file.saved_text = text;
+            file.file_write_stamp = stamp;
+            file.text_valid = true;
+            file.dirty = false;
+            file.external_change_pending = false;
+        }
+    }
+
+    auto update_open_file_changes(EditorState& editor) -> void {
+        update_current_file_change(editor);
+        size_t const focused_pane = editor_focused_pane(editor);
+        for (size_t index = 0u; index < editor.panes.size(); ++index) {
+            if (index == focused_pane) {
+                continue;
+            }
+            EditorPane* const pane = editor.panes[index];
+            if (pane != nullptr && pane->kind == EditorPaneKind::CODE) {
+                update_pane_file_change(*pane);
+            }
+        }
+        for (OpenFile& file : editor.open_files) {
+            update_open_file_change(editor, file);
+        }
     }
 
     auto draw_token(
@@ -453,15 +925,17 @@ namespace code_editor {
 
         set_editor_split_rect(editor, split, box->rect);
         focus_editor_split(editor, split);
+        bool const popup_open = editor.external_change_pending;
+        gui::InputState const surface_input = popup_open ? gui::InputState{} : input;
         bool const clicked = draw_editor_surface_rect(
             draw_context,
             editor_font,
             editor,
             char_width,
             box->rect,
-            input,
+            surface_input,
             palette,
-            split == initial_focus && input.key_event_count != 0u
+            !popup_open && split == initial_focus && input.key_event_count != 0u
         );
         if (clicked) {
             target_focus = split;
@@ -769,10 +1243,26 @@ namespace code_editor {
     }
 
     [[nodiscard]] auto open_file_selected(EditorState const& editor, OpenFile const& file) -> bool {
-        if (!file.path.empty() || !editor.current_file_path.empty()) {
-            return file.path == editor.current_file_path;
+        return same_file(file.name, file.path, editor.current_file_name, editor.current_file_path);
+    }
+
+    [[nodiscard]] auto open_file_dirty(EditorState const& editor, OpenFile const& file) -> bool {
+        if (same_file(file.name, file.path, editor.current_file_name, editor.current_file_path) &&
+            editor_focused_pane_kind(editor) == EditorPaneKind::CODE) {
+            return editor.dirty;
         }
-        return file.name == editor.current_file_name;
+        size_t const focused_pane = editor_focused_pane(editor);
+        for (size_t index = 0u; index < editor.panes.size(); ++index) {
+            if (index == focused_pane) {
+                continue;
+            }
+            EditorPane const* const pane = editor.panes[index];
+            if (pane != nullptr && pane->kind == EditorPaneKind::CODE &&
+                same_file(file.name, file.path, pane->current_file_name, pane->current_file_path)) {
+                return pane->dirty;
+            }
+        }
+        return file.dirty;
     }
 
     [[nodiscard]] auto selected_open_file_index(EditorState const& editor, size_t& out_index)
@@ -806,7 +1296,7 @@ namespace code_editor {
 
         size_t const next_index = std::min(index, editor.open_files.size() - 1u);
         OpenFile const next = editor.open_files[next_index];
-        if (!open_file(editor, next.name, next.path)) {
+        if (!open_file(editor, next.name, next.path, false)) {
             open_scratch_file(editor);
         }
     }
@@ -990,6 +1480,194 @@ namespace code_editor {
         }
     }
 
+    [[nodiscard]] auto key_pressed(gui::InputState const& input, gui::Key key, bool repeat = false)
+        -> bool {
+        if (input.key_events == nullptr) {
+            return false;
+        }
+        for (size_t index = 0u; index < input.key_event_count; ++index) {
+            gui::KeyEvent const& event = input.key_events[index];
+            if (event.key == key && (event.kind == gui::KeyEventKind::PRESS ||
+                                     (repeat && event.kind == gui::KeyEventKind::REPEAT))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    [[nodiscard]] auto shortcut_pressed(gui::InputState const& input, gui::Key key) -> bool {
+        if (input.key_events == nullptr) {
+            return false;
+        }
+        for (size_t index = 0u; index < input.key_event_count; ++index) {
+            gui::KeyEvent const& event = input.key_events[index];
+            if (event.kind == gui::KeyEventKind::PRESS && event.key == key &&
+                (event.mods & gui::KEY_MOD_CTRL) != 0u &&
+                (event.mods & (gui::KEY_MOD_ALT | gui::KEY_MOD_SUPER)) == 0u) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    [[nodiscard]] auto save_path_error_text(EditorSavePathError error) -> StrRef {
+        switch (error) {
+        case EditorSavePathError::EMPTY:
+            return "Enter a file path.";
+        case EditorSavePathError::EXISTS:
+            return "A file already exists at that path.";
+        case EditorSavePathError::WRITE_FAILED:
+            return "Could not save to that path.";
+        case EditorSavePathError::NONE:
+        default:
+            return {};
+        }
+    }
+
+    auto draw_save_path_picker(
+        gui::Frame& ui, EditorState& editor, Palette const& palette, gui::InputState const& input
+    ) -> void {
+        if (!editor.save_path_open) {
+            return;
+        }
+
+        bool save = shortcut_pressed(input, gui::Key::S);
+        bool cancel = key_pressed(input, gui::Key::ESCAPE);
+        if (auto modal = ui.modal(
+                gui::id("save_path_modal"),
+                {
+                    .layout =
+                        {
+                            .padding = gui::insets(42.0f, 24.0f, 24.0f, 24.0f),
+                            .align_x = gui::Align::CENTER,
+                            .align_y = gui::Align::START,
+                        },
+                    .debug_name = "save_path_modal",
+                }
+            )) {
+            if (auto dialog = ui.column(
+                    gui::id("save_path_dialog"),
+                    {
+                        .layout =
+                            {
+                                .width = gui::fill(),
+                                .height = gui::children(),
+                                .max_width = gui::px(860.0f),
+                                .padding = gui::insets(8.0f),
+                                .gap = 8.0f,
+                                .align_x = gui::Align::STRETCH,
+                            },
+                        .style = {
+                            .background = palette.panel,
+                            .border = palette.border,
+                            .border_thickness = 1.0f,
+                            .radius = 6.0f,
+                        },
+                    }
+                )) {
+                ui.label(
+                    "Save file",
+                    {
+                        .layout =
+                            {
+                                .width = gui::fill(),
+                                .height = gui::px(28.0f),
+                                .padding = gui::insets(0.0f, 10.0f),
+                            },
+                        .style = {.foreground = palette.text},
+                    }
+                );
+
+                ui.request_focus(gui::id("save_path_input"));
+                gui::Signal const path = ui.input_text(
+                    gui::id("save_path_input"),
+                    "",
+                    editor.save_path_text,
+                    SAVE_PATH_TEXT_CAPACITY,
+                    {
+                        .layout =
+                            {
+                                .width = gui::fill(),
+                                .height = gui::px(36.0f),
+                                .padding = gui::insets(0.0f, 10.0f),
+                            },
+                        .style = {
+                            .background = palette.panel_raised,
+                            .foreground = palette.text,
+                            .border = editor.save_path_error == EditorSavePathError::NONE
+                                          ? palette.cursor
+                                          : palette.preprocessor,
+                            .border_thickness = 1.0f,
+                            .radius = 4.0f,
+                        },
+                    }
+                );
+                if (path.changed) {
+                    editor.save_path_error = EditorSavePathError::NONE;
+                }
+                save = save || path.activated;
+
+                StrRef const error = save_path_error_text(editor.save_path_error);
+                ui.label(
+                    error,
+                    {
+                        .layout =
+                            {
+                                .width = gui::fill(),
+                                .height = gui::px(24.0f),
+                                .padding = gui::insets(0.0f, 10.0f),
+                            },
+                        .style = {
+                            .foreground = error.empty() ? gui::Color{} : palette.preprocessor,
+                            .font_size = editor_scaled_font_size(editor, 12.0f),
+                        },
+                    }
+                );
+
+                if (auto buttons = ui.row(
+                        gui::id("save_path_buttons"),
+                        {
+                            .layout = {
+                                .width = gui::fill(),
+                                .height = gui::px(34.0f),
+                                .gap = 8.0f,
+                                .align_y = gui::Align::CENTER,
+                            },
+                        }
+                    )) {
+                    gui::BoxDesc const button_desc = {
+                        .layout =
+                            {
+                                .width = gui::px(92.0f),
+                                .height = gui::fill(),
+                                .padding = gui::insets(0.0f, 12.0f),
+                            },
+                        .style = {
+                            .background = palette.panel_raised,
+                            .foreground = palette.text,
+                            .border = palette.border,
+                            .border_thickness = 1.0f,
+                            .radius = 4.0f,
+                            .font_size = editor_scaled_font_size(editor, 12.0f),
+                        },
+                    };
+                    ui.spacer({.layout = {.width = gui::fill(), .height = gui::px(1.0f)}});
+                    cancel =
+                        ui.button(gui::id("save_path_cancel"), "Cancel", button_desc).activated ||
+                        cancel;
+                    save =
+                        ui.button(gui::id("save_path_save"), "Save", button_desc).activated || save;
+                }
+            }
+        }
+
+        if (cancel) {
+            close_save_path_popup(editor);
+        } else if (save) {
+            save_path_from_popup(editor);
+        }
+    }
+
     struct OpenFileTabSignal {
         bool selected = false;
         bool closed = false;
@@ -1023,8 +1701,10 @@ namespace code_editor {
                     },
                 }
             )) {
+            StrRef const label =
+                open_file_dirty(editor, file) ? fmt::tprintf("*%s", file.name) : file.name;
             ui.label(
-                file.name,
+                label,
                 {
                     .layout = {.width = gui::text(), .height = gui::fill()},
                     .style = {
@@ -1059,6 +1739,151 @@ namespace code_editor {
             result.selected = !result.closed && !selected && tab.signal().clicked_left;
         }
         return result;
+    }
+
+    [[nodiscard]] auto file_change_key_pressed(gui::InputState const& input, char key) -> bool {
+        if (input.key_events == nullptr) {
+            return false;
+        }
+        for (size_t index = 0u; index < input.key_event_count; ++index) {
+            gui::KeyEvent const& event = input.key_events[index];
+            if (event.kind != gui::KeyEventKind::TEXT ||
+                (event.mods & (gui::KEY_MOD_CTRL | gui::KEY_MOD_ALT | gui::KEY_MOD_SUPER)) != 0u) {
+                continue;
+            }
+            if (to_ascii_lower(static_cast<char>(event.codepoint)) == key) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    auto draw_file_change_popup(
+        gui::Frame& ui, EditorState& editor, Palette const& palette, gui::InputState const& input
+    ) -> void {
+        if (!editor.external_change_pending) {
+            return;
+        }
+
+        bool overwrite = file_change_key_pressed(input, OVERWRITE_FILE_KEY);
+        bool reload = file_change_key_pressed(input, RELOAD_FILE_KEY);
+        if (auto popup = ui.popup(
+                gui::id("file_change_popup"),
+                {
+                    .layout =
+                        {
+                            .width = gui::px(500.0f),
+                            .height = gui::children(),
+                            .padding = gui::insets(18.0f),
+                            .gap = 14.0f,
+                            .align_x = gui::Align::STRETCH,
+                        },
+                    .style =
+                        {
+                            .background = palette.panel_raised,
+                            .border = gui::color_alpha(palette.cursor, 0.72f),
+                            .border_thickness = 1.0f,
+                            .radius = 6.0f,
+                            .shadow =
+                                {
+                                    .offset = {0.0f, 14.0f},
+                                    .blur_radius = 34.0f,
+                                    .spread = 2.0f,
+                                    .color = gui::rgba(0, 0, 0, 120),
+                                },
+                        },
+                    .debug_name = "file_change_popup",
+                }
+            )) {
+            ui.label(
+                "External edit detected",
+                {
+                    .layout = {.width = gui::fill(), .height = gui::px(26.0f)},
+                    .style = {
+                        .foreground = palette.text,
+                        .font_size = editor_scaled_font_size(editor, 15.0f),
+                    },
+                }
+            );
+            ui.label(
+                fmt::tprintf(
+                    "%s changed on disk while this buffer has unsaved edits.\nChoose which copy to "
+                    "keep.",
+                    editor.current_file_name
+                ),
+                {
+                    .layout =
+                        {
+                            .width = gui::fill(),
+                            .height = gui::px(42.0f),
+                            .word_wrap = true,
+                        },
+                    .style = {
+                        .foreground = palette.muted,
+                        .font_size = editor_scaled_font_size(editor, 12.5f),
+                    },
+                }
+            );
+            if (auto buttons = ui.row(
+                    gui::id("file_change_buttons"),
+                    {
+                        .layout = {
+                            .width = gui::fill(),
+                            .height = gui::px(38.0f),
+                            .gap = 10.0f,
+                            .align_y = gui::Align::CENTER,
+                        },
+                    }
+                )) {
+                gui::BoxDesc const overwrite_desc = {
+                    .layout =
+                        {
+                            .width = gui::fill(),
+                            .height = gui::fill(),
+                            .padding = gui::insets(0.0f, 12.0f),
+                        },
+                    .style = {
+                        .background = gui::color_alpha(palette.preprocessor, 0.18f),
+                        .foreground = palette.text,
+                        .border = gui::color_alpha(palette.preprocessor, 0.55f),
+                        .border_thickness = 1.0f,
+                        .radius = 5.0f,
+                        .font_size = editor_scaled_font_size(editor, 12.5f),
+                    },
+                };
+                gui::BoxDesc const reload_desc = {
+                    .layout =
+                        {
+                            .width = gui::fill(),
+                            .height = gui::fill(),
+                            .padding = gui::insets(0.0f, 12.0f),
+                        },
+                    .style = {
+                        .background = gui::color_alpha(palette.cursor, 0.22f),
+                        .foreground = palette.text,
+                        .border = gui::color_alpha(palette.cursor, 0.72f),
+                        .border_thickness = 1.0f,
+                        .radius = 5.0f,
+                        .font_size = editor_scaled_font_size(editor, 12.5f),
+                    },
+                };
+                overwrite =
+                    ui.button(
+                          gui::id("file_change_overwrite"), "[O] Overwrite disk", overwrite_desc
+                    )
+                        .activated ||
+                    overwrite;
+                reload = ui.button(gui::id("file_change_reload"), "[R] Reload buffer", reload_desc)
+                             .activated ||
+                         reload;
+            }
+        }
+
+        if (overwrite && !overwrite_current_file_to_disk(editor)) {
+            fmt::eprintf("code_editor: failed to write %s\n", editor.current_file_path);
+        } else if (reload && !reload_current_file_from_disk(editor)) {
+            fmt::eprintf("code_editor: failed to reload %s\n", editor.current_file_path);
+        }
     }
 
     auto draw_editor_split_resizer(
@@ -1128,6 +1953,8 @@ namespace code_editor {
                             {
                                 .width = width,
                                 .height = height,
+                                .align_x = gui::Align::CENTER,
+                                .align_y = gui::Align::CENTER,
                                 .clip = true,
                             },
                         .style =
@@ -1142,6 +1969,9 @@ namespace code_editor {
                 )) {
                 if (editor_panel.signal().pressed_left) {
                     focus_editor_split(editor, split);
+                }
+                if (focused) {
+                    draw_file_change_popup(ui, editor, palette, input);
                 }
             }
             return;
@@ -1396,6 +2226,10 @@ namespace code_editor {
             if (editor.file_search_open) {
                 draw_file_search_picker(ui, editor, palette);
             }
+            if (editor.save_path_open) {
+                draw_save_path_picker(ui, editor, palette, input);
+            }
+            handle_editor_save_request(editor);
         }
     }
 
