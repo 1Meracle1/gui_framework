@@ -1467,8 +1467,23 @@ namespace code_editor {
         BASE_UNUSED(open_file(editor, file.name, file.path));
     }
 
+    auto open_buffer_search_match(EditorState& editor, size_t open_file_index) -> void {
+        if (open_file_index >= editor.open_files.size()) {
+            return;
+        }
+        if (editor_focused_pane_kind(editor) != EditorPaneKind::CODE) {
+            focus_first_code_split(editor);
+        }
+        OpenFile const file = editor.open_files[open_file_index];
+        BASE_UNUSED(open_file(editor, file.name, file.path));
+    }
+
     auto draw_file_search_picker(
-        gui::Frame& ui, EditorState& editor, Palette const& palette, float client_height
+        gui::Frame& ui,
+        EditorState& editor,
+        Palette const& palette,
+        float client_height,
+        bool buffers
     ) -> void {
         float constexpr modal_margin = 24.0f;
         float constexpr dialog_padding = 8.0f;
@@ -1483,12 +1498,14 @@ namespace code_editor {
         );
 
         FileSearchMatch matches[FILE_SEARCH_RESULT_LIMIT] = {};
-        size_t const match_count = collect_file_search_matches(editor, matches);
+        BufferSearchMatch buffer_matches[FILE_SEARCH_RESULT_LIMIT] = {};
+        size_t const match_count = buffers ? collect_buffer_search_matches(editor, buffer_matches)
+                                           : collect_file_search_matches(editor, matches);
         editor.file_search_selected =
             match_count == 0u ? 0u : std::min(editor.file_search_selected, match_count - 1u);
 
         if (auto modal = ui.modal(
-                gui::id("file_search_modal"),
+                gui::id(buffers ? "buffer_search_modal" : "file_search_modal"),
                 {
                     .layout =
                         {
@@ -1496,11 +1513,11 @@ namespace code_editor {
                             .align_x = gui::Align::CENTER,
                             .align_y = gui::Align::CENTER,
                         },
-                    .debug_name = "file_search_modal",
+                    .debug_name = buffers ? "buffer_search_modal" : "file_search_modal",
                 }
             )) {
             if (auto dialog = ui.column(
-                    gui::id("file_search_dialog"),
+                    gui::id(buffers ? "buffer_search_dialog" : "file_search_dialog"),
                     {
                         .layout =
                             {
@@ -1520,7 +1537,7 @@ namespace code_editor {
                     }
                 )) {
                 if (auto query = ui.row(
-                        gui::id("file_search_query"),
+                        gui::id(buffers ? "buffer_search_query" : "file_search_query"),
                         {
                             .layout =
                                 {
@@ -1566,7 +1583,7 @@ namespace code_editor {
                 }
 
                 if (auto results = ui.scroll_panel(
-                        gui::id("file_search_results"),
+                        gui::id(buffers ? "buffer_search_results" : "file_search_results"),
                         {
                             .layout = {
                                 .width = gui::fill(),
@@ -1577,7 +1594,10 @@ namespace code_editor {
                     )) {
                     if (match_count == 0u) {
                         ui.label(
-                            editor.tree_files.empty() ? "No indexed files" : "No matching files",
+                            buffers ? (editor.open_files.empty() ? "No open buffers"
+                                                                 : "No matching buffers")
+                                    : (editor.tree_files.empty() ? "No indexed files"
+                                                                 : "No matching files"),
                             {
                                 .layout =
                                     {
@@ -1590,11 +1610,11 @@ namespace code_editor {
                         );
                     }
                     for (size_t index = 0u; index < match_count; ++index) {
-                        FileTreeEntry const& file =
-                            editor.tree_files[matches[index].tree_file_index];
                         bool const selected = index == editor.file_search_selected;
                         if (auto row = ui.row(
-                                gui::id("file_search_result", index),
+                                gui::id(
+                                    buffers ? "buffer_search_result" : "file_search_result", index
+                                ),
                                 {
                                     .layout =
                                         {
@@ -1612,8 +1632,15 @@ namespace code_editor {
                             )) {
                             if (row.signal().clicked_left) {
                                 editor.file_search_selected = index;
-                                open_file_search_match(editor, matches[index].tree_file_index);
-                                editor.set_flag(EditorFlag::FILE_SEARCH_OPEN, false);
+                                if (buffers) {
+                                    open_buffer_search_match(
+                                        editor, buffer_matches[index].open_file_index
+                                    );
+                                    editor.set_flag(EditorFlag::BUFFER_SEARCH_OPEN, false);
+                                } else {
+                                    open_file_search_match(editor, matches[index].tree_file_index);
+                                    editor.set_flag(EditorFlag::FILE_SEARCH_OPEN, false);
+                                }
                             }
                             ui.label(
                                 selected ? ">" : "",
@@ -1622,8 +1649,26 @@ namespace code_editor {
                                     .style = {.foreground = palette.cursor},
                                 }
                             );
+                            StrRef text = {};
+                            if (buffers) {
+                                OpenFile const& file =
+                                    editor.open_files[buffer_matches[index].open_file_index];
+                                bool const current =
+                                    editor_focused_pane_kind(editor) == EditorPaneKind::CODE &&
+                                    open_file_selected(editor, file);
+                                text = fmt::tprintf(
+                                    "%zu %c %s",
+                                    buffer_matches[index].open_file_index + 1u,
+                                    current ? '*' : ' ',
+                                    !file.name.empty() ? file.name : file.path
+                                );
+                            } else {
+                                FileTreeEntry const& file =
+                                    editor.tree_files[matches[index].tree_file_index];
+                                text = file_search_entry_text(file);
+                            }
                             ui.label(
-                                file_search_entry_text(file),
+                                text,
                                 {
                                     .layout = {.width = gui::fill(), .height = gui::fill()},
                                     .style = {
@@ -2361,6 +2406,11 @@ namespace code_editor {
             editor.file_search_open_file = FILE_SEARCH_NO_FILE;
             open_file_search_match(editor, tree_file_index);
         }
+        if (editor.buffer_search_open_file != FILE_SEARCH_NO_FILE) {
+            size_t const open_file_index = editor.buffer_search_open_file;
+            editor.buffer_search_open_file = FILE_SEARCH_NO_FILE;
+            open_buffer_search_match(editor, open_file_index);
+        }
         remember_open_file(editor, editor.current_file_name, editor.current_file_path);
         char const* mode = editor.flag(EditorFlag::INSERT_MODE) ? "INSERT" : "NORMAL";
         if (!editor.flag(EditorFlag::INSERT_MODE) &&
@@ -2575,7 +2625,10 @@ namespace code_editor {
             }
 
             if (editor.flag(EditorFlag::FILE_SEARCH_OPEN)) {
-                draw_file_search_picker(ui, editor, palette, client_height);
+                draw_file_search_picker(ui, editor, palette, client_height, false);
+            }
+            if (editor.flag(EditorFlag::BUFFER_SEARCH_OPEN)) {
+                draw_file_search_picker(ui, editor, palette, client_height, true);
             }
             if (editor.flag(EditorFlag::SAVE_PATH_OPEN)) {
                 draw_save_path_picker(ui, editor, palette, input);

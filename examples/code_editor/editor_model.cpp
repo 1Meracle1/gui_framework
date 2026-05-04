@@ -100,7 +100,6 @@ namespace code_editor {
         editor.set_flag(EditorFlag::MOUSE_SELECTING, false);
         editor.scroll_y = 0.0f;
         editor.set_flag(EditorFlag::PENDING_LEADER, false);
-        editor.set_flag(EditorFlag::PENDING_BUFFER, false);
         editor.set_flag(EditorFlag::PENDING_WINDOW, false);
         editor.set_flag(EditorFlag::PENDING_G, false);
         editor.set_flag(EditorFlag::PENDING_D, false);
@@ -110,6 +109,8 @@ namespace code_editor {
         editor.set_flag(EditorFlag::PENDING_LINE_NUMBER_ACTIVE, false);
         editor.set_flag(EditorFlag::FILE_SEARCH_OPEN, false);
         editor.file_search_open_file = FILE_SEARCH_NO_FILE;
+        editor.set_flag(EditorFlag::BUFFER_SEARCH_OPEN, false);
+        editor.buffer_search_open_file = FILE_SEARCH_NO_FILE;
         editor.set_flag(EditorFlag::COMMAND_LINE_ACTIVE, false);
         editor.command_text_size = 0u;
         editor.command_selected = 0u;
@@ -933,6 +934,8 @@ namespace code_editor {
         editor.save_path_error = EditorSavePathError::NONE;
         editor.set_flag(EditorFlag::FILE_SEARCH_OPEN, false);
         editor.file_search_open_file = FILE_SEARCH_NO_FILE;
+        editor.set_flag(EditorFlag::BUFFER_SEARCH_OPEN, false);
+        editor.buffer_search_open_file = FILE_SEARCH_NO_FILE;
         clear_save_path_text(editor);
 
         StrRef const root = save_root_without_trailing_slash(editor.save_root_path);
@@ -1556,7 +1559,6 @@ namespace code_editor {
         insert_line(editor, insert_at, "");
         editor.set_flag(EditorFlag::INSERT_MODE, true);
         editor.set_flag(EditorFlag::PENDING_LEADER, false);
-        editor.set_flag(EditorFlag::PENDING_BUFFER, false);
         editor.set_flag(EditorFlag::PENDING_WINDOW, false);
         editor.set_flag(EditorFlag::PENDING_D, false);
         editor.set_flag(EditorFlag::PENDING_G, false);
@@ -1697,23 +1699,77 @@ namespace code_editor {
         return count;
     }
 
-    auto clamp_file_search_selected(EditorState& editor) -> void {
+    [[nodiscard]] auto buffer_search_entry_text(OpenFile const& file) -> StrRef {
+        return !file.name.empty() ? file.name : file.path;
+    }
+
+    [[nodiscard]] auto buffer_search_match_less(BufferSearchMatch lhs, BufferSearchMatch rhs)
+        -> bool {
+        if (lhs.score != rhs.score) {
+            return lhs.score < rhs.score;
+        }
+        return lhs.open_file_index < rhs.open_file_index;
+    }
+
+    [[nodiscard]] auto
+    collect_buffer_search_matches(EditorState const& editor, Slice<BufferSearchMatch> matches)
+        -> size_t {
+        size_t count = 0u;
+        StrRef const query = editor_file_search_text(editor);
+        for (size_t index = 0u; index < editor.open_files.size(); ++index) {
+            BufferSearchMatch match = {.open_file_index = index};
+            if (!file_search_fuzzy_score(
+                    buffer_search_entry_text(editor.open_files[index]), query, match.score
+                )) {
+                continue;
+            }
+
+            if (count < matches.size()) {
+                size_t insert = count;
+                while (insert > 0u && buffer_search_match_less(match, matches[insert - 1u])) {
+                    matches[insert] = matches[insert - 1u];
+                    insert -= 1u;
+                }
+                matches[insert] = match;
+                count += 1u;
+            } else if (!matches.empty() && buffer_search_match_less(match, matches.back())) {
+                size_t insert = matches.size() - 1u;
+                while (insert > 0u && buffer_search_match_less(match, matches[insert - 1u])) {
+                    matches[insert] = matches[insert - 1u];
+                    insert -= 1u;
+                }
+                matches[insert] = match;
+            }
+        }
+        return count;
+    }
+
+    [[nodiscard]] auto search_match_count(EditorState const& editor, bool buffers) -> size_t {
+        if (buffers) {
+            BufferSearchMatch matches[FILE_SEARCH_RESULT_LIMIT] = {};
+            return collect_buffer_search_matches(editor, matches);
+        }
         FileSearchMatch matches[FILE_SEARCH_RESULT_LIMIT] = {};
-        size_t const count = collect_file_search_matches(editor, matches);
+        return collect_file_search_matches(editor, matches);
+    }
+
+    auto clamp_search_selected(EditorState& editor, bool buffers) -> void {
+        size_t const count = search_match_count(editor, buffers);
         editor.file_search_selected =
             count == 0u ? 0u : std::min(editor.file_search_selected, count - 1u);
     }
 
     auto open_file_search(EditorState& editor) -> void {
         editor.set_flag(EditorFlag::FILE_SEARCH_OPEN, true);
+        editor.set_flag(EditorFlag::BUFFER_SEARCH_OPEN, false);
         editor.file_search_text_size = 0u;
         editor.file_search_text[0u] = '\0';
         editor.file_search_selected = 0u;
         editor.file_search_open_file = FILE_SEARCH_NO_FILE;
+        editor.buffer_search_open_file = FILE_SEARCH_NO_FILE;
         editor.set_flag(EditorFlag::SAVE_PATH_OPEN, false);
         editor.save_path_error = EditorSavePathError::NONE;
         editor.set_flag(EditorFlag::PENDING_LEADER, false);
-        editor.set_flag(EditorFlag::PENDING_BUFFER, false);
         editor.set_flag(EditorFlag::PENDING_WINDOW, false);
         editor.set_flag(EditorFlag::PENDING_D, false);
         editor.set_flag(EditorFlag::PENDING_G, false);
@@ -1723,6 +1779,39 @@ namespace code_editor {
 
     auto close_file_search(EditorState& editor) -> void {
         editor.set_flag(EditorFlag::FILE_SEARCH_OPEN, false);
+        editor.file_search_selected = 0u;
+    }
+
+    auto open_buffer_search(EditorState& editor) -> void {
+        remember_open_file(editor, editor.current_file_name, editor.current_file_path);
+        editor.set_flag(EditorFlag::BUFFER_SEARCH_OPEN, true);
+        editor.set_flag(EditorFlag::FILE_SEARCH_OPEN, false);
+        editor.file_search_text_size = 0u;
+        editor.file_search_text[0u] = '\0';
+        editor.file_search_selected = 0u;
+        for (size_t index = 0u; index < editor.open_files.size(); ++index) {
+            OpenFile const& file = editor.open_files[index];
+            if (same_editor_file(
+                    file.name, file.path, editor.current_file_name, editor.current_file_path
+                )) {
+                editor.file_search_selected = index;
+                break;
+            }
+        }
+        editor.file_search_open_file = FILE_SEARCH_NO_FILE;
+        editor.buffer_search_open_file = FILE_SEARCH_NO_FILE;
+        editor.set_flag(EditorFlag::SAVE_PATH_OPEN, false);
+        editor.save_path_error = EditorSavePathError::NONE;
+        editor.set_flag(EditorFlag::PENDING_LEADER, false);
+        editor.set_flag(EditorFlag::PENDING_WINDOW, false);
+        editor.set_flag(EditorFlag::PENDING_D, false);
+        editor.set_flag(EditorFlag::PENDING_G, false);
+        editor.set_flag(EditorFlag::PENDING_R, false);
+        editor.set_flag(EditorFlag::PENDING_Z, false);
+    }
+
+    auto close_buffer_search(EditorState& editor) -> void {
+        editor.set_flag(EditorFlag::BUFFER_SEARCH_OPEN, false);
         editor.file_search_selected = 0u;
     }
 
@@ -1768,6 +1857,8 @@ namespace code_editor {
         editor.set_flag(EditorFlag::COMMAND_LINE_ACTIVE, true);
         editor.set_flag(EditorFlag::FILE_SEARCH_OPEN, false);
         editor.file_search_open_file = FILE_SEARCH_NO_FILE;
+        editor.set_flag(EditorFlag::BUFFER_SEARCH_OPEN, false);
+        editor.buffer_search_open_file = FILE_SEARCH_NO_FILE;
         editor.set_flag(EditorFlag::SAVE_PATH_OPEN, false);
         editor.save_path_error = EditorSavePathError::NONE;
     }
@@ -1855,7 +1946,19 @@ namespace code_editor {
         close_file_search(editor);
     }
 
-    auto handle_file_search_event(EditorState& editor, gui::KeyEvent const& event) -> void {
+    auto select_buffer_search_match(EditorState& editor) -> void {
+        BufferSearchMatch matches[FILE_SEARCH_RESULT_LIMIT] = {};
+        size_t const count = collect_buffer_search_matches(editor, matches);
+        if (count == 0u) {
+            return;
+        }
+        editor.file_search_selected = std::min(editor.file_search_selected, count - 1u);
+        editor.buffer_search_open_file = matches[editor.file_search_selected].open_file_index;
+        close_buffer_search(editor);
+    }
+
+    auto handle_search_event(EditorState& editor, gui::KeyEvent const& event, bool buffers)
+        -> void {
         if (event.kind == gui::KeyEventKind::TEXT) {
             if (event.codepoint >= 32u && event.codepoint <= 126u &&
                 editor.file_search_text_size + 1u < FILE_SEARCH_TEXT_CAPACITY) {
@@ -1864,7 +1967,7 @@ namespace code_editor {
                 editor.file_search_text_size += 1u;
                 editor.file_search_text[editor.file_search_text_size] = '\0';
                 editor.file_search_selected = 0u;
-                clamp_file_search_selected(editor);
+                clamp_search_selected(editor, buffers);
             }
             return;
         }
@@ -1873,17 +1976,25 @@ namespace code_editor {
         }
         switch (event.key) {
         case gui::Key::ESCAPE:
-            close_file_search(editor);
+            if (buffers) {
+                close_buffer_search(editor);
+            } else {
+                close_file_search(editor);
+            }
             break;
         case gui::Key::ENTER:
-            select_file_search_match(editor);
+            if (buffers) {
+                select_buffer_search_match(editor);
+            } else {
+                select_file_search_match(editor);
+            }
             break;
         case gui::Key::BACKSPACE:
             if (editor.file_search_text_size != 0u) {
                 editor.file_search_text_size -= 1u;
                 editor.file_search_text[editor.file_search_text_size] = '\0';
                 editor.file_search_selected = 0u;
-                clamp_file_search_selected(editor);
+                clamp_search_selected(editor, buffers);
             }
             break;
         case gui::Key::UP:
@@ -1892,8 +2003,7 @@ namespace code_editor {
             }
             break;
         case gui::Key::DOWN: {
-            FileSearchMatch matches[FILE_SEARCH_RESULT_LIMIT] = {};
-            size_t const count = collect_file_search_matches(editor, matches);
+            size_t const count = search_match_count(editor, buffers);
             if (editor.file_search_selected + 1u < count) {
                 editor.file_search_selected += 1u;
             }
@@ -1923,7 +2033,6 @@ namespace code_editor {
     auto enter_insert_at(EditorState& editor, EditorPosition position) -> void {
         editor.set_flag(EditorFlag::INSERT_MODE, true);
         editor.set_flag(EditorFlag::PENDING_LEADER, false);
-        editor.set_flag(EditorFlag::PENDING_BUFFER, false);
         editor.set_flag(EditorFlag::PENDING_WINDOW, false);
         editor.set_flag(EditorFlag::PENDING_D, false);
         editor.set_flag(EditorFlag::PENDING_G, false);
@@ -2157,13 +2266,6 @@ namespace code_editor {
             }
             return;
         }
-        if (editor.flag(EditorFlag::PENDING_BUFFER)) {
-            editor.set_flag(EditorFlag::PENDING_BUFFER, false);
-            if (ch == 'd') {
-                editor.set_flag(EditorFlag::CLOSE_CURRENT_REQUESTED, true);
-            }
-            return;
-        }
         if (editor.flag(EditorFlag::PENDING_WINDOW)) {
             editor.set_flag(EditorFlag::PENDING_WINDOW, false);
             switch (ch) {
@@ -2209,7 +2311,7 @@ namespace code_editor {
             } else if (ch == 'f') {
                 open_file_search(editor);
             } else if (ch == 'b') {
-                editor.set_flag(EditorFlag::PENDING_BUFFER, true);
+                open_buffer_search(editor);
             } else if (ch == 'w') {
                 editor.set_flag(EditorFlag::PENDING_WINDOW, true);
             }
@@ -2551,7 +2653,6 @@ namespace code_editor {
         if (event.key == gui::Key::ESCAPE) {
             editor.set_flag(EditorFlag::INSERT_MODE, false);
             editor.set_flag(EditorFlag::PENDING_LEADER, false);
-            editor.set_flag(EditorFlag::PENDING_BUFFER, false);
             editor.set_flag(EditorFlag::PENDING_WINDOW, false);
             editor.set_flag(EditorFlag::PENDING_D, false);
             editor.set_flag(EditorFlag::PENDING_G, false);
@@ -2696,7 +2797,11 @@ namespace code_editor {
                 continue;
             }
             if (editor.flag(EditorFlag::FILE_SEARCH_OPEN)) {
-                handle_file_search_event(editor, event);
+                handle_search_event(editor, event, false);
+                continue;
+            }
+            if (editor.flag(EditorFlag::BUFFER_SEARCH_OPEN)) {
+                handle_search_event(editor, event, true);
                 continue;
             }
             if (event.kind == gui::KeyEventKind::TEXT) {
@@ -2929,6 +3034,9 @@ namespace code_editor {
         hash = hash_bytes(hash, &editor.file_search_selected, sizeof(editor.file_search_selected));
         hash =
             hash_bytes(hash, &editor.file_search_open_file, sizeof(editor.file_search_open_file));
+        hash = hash_bytes(
+            hash, &editor.buffer_search_open_file, sizeof(editor.buffer_search_open_file)
+        );
         hash = hash_bytes(hash, &editor.command_text_size, sizeof(editor.command_text_size));
         hash = hash_bytes(hash, &editor.command_selected, sizeof(editor.command_selected));
         hash = hash_bytes(hash, editor.command_text, editor.command_text_size);

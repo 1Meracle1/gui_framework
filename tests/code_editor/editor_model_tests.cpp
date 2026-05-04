@@ -1184,18 +1184,33 @@ namespace {
         TEST_EXPECT(context, editor.cursor_column == 8u);
     }
 
-    TEST_CASE(editor_space_b_d_requests_close_current_buffer) {
+    TEST_CASE(editor_space_b_opens_buffer_search_over_open_files) {
         Arena arena = {};
         arena.init();
 
         code_editor::EditorState editor = {};
         code_editor::init_editor(arena, editor, "");
+        editor.current_file_name = "main.cpp";
+        editor.current_file_path = "C:\\repo\\main.cpp";
+        code_editor::remember_open_file(editor, editor.current_file_name, editor.current_file_path);
+        code_editor::remember_open_file(editor, "app.cpp", "C:\\repo\\app.cpp");
 
-        send_text(editor, " bd");
-
-        TEST_EXPECT(context, editor.flag(EditorFlag::CLOSE_CURRENT_REQUESTED));
+        send_text(editor, " b");
+        TEST_EXPECT(context, editor.flag(EditorFlag::BUFFER_SEARCH_OPEN));
         TEST_EXPECT(context, !editor.flag(EditorFlag::PENDING_LEADER));
-        TEST_EXPECT(context, !editor.flag(EditorFlag::PENDING_BUFFER));
+        TEST_EXPECT(context, editor.file_search_selected == 0u);
+
+        send_text(editor, "appc");
+
+        code_editor::BufferSearchMatch matches[code_editor::FILE_SEARCH_RESULT_LIMIT] = {};
+        size_t const count = code_editor::collect_buffer_search_matches(editor, matches);
+        TEST_EXPECT(context, code_editor::editor_file_search_text(editor) == "appc");
+        TEST_EXPECT(context, count == 1u);
+        TEST_EXPECT(context, matches[0u].open_file_index == 1u);
+
+        press_key(editor, gui::Key::ENTER);
+        TEST_EXPECT(context, !editor.flag(EditorFlag::BUFFER_SEARCH_OPEN));
+        TEST_EXPECT(context, editor.buffer_search_open_file == 1u);
     }
 
     TEST_CASE(editor_space_w_v_and_s_create_splits) {

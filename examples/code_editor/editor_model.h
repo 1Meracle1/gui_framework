@@ -79,6 +79,11 @@ namespace code_editor {
         int32_t score = 0;
     };
 
+    struct BufferSearchMatch {
+        size_t open_file_index = 0u;
+        int32_t score = 0;
+    };
+
     enum class EditorPaneKind : uint8_t {
         CODE,
         FILESYSTEM,
@@ -132,12 +137,12 @@ namespace code_editor {
         SIDEBAR_RESIZING,
         TREE_OPEN,
         FILE_SEARCH_OPEN,
+        BUFFER_SEARCH_OPEN,
         COMMAND_LINE_ACTIVE,
         SAVE_REQUESTED,
         SAVE_PATH_OPEN,
         PENDING_LINE_NUMBER_ACTIVE,
         PENDING_LEADER,
-        PENDING_BUFFER,
         PENDING_WINDOW,
         PENDING_G,
         PENDING_D,
@@ -206,6 +211,7 @@ namespace code_editor {
         size_t command_selected = 0u;
         size_t file_search_selected = 0u;
         size_t file_search_open_file = FILE_SEARCH_NO_FILE;
+        size_t buffer_search_open_file = FILE_SEARCH_NO_FILE;
         size_t pending_line_number = 0u;
         EditorSavePathError save_path_error = EditorSavePathError::NONE;
         EditorFlags flags = {EditorFlag::TREE_OPEN};
@@ -251,6 +257,9 @@ namespace code_editor {
     [[nodiscard]] auto file_search_entry_text(FileTreeEntry const& entry) -> StrRef;
     [[nodiscard]] auto
     collect_file_search_matches(EditorState const& editor, Slice<FileSearchMatch> matches)
+        -> size_t;
+    [[nodiscard]] auto
+    collect_buffer_search_matches(EditorState const& editor, Slice<BufferSearchMatch> matches)
         -> size_t;
     [[nodiscard]] auto point_in_rect(gui::Rect rect, gui::Vec2 point) -> bool;
     [[nodiscard]] auto editor_scaled_font_size(EditorState const& editor, float base_size) -> float;

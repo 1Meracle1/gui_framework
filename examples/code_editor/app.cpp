@@ -294,6 +294,7 @@ namespace code_editor {
         draw::begin_frame(runtime->draw_context);
         gui::render_frame(ui, runtime->draw_context);
         if (!runtime->editor.flag(EditorFlag::FILE_SEARCH_OPEN) &&
+            !runtime->editor.flag(EditorFlag::BUFFER_SEARCH_OPEN) &&
             !runtime->editor.flag(EditorFlag::SAVE_PATH_OPEN)) {
             draw_editor_surface(
                 runtime->draw_context,
