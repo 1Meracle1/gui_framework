@@ -1414,6 +1414,22 @@ namespace {
         TEST_EXPECT(context, editor.close_app_requested);
     }
 
+    TEST_CASE(editor_space_w_q_closes_non_empty_split) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "abc\ndef");
+
+        send_text(editor, " wv");
+        send_text(editor, " wq");
+
+        TEST_EXPECT(context, code_editor::editor_split_leaf_count(editor) == 1u);
+        TEST_EXPECT(
+            context, code_editor::editor_line_text(code_editor::editor_line(editor, 0u)) == "abc"
+        );
+    }
+
     TEST_CASE(editor_space_w_q_closes_app_when_last_code_split_has_filesystem_sibling) {
         Arena arena = {};
         arena.init();
@@ -1460,6 +1476,29 @@ namespace {
         TEST_EXPECT(
             context, code_editor::editor_line_text(code_editor::editor_line(editor, 0u)) == "abZc"
         );
+    }
+
+    TEST_CASE(editor_split_focus_does_not_reclone_unchanged_text) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "abc");
+
+        send_text(editor, " wv");
+        size_t const left = editor.split_nodes[editor.root_split].first;
+        size_t const right = editor.split_nodes[editor.root_split].second;
+
+        code_editor::focus_editor_split(editor, left);
+        code_editor::focus_editor_split(editor, right);
+        size_t const used = arena.used_size();
+
+        for (size_t index = 0u; index < 8u; ++index) {
+            code_editor::focus_editor_split(editor, left);
+            code_editor::focus_editor_split(editor, right);
+        }
+
+        TEST_EXPECT(context, arena.used_size() == used);
     }
 
     TEST_CASE(editor_insert_mode_space_w_v_does_not_split) {

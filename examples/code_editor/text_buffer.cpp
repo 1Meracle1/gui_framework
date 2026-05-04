@@ -469,7 +469,7 @@ namespace code_editor {
         target.root = clone_tree(target, source.root);
         target.line_cache.clear();
         target.node_seed = source.node_seed;
-        target.revision += 1u;
+        target.revision = source.revision;
     }
 
     auto text_buffer_insert(EditorText& text, size_t offset, StrRef value) -> void {

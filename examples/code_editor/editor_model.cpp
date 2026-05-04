@@ -405,7 +405,9 @@ namespace code_editor {
                                    )) {
                 continue;
             }
-            clone_text(editor.text, pane->text);
+            if (pane->text.revision != editor.text.revision) {
+                clone_text(editor.text, pane->text);
+            }
             pane->scratch_text = editor.scratch_text;
             pane->saved_text = editor.saved_text;
             pane->undo_stack = editor.undo_stack;
@@ -664,6 +666,7 @@ namespace code_editor {
         if (!split_valid(editor, sibling)) {
             return;
         }
+        size_t const closed_pane = editor.split_nodes[split].pane;
 
         editor.split_nodes[parent] = editor.split_nodes[sibling];
         editor.split_nodes[parent].parent = parent_node.parent;
@@ -673,6 +676,8 @@ namespace code_editor {
         if (split_valid(editor, editor.split_nodes[parent].second)) {
             editor.split_nodes[editor.split_nodes[parent].second].parent = parent;
         }
+        DEBUG_ASSERT(closed_pane < editor.panes.size());
+        editor.panes[closed_pane] = nullptr;
 
         editor.pane_loaded = false;
         editor.focused_split = first_leaf(editor, parent);
