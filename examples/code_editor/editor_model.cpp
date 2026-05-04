@@ -102,6 +102,9 @@ namespace code_editor {
         editor.pending_line_number_active = false;
         editor.file_search_open = false;
         editor.file_search_open_file = FILE_SEARCH_NO_FILE;
+        editor.command_line_active = false;
+        editor.command_text_size = 0u;
+        editor.command_text[0u] = '\0';
         editor.save_requested = false;
         editor.save_path_open = false;
         editor.save_path_error = EditorSavePathError::NONE;
@@ -1638,6 +1641,37 @@ namespace code_editor {
         editor.file_search_selected = 0u;
     }
 
+    auto clear_command_line(EditorState& editor) -> void {
+        editor.command_line_active = false;
+        editor.command_text_size = 0u;
+        editor.command_text[0u] = '\0';
+    }
+
+    auto handle_command_line_event(EditorState& editor, gui::KeyEvent const& event) -> void {
+        if (event.kind == gui::KeyEventKind::TEXT) {
+            bool const text_input =
+                (event.mods & (gui::KEY_MOD_CTRL | gui::KEY_MOD_ALT | gui::KEY_MOD_SUPER)) == 0u;
+            if (text_input && event.codepoint >= 32u && event.codepoint <= 126u &&
+                editor.command_text_size + 1u < COMMAND_TEXT_CAPACITY) {
+                editor.command_text[editor.command_text_size] = static_cast<char>(event.codepoint);
+                editor.command_text_size += 1u;
+                editor.command_text[editor.command_text_size] = '\0';
+            }
+            return;
+        }
+
+        if (event.kind != gui::KeyEventKind::PRESS && event.kind != gui::KeyEventKind::REPEAT) {
+            return;
+        }
+
+        if (event.key == gui::Key::ESCAPE || event.key == gui::Key::ENTER) {
+            clear_command_line(editor);
+        } else if (event.key == gui::Key::BACKSPACE && editor.command_text_size != 0u) {
+            editor.command_text_size -= 1u;
+            editor.command_text[editor.command_text_size] = '\0';
+        }
+    }
+
     auto select_file_search_match(EditorState& editor) -> void {
         FileSearchMatch matches[FILE_SEARCH_RESULT_LIMIT] = {};
         size_t const count = collect_file_search_matches(editor, matches);
@@ -2037,6 +2071,10 @@ namespace code_editor {
         bool const select = visual_selecting(editor);
         EditorSelectionRange const selection = editor_selection_range(editor);
         switch (ch) {
+        case ':':
+            clear_command_line(editor);
+            editor.command_line_active = true;
+            break;
         case ' ':
             editor.pending_leader = true;
             break;
@@ -2460,6 +2498,10 @@ namespace code_editor {
 
         for (size_t index = 0u; index < input.key_event_count; ++index) {
             gui::KeyEvent const& event = input.key_events[index];
+            if (editor.command_line_active) {
+                handle_command_line_event(editor, event);
+                continue;
+            }
             if (editor.file_search_open) {
                 handle_file_search_event(editor, event);
                 continue;
@@ -2693,6 +2735,9 @@ namespace code_editor {
         hash = hash_bytes(hash, &editor.file_search_selected, sizeof(editor.file_search_selected));
         hash =
             hash_bytes(hash, &editor.file_search_open_file, sizeof(editor.file_search_open_file));
+        hash = hash_bytes(hash, &editor.command_line_active, sizeof(editor.command_line_active));
+        hash = hash_bytes(hash, &editor.command_text_size, sizeof(editor.command_text_size));
+        hash = hash_bytes(hash, editor.command_text, editor.command_text_size);
         hash = hash_bytes(hash, &editor.save_requested, sizeof(editor.save_requested));
         hash = hash_bytes(hash, &editor.save_path_open, sizeof(editor.save_path_open));
         hash = hash_bytes(hash, &editor.save_path_error, sizeof(editor.save_path_error));

@@ -2159,68 +2159,102 @@ namespace code_editor {
                 );
             }
 
-            if (auto status = ui.row(
-                    gui::id("status"),
+            float const status_ratio = std::clamp(
+                editor.sidebar_width_percent, SIDEBAR_MIN_WIDTH_PERCENT, SIDEBAR_MAX_WIDTH_PERCENT
+            );
+            if (auto bottom = ui.row(
+                    gui::id("bottom_bar"),
                     {
-                        .layout =
-                            {
-                                .width = gui::fill(),
-                                .height = gui::px(30.0f),
-                                .padding = gui::insets(0.0f, 12.0f),
-                                .gap = 10.0f,
-                                .align_y = gui::Align::CENTER,
-                            },
-                        .style = {
-                            .background = palette.panel,
-                            .border = palette.border,
-                            .border_thickness = 1.0f,
-                            .radius = 8.0f,
+                        .layout = {
+                            .width = gui::fill(),
+                            .height = gui::px(30.0f),
+                            .gap = EDITOR_SPLIT_GAP,
+                            .align_y = gui::Align::CENTER,
                         },
                     }
                 )) {
-                ui.label(
-                    mode,
-                    {
-                        .layout = {.width = gui::px(74.0f), .height = gui::fill()},
-                        .style = {
-                            .foreground = mode_color,
-                            .font_size = editor_scaled_font_size(editor, 12.0f),
+                gui::BoxDesc const status_panel = {
+                    .layout =
+                        {
+                            .width = gui::fill(status_ratio),
+                            .height = gui::fill(),
+                            .padding = gui::insets(0.0f, 12.0f),
+                            .gap = 7.0f,
+                            .align_y = gui::Align::CENTER,
+                            .clip = true,
                         },
-                    }
-                );
-                ui.label(
-                    fmt::tprintf(
-                        "Ln %zu, Col %zu", editor.cursor_line + 1u, editor.cursor_column + 1u
-                    ),
-                    {
-                        .layout = {.width = gui::px(128.0f), .height = gui::fill()},
-                        .style = {
-                            .foreground = palette.muted,
-                            .font_size = editor_scaled_font_size(editor, 12.0f),
+                    .style = {
+                        .background = palette.panel,
+                        .border = palette.border,
+                        .border_thickness = 1.0f,
+                        .radius = 8.0f,
+                    },
+                };
+                if (auto status = ui.row(gui::id("status"), status_panel)) {
+                    ui.label(
+                        mode,
+                        {
+                            .layout = {.width = gui::text(), .height = gui::fill()},
+                            .style = {
+                                .foreground = mode_color,
+                                .font_size = editor_scaled_font_size(editor, 12.0f),
+                            },
+                        }
+                    );
+                    ui.label(
+                        fmt::tprintf(
+                            "Ln %zu, Col %zu", editor.cursor_line + 1u, editor.cursor_column + 1u
+                        ),
+                        {
+                            .layout = {.width = gui::text(), .height = gui::fill()},
+                            .style = {
+                                .foreground = palette.muted,
+                                .font_size = editor_scaled_font_size(editor, 12.0f),
+                            },
+                        }
+                    );
+                    ui.label(
+                        "UTF-8",
+                        {
+                            .layout = {.width = gui::text(), .height = gui::fill()},
+                            .style = {
+                                .foreground = palette.muted,
+                                .font_size = editor_scaled_font_size(editor, 12.0f),
+                            },
+                        }
+                    );
+                }
+
+                gui::BoxDesc const command_panel = {
+                    .layout =
+                        {
+                            .width = gui::fill(1.0f - status_ratio),
+                            .height = gui::fill(),
+                            .padding = gui::insets(0.0f, 12.0f),
+                            .align_y = gui::Align::CENTER,
+                            .clip = true,
                         },
+                    .style = {
+                        .background = palette.panel,
+                        .border = palette.border,
+                        .border_thickness = 1.0f,
+                        .radius = 8.0f,
+                    },
+                };
+                if (auto command = ui.row(gui::id("command_line"), command_panel)) {
+                    if (editor.command_line_active) {
+                        ui.label(
+                            fmt::tprintf(":%s", editor.command_text),
+                            {
+                                .layout = {.width = gui::fill(), .height = gui::fill()},
+                                .style = {
+                                    .foreground = palette.text,
+                                    .font_size = editor_scaled_font_size(editor, 12.0f),
+                                },
+                            }
+                        );
                     }
-                );
-                ui.label(
-                    "UTF-8",
-                    {
-                        .layout = {.width = gui::px(58.0f), .height = gui::fill()},
-                        .style = {
-                            .foreground = palette.muted,
-                            .font_size = editor_scaled_font_size(editor, 12.0f),
-                        },
-                    }
-                );
-                ui.spacer({.layout = {.width = gui::fill(), .height = gui::px(1.0f)}});
-                ui.label(
-                    "code_editor",
-                    {
-                        .layout = {.width = gui::text(), .height = gui::fill()},
-                        .style = {
-                            .foreground = palette.muted,
-                            .font_size = editor_scaled_font_size(editor, 12.0f),
-                        },
-                    }
-                );
+                }
             }
 
             if (editor.file_search_open) {
