@@ -80,6 +80,7 @@ namespace gui {
         bool clip = false;
         bool scroll_x = false;
         bool scroll_y = false;
+        bool show_scrollbars = true;
         bool word_wrap = false;
     };
 
@@ -186,6 +187,10 @@ namespace gui {
         V,
         X,
         Z,
+        PLUS,
+        MINUS,
+        D,
+        U,
     };
 
     enum class KeyEventKind : uint8_t {

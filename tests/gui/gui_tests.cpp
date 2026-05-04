@@ -2265,6 +2265,51 @@ namespace {
         gui::destroy_context(gui_context);
     }
 
+    TEST_CASE(scroll_panel_can_hide_scrollbars_without_disabling_scroll) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::draw::Context draw_context = {};
+        gui::draw::create_context(arena, {}, draw_context);
+
+        gui::InputState input = {};
+        input.mouse_pos = {10.0f, 10.0f};
+        input.scroll_delta_y = -12.0f;
+
+        gui::Id const panel_id = gui::id("panel");
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {100.0f, 50.0f}, .input = input});
+        {
+            auto panel = ui.scroll_panel(
+                panel_id,
+                {.layout = {
+                     .width = gui::fill(),
+                     .height = gui::px(30.0f),
+                     .show_scrollbars = false,
+                 }}
+            );
+            TEST_EXPECT(context, panel);
+            for (size_t index = 0u; index < 3u; ++index) {
+                ui.spacer({.layout = {.width = gui::fill(), .height = gui::px(20.0f)}});
+            }
+        }
+        gui::end_frame(ui);
+
+        gui::ScrollState const state = ui.scroll_state(panel_id);
+        TEST_EXPECT(context, state.valid);
+        TEST_EXPECT(context, state.y == 12.0f);
+        TEST_EXPECT(context, state.max_y == 30.0f);
+
+        gui::draw::begin_frame(draw_context);
+        gui::render_frame(ui, draw_context);
+        TEST_EXPECT(context, gui::draw::styled_rect_command_count(draw_context) == 0u);
+
+        gui::draw::destroy_context(draw_context);
+        gui::destroy_context(gui_context);
+    }
+
     TEST_CASE(scroll_panel_insets_scrollbar_inside_rounded_corners) {
         Arena arena = {};
         arena.init();

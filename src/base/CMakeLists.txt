@@ -5,6 +5,8 @@ target_sources(gui_framework PRIVATE
     src/io.cpp
     src/memory.cpp
     src/string_buffer.cpp
+    src/strconv.cpp
+    src/unicode.cpp
     src/virtual_memory.cpp
 )
 

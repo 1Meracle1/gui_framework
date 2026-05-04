@@ -1,0 +1,861 @@
+#if defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#endif
+
+#include "app.h"
+
+#include <algorithm>
+#include <base/config.h>
+#include <base/crash.h>
+#include <base/fmt.h>
+#include <base/memory.h>
+#include <base/slice.h>
+#include <base/vec.h>
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
+#if defined(_WIN32)
+#include <code_editor_hot_reload_manifest.h>
+#include <dwmapi.h>
+#include <gui/gui.h>
+#include <gui/hot_reload_app.h>
+#include <render/render.h>
+#include <windows.h>
+#endif
+
+#ifndef CODE_EDITOR_SOURCE_DIR
+#define CODE_EDITOR_SOURCE_DIR "."
+#endif
+
+#ifndef CODE_EDITOR_BINARY_DIR
+#define CODE_EDITOR_BINARY_DIR "."
+#endif
+
+#ifndef CODE_EDITOR_BUILD_CONFIG
+#define CODE_EDITOR_BUILD_CONFIG "Debug"
+#endif
+
+namespace code_editor {
+
+#if defined(_WIN32)
+    namespace render = gui::render;
+
+    constexpr wchar_t WINDOW_CLASS_NAME[] = L"gui_framework_code_editor";
+    constexpr DWORD DWM_ATTR_USE_IMMERSIVE_DARK_MODE = 20u;
+    constexpr DWORD DWM_ATTR_BORDER_COLOR = 34u;
+    constexpr DWORD DWM_ATTR_CAPTION_COLOR = 35u;
+    constexpr DWORD DWM_ATTR_TEXT_COLOR = 36u;
+    constexpr COLORREF WINDOW_HEADER_BACKGROUND = RGB(12, 15, 18);
+    constexpr COLORREF WINDOW_HEADER_TEXT = RGB(230, 235, 239);
+
+    struct AppState {
+        HWND hwnd = nullptr;
+        bool running = true;
+        bool redraw_pending = true;
+        bool resize_pending = false;
+        render::SizeU32 pending_size = {};
+        gui::Frame last_frame = {};
+        gui::Id mouse_hit_id = {};
+        gui::InputState input = {};
+        gui::KeyEvent key_events[MAX_KEY_EVENTS_PER_FRAME] = {};
+        gui::Vec2 last_click_pos = {};
+        uint64_t last_click_ticks = 0u;
+        uint32_t click_count = 0u;
+    };
+
+    struct LaunchDesc {
+        StrRef initial_text = {};
+        StrRef initial_file_name = {};
+        StrRef initial_file_path = {};
+        StrRef tree_root_name = {};
+        Vec<FileTreeEntry> tree_files = {};
+        bool initial_sidebar_visible = false;
+    };
+
+    AppState* global_app_state = nullptr;
+
+    auto request_redraw(AppState* state) -> void {
+        if (state != nullptr) {
+            state->redraw_pending = true;
+        }
+    }
+
+    [[nodiscard]] auto frame_ready(gui::Frame const& frame) -> bool {
+        return frame.box_info_count() != 0u;
+    }
+
+    [[nodiscard]] auto frame_hit_id(gui::Frame const& frame, gui::Vec2 pos) -> gui::Id {
+        gui::BoxInfo const* const box = frame.hit_test(pos);
+        return box != nullptr ? box->id : gui::Id{};
+    }
+
+    [[nodiscard]] auto loword_u32(LPARAM value) -> uint32_t {
+        return static_cast<uint32_t>(static_cast<uint16_t>(value & 0xffff));
+    }
+
+    [[nodiscard]] auto hiword_u32(LPARAM value) -> uint32_t {
+        return static_cast<uint32_t>(static_cast<uint16_t>((value >> 16) & 0xffff));
+    }
+
+    [[nodiscard]] auto lparam_x(LPARAM value) -> float {
+        return static_cast<float>(static_cast<int16_t>(value & 0xffff));
+    }
+
+    [[nodiscard]] auto lparam_y(LPARAM value) -> float {
+        return static_cast<float>(static_cast<int16_t>((value >> 16) & 0xffff));
+    }
+
+    [[nodiscard]] auto current_key_mods() -> gui::KeyMods {
+        gui::KeyMods mods = gui::KEY_MOD_NONE;
+        if ((GetKeyState(VK_SHIFT) & 0x8000) != 0) {
+            mods |= gui::KEY_MOD_SHIFT;
+        }
+        if ((GetKeyState(VK_CONTROL) & 0x8000) != 0) {
+            mods |= gui::KEY_MOD_CTRL;
+        }
+        if ((GetKeyState(VK_MENU) & 0x8000) != 0) {
+            mods |= gui::KEY_MOD_ALT;
+        }
+        if ((GetKeyState(VK_LWIN) & 0x8000) != 0 || (GetKeyState(VK_RWIN) & 0x8000) != 0) {
+            mods |= gui::KEY_MOD_SUPER;
+        }
+        return mods;
+    }
+
+    [[nodiscard]] auto close_click(AppState const& state, gui::Vec2 pos, uint64_t ticks) -> bool {
+        float const dx = pos.x > state.last_click_pos.x ? pos.x - state.last_click_pos.x
+                                                        : state.last_click_pos.x - pos.x;
+        float const dy = pos.y > state.last_click_pos.y ? pos.y - state.last_click_pos.y
+                                                        : state.last_click_pos.y - pos.y;
+        return ticks - state.last_click_ticks <= static_cast<uint64_t>(GetDoubleClickTime()) &&
+               dx <= static_cast<float>(GetSystemMetrics(SM_CXDOUBLECLK)) &&
+               dy <= static_cast<float>(GetSystemMetrics(SM_CYDOUBLECLK));
+    }
+
+    auto push_mouse_down(AppState* state, gui::Vec2 pos, bool double_click) -> void {
+        if (state == nullptr) {
+            return;
+        }
+
+        uint64_t const ticks = GetTickCount64();
+        state->input.mouse_down[0u] = true;
+        state->input.mouse_pos = pos;
+        if (double_click) {
+            state->click_count = 2u;
+            state->input.mouse_double_clicked[0u] = true;
+        } else if (state->click_count == 2u && close_click(*state, pos, ticks)) {
+            state->click_count = 3u;
+            state->input.mouse_double_clicked[0u] = false;
+            state->input.mouse_triple_clicked[0u] = true;
+        } else {
+            state->click_count = 1u;
+        }
+        state->last_click_pos = pos;
+        state->last_click_ticks = ticks;
+        request_redraw(state);
+    }
+
+    [[nodiscard]] auto hot_reload_desc(ModuleRuntimeContext* context) -> gui::HotReloadDesc {
+        return {
+            .label = "code_editor",
+            .source_dir = CODE_EDITOR_SOURCE_DIR,
+            .binary_dir = CODE_EDITOR_BINARY_DIR,
+            .build_config = CODE_EDITOR_BUILD_CONFIG,
+            .build_target = "code_editor_module",
+            .api_export_name = "code_editor_get_module_api",
+            .module_file_name = MODULE_FILE_NAME,
+            .module_copy_prefix = "code_editor_module",
+            .watched_files = HOT_RELOAD_WATCH_FILES,
+            .storage_size = MODULE_STORAGE_SIZE,
+            .storage_alignment = MODULE_STORAGE_ALIGNMENT,
+            .user_data = context,
+        };
+    }
+
+    [[nodiscard]] auto key_from_virtual_key(WPARAM value) -> gui::Key {
+        switch (value) {
+        case VK_TAB:
+            return gui::Key::TAB;
+        case VK_RETURN:
+            return gui::Key::ENTER;
+        case VK_ESCAPE:
+            return gui::Key::ESCAPE;
+        case VK_SPACE:
+            return gui::Key::SPACE;
+        case VK_LEFT:
+            return gui::Key::LEFT;
+        case VK_RIGHT:
+            return gui::Key::RIGHT;
+        case VK_UP:
+            return gui::Key::UP;
+        case VK_DOWN:
+            return gui::Key::DOWN;
+        case VK_HOME:
+            return gui::Key::HOME;
+        case VK_END:
+            return gui::Key::END;
+        case VK_BACK:
+            return gui::Key::BACKSPACE;
+        case VK_DELETE:
+            return gui::Key::DELETE_KEY;
+        case VK_OEM_PLUS:
+        case VK_ADD:
+            return gui::Key::PLUS;
+        case VK_OEM_MINUS:
+        case VK_SUBTRACT:
+            return gui::Key::MINUS;
+        case 'A':
+            return gui::Key::A;
+        case 'C':
+            return gui::Key::C;
+        case 'D':
+            return gui::Key::D;
+        case 'U':
+            return gui::Key::U;
+        case 'V':
+            return gui::Key::V;
+        case 'X':
+            return gui::Key::X;
+        case 'Z':
+            return gui::Key::Z;
+        default:
+            return gui::Key::UNKNOWN;
+        }
+    }
+
+    [[nodiscard]] auto key_down_kind(LPARAM lparam) -> gui::KeyEventKind {
+        return (lparam & (1ll << 30)) != 0 ? gui::KeyEventKind::REPEAT : gui::KeyEventKind::PRESS;
+    }
+
+    auto push_key_event(AppState* state, gui::Key key, gui::KeyEventKind kind, gui::KeyMods mods)
+        -> void {
+        if (state == nullptr || key == gui::Key::UNKNOWN ||
+            state->input.key_event_count >= MAX_KEY_EVENTS_PER_FRAME) {
+            return;
+        }
+
+        size_t const index = state->input.key_event_count;
+        state->key_events[index] = {.key = key, .kind = kind, .mods = mods};
+        state->input.key_events = state->key_events;
+        state->input.key_event_count += 1u;
+    }
+
+    auto push_text_event(AppState* state, uint32_t codepoint, gui::KeyMods mods) -> void {
+        if (state == nullptr || state->input.key_event_count >= MAX_KEY_EVENTS_PER_FRAME) {
+            return;
+        }
+
+        size_t const index = state->input.key_event_count;
+        state->key_events[index] = {
+            .kind = gui::KeyEventKind::TEXT, .mods = mods, .codepoint = codepoint
+        };
+        state->input.key_events = state->key_events;
+        state->input.key_event_count += 1u;
+    }
+
+    static auto log_render_result(char const* operation, render::Result result) -> void {
+        fmt::eprintf("%s failed: %s\n", operation, render::result_name(result));
+    }
+
+    auto window_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) -> LRESULT {
+        switch (message) {
+        case WM_SIZE:
+            if (global_app_state != nullptr && wparam != SIZE_MINIMIZED) {
+                render::SizeU32 const size = {loword_u32(lparam), hiword_u32(lparam)};
+                if (size.width != 0u && size.height != 0u) {
+                    global_app_state->pending_size = size;
+                    global_app_state->resize_pending = true;
+                    request_redraw(global_app_state);
+                }
+            }
+            return 0;
+        case WM_MOUSEMOVE:
+            if (global_app_state != nullptr) {
+                gui::Vec2 const pos = {lparam_x(lparam), lparam_y(lparam)};
+                gui::Id const hit_id = frame_hit_id(global_app_state->last_frame, pos);
+                bool const needs_frame = global_app_state->redraw_pending ||
+                                         !frame_ready(global_app_state->last_frame) ||
+                                         global_app_state->input.mouse_down[0u] ||
+                                         hit_id.value != global_app_state->mouse_hit_id.value;
+                global_app_state->input.mouse_pos = pos;
+                global_app_state->mouse_hit_id = hit_id;
+                if (needs_frame) {
+                    request_redraw(global_app_state);
+                }
+            }
+            return 0;
+        case WM_LBUTTONDOWN:
+            push_mouse_down(global_app_state, {lparam_x(lparam), lparam_y(lparam)}, false);
+            SetCapture(hwnd);
+            SetFocus(hwnd);
+            return 0;
+        case WM_LBUTTONDBLCLK:
+            push_mouse_down(global_app_state, {lparam_x(lparam), lparam_y(lparam)}, true);
+            SetCapture(hwnd);
+            SetFocus(hwnd);
+            return 0;
+        case WM_LBUTTONUP:
+            if (global_app_state != nullptr) {
+                global_app_state->input.mouse_down[0u] = false;
+                global_app_state->input.mouse_pos = {lparam_x(lparam), lparam_y(lparam)};
+                request_redraw(global_app_state);
+            }
+            if (GetCapture() == hwnd) {
+                ReleaseCapture();
+            }
+            return 0;
+        case WM_MOUSEWHEEL:
+            if (global_app_state != nullptr) {
+                POINT point = {
+                    static_cast<LONG>(lparam_x(lparam)),
+                    static_cast<LONG>(lparam_y(lparam)),
+                };
+                BASE_UNUSED(ScreenToClient(hwnd, &point));
+                global_app_state->input.mouse_pos = {
+                    static_cast<float>(point.x), static_cast<float>(point.y)
+                };
+                global_app_state->input.scroll_delta_y +=
+                    static_cast<float>(GET_WHEEL_DELTA_WPARAM(wparam)) /
+                    static_cast<float>(WHEEL_DELTA) * 72.0f;
+                global_app_state->input.key_mods = current_key_mods();
+                request_redraw(global_app_state);
+            }
+            return 0;
+        case WM_KEYDOWN:
+        case WM_SYSKEYDOWN: {
+            gui::Key const key = key_from_virtual_key(wparam);
+            if (key != gui::Key::UNKNOWN) {
+                push_key_event(global_app_state, key, key_down_kind(lparam), current_key_mods());
+                request_redraw(global_app_state);
+                return 0;
+            }
+            return DefWindowProcW(hwnd, message, wparam, lparam);
+        }
+        case WM_CHAR:
+        case WM_SYSCHAR:
+            if (global_app_state != nullptr && wparam >= 32u && wparam != 127u) {
+                push_text_event(
+                    global_app_state, static_cast<uint32_t>(wparam), current_key_mods()
+                );
+                request_redraw(global_app_state);
+            }
+            return 0;
+        case WM_CLOSE:
+            if (global_app_state != nullptr) {
+                global_app_state->running = false;
+            }
+            DestroyWindow(hwnd);
+            return 0;
+        case WM_DESTROY:
+            PostQuitMessage(0);
+            return 0;
+        default:
+            return DefWindowProcW(hwnd, message, wparam, lparam);
+        }
+    }
+
+    auto apply_window_header_theme(HWND hwnd) -> void {
+        BOOL const dark_mode = TRUE;
+        COLORREF const border_color = WINDOW_HEADER_BACKGROUND;
+        COLORREF const caption_color = WINDOW_HEADER_BACKGROUND;
+        COLORREF const text_color = WINDOW_HEADER_TEXT;
+
+        BASE_UNUSED(DwmSetWindowAttribute(
+            hwnd,
+            DWM_ATTR_USE_IMMERSIVE_DARK_MODE,
+            &dark_mode,
+            static_cast<DWORD>(sizeof(dark_mode))
+        ));
+        BASE_UNUSED(DwmSetWindowAttribute(
+            hwnd, DWM_ATTR_BORDER_COLOR, &border_color, static_cast<DWORD>(sizeof(border_color))
+        ));
+        BASE_UNUSED(DwmSetWindowAttribute(
+            hwnd, DWM_ATTR_CAPTION_COLOR, &caption_color, static_cast<DWORD>(sizeof(caption_color))
+        ));
+        BASE_UNUSED(DwmSetWindowAttribute(
+            hwnd, DWM_ATTR_TEXT_COLOR, &text_color, static_cast<DWORD>(sizeof(text_color))
+        ));
+    }
+
+    [[nodiscard]] auto create_testbed_window(AppState* app_state) -> bool {
+        HINSTANCE const instance = GetModuleHandleW(nullptr);
+        WNDCLASSEXW window_class = {};
+        window_class.cbSize = static_cast<UINT>(sizeof(window_class));
+        window_class.style = CS_HREDRAW | CS_VREDRAW | CS_DBLCLKS;
+        window_class.lpfnWndProc = window_proc;
+        window_class.hInstance = instance;
+        window_class.hCursor = LoadCursorW(nullptr, MAKEINTRESOURCEW(32512));
+        window_class.lpszClassName = WINDOW_CLASS_NAME;
+
+        if (RegisterClassExW(&window_class) == 0u) {
+            fmt::eprintf("RegisterClassExW failed: %lu\n", GetLastError());
+            return false;
+        }
+
+        DWORD const style = WS_OVERLAPPEDWINDOW;
+        RECT rect = {};
+        rect.right = static_cast<LONG>(INITIAL_WINDOW_WIDTH);
+        rect.bottom = static_cast<LONG>(INITIAL_WINDOW_HEIGHT);
+        if (!AdjustWindowRect(&rect, style, FALSE)) {
+            fmt::eprintf("AdjustWindowRect failed: %lu\n", GetLastError());
+            UnregisterClassW(WINDOW_CLASS_NAME, instance);
+            return false;
+        }
+
+        HWND const hwnd = CreateWindowExW(
+            0u,
+            WINDOW_CLASS_NAME,
+            L"gui_framework code editor testbed",
+            style,
+            CW_USEDEFAULT,
+            CW_USEDEFAULT,
+            rect.right - rect.left,
+            rect.bottom - rect.top,
+            nullptr,
+            nullptr,
+            instance,
+            nullptr
+        );
+        if (hwnd == nullptr) {
+            fmt::eprintf("CreateWindowExW failed: %lu\n", GetLastError());
+            UnregisterClassW(WINDOW_CLASS_NAME, instance);
+            return false;
+        }
+
+        apply_window_header_theme(hwnd);
+        app_state->hwnd = hwnd;
+        ShowWindow(hwnd, SW_SHOW);
+        UpdateWindow(hwnd);
+        return true;
+    }
+
+    auto destroy_testbed_window(AppState* app_state) -> void {
+        if (app_state->hwnd != nullptr && IsWindow(app_state->hwnd)) {
+            DestroyWindow(app_state->hwnd);
+        }
+        app_state->hwnd = nullptr;
+        UnregisterClassW(WINDOW_CLASS_NAME, GetModuleHandleW(nullptr));
+    }
+
+    [[nodiscard]] auto open_read_file(StrRef path) -> std::FILE* {
+        std::FILE* file = nullptr;
+#if defined(_MSC_VER)
+        if (fopen_s(&file, path.data(), "rb") != 0) {
+            return nullptr;
+        }
+#else
+        file = std::fopen(path.data(), "rb");
+#endif
+        return file;
+    }
+
+    [[nodiscard]] auto read_file_text(Arena& arena, StrRef path, StrRef& out_text) -> bool {
+        std::FILE* const file = open_read_file(path);
+        if (file == nullptr) {
+            return false;
+        }
+        bool ok = std::fseek(file, 0, SEEK_END) == 0;
+        long const size = ok ? std::ftell(file) : -1l;
+        ok = ok && size >= 0l && std::fseek(file, 0, SEEK_SET) == 0;
+        if (ok && size != 0l) {
+            char* const text = arena_alloc<char>(arena, static_cast<size_t>(size));
+            size_t const read_size = std::fread(text, 1u, static_cast<size_t>(size), file);
+            ok = read_size == static_cast<size_t>(size);
+            out_text = ok ? StrRef(text, read_size) : StrRef();
+        }
+        std::fclose(file);
+        return ok;
+    }
+
+    [[nodiscard]] auto path_without_trailing_slash(StrRef path) -> StrRef {
+        while (path.size() > 1u && (path.back() == '\\' || path.back() == '/') &&
+               !(path.size() == 3u && path[1u] == ':')) {
+            path.remove_suffix(1u);
+        }
+        return path;
+    }
+
+    [[nodiscard]] auto path_leaf(StrRef path) -> StrRef {
+        path = path_without_trailing_slash(path);
+        size_t const slash = path.find_last_of("\\/");
+        if (slash == StrRef::NPOS) {
+            return path;
+        }
+        StrRef const leaf = path.substr(slash + 1u);
+        return leaf.empty() ? path : leaf;
+    }
+
+    [[nodiscard]] auto path_parent(StrRef path) -> StrRef {
+        path = path_without_trailing_slash(path);
+        size_t const slash = path.find_last_of("\\/");
+        if (slash == StrRef::NPOS) {
+            return ".";
+        }
+        if (slash == 0u) {
+            return path.prefix(1u);
+        }
+        if (slash == 2u && path[1u] == ':') {
+            return path.prefix(3u);
+        }
+        return path.prefix(slash);
+    }
+
+    [[nodiscard]] auto path_is_directory(StrRef path) -> bool {
+        DWORD const attributes = GetFileAttributesA(path.data());
+        return attributes != INVALID_FILE_ATTRIBUTES &&
+               (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0u;
+    }
+
+    [[nodiscard]] auto full_path_cstr(Arena& arena, StrRef path) -> StrRef {
+        char buffer[MAX_PATH * 4] = {};
+        DWORD const size =
+            GetFullPathNameA(path.data(), static_cast<DWORD>(sizeof(buffer)), buffer, nullptr);
+        return size != 0u && size < sizeof(buffer) ? arena_copy_cstr(arena, StrRef(buffer, size))
+                                                   : StrRef();
+    }
+
+    [[nodiscard]] auto append_buffer(char* buffer, size_t capacity, size_t& size, StrRef text)
+        -> bool {
+        if (text.size() >= capacity || size > capacity - text.size() - 1u) {
+            return false;
+        }
+        if (!text.empty()) {
+            std::memcpy(buffer + size, text.data(), text.size());
+            size += text.size();
+        }
+        buffer[size] = '\0';
+        return true;
+    }
+
+    [[nodiscard]] auto child_path_cstr(Arena& arena, StrRef directory, StrRef name) -> StrRef {
+        char path[MAX_PATH * 4] = {};
+        size_t size = 0u;
+        StrRef const trimmed_directory = path_without_trailing_slash(directory);
+        if (!append_buffer(path, sizeof(path), size, trimmed_directory)) {
+            return {};
+        }
+        if (!trimmed_directory.empty() && !trimmed_directory.ends_with('\\') &&
+            !trimmed_directory.ends_with('/')) {
+            if (!append_buffer(path, sizeof(path), size, "\\")) {
+                return {};
+            }
+        }
+        if (!append_buffer(path, sizeof(path), size, name)) {
+            return {};
+        }
+        return arena_copy_cstr(arena, StrRef(path, size));
+    }
+
+    [[nodiscard]] auto append_tree_entry(
+        Arena& arena,
+        Vec<FileTreeEntry>& files,
+        StrRef directory,
+        StrRef relative_directory,
+        StrRef name,
+        size_t depth,
+        bool is_directory
+    ) -> bool {
+        StrRef const path = child_path_cstr(arena, directory, name);
+        StrRef const relative_path = child_path_cstr(arena, relative_directory, name);
+        return !path.empty() && !relative_path.empty() &&
+               files.push_back({
+                   .name = arena_copy_cstr(arena, name),
+                   .path = path,
+                   .relative_path = relative_path,
+                   .depth = depth,
+                   .is_directory = is_directory,
+               });
+    }
+
+    [[nodiscard]] auto read_directory_files(
+        Arena& arena,
+        StrRef directory,
+        StrRef relative_directory,
+        Vec<FileTreeEntry>& files,
+        size_t depth
+    ) -> bool {
+        StrRef const directory_cstr =
+            arena_copy_cstr(arena, path_without_trailing_slash(directory));
+        StrRef const search_path = child_path_cstr(arena, directory_cstr, "*");
+        if (search_path.empty()) {
+            return false;
+        }
+
+        Vec<FileTreeEntry> entries = {};
+        if (!entries.init(32u, arena.resource())) {
+            return false;
+        }
+
+        WIN32_FIND_DATAA find_data = {};
+        HANDLE const find = FindFirstFileA(search_path.data(), &find_data);
+        if (find == INVALID_HANDLE_VALUE) {
+            return false;
+        }
+
+        do {
+            StrRef const name(find_data.cFileName);
+            if (name == "." || name == "..") {
+                continue;
+            }
+            bool const is_directory = (find_data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0u;
+            if (!append_tree_entry(
+                    arena, entries, directory_cstr, relative_directory, name, depth, is_directory
+                )) {
+                FindClose(find);
+                return false;
+            }
+        } while (FindNextFileA(find, &find_data));
+
+        FindClose(find);
+        if (entries.size() > 1u) {
+            std::sort(
+                entries.begin(), entries.end(), [](FileTreeEntry const& a, FileTreeEntry const& b) {
+                    if (a.is_directory != b.is_directory) {
+                        return a.is_directory;
+                    }
+                    return a.name.compare_ignore_ascii_case(b.name) < 0;
+                }
+            );
+        }
+
+        for (FileTreeEntry entry : entries) {
+            StrRef const path = entry.path;
+            if (!files.push_back(entry)) {
+                return false;
+            }
+            if (entry.is_directory) {
+                BASE_UNUSED(
+                    read_directory_files(arena, path, entry.relative_path, files, depth + 1u)
+                );
+            }
+        }
+        return true;
+    }
+
+    [[nodiscard]] auto prepare_launch(Arena& arena, StrRef initial_path, LaunchDesc& launch)
+        -> bool {
+        if (!launch.tree_files.init(32u, arena.resource())) {
+            return false;
+        }
+        if (initial_path.empty()) {
+            return true;
+        }
+
+        StrRef const full_path = full_path_cstr(arena, initial_path);
+        if (full_path.empty()) {
+            return false;
+        }
+
+        StrRef const path = path_without_trailing_slash(full_path);
+        if (path_is_directory(full_path)) {
+            launch.tree_root_name = arena_copy_str(arena, path_leaf(path));
+            launch.initial_sidebar_visible = true;
+            return read_directory_files(arena, path, "", launch.tree_files, 0u);
+        }
+
+        if (!read_file_text(arena, full_path, launch.initial_text)) {
+            fmt::eprintf("code_editor: failed to read %s\n", full_path);
+            return false;
+        }
+        launch.initial_text = editor_display_text(arena, launch.initial_text);
+
+        launch.initial_file_name = arena_copy_str(arena, path_leaf(path));
+        launch.initial_file_path = path;
+        StrRef const parent = path_parent(path);
+        if (read_directory_files(arena, parent, "", launch.tree_files, 0u)) {
+            launch.tree_root_name = arena_copy_str(arena, path_leaf(parent));
+        }
+        return true;
+    }
+
+    auto run_windowed(StrRef initial_path) -> int {
+        Arena app_arena = {};
+        app_arena.init();
+
+        LaunchDesc launch = {};
+        if (!prepare_launch(app_arena, initial_path, launch)) {
+            return 1;
+        }
+
+        AppState app_state = {};
+        global_app_state = &app_state;
+        if (!create_testbed_window(&app_state)) {
+            global_app_state = nullptr;
+            return 1;
+        }
+
+        render::Context render_context = {};
+        render::ContextDesc context_desc = {};
+        context_desc.backend = render::Backend::D3D11;
+#if BASE_DEBUG
+        context_desc.enable_debug_layer = true;
+#endif
+        render::Result result = render::create_context(app_arena, context_desc, render_context);
+        if (render::result_failed(result)) {
+            log_render_result("render::create_context", result);
+            destroy_testbed_window(&app_state);
+            global_app_state = nullptr;
+            return 1;
+        }
+
+        render::Window render_window = {};
+        render::WindowDesc window_desc = {};
+        window_desc.native_window = app_state.hwnd;
+        window_desc.size = {INITIAL_WINDOW_WIDTH, INITIAL_WINDOW_HEIGHT};
+        window_desc.buffer_count = 2u;
+        window_desc.present_mode = render::PresentMode::VSYNC;
+
+        result = render::create_window(app_arena, render_context, window_desc, render_window);
+        if (render::result_failed(result)) {
+            log_render_result("render::create_window", result);
+            render::destroy_context(render_context);
+            destroy_testbed_window(&app_state);
+            global_app_state = nullptr;
+            return 1;
+        }
+
+        ModuleRuntimeContext module_context = {
+            .render_context = render_context,
+            .native_window = app_state.hwnd,
+            .initial_text = launch.initial_text,
+            .initial_file_name = launch.initial_file_name,
+            .initial_file_path = launch.initial_file_path,
+            .tree_root_name = launch.tree_root_name,
+            .tree_files = launch.tree_files.slice(),
+            .initial_sidebar_visible = launch.initial_sidebar_visible,
+        };
+        gui::HotReloadDesc module_desc = hot_reload_desc(&module_context);
+        gui::HotReloadAppModule module = {};
+        gui::init_hot_reload_app_module(&module, module_desc, app_arena);
+#if BASE_DEBUG
+        bool const module_loaded = gui::load_hot_reload_app_module(&module, module_desc, nullptr);
+#else
+        bool const module_loaded =
+            gui::load_hot_reload_app_module(&module, module_desc, code_editor_module_api());
+#endif
+        if (!module_loaded) {
+            gui::destroy_hot_reload_app_module(&module, module_desc);
+            render::destroy_window(render_window);
+            render::destroy_context(render_context);
+            destroy_testbed_window(&app_state);
+            global_app_state = nullptr;
+            return 1;
+        }
+
+        uint64_t previous_ticks = GetTickCount64();
+        while (app_state.running) {
+            MSG message = {};
+            while (PeekMessageW(&message, nullptr, 0u, 0u, PM_REMOVE)) {
+                if (message.message == WM_QUIT) {
+                    app_state.running = false;
+                    break;
+                }
+                TranslateMessage(&message);
+                DispatchMessageW(&message);
+            }
+            if (!app_state.running) {
+                break;
+            }
+
+            if (app_state.resize_pending) {
+                result =
+                    render::resize_window(render_context, render_window, app_state.pending_size);
+                if (render::result_failed(result)) {
+                    log_render_result("render::resize_window", result);
+                    break;
+                }
+                app_state.resize_pending = false;
+                app_state.redraw_pending = true;
+            }
+
+            if (gui::update_hot_reload_app_module(&module, module_desc)) {
+                app_state.last_frame = {};
+                app_state.mouse_hit_id = {};
+                app_state.redraw_pending = true;
+            }
+
+            if (!app_state.redraw_pending) {
+#if BASE_DEBUG
+                DWORD const wait_ms = HOT_RELOAD_POLL_MS;
+#else
+                DWORD const wait_ms = INFINITE;
+#endif
+                BASE_UNUSED(MsgWaitForMultipleObjectsEx(
+                    0u, nullptr, wait_ms, QS_ALLINPUT, MWMO_INPUTAVAILABLE
+                ));
+                continue;
+            }
+
+            uint64_t const ticks = GetTickCount64();
+            float const delta_time = static_cast<float>(ticks - previous_ticks) * 0.001f;
+            previous_ticks = ticks;
+            app_state.redraw_pending = false;
+            app_state.input.key_mods = current_key_mods();
+
+            FrameResult const frame_result = gui::hot_reload_app_module_api(module)->render_frame(
+                gui::hot_reload_app_module_storage(module),
+                render_context,
+                render_window,
+                render::window_size(render_window),
+                app_state.input,
+                delta_time
+            );
+            app_state.last_frame = frame_result.frame;
+            app_state.mouse_hit_id = frame_result.mouse_hit_id;
+            if (render::result_failed(frame_result.render_result)) {
+                log_render_result("draw::render_commands_to_window", frame_result.render_result);
+                break;
+            }
+
+            result = render::present_window(render_context, render_window);
+            app_state.redraw_pending = frame_result.redraw_pending;
+            app_state.input.scroll_delta_y = 0.0f;
+            app_state.input.mouse_double_clicked[0u] = false;
+            app_state.input.mouse_triple_clicked[0u] = false;
+            app_state.input.key_events = app_state.key_events;
+            app_state.input.key_event_count = 0u;
+            if (result == render::Result::OCCLUDED) {
+                Sleep(16u);
+            } else if (render::result_failed(result)) {
+                log_render_result("render::present_window", result);
+                break;
+            }
+        }
+
+        gui::destroy_hot_reload_app_module(&module, module_desc);
+        render::destroy_window(render_window);
+        render::destroy_context(render_context);
+        destroy_testbed_window(&app_state);
+        global_app_state = nullptr;
+        return 0;
+    }
+#endif
+
+} // namespace code_editor
+
+auto main(int argc, char** argv) -> int {
+    base::install_crash_handlers();
+
+    if (argc > 2) {
+        fmt::eprintf("usage: %s [path]\n", argv[0]);
+        shutdown_thread_temp_arenas();
+        return 1;
+    }
+    StrRef const initial_path = argc == 2 ? StrRef(argv[1]) : StrRef();
+
+#if defined(_WIN32)
+    int const result = code_editor::run_windowed(initial_path);
+#else
+    BASE_UNUSED(argc);
+    BASE_UNUSED(argv);
+    BASE_UNUSED(initial_path);
+    int const result = code_editor::run_console_fallback();
+#endif
+    shutdown_thread_temp_arenas();
+    return result;
+}

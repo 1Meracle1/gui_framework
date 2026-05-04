@@ -38,6 +38,7 @@ target_link_libraries(gui_framework_info PRIVATE gui::gui)
 cpp_configure_target(gui_framework_info)
 
 add_subdirectory(examples/ui_api_testbed)
+add_subdirectory(examples/code_editor)
 
 if(WIN32)
     add_subdirectory(examples/repository_ui_testbed)
@@ -174,12 +175,35 @@ if(BUILD_TESTS)
     target_link_libraries(draw_tests PRIVATE draw::draw gui_test)
     cpp_configure_target(draw_tests)
 
+    add_executable(code_editor_model_tests
+        tests/code_editor/editor_model_tests.cpp
+        examples/code_editor/editor_model.cpp
+    )
+    target_include_directories(code_editor_model_tests PRIVATE
+        "${PROJECT_SOURCE_DIR}/examples/code_editor"
+    )
+    target_link_libraries(code_editor_model_tests PRIVATE gui::gui gui_test)
+    cpp_configure_target(code_editor_model_tests)
+
+    add_executable(code_editor_syntax_tests
+        tests/code_editor/syntax_tests.cpp
+        examples/code_editor/syntax.cpp
+        examples/code_editor/cpp_tokenizer.cpp
+    )
+    target_include_directories(code_editor_syntax_tests PRIVATE
+        "${PROJECT_SOURCE_DIR}/examples/code_editor"
+    )
+    target_link_libraries(code_editor_syntax_tests PRIVATE gui::gui gui_test)
+    cpp_configure_target(code_editor_syntax_tests)
+
     add_test(NAME base_tests COMMAND base_tests)
     add_test(NAME gui_tests COMMAND gui_tests)
     add_test(NAME render_tests COMMAND render_tests)
     add_test(NAME font_provider_tests COMMAND font_provider_tests)
     add_test(NAME font_cache_tests COMMAND font_cache_tests)
     add_test(NAME draw_tests COMMAND draw_tests)
+    add_test(NAME code_editor_model_tests COMMAND code_editor_model_tests)
+    add_test(NAME code_editor_syntax_tests COMMAND code_editor_syntax_tests)
     if(WIN32)
         add_test(NAME render_dx12_clear_smoke COMMAND render_dx12_clear_smoke)
     endif()

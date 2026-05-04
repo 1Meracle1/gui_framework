@@ -491,8 +491,8 @@ namespace gui::draw {
         write_text_vertices(RenderVertex* vertices, RenderTarget target, TextCommand const& command)
             -> void {
             font_cache::TextRun const& run = command.run;
-            float const x0 = command.position.x;
-            float const y0 = command.position.y;
+            float const x0 = std::round(command.position.x);
+            float const y0 = std::round(command.position.y);
             float const x1 = x0 + static_cast<float>(run.size.width);
             float const y1 = y0 + static_cast<float>(run.size.height);
             Vec2 const p0 = target_position(target, transform_point(command.transform, {x0, y0}));

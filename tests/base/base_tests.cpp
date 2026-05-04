@@ -9,7 +9,9 @@
 #include <base/slice.h>
 #include <base/small_array.h>
 #include <base/str_ref.h>
+#include <base/strconv.h>
 #include <base/string_buffer.h>
+#include <base/unicode.h>
 #include <base/vec.h>
 #include <base/xar.h>
 #include <cstddef>
@@ -748,6 +750,21 @@ namespace {
         TEST_EXPECT(context, other != nullptr && *other == 3);
     }
 
+    TEST_CASE(hash_map_initializes_from_key_value_pairs) {
+        HashMap<StrRef, int> map;
+
+        TEST_EXPECT(context, map.init({{"panel", 7}, {"dock", 3}, {"panel", 9}}));
+
+        int const* const panel = map.get("panel");
+        int const* const dock = map.get("dock");
+
+        TEST_EXPECT(context, map.size() == 2u);
+        TEST_EXPECT(context, panel != nullptr);
+        TEST_EXPECT(context, panel != nullptr && *panel == 9);
+        TEST_EXPECT(context, dock != nullptr);
+        TEST_EXPECT(context, dock != nullptr && *dock == 3);
+    }
+
     TEST_CASE(hash_map_erases_tombstones_and_reuses_collision_slots) {
         HashMap<int, int, CollidingIntHasher> map;
 
@@ -920,6 +937,57 @@ namespace {
         TEST_EXPECT(context, word_parts[0] == "alpha");
         TEST_EXPECT(context, word_parts[1] == "beta");
         TEST_EXPECT(context, word_parts[2] == "gamma");
+    }
+
+    TEST_CASE(utf8_helpers_validate_decode_and_encode_codepoints) {
+        StrRef const euro = "\xe2\x82\xac";
+        base::Utf8DecodeResult const decoded = base::utf8_decode(euro, 0u);
+
+        TEST_EXPECT(context, decoded.ok);
+        TEST_EXPECT(context, decoded.codepoint == 0x20acu);
+        TEST_EXPECT(context, decoded.size == 3u);
+        TEST_EXPECT(context, base::utf8_codepoint_valid(euro, 0u));
+        TEST_EXPECT(context, base::utf8_codepoint_size(euro, 0u) == 3u);
+        TEST_EXPECT(context, !base::utf8_codepoint_valid("\xc0\x80", 0u));
+        TEST_EXPECT(context, !base::utf8_codepoint_valid("\xed\xa0\x80", 0u));
+
+        char buffer[4] = {};
+        size_t const size = base::utf8_from_codepoint(0x1f600u, buffer);
+
+        TEST_EXPECT(context, size == 4u);
+        TEST_EXPECT(context, StrRef(buffer, size) == "\xf0\x9f\x98\x80");
+        TEST_EXPECT(context, base::utf8_from_codepoint(0xd800u, buffer) == 0u);
+    }
+
+    TEST_CASE(string_number_conversions_parse_and_write_exact_values) {
+        int64_t signed_value = 0;
+        uint64_t unsigned_value = 0u;
+        float float_value = 0.0f;
+        double double_value = 0.0;
+        char buffer[64] = {};
+
+        TEST_EXPECT(context, base::string_to_i64("-42", signed_value));
+        TEST_EXPECT(context, signed_value == -42);
+        TEST_EXPECT(context, !base::string_to_i64("42x", signed_value));
+
+        TEST_EXPECT(context, base::string_to_u64("123456789", unsigned_value));
+        TEST_EXPECT(context, unsigned_value == 123456789u);
+        TEST_EXPECT(context, !base::string_to_u64("-1", unsigned_value));
+
+        TEST_EXPECT(context, base::string_to_f32("-2.25", float_value));
+        TEST_EXPECT(context, float_value == -2.25f);
+        TEST_EXPECT(context, base::string_to_f64("12.5", double_value));
+        TEST_EXPECT(context, double_value == 12.5);
+        TEST_EXPECT(context, !base::string_to_f32("1.0x", float_value));
+
+        TEST_EXPECT(context, base::i64_to_string(buffer, sizeof(buffer), -99) == "-99");
+        TEST_EXPECT(context, base::u64_to_string(buffer, sizeof(buffer), 123u) == "123");
+
+        StrRef const float_text = base::f32_to_string(buffer, sizeof(buffer), 12.5f);
+        TEST_EXPECT(context, !float_text.empty());
+        TEST_EXPECT(context, base::string_to_f32(float_text, float_value));
+        TEST_EXPECT(context, float_value == 12.5f);
+        TEST_EXPECT(context, base::f64_to_string(buffer, 2u, 12345.0).empty());
     }
 
     TEST_CASE(string_buffer_writes_and_views_dynamic_text) {

@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <initializer_list>
 #include <limits>
 #include <memory_resource>
 #include <type_traits>
@@ -256,6 +257,11 @@ class HashMap final {
         bool inserted = false;
     };
 
+    struct Pair {
+        Key key = {};
+        Value value = {};
+    };
+
     class Iterator {
       public:
         Iterator() = default;
@@ -396,6 +402,19 @@ class HashMap final {
         }
 
         return reserve(capacity);
+    }
+
+    [[nodiscard]] auto init(std::initializer_list<Pair> pairs, MemoryResource* resource = nullptr)
+        -> bool {
+        if (!init(pairs.size(), resource)) {
+            return false;
+        }
+        for (Pair const& pair : pairs) {
+            if (set(pair.key, pair.value) == nullptr) {
+                return false;
+            }
+        }
+        return true;
     }
 
     auto destroy() -> void {

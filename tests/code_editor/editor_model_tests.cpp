@@ -1,0 +1,1261 @@
+#include "editor_model.h"
+
+#include <base/string_buffer.h>
+#include <test/test.h>
+
+namespace {
+
+    struct ClipboardCapture {
+        char text[128] = {};
+        size_t text_size = 0u;
+        size_t call_count = 0u;
+        size_t read_count = 0u;
+    };
+
+    auto capture_clipboard_text(void* user_data, StrRef text) -> void {
+        auto* const clipboard = static_cast<ClipboardCapture*>(user_data);
+        clipboard->text_size = text.copy_to(clipboard->text, sizeof(clipboard->text));
+        clipboard->call_count += 1u;
+    }
+
+    auto read_clipboard_text(void* user_data, Arena&) -> StrRef {
+        auto* const clipboard = static_cast<ClipboardCapture*>(user_data);
+        clipboard->read_count += 1u;
+        return StrRef(clipboard->text, clipboard->text_size);
+    }
+
+    auto append_lines(StringBuffer& buffer, size_t count) -> void {
+        for (size_t index = 0u; index < count; ++index) {
+            (void)buffer.write_string("line\n");
+        }
+    }
+
+    auto send_text(
+        code_editor::EditorState& editor,
+        StrRef text,
+        gui::KeyMods mods = gui::KEY_MOD_NONE,
+        code_editor::EditorClipboard clipboard = {}
+    ) -> void {
+        for (char ch : text) {
+            gui::KeyEvent const event = {
+                .kind = gui::KeyEventKind::TEXT,
+                .mods = mods,
+                .codepoint = static_cast<uint32_t>(static_cast<unsigned char>(ch)),
+            };
+            gui::InputState const input = {.key_events = &event, .key_event_count = 1u};
+            code_editor::process_editor_input(editor, input, clipboard);
+        }
+    }
+
+    auto press_key(
+        code_editor::EditorState& editor,
+        gui::Key key,
+        gui::KeyMods mods = gui::KEY_MOD_NONE,
+        code_editor::EditorClipboard clipboard = {}
+    ) -> void {
+        gui::KeyEvent const event = {.key = key, .kind = gui::KeyEventKind::PRESS, .mods = mods};
+        gui::InputState const input = {.key_events = &event, .key_event_count = 1u};
+        code_editor::process_editor_input(editor, input, clipboard);
+    }
+
+    auto select_editor_range(
+        code_editor::EditorState& editor,
+        size_t start_line,
+        size_t start_column,
+        size_t end_line,
+        size_t end_column,
+        code_editor::EditorSelectionMode mode = code_editor::EditorSelectionMode::NONE
+    ) -> void {
+        editor.selection_anchor_line = start_line;
+        editor.selection_anchor_column = start_column;
+        editor.cursor_line = end_line;
+        editor.cursor_column = end_column;
+        editor.preferred_column = end_column;
+        editor.selection_mode = mode;
+        editor.selection_active = true;
+    }
+
+    TEST_CASE(editor_loads_more_than_old_line_cap) {
+        Arena arena = {};
+        arena.init();
+
+        StringBuffer text = {};
+        TEST_EXPECT(context, text.init(2048u, arena.resource()));
+        append_lines(text, 160u);
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, text.str());
+
+        TEST_EXPECT(context, code_editor::editor_line_count(editor) == 160u);
+        TEST_EXPECT(
+            context, code_editor::editor_line_text(code_editor::editor_line(editor, 159u)) == "line"
+        );
+    }
+
+    TEST_CASE(editor_default_file_is_scratch) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "");
+
+        TEST_EXPECT(context, editor.current_file_name == code_editor::SCRATCH_FILE_NAME);
+        TEST_EXPECT(context, editor.current_file_path.empty());
+    }
+
+    TEST_CASE(editor_loads_and_edits_line_past_old_column_cap) {
+        Arena arena = {};
+        arena.init();
+
+        StringBuffer text = {};
+        TEST_EXPECT(context, text.init(320u, arena.resource()));
+        TEST_EXPECT(context, text.write_fill('a', 256u) == 256u);
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, text.str());
+        editor.cursor_column = code_editor::editor_line(editor, 0u).size;
+        editor.preferred_column = editor.cursor_column;
+        editor.insert_mode = true;
+        send_text(editor, "z");
+
+        StrRef const line = code_editor::editor_line_text(code_editor::editor_line(editor, 0u));
+        TEST_EXPECT(context, line.size() == 257u);
+        TEST_EXPECT(context, line[256u] == 'z');
+    }
+
+    TEST_CASE(editor_inserts_lines_past_old_line_cap) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "");
+        editor.insert_mode = true;
+        for (size_t index = 0u; index < 130u; ++index) {
+            press_key(editor, gui::Key::ENTER);
+        }
+
+        TEST_EXPECT(context, code_editor::editor_line_count(editor) == 131u);
+        TEST_EXPECT(context, editor.cursor_line == 130u);
+    }
+
+    TEST_CASE(editor_backspace_joins_long_lines) {
+        Arena arena = {};
+        arena.init();
+
+        StringBuffer text = {};
+        TEST_EXPECT(context, text.init(384u, arena.resource()));
+        TEST_EXPECT(context, text.write_fill('a', 160u) == 160u);
+        TEST_EXPECT(context, text.write_byte('\n') == 1u);
+        TEST_EXPECT(context, text.write_fill('b', 160u) == 160u);
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, text.str());
+        editor.cursor_line = 1u;
+        editor.cursor_column = 0u;
+        editor.insert_mode = true;
+        press_key(editor, gui::Key::BACKSPACE);
+
+        StrRef const line = code_editor::editor_line_text(code_editor::editor_line(editor, 0u));
+        TEST_EXPECT(context, code_editor::editor_line_count(editor) == 1u);
+        TEST_EXPECT(context, line.size() == 320u);
+        TEST_EXPECT(context, line[159u] == 'a');
+        TEST_EXPECT(context, line[160u] == 'b');
+        TEST_EXPECT(context, editor.cursor_column == 160u);
+    }
+
+    TEST_CASE(editor_clamps_cursor_after_delete_and_long_edit) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "short\nlonger");
+        editor.cursor_line = 1u;
+        editor.cursor_column = 200u;
+        send_text(editor, "dd");
+
+        TEST_EXPECT(context, code_editor::editor_line_count(editor) == 1u);
+        TEST_EXPECT(context, editor.cursor_line == 0u);
+        TEST_EXPECT(context, editor.cursor_column == 5u);
+
+        editor.insert_mode = true;
+        press_key(editor, gui::Key::BACKSPACE);
+
+        TEST_EXPECT(
+            context, code_editor::editor_line_text(code_editor::editor_line(editor, 0u)) == "shor"
+        );
+        TEST_EXPECT(context, editor.cursor_column == 4u);
+    }
+
+    TEST_CASE(editor_toggles_sidebar_with_leader_e) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "");
+
+        TEST_EXPECT(context, !editor.sidebar_visible);
+        press_key(editor, gui::Key::SPACE);
+        send_text(editor, " e");
+        TEST_EXPECT(context, editor.sidebar_visible);
+        send_text(editor, " e");
+        TEST_EXPECT(context, !editor.sidebar_visible);
+    }
+
+    TEST_CASE(editor_insert_mode_space_e_does_not_toggle_sidebar) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "");
+        editor.insert_mode = true;
+        send_text(editor, " e");
+
+        TEST_EXPECT(context, !editor.sidebar_visible);
+        TEST_EXPECT(
+            context, code_editor::editor_line_text(code_editor::editor_line(editor, 0u)) == " e"
+        );
+    }
+
+    TEST_CASE(editor_space_f_opens_file_search_over_indexed_files) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::FileTreeEntry tree[] = {
+            {
+                .name = "src",
+                .path = "C:\\repo\\src",
+                .relative_path = "src",
+                .is_directory = true,
+            },
+            {
+                .name = "font_cache.cpp",
+                .path = "C:\\repo\\src\\font_cache.cpp",
+                .relative_path = "src\\font_cache.cpp",
+            },
+            {
+                .name = "app.cpp",
+                .path = "C:\\repo\\src\\app.cpp",
+                .relative_path = "src\\app.cpp",
+            },
+        };
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "");
+        editor.tree_files = Slice<code_editor::FileTreeEntry>(tree);
+
+        send_text(editor, " f");
+        TEST_EXPECT(context, editor.file_search_open);
+        send_text(editor, "fc");
+
+        code_editor::FileSearchMatch matches[code_editor::FILE_SEARCH_RESULT_LIMIT] = {};
+        size_t const count = code_editor::collect_file_search_matches(editor, matches);
+        TEST_EXPECT(context, code_editor::editor_file_search_text(editor) == "fc");
+        TEST_EXPECT(context, count == 1u);
+        TEST_EXPECT(context, matches[0u].tree_file_index == 1u);
+        TEST_EXPECT(
+            context, code_editor::editor_line_text(code_editor::editor_line(editor, 0u)).empty()
+        );
+
+        press_key(editor, gui::Key::ENTER);
+        TEST_EXPECT(context, !editor.file_search_open);
+        TEST_EXPECT(context, editor.file_search_open_file == 1u);
+    }
+
+    TEST_CASE(editor_ctrl_plus_minus_changes_font_size) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "");
+
+        TEST_EXPECT(context, editor.font_size == code_editor::EDITOR_FONT_SIZE);
+        press_key(editor, gui::Key::PLUS, gui::KEY_MOD_CTRL);
+        TEST_EXPECT(context, editor.font_size == code_editor::EDITOR_FONT_SIZE + 1.0f);
+        TEST_EXPECT(
+            context,
+            code_editor::editor_scaled_font_size(editor, 12.0f) >
+                code_editor::editor_scaled_font_size(code_editor::EditorState{}, 12.0f)
+        );
+        press_key(editor, gui::Key::MINUS, gui::KEY_MOD_CTRL);
+        TEST_EXPECT(context, editor.font_size == code_editor::EDITOR_FONT_SIZE);
+    }
+
+    TEST_CASE(editor_ctrl_plus_minus_text_events_do_not_insert_text) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "");
+        editor.insert_mode = true;
+
+        send_text(editor, "+-=", gui::KEY_MOD_CTRL);
+
+        TEST_EXPECT(
+            context, code_editor::editor_line_text(code_editor::editor_line(editor, 0u)).empty()
+        );
+    }
+
+    TEST_CASE(editor_shift_right_selects_text_and_insert_replaces_it) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "abcd");
+        editor.insert_mode = true;
+        editor.cursor_column = 1u;
+        editor.preferred_column = 1u;
+
+        press_key(editor, gui::Key::RIGHT, gui::KEY_MOD_SHIFT);
+        press_key(editor, gui::Key::RIGHT, gui::KEY_MOD_SHIFT);
+
+        code_editor::EditorSelectionRange const selection =
+            code_editor::editor_selection_range(editor);
+        TEST_EXPECT(context, selection.active);
+        TEST_EXPECT(context, selection.start_line == 0u);
+        TEST_EXPECT(context, selection.start_column == 1u);
+        TEST_EXPECT(context, selection.end_line == 0u);
+        TEST_EXPECT(context, selection.end_column == 3u);
+
+        send_text(editor, "Z");
+
+        TEST_EXPECT(
+            context, code_editor::editor_line_text(code_editor::editor_line(editor, 0u)) == "aZd"
+        );
+        TEST_EXPECT(context, editor.cursor_column == 2u);
+        TEST_EXPECT(context, !code_editor::editor_selection_range(editor).active);
+    }
+
+    TEST_CASE(editor_left_right_cross_line_boundaries) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "abc\ndef");
+        editor.insert_mode = true;
+        editor.cursor_line = 1u;
+        editor.cursor_column = 0u;
+
+        press_key(editor, gui::Key::LEFT);
+
+        TEST_EXPECT(context, editor.cursor_line == 0u);
+        TEST_EXPECT(context, editor.cursor_column == 3u);
+
+        press_key(editor, gui::Key::RIGHT);
+
+        TEST_EXPECT(context, editor.cursor_line == 1u);
+        TEST_EXPECT(context, editor.cursor_column == 0u);
+    }
+
+    TEST_CASE(editor_ctrl_c_copies_selection) {
+        Arena arena = {};
+        arena.init();
+
+        ClipboardCapture clipboard = {};
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "alpha beta");
+        editor.insert_mode = true;
+        editor.cursor_column = code_editor::editor_line(editor, 0u).size;
+        editor.preferred_column = editor.cursor_column;
+
+        for (size_t index = 0u; index < 4u; ++index) {
+            press_key(editor, gui::Key::LEFT, gui::KEY_MOD_SHIFT);
+        }
+        press_key(
+            editor,
+            gui::Key::C,
+            gui::KEY_MOD_CTRL,
+            {.set_clipboard_text = capture_clipboard_text, .user_data = &clipboard}
+        );
+
+        TEST_EXPECT(context, clipboard.call_count == 1u);
+        TEST_EXPECT(context, StrRef(clipboard.text, clipboard.text_size) == "beta");
+        TEST_EXPECT(
+            context,
+            code_editor::editor_line_text(code_editor::editor_line(editor, 0u)) == "alpha beta"
+        );
+    }
+
+    TEST_CASE(editor_ctrl_v_pastes_multiline_clipboard_text) {
+        Arena arena = {};
+        arena.init();
+
+        ClipboardCapture clipboard = {};
+        clipboard.text_size = StrRef("X\r\nY").copy_to(clipboard.text, sizeof(clipboard.text));
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "ab");
+        editor.cursor_column = 1u;
+        editor.preferred_column = 1u;
+
+        press_key(
+            editor,
+            gui::Key::V,
+            gui::KEY_MOD_CTRL,
+            {.get_clipboard_text = read_clipboard_text, .user_data = &clipboard}
+        );
+
+        TEST_EXPECT(context, clipboard.read_count == 1u);
+        TEST_EXPECT(context, code_editor::editor_line_count(editor) == 2u);
+        TEST_EXPECT(
+            context, code_editor::editor_line_text(code_editor::editor_line(editor, 0u)) == "aX"
+        );
+        TEST_EXPECT(
+            context, code_editor::editor_line_text(code_editor::editor_line(editor, 1u)) == "Yb"
+        );
+        TEST_EXPECT(context, editor.cursor_line == 1u);
+        TEST_EXPECT(context, editor.cursor_column == 1u);
+    }
+
+    TEST_CASE(editor_ctrl_z_reverts_changes_one_at_a_time) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "Hi");
+        editor.insert_mode = true;
+        editor.cursor_column = 2u;
+        editor.preferred_column = 2u;
+
+        send_text(editor, "!?*");
+
+        StrRef const expected[] = {"Hi!?", "Hi!", "Hi"};
+        for (StrRef text : expected) {
+            press_key(editor, gui::Key::Z, gui::KEY_MOD_CTRL);
+            TEST_EXPECT(
+                context, code_editor::editor_line_text(code_editor::editor_line(editor, 0u)) == text
+            );
+        }
+
+        press_key(editor, gui::Key::Z, gui::KEY_MOD_CTRL);
+        TEST_EXPECT(
+            context, code_editor::editor_line_text(code_editor::editor_line(editor, 0u)) == "Hi"
+        );
+    }
+
+    TEST_CASE(editor_mouse_word_selection_selects_current_word) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "one two_three + four");
+        gui::Rect const rect = {{0.0f, 0.0f}, {500.0f, 300.0f}};
+        float const char_width = 10.0f;
+        gui::Vec2 const mouse = {
+            code_editor::editor_text_x(editor, rect) + char_width * 6.0f,
+            code_editor::editor_content_rect(rect).min.y + 2.0f,
+        };
+
+        code_editor::select_word_from_mouse(editor, rect, mouse, char_width);
+
+        code_editor::EditorSelectionRange const selection =
+            code_editor::editor_selection_range(editor);
+        TEST_EXPECT(context, selection.active);
+        TEST_EXPECT(context, selection.start_line == 0u);
+        TEST_EXPECT(context, selection.start_column == 4u);
+        TEST_EXPECT(context, selection.end_line == 0u);
+        TEST_EXPECT(context, selection.end_column == 13u);
+    }
+
+    TEST_CASE(editor_mouse_line_selection_selects_current_line_text) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "first\nsecond line");
+        gui::Rect const rect = {{0.0f, 0.0f}, {500.0f, 300.0f}};
+        float const char_width = 10.0f;
+        gui::Vec2 const mouse = {
+            code_editor::editor_text_x(editor, rect) + char_width * 4.0f,
+            code_editor::editor_content_rect(rect).min.y + code_editor::editor_line_height(editor) +
+                2.0f,
+        };
+
+        code_editor::select_line_from_mouse(editor, rect, mouse, char_width);
+
+        code_editor::EditorSelectionRange const selection =
+            code_editor::editor_selection_range(editor);
+        TEST_EXPECT(context, selection.active);
+        TEST_EXPECT(context, selection.start_line == 1u);
+        TEST_EXPECT(context, selection.start_column == 0u);
+        TEST_EXPECT(context, selection.end_line == 1u);
+        TEST_EXPECT(context, selection.end_column == 11u);
+    }
+
+    TEST_CASE(editor_ctrl_left_right_moves_by_words) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "one two_three + four");
+        editor.insert_mode = true;
+        editor.cursor_column = code_editor::editor_line(editor, 0u).size;
+        editor.preferred_column = editor.cursor_column;
+
+        press_key(editor, gui::Key::LEFT, gui::KEY_MOD_CTRL);
+        TEST_EXPECT(context, editor.cursor_column == 16u);
+        press_key(editor, gui::Key::LEFT, gui::KEY_MOD_CTRL);
+        TEST_EXPECT(context, editor.cursor_column == 4u);
+        press_key(editor, gui::Key::RIGHT, gui::KEY_MOD_CTRL);
+        TEST_EXPECT(context, editor.cursor_column == 16u);
+    }
+
+    TEST_CASE(editor_normal_word_keys_move_by_words) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "one two_three + four");
+
+        send_text(editor, "w");
+        TEST_EXPECT(context, editor.cursor_column == 4u);
+        send_text(editor, "e");
+        TEST_EXPECT(context, editor.cursor_column == 12u);
+        send_text(editor, "b");
+        TEST_EXPECT(context, editor.cursor_column == 4u);
+        send_text(editor, "W");
+        TEST_EXPECT(context, editor.cursor_column == 14u);
+        send_text(editor, "E");
+        TEST_EXPECT(context, editor.cursor_column == 19u);
+        send_text(editor, "B");
+        TEST_EXPECT(context, editor.cursor_column == 16u);
+        send_text(editor, "B");
+        TEST_EXPECT(context, editor.cursor_column == 14u);
+    }
+
+    TEST_CASE(editor_normal_v_selects_characters) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "abcd");
+        editor.cursor_column = 1u;
+        editor.preferred_column = 1u;
+
+        send_text(editor, "v");
+
+        code_editor::EditorSelectionRange selection = code_editor::editor_selection_range(editor);
+        TEST_EXPECT(context, selection.active);
+        TEST_EXPECT(context, !selection.full_line);
+        TEST_EXPECT(context, selection.start_line == 0u);
+        TEST_EXPECT(context, selection.start_column == 1u);
+        TEST_EXPECT(context, selection.end_line == 0u);
+        TEST_EXPECT(context, selection.end_column == 2u);
+
+        send_text(editor, "l");
+
+        selection = code_editor::editor_selection_range(editor);
+        TEST_EXPECT(context, selection.start_column == 1u);
+        TEST_EXPECT(context, selection.end_column == 3u);
+
+        send_text(editor, "v");
+        TEST_EXPECT(context, !code_editor::editor_selection_range(editor).active);
+    }
+
+    TEST_CASE(editor_normal_shift_v_selects_full_lines) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "one\ntwo\nthree\nfour");
+        editor.cursor_line = 1u;
+        editor.cursor_column = 1u;
+        editor.preferred_column = 1u;
+
+        send_text(editor, "V");
+
+        code_editor::EditorSelectionRange selection = code_editor::editor_selection_range(editor);
+        TEST_EXPECT(context, selection.active);
+        TEST_EXPECT(context, selection.full_line);
+        TEST_EXPECT(context, selection.start_line == 1u);
+        TEST_EXPECT(context, selection.start_column == 0u);
+        TEST_EXPECT(context, selection.end_line == 2u);
+        TEST_EXPECT(context, selection.end_column == 0u);
+
+        send_text(editor, "j");
+
+        selection = code_editor::editor_selection_range(editor);
+        TEST_EXPECT(context, selection.start_line == 1u);
+        TEST_EXPECT(context, selection.end_line == 3u);
+        TEST_EXPECT(context, selection.full_line);
+    }
+
+    TEST_CASE(editor_normal_selection_insert_keys_use_selection_edges) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "one\ntwo\nthree");
+
+        select_editor_range(editor, 0u, 1u, 0u, 2u);
+        send_text(editor, "i");
+        TEST_EXPECT(context, editor.insert_mode);
+        TEST_EXPECT(context, editor.cursor_line == 0u);
+        TEST_EXPECT(context, editor.cursor_column == 1u);
+
+        editor.insert_mode = false;
+        select_editor_range(editor, 0u, 1u, 0u, 2u);
+        send_text(editor, "a");
+        TEST_EXPECT(context, editor.insert_mode);
+        TEST_EXPECT(context, editor.cursor_column == 2u);
+
+        editor.insert_mode = false;
+        editor.cursor_line = 1u;
+        editor.cursor_column = 1u;
+        send_text(editor, "I");
+        TEST_EXPECT(context, editor.cursor_column == 0u);
+
+        editor.insert_mode = false;
+        editor.cursor_line = 1u;
+        editor.cursor_column = 1u;
+        send_text(editor, "A");
+        TEST_EXPECT(context, editor.cursor_column == 3u);
+    }
+
+    TEST_CASE(editor_normal_selection_open_line_keys_use_selected_lines) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState below = {};
+        code_editor::init_editor(arena, below, "one\ntwo\nthree");
+        select_editor_range(below, 1u, 0u, 2u, 0u, code_editor::EditorSelectionMode::LINE);
+        send_text(below, "o");
+
+        TEST_EXPECT(context, code_editor::editor_line_count(below) == 4u);
+        TEST_EXPECT(context, below.insert_mode);
+        TEST_EXPECT(context, below.cursor_line == 3u);
+        TEST_EXPECT(
+            context, code_editor::editor_line_text(code_editor::editor_line(below, 3u)).empty()
+        );
+
+        code_editor::EditorState above = {};
+        code_editor::init_editor(arena, above, "one\ntwo\nthree");
+        select_editor_range(above, 1u, 0u, 2u, 0u, code_editor::EditorSelectionMode::LINE);
+        send_text(above, "O");
+
+        TEST_EXPECT(context, code_editor::editor_line_count(above) == 4u);
+        TEST_EXPECT(context, above.insert_mode);
+        TEST_EXPECT(context, above.cursor_line == 1u);
+        TEST_EXPECT(
+            context, code_editor::editor_line_text(code_editor::editor_line(above, 1u)).empty()
+        );
+    }
+
+    TEST_CASE(editor_normal_selection_yank_delete_paste_replace_and_change) {
+        Arena arena = {};
+        arena.init();
+
+        ClipboardCapture clipboard = {};
+        code_editor::EditorClipboard clip = {
+            .set_clipboard_text = capture_clipboard_text,
+            .get_clipboard_text = read_clipboard_text,
+            .user_data = &clipboard,
+        };
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "abcd");
+        select_editor_range(editor, 0u, 1u, 0u, 3u);
+        send_text(editor, "y", gui::KEY_MOD_NONE, clip);
+        TEST_EXPECT(context, clipboard.call_count == 1u);
+        TEST_EXPECT(context, StrRef(clipboard.text, clipboard.text_size) == "bc");
+        TEST_EXPECT(
+            context, code_editor::editor_line_text(code_editor::editor_line(editor, 0u)) == "abcd"
+        );
+
+        send_text(editor, "d", gui::KEY_MOD_NONE, clip);
+        TEST_EXPECT(context, StrRef(clipboard.text, clipboard.text_size) == "bc");
+        TEST_EXPECT(
+            context, code_editor::editor_line_text(code_editor::editor_line(editor, 0u)) == "ad"
+        );
+
+        send_text(editor, "u");
+        TEST_EXPECT(
+            context, code_editor::editor_line_text(code_editor::editor_line(editor, 0u)) == "abcd"
+        );
+        send_text(editor, "U");
+        TEST_EXPECT(
+            context, code_editor::editor_line_text(code_editor::editor_line(editor, 0u)) == "ad"
+        );
+
+        clipboard.text_size = StrRef("X").copy_to(clipboard.text, sizeof(clipboard.text));
+        code_editor::set_editor_text(editor, "abcd");
+        select_editor_range(editor, 0u, 1u, 0u, 3u);
+        send_text(editor, "P", gui::KEY_MOD_NONE, clip);
+        TEST_EXPECT(
+            context, code_editor::editor_line_text(code_editor::editor_line(editor, 0u)) == "aXbcd"
+        );
+
+        code_editor::set_editor_text(editor, "abcd");
+        select_editor_range(editor, 0u, 1u, 0u, 3u);
+        send_text(editor, "p", gui::KEY_MOD_NONE, clip);
+        TEST_EXPECT(
+            context, code_editor::editor_line_text(code_editor::editor_line(editor, 0u)) == "abcXd"
+        );
+
+        clipboard.text_size = StrRef("YZ").copy_to(clipboard.text, sizeof(clipboard.text));
+        code_editor::set_editor_text(editor, "abcd");
+        select_editor_range(editor, 0u, 1u, 0u, 3u);
+        send_text(editor, "R", gui::KEY_MOD_NONE, clip);
+        TEST_EXPECT(
+            context, code_editor::editor_line_text(code_editor::editor_line(editor, 0u)) == "aYZd"
+        );
+
+        code_editor::set_editor_text(editor, "abcd");
+        select_editor_range(editor, 0u, 1u, 0u, 3u);
+        send_text(editor, "c", gui::KEY_MOD_NONE, clip);
+        TEST_EXPECT(context, editor.insert_mode);
+        TEST_EXPECT(context, StrRef(clipboard.text, clipboard.text_size) == "bc");
+        send_text(editor, "Q");
+        TEST_EXPECT(
+            context, code_editor::editor_line_text(code_editor::editor_line(editor, 0u)) == "aQd"
+        );
+    }
+
+    TEST_CASE(editor_normal_alt_delete_and_change_do_not_yank) {
+        Arena arena = {};
+        arena.init();
+
+        ClipboardCapture clipboard = {};
+        code_editor::EditorClipboard clip = {
+            .set_clipboard_text = capture_clipboard_text,
+            .user_data = &clipboard,
+        };
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "abcd");
+        select_editor_range(editor, 0u, 1u, 0u, 3u);
+        send_text(editor, "d", gui::KEY_MOD_ALT, clip);
+
+        TEST_EXPECT(context, clipboard.call_count == 0u);
+        TEST_EXPECT(
+            context, code_editor::editor_line_text(code_editor::editor_line(editor, 0u)) == "ad"
+        );
+
+        code_editor::set_editor_text(editor, "abcd");
+        select_editor_range(editor, 0u, 1u, 0u, 3u);
+        send_text(editor, "c", gui::KEY_MOD_ALT, clip);
+
+        TEST_EXPECT(context, clipboard.call_count == 0u);
+        TEST_EXPECT(context, editor.insert_mode);
+        TEST_EXPECT(
+            context, code_editor::editor_line_text(code_editor::editor_line(editor, 0u)) == "ad"
+        );
+    }
+
+    TEST_CASE(editor_normal_selection_replace_case_and_indent) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "abcdef");
+        select_editor_range(editor, 0u, 1u, 0u, 4u);
+        send_text(editor, "rX");
+        TEST_EXPECT(
+            context, code_editor::editor_line_text(code_editor::editor_line(editor, 0u)) == "aXef"
+        );
+
+        code_editor::set_editor_text(editor, "Ab\nCd");
+        select_editor_range(editor, 0u, 0u, 1u, 2u);
+        send_text(editor, "~");
+        TEST_EXPECT(
+            context, code_editor::editor_line_text(code_editor::editor_line(editor, 0u)) == "aB"
+        );
+        TEST_EXPECT(
+            context, code_editor::editor_line_text(code_editor::editor_line(editor, 1u)) == "cD"
+        );
+
+        select_editor_range(editor, 0u, 0u, 1u, 2u);
+        send_text(editor, "`");
+        TEST_EXPECT(
+            context, code_editor::editor_line_text(code_editor::editor_line(editor, 0u)) == "ab"
+        );
+        TEST_EXPECT(
+            context, code_editor::editor_line_text(code_editor::editor_line(editor, 1u)) == "cd"
+        );
+
+        select_editor_range(editor, 0u, 0u, 1u, 2u);
+        send_text(editor, "`", gui::KEY_MOD_ALT);
+        TEST_EXPECT(
+            context, code_editor::editor_line_text(code_editor::editor_line(editor, 0u)) == "AB"
+        );
+        TEST_EXPECT(
+            context, code_editor::editor_line_text(code_editor::editor_line(editor, 1u)) == "CD"
+        );
+
+        code_editor::set_editor_text(editor, "a\n b\n\tc");
+        select_editor_range(editor, 0u, 0u, 2u, 0u, code_editor::EditorSelectionMode::LINE);
+        send_text(editor, ">");
+        TEST_EXPECT(
+            context, code_editor::editor_line_text(code_editor::editor_line(editor, 0u)) == "    a"
+        );
+        TEST_EXPECT(
+            context, code_editor::editor_line_text(code_editor::editor_line(editor, 1u)) == "     b"
+        );
+        TEST_EXPECT(
+            context,
+            code_editor::editor_line_text(code_editor::editor_line(editor, 2u)) == "    \tc"
+        );
+
+        select_editor_range(editor, 0u, 0u, 2u, 0u, code_editor::EditorSelectionMode::LINE);
+        send_text(editor, "<");
+        TEST_EXPECT(
+            context, code_editor::editor_line_text(code_editor::editor_line(editor, 0u)) == "a"
+        );
+        TEST_EXPECT(
+            context, code_editor::editor_line_text(code_editor::editor_line(editor, 1u)) == " b"
+        );
+        TEST_EXPECT(
+            context, code_editor::editor_line_text(code_editor::editor_line(editor, 2u)) == "\tc"
+        );
+    }
+
+    TEST_CASE(editor_normal_goto_line_home_end) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "one\n two\nthree\nfour");
+
+        send_text(editor, "3G");
+        TEST_EXPECT(context, editor.cursor_line == 2u);
+        TEST_EXPECT(context, editor.cursor_column == 0u);
+
+        editor.cursor_column = 3u;
+        press_key(editor, gui::Key::HOME);
+        TEST_EXPECT(context, editor.cursor_column == 0u);
+        press_key(editor, gui::Key::END);
+        TEST_EXPECT(context, editor.cursor_column == 5u);
+
+        send_text(editor, "G");
+        TEST_EXPECT(context, editor.cursor_line == 3u);
+    }
+
+    TEST_CASE(editor_ctrl_d_u_moves_by_half_focused_split) {
+        Arena arena = {};
+        arena.init();
+
+        StringBuffer text = {};
+        TEST_EXPECT(context, text.init(512u, arena.resource()));
+        append_lines(text, 40u);
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, text.str());
+        float const line_height = code_editor::editor_line_height(editor);
+        code_editor::set_editor_split_rect(
+            editor,
+            editor.focused_split,
+            {{0.0f, 0.0f}, {500.0f, line_height * 10.0f + code_editor::EDITOR_PADDING_Y * 2.0f}}
+        );
+
+        press_key(editor, gui::Key::D, gui::KEY_MOD_CTRL);
+        TEST_EXPECT(context, editor.cursor_line == 5u);
+        TEST_EXPECT(context, editor.scroll_y == line_height * 5.0f);
+
+        press_key(editor, gui::Key::U, gui::KEY_MOD_CTRL);
+        TEST_EXPECT(context, editor.cursor_line == 0u);
+        TEST_EXPECT(context, editor.scroll_y == 0.0f);
+    }
+
+    TEST_CASE(editor_ctrl_backspace_deletes_previous_word) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "one two three");
+        editor.insert_mode = true;
+        editor.cursor_column = code_editor::editor_line(editor, 0u).size;
+        editor.preferred_column = editor.cursor_column;
+
+        press_key(editor, gui::Key::BACKSPACE, gui::KEY_MOD_CTRL);
+
+        TEST_EXPECT(
+            context,
+            code_editor::editor_line_text(code_editor::editor_line(editor, 0u)) == "one two "
+        );
+        TEST_EXPECT(context, editor.cursor_column == 8u);
+    }
+
+    TEST_CASE(editor_space_b_d_requests_close_current_buffer) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "");
+
+        send_text(editor, " bd");
+
+        TEST_EXPECT(context, editor.close_current_requested);
+        TEST_EXPECT(context, !editor.pending_leader);
+        TEST_EXPECT(context, !editor.pending_buffer);
+    }
+
+    TEST_CASE(editor_space_w_v_and_s_create_splits) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "abc");
+
+        TEST_EXPECT(context, code_editor::editor_split_leaf_count(editor) == 1u);
+
+        send_text(editor, " wv");
+
+        TEST_EXPECT(context, code_editor::editor_split_leaf_count(editor) == 2u);
+        TEST_EXPECT(context, code_editor::editor_focused_pane(editor) == 1u);
+        TEST_EXPECT(
+            context,
+            editor.split_nodes[editor.root_split].kind == code_editor::EditorSplitKind::VERTICAL
+        );
+
+        send_text(editor, " ws");
+
+        TEST_EXPECT(context, code_editor::editor_split_leaf_count(editor) == 3u);
+        TEST_EXPECT(context, code_editor::editor_focused_pane(editor) == 2u);
+        TEST_EXPECT(context, !editor.pending_leader);
+        TEST_EXPECT(context, !editor.pending_window);
+    }
+
+    TEST_CASE(editor_space_w_hjkl_moves_between_split_rects) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "");
+
+        send_text(editor, " wv");
+        size_t const left = editor.split_nodes[editor.root_split].first;
+        size_t const right = editor.split_nodes[editor.root_split].second;
+        code_editor::set_editor_split_rect(editor, left, {{0.0f, 0.0f}, {100.0f, 100.0f}});
+        code_editor::set_editor_split_rect(editor, right, {{100.0f, 0.0f}, {200.0f, 100.0f}});
+
+        TEST_EXPECT(context, editor.focused_split == right);
+        send_text(editor, " wh");
+        TEST_EXPECT(context, editor.focused_split == left);
+        send_text(editor, " wl");
+        TEST_EXPECT(context, editor.focused_split == right);
+
+        send_text(editor, " ws");
+        size_t const top = editor.split_nodes[right].first;
+        size_t const bottom = editor.split_nodes[right].second;
+        code_editor::set_editor_split_rect(editor, left, {{0.0f, 0.0f}, {100.0f, 200.0f}});
+        code_editor::set_editor_split_rect(editor, top, {{100.0f, 0.0f}, {200.0f, 100.0f}});
+        code_editor::set_editor_split_rect(editor, bottom, {{100.0f, 100.0f}, {200.0f, 200.0f}});
+
+        TEST_EXPECT(context, editor.focused_split == bottom);
+        send_text(editor, " wk");
+        TEST_EXPECT(context, editor.focused_split == top);
+        send_text(editor, " wj");
+        TEST_EXPECT(context, editor.focused_split == bottom);
+    }
+
+    TEST_CASE(editor_space_w_shift_hjkl_swaps_with_directional_split) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "");
+
+        send_text(editor, " wv");
+        size_t const left = editor.split_nodes[editor.root_split].first;
+        size_t const right = editor.split_nodes[editor.root_split].second;
+        size_t const left_pane = editor.split_nodes[left].pane;
+        size_t const right_pane = editor.split_nodes[right].pane;
+        code_editor::set_editor_split_rect(editor, left, {{0.0f, 0.0f}, {100.0f, 100.0f}});
+        code_editor::set_editor_split_rect(editor, right, {{100.0f, 0.0f}, {200.0f, 100.0f}});
+
+        send_text(editor, " wH");
+
+        TEST_EXPECT(context, editor.focused_split == left);
+        TEST_EXPECT(context, editor.split_nodes[left].pane == right_pane);
+        TEST_EXPECT(context, editor.split_nodes[right].pane == left_pane);
+    }
+
+    TEST_CASE(editor_space_w_shift_h_swaps_code_with_filesystem_panel) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "");
+
+        send_text(editor, " e");
+        size_t const left = editor.split_nodes[editor.root_split].first;
+        size_t const right = editor.split_nodes[editor.root_split].second;
+        code_editor::set_editor_split_rect(editor, left, {{0.0f, 0.0f}, {80.0f, 100.0f}});
+        code_editor::set_editor_split_rect(editor, right, {{80.0f, 0.0f}, {200.0f, 100.0f}});
+
+        TEST_EXPECT(
+            context,
+            code_editor::editor_split_pane_kind(editor, left) ==
+                code_editor::EditorPaneKind::FILESYSTEM
+        );
+        TEST_EXPECT(
+            context,
+            code_editor::editor_split_pane_kind(editor, right) == code_editor::EditorPaneKind::CODE
+        );
+
+        send_text(editor, " wH");
+
+        TEST_EXPECT(context, editor.focused_split == left);
+        TEST_EXPECT(
+            context,
+            code_editor::editor_split_pane_kind(editor, left) == code_editor::EditorPaneKind::CODE
+        );
+        TEST_EXPECT(
+            context,
+            code_editor::editor_split_pane_kind(editor, right) ==
+                code_editor::EditorPaneKind::FILESYSTEM
+        );
+        TEST_EXPECT(context, editor.sidebar_visible);
+    }
+
+    TEST_CASE(editor_filesystem_panel_participates_in_window_navigation) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "");
+
+        send_text(editor, " e");
+
+        TEST_EXPECT(context, editor.sidebar_visible);
+        TEST_EXPECT(context, code_editor::editor_split_leaf_count(editor) == 2u);
+        TEST_EXPECT(context, editor.split_nodes[editor.root_split].ratio > 0.15f);
+        TEST_EXPECT(context, editor.split_nodes[editor.root_split].ratio < 0.20f);
+
+        size_t const filesystem = editor.split_nodes[editor.root_split].first;
+        size_t const code = editor.split_nodes[editor.root_split].second;
+        TEST_EXPECT(
+            context,
+            code_editor::editor_split_pane_kind(editor, filesystem) ==
+                code_editor::EditorPaneKind::FILESYSTEM
+        );
+        TEST_EXPECT(
+            context,
+            code_editor::editor_split_pane_kind(editor, code) == code_editor::EditorPaneKind::CODE
+        );
+        code_editor::set_editor_split_rect(editor, filesystem, {{0.0f, 0.0f}, {80.0f, 100.0f}});
+        code_editor::set_editor_split_rect(editor, code, {{80.0f, 0.0f}, {200.0f, 100.0f}});
+
+        send_text(editor, " wh");
+        TEST_EXPECT(
+            context,
+            code_editor::editor_focused_pane_kind(editor) == code_editor::EditorPaneKind::FILESYSTEM
+        );
+
+        send_text(editor, " wl");
+        TEST_EXPECT(
+            context,
+            code_editor::editor_focused_pane_kind(editor) == code_editor::EditorPaneKind::CODE
+        );
+    }
+
+    TEST_CASE(editor_focused_filesystem_panel_can_split_and_close) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "");
+
+        send_text(editor, " e");
+        size_t const filesystem = editor.split_nodes[editor.root_split].first;
+        size_t const code = editor.split_nodes[editor.root_split].second;
+        code_editor::set_editor_split_rect(editor, filesystem, {{0.0f, 0.0f}, {80.0f, 100.0f}});
+        code_editor::set_editor_split_rect(editor, code, {{80.0f, 0.0f}, {200.0f, 100.0f}});
+        send_text(editor, " wh");
+
+        send_text(editor, " wv");
+
+        TEST_EXPECT(context, code_editor::editor_split_leaf_count(editor) == 3u);
+        TEST_EXPECT(
+            context,
+            code_editor::editor_focused_pane_kind(editor) == code_editor::EditorPaneKind::FILESYSTEM
+        );
+
+        send_text(editor, " wq");
+        TEST_EXPECT(context, code_editor::editor_split_leaf_count(editor) == 2u);
+        TEST_EXPECT(context, editor.sidebar_visible);
+
+        send_text(editor, " wq");
+        TEST_EXPECT(context, code_editor::editor_split_leaf_count(editor) == 1u);
+        TEST_EXPECT(context, !editor.sidebar_visible);
+        TEST_EXPECT(
+            context,
+            code_editor::editor_focused_pane_kind(editor) == code_editor::EditorPaneKind::CODE
+        );
+    }
+
+    TEST_CASE(editor_space_w_q_closes_focused_split) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "");
+
+        send_text(editor, " wq");
+        TEST_EXPECT(context, code_editor::editor_split_leaf_count(editor) == 1u);
+
+        send_text(editor, " wv");
+        TEST_EXPECT(context, code_editor::editor_split_leaf_count(editor) == 2u);
+
+        send_text(editor, " wq");
+        TEST_EXPECT(context, code_editor::editor_split_leaf_count(editor) == 1u);
+
+        send_text(editor, " wq");
+        TEST_EXPECT(context, code_editor::editor_split_leaf_count(editor) == 1u);
+    }
+
+    TEST_CASE(editor_split_clones_view_and_shares_text_for_same_file) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "abc");
+        editor.cursor_column = 2u;
+        editor.preferred_column = 2u;
+
+        send_text(editor, " wv");
+        size_t const left = editor.split_nodes[editor.root_split].first;
+        size_t const right = editor.split_nodes[editor.root_split].second;
+        code_editor::set_editor_split_rect(editor, left, {{0.0f, 0.0f}, {100.0f, 100.0f}});
+        code_editor::set_editor_split_rect(editor, right, {{100.0f, 0.0f}, {200.0f, 100.0f}});
+
+        TEST_EXPECT(context, editor.cursor_column == 2u);
+        editor.insert_mode = true;
+        send_text(editor, "Z");
+        editor.insert_mode = false;
+
+        send_text(editor, " wh");
+
+        TEST_EXPECT(
+            context, code_editor::editor_line_text(code_editor::editor_line(editor, 0u)) == "abZc"
+        );
+    }
+
+    TEST_CASE(editor_insert_mode_space_w_v_does_not_split) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "");
+        editor.insert_mode = true;
+
+        send_text(editor, " wv");
+
+        TEST_EXPECT(context, code_editor::editor_split_leaf_count(editor) == 1u);
+        TEST_EXPECT(
+            context, code_editor::editor_line_text(code_editor::editor_line(editor, 0u)) == " wv"
+        );
+    }
+
+    TEST_CASE(editor_replaces_text_when_opening_file) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "old\ntext");
+        editor.cursor_line = 1u;
+        editor.cursor_column = 4u;
+        editor.scroll_y = 20.0f;
+
+        code_editor::set_editor_text(editor, "new\nfile");
+
+        TEST_EXPECT(context, code_editor::editor_line_count(editor) == 2u);
+        TEST_EXPECT(
+            context, code_editor::editor_line_text(code_editor::editor_line(editor, 0u)) == "new"
+        );
+        TEST_EXPECT(
+            context, code_editor::editor_line_text(code_editor::editor_line(editor, 1u)) == "file"
+        );
+        TEST_EXPECT(context, editor.cursor_line == 0u);
+        TEST_EXPECT(context, editor.cursor_column == 0u);
+        TEST_EXPECT(context, editor.scroll_y == 0.0f);
+    }
+
+    TEST_CASE(editor_remembers_unique_open_files) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "");
+        code_editor::remember_open_file(editor, "a.cpp", "C:\\src\\a.cpp");
+        code_editor::remember_open_file(editor, "a.cpp", "C:\\src\\a.cpp");
+        code_editor::remember_open_file(editor, "b.cpp", "C:\\src\\b.cpp");
+
+        TEST_EXPECT(context, editor.open_files.size() == 2u);
+        TEST_EXPECT(context, editor.open_files[0u].name == "a.cpp");
+        TEST_EXPECT(context, editor.open_files[1u].path == "C:\\src\\b.cpp");
+    }
+
+    TEST_CASE(editor_opens_saved_scratch_file) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "");
+        code_editor::set_editor_text(editor, "draft\ntext");
+        code_editor::save_scratch_file(editor);
+
+        code_editor::set_editor_text(editor, "file");
+        editor.current_file_name = "file.cpp";
+        editor.current_file_path = "C:\\src\\file.cpp";
+        code_editor::open_scratch_file(editor);
+
+        TEST_EXPECT(context, editor.current_file_name == code_editor::SCRATCH_FILE_NAME);
+        TEST_EXPECT(context, editor.current_file_path.empty());
+        TEST_EXPECT(context, code_editor::editor_line_count(editor) == 2u);
+        TEST_EXPECT(
+            context, code_editor::editor_line_text(code_editor::editor_line(editor, 0u)) == "draft"
+        );
+        TEST_EXPECT(
+            context, code_editor::editor_line_text(code_editor::editor_line(editor, 1u)) == "text"
+        );
+    }
+
+    TEST_CASE(editor_preserves_text_for_display) {
+        Arena arena = {};
+        arena.init();
+
+        TEST_EXPECT(
+            context, code_editor::editor_display_text(arena, "ok\r\n\ttext") == "ok\r\n\ttext"
+        );
+        TEST_EXPECT(
+            context,
+            code_editor::editor_display_text(
+                arena,
+                "\xef\xbb\xbf"
+                "\xe2\x80\x9c"
+                "ok"
+                "\xe2\x80\x9d"
+            ) == "\xe2\x80\x9c"
+                 "ok"
+                 "\xe2\x80\x9d"
+        );
+    }
+
+    TEST_CASE(editor_dumps_non_text_bytes_for_display) {
+        Arena arena = {};
+        arena.init();
+
+        char const nul_text[] = {'o', 'k', '\0'};
+        char const high_text[] = {'o', 'k', static_cast<char>(0xff)};
+        char const invalid_utf8[] = {'o', 'k', static_cast<char>(0xc0), static_cast<char>(0x80)};
+
+        TEST_EXPECT(
+            context,
+            code_editor::editor_display_text(arena, StrRef(nul_text, sizeof(nul_text))) ==
+                "00000000  6f 6b 00\n"
+        );
+        TEST_EXPECT(
+            context,
+            code_editor::editor_display_text(arena, StrRef(high_text, sizeof(high_text))) ==
+                "00000000  6f 6b ff\n"
+        );
+        TEST_EXPECT(
+            context,
+            code_editor::editor_display_text(arena, StrRef(invalid_utf8, sizeof(invalid_utf8))) ==
+                "00000000  6f 6b c0 80\n"
+        );
+    }
+
+} // namespace
+
+TEST_MAIN()

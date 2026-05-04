@@ -447,8 +447,16 @@ namespace gui {
                    state->scroll_content_width > 0.0f;
         }
 
-        [[nodiscard]] auto scrollbar_visible(StateEntry const* state) -> bool {
-            return vertical_scrollbar_visible(state) || horizontal_scrollbar_visible(state);
+        [[nodiscard]] auto vertical_scrollbar_shown(BoxNode const& box) -> bool {
+            return box.layout.show_scrollbars && vertical_scrollbar_visible(box.scroll_state);
+        }
+
+        [[nodiscard]] auto horizontal_scrollbar_shown(BoxNode const& box) -> bool {
+            return box.layout.show_scrollbars && horizontal_scrollbar_visible(box.scroll_state);
+        }
+
+        [[nodiscard]] auto scrollbar_shown(BoxNode const& box) -> bool {
+            return vertical_scrollbar_shown(box) || horizontal_scrollbar_shown(box);
         }
 
         [[nodiscard]] auto hit_passes_clips(ContextImpl const* impl, size_t index, Vec2 point)
@@ -501,7 +509,8 @@ namespace gui {
             for (size_t parent = box.parent_index; parent != INVALID_INDEX;
                  parent = impl->boxes[parent].parent_index) {
                 BoxNode const& parent_box = impl->boxes[parent];
-                if (parent_box.scroll_state == nullptr || !parent_box.layout.scroll_y) {
+                if (parent_box.scroll_state == nullptr || !parent_box.layout.scroll_y ||
+                    !parent_box.layout.show_scrollbars) {
                     continue;
                 }
 
@@ -526,11 +535,11 @@ namespace gui {
         [[nodiscard]] auto scrollbar_hit(ContextImpl const* impl, size_t index, Vec2 point)
             -> bool {
             BoxNode const& box = impl->boxes[index];
-            if (!scrollbar_visible(box.scroll_state) || !hit_passes_clips(impl, index, point)) {
+            if (!scrollbar_shown(box) || !hit_passes_clips(impl, index, point)) {
                 return false;
             }
-            bool const vertical = vertical_scrollbar_visible(box.scroll_state);
-            bool const horizontal = horizontal_scrollbar_visible(box.scroll_state);
+            bool const vertical = vertical_scrollbar_shown(box);
+            bool const horizontal = horizontal_scrollbar_shown(box);
             Rect const v_track =
                 scrollbar_track_rect(box.rect, box.resolved_style.radius, Axis::Y, horizontal);
             Rect const h_track = scrollbar_track_rect(
@@ -2143,6 +2152,7 @@ namespace gui {
             Rect rect,
             float radius,
             float content_height,
+            bool show_scrollbar,
             bool apply_input,
             bool consume_request
         ) -> void {
@@ -2160,17 +2170,19 @@ namespace gui {
                 consume_scroll_request(state, max_y);
             }
             state->scroll_y = std::clamp(state->scroll_y, 0.0f, max_y);
-            apply_scrollbar_input(
-                impl,
-                state,
-                rect,
-                radius,
-                Axis::Y,
-                state->scroll_max_x > 0.0f,
-                viewport_height,
-                scroll_content_height,
-                max_y
-            );
+            if (show_scrollbar) {
+                apply_scrollbar_input(
+                    impl,
+                    state,
+                    rect,
+                    radius,
+                    Axis::Y,
+                    state->scroll_max_x > 0.0f,
+                    viewport_height,
+                    scroll_content_height,
+                    max_y
+                );
+            }
             state->scroll_y = std::clamp(state->scroll_y, 0.0f, max_y);
             state->scroll_max_y = max_y;
             state->scroll_viewport_height = viewport_height;
@@ -2186,6 +2198,7 @@ namespace gui {
             Rect rect,
             float radius,
             float content_width,
+            bool show_scrollbar,
             bool apply_input,
             bool vertical_scroll_available
         ) -> void {
@@ -2204,16 +2217,18 @@ namespace gui {
                 state->scroll_request_x_set = false;
             }
             state->scroll_x = std::clamp(state->scroll_x, 0.0f, max_x);
-            apply_horizontal_scrollbar_input(
-                impl,
-                state,
-                rect,
-                radius,
-                state->scroll_max_y > 0.0f,
-                viewport_width,
-                scroll_content_width,
-                max_x
-            );
+            if (show_scrollbar) {
+                apply_horizontal_scrollbar_input(
+                    impl,
+                    state,
+                    rect,
+                    radius,
+                    state->scroll_max_y > 0.0f,
+                    viewport_width,
+                    scroll_content_width,
+                    max_x
+                );
+            }
             state->scroll_x = std::clamp(state->scroll_x, 0.0f, max_x);
             state->scroll_max_x = max_x;
             state->scroll_viewport_width = viewport_width;
@@ -2288,6 +2303,7 @@ namespace gui {
                     rect,
                     box.resolved_style.radius,
                     content_height,
+                    box.layout.show_scrollbars,
                     true,
                     true
                 );
@@ -2299,6 +2315,7 @@ namespace gui {
                             horizontal_scrollbar_rect(impl, index),
                             box.resolved_style.radius,
                             content_width,
+                            box.layout.show_scrollbars,
                             true,
                             vertical_scroll_available(impl, index)
                         );
@@ -2328,6 +2345,7 @@ namespace gui {
                     rect,
                     box.resolved_style.radius,
                     content_height,
+                    box.layout.show_scrollbars,
                     true,
                     true
                 );
@@ -2338,6 +2356,7 @@ namespace gui {
                         horizontal_scrollbar_rect(impl, index),
                         box.resolved_style.radius,
                         text_scroll_content_width(box, rect),
+                        box.layout.show_scrollbars,
                         true,
                         vertical_scroll_available(impl, index)
                     );
@@ -2351,6 +2370,7 @@ namespace gui {
                     rect,
                     box.resolved_style.radius,
                     box.scroll_content_height,
+                    box.layout.show_scrollbars,
                     false,
                     false
                 );
@@ -3950,13 +3970,13 @@ namespace gui {
         }
 
         [[nodiscard]] auto text_selection_scrollbar_hit(BoxNode const& box, Vec2 point) -> bool {
-            StateEntry const* const state = box.scroll_state;
-            if (!scrollbar_visible(state)) {
+            if (!scrollbar_shown(box)) {
                 return false;
             }
 
-            bool const vertical = vertical_scrollbar_visible(state);
-            bool const horizontal = horizontal_scrollbar_visible(state);
+            StateEntry const* const state = box.scroll_state;
+            bool const vertical = vertical_scrollbar_shown(box);
+            bool const horizontal = horizontal_scrollbar_shown(box);
             Rect const v_track = scrollbar_track_rect(
                 previous_box_rect(box), box.resolved_style.radius, Axis::Y, horizontal
             );
@@ -4924,8 +4944,8 @@ namespace gui {
 
             ThemeTokens const& tokens = impl->theme.tokens;
             float const opacity = box.resolved_style.opacity;
-            bool const vertical = vertical_scrollbar_visible(state);
-            bool const horizontal = horizontal_scrollbar_visible(state);
+            bool const vertical = vertical_scrollbar_shown(box);
+            bool const horizontal = horizontal_scrollbar_shown(box);
             if (vertical) {
                 Rect const track =
                     scrollbar_track_rect(box.rect, box.resolved_style.radius, Axis::Y, horizontal);
@@ -6986,7 +7006,7 @@ namespace gui {
             list.scroll_state, desc.item_count, item_height, viewport_height, max_scroll
         );
         list.scroll_state->scroll_y = std::clamp(list.scroll_state->scroll_y, 0.0f, max_scroll);
-        if (list.scroll_state->last_frame != 0u) {
+        if (list.scroll_state->last_frame != 0u && box_desc.layout.show_scrollbars) {
             apply_scrollbar_input(
                 impl,
                 list.scroll_state,

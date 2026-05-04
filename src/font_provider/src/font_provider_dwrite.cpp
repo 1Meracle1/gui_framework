@@ -21,8 +21,10 @@ namespace gui::font_provider::platform {
     namespace {
 
         constexpr StrRef DEFAULT_FONT_FAMILY = "Segoe UI";
-        constexpr float POINTS_TO_DIPS = 96.0f / 72.0f;
-
+        constexpr DWRITE_MEASURING_MODE TEXT_MEASURING_MODE = DWRITE_MEASURING_MODE_GDI_NATURAL;
+        constexpr DWRITE_RENDERING_MODE TEXT_RENDERING_MODE =
+            DWRITE_RENDERING_MODE_NATURAL_SYMMETRIC;
+        constexpr FLOAT TEXT_ENHANCED_CONTRAST = 0.0f;
         struct ContextImpl {
             IDWriteFactory* factory = nullptr;
             IDWriteGdiInterop* gdi_interop = nullptr;
@@ -76,7 +78,8 @@ namespace gui::font_provider::platform {
             }
 
             int const wide_len = MultiByteToWideChar(
-                CP_UTF8, MB_ERR_INVALID_CHARS, text.data(), input_size, nullptr, 0);
+                CP_UTF8, MB_ERR_INVALID_CHARS, text.data(), input_size, nullptr, 0
+            );
             if (wide_len <= 0) {
                 return false;
             }
@@ -84,7 +87,8 @@ namespace gui::font_provider::platform {
             wchar_t* const wide_text =
                 arena_alloc<wchar_t>(arena, static_cast<size_t>(wide_len) + 1u);
             int const converted = MultiByteToWideChar(
-                CP_UTF8, MB_ERR_INVALID_CHARS, text.data(), input_size, wide_text, wide_len);
+                CP_UTF8, MB_ERR_INVALID_CHARS, text.data(), input_size, wide_text, wide_len
+            );
             if (converted != wide_len) {
                 return false;
             }
@@ -214,7 +218,8 @@ namespace gui::font_provider::platform {
             auto* const glyph_metrics =
                 arena_alloc<DWRITE_GLYPH_METRICS>(*temp.arena(), glyph_count);
             hr = impl->font_face->GetGdiCompatibleGlyphMetrics(
-                size, 1.0f, nullptr, TRUE, glyph_indices, glyph_count, glyph_metrics, FALSE);
+                size, 1.0f, nullptr, TRUE, glyph_indices, glyph_count, glyph_metrics, FALSE
+            );
             ASSERT(SUCCEEDED(hr));
 
             DWRITE_FONT_METRICS font_metrics = {};
@@ -267,10 +272,12 @@ namespace gui::font_provider::platform {
                 hr = collection->GetFontFamily(family_index, &family);
             }
             if (SUCCEEDED(hr) && family != nullptr) {
-                hr = family->GetFirstMatchingFont(DWRITE_FONT_WEIGHT_REGULAR,
-                                                  DWRITE_FONT_STRETCH_NORMAL,
-                                                  DWRITE_FONT_STYLE_NORMAL,
-                                                  &dwrite_font);
+                hr = family->GetFirstMatchingFont(
+                    DWRITE_FONT_WEIGHT_REGULAR,
+                    DWRITE_FONT_STRETCH_NORMAL,
+                    DWRITE_FONT_STYLE_NORMAL,
+                    &dwrite_font
+                );
             }
             if (SUCCEEDED(hr) && dwrite_font != nullptr) {
                 hr = dwrite_font->CreateFontFace(&font->font_face);
@@ -311,7 +318,8 @@ namespace gui::font_provider::platform {
             if (SUCCEEDED(hr) && supported != FALSE && face_count != 0u) {
                 IDWriteFontFile* font_files[] = {font->font_file};
                 hr = context->factory->CreateFontFace(
-                    face_type, 1u, font_files, 0u, DWRITE_FONT_SIMULATIONS_NONE, &font->font_face);
+                    face_type, 1u, font_files, 0u, DWRITE_FONT_SIMULATIONS_NONE, &font->font_face
+                );
             }
 
             BASE_UNUSED(file_type);
@@ -325,7 +333,7 @@ namespace gui::font_provider::platform {
 
         [[nodiscard]] auto metrics_scale(DWRITE_FONT_METRICS const& metrics, float size) -> float {
             ASSERT(metrics.designUnitsPerEm != 0u);
-            return POINTS_TO_DIPS * size / static_cast<float>(metrics.designUnitsPerEm);
+            return size / static_cast<float>(metrics.designUnitsPerEm);
         }
 
         [[nodiscard]] auto ceil_u32(float value, uint32_t& out_value) -> bool {
@@ -371,9 +379,11 @@ namespace gui::font_provider::platform {
         ArenaMarker const marker = arena.marker();
         ContextImpl* const context = arena_new<ContextImpl>(arena);
 
-        HRESULT hr = DWriteCreateFactory(DWRITE_FACTORY_TYPE_ISOLATED,
-                                         __uuidof(IDWriteFactory),
-                                         reinterpret_cast<IUnknown**>(&context->factory));
+        HRESULT hr = DWriteCreateFactory(
+            DWRITE_FACTORY_TYPE_ISOLATED,
+            __uuidof(IDWriteFactory),
+            reinterpret_cast<IUnknown**>(&context->factory)
+        );
         if (SUCCEEDED(hr)) {
             hr = context->factory->GetGdiInterop(&context->gdi_interop);
         }
@@ -382,14 +392,15 @@ namespace gui::font_provider::platform {
         }
         if (SUCCEEDED(hr)) {
             FLOAT const gamma = context->base_rendering_params->GetGamma();
-            FLOAT const enhanced_contrast = context->base_rendering_params->GetEnhancedContrast();
             FLOAT const clear_type_level = context->base_rendering_params->GetClearTypeLevel();
-            hr = context->factory->CreateCustomRenderingParams(gamma,
-                                                               enhanced_contrast,
-                                                               clear_type_level,
-                                                               DWRITE_PIXEL_GEOMETRY_FLAT,
-                                                               DWRITE_RENDERING_MODE_DEFAULT,
-                                                               &context->rendering_params);
+            hr = context->factory->CreateCustomRenderingParams(
+                gamma,
+                TEXT_ENHANCED_CONTRAST,
+                clear_type_level,
+                DWRITE_PIXEL_GEOMETRY_FLAT,
+                TEXT_RENDERING_MODE,
+                &context->rendering_params
+            );
         }
 
         if (FAILED(hr)) {
@@ -479,7 +490,8 @@ namespace gui::font_provider::platform {
 
         auto* const glyph_metrics = arena_alloc<DWRITE_GLYPH_METRICS>(*temp.arena(), glyph_count);
         hr = impl->font_face->GetGdiCompatibleGlyphMetrics(
-            size, 1.0f, nullptr, TRUE, glyph_indices, glyph_count, glyph_metrics, FALSE);
+            size, 1.0f, nullptr, TRUE, glyph_indices, glyph_count, glyph_metrics, FALSE
+        );
         ASSERT(SUCCEEDED(hr));
 
         DWRITE_FONT_METRICS font_metrics = {};
@@ -495,16 +507,21 @@ namespace gui::font_provider::platform {
         uint32_t bitmap_width = 0u;
         uint32_t bitmap_height = 0u;
         ASSERT(ceil_u32(std::max(1.0f, advance + 4.0f), bitmap_width));
-        ASSERT(ceil_u32(std::max(1.0f,
-                                 (static_cast<float>(font_metrics.ascent) +
-                                  static_cast<float>(font_metrics.descent)) *
-                                         scale +
-                                     4.0f),
-                        bitmap_height));
+        ASSERT(ceil_u32(
+            std::max(
+                1.0f,
+                (static_cast<float>(font_metrics.ascent) +
+                 static_cast<float>(font_metrics.descent)) *
+                        scale +
+                    4.0f
+            ),
+            bitmap_height
+        ));
 
         IDWriteBitmapRenderTarget* render_target = nullptr;
         hr = impl->context->gdi_interop->CreateBitmapRenderTarget(
-            nullptr, bitmap_width, bitmap_height, &render_target);
+            nullptr, bitmap_width, bitmap_height, &render_target
+        );
         ASSERT(SUCCEEDED(hr));
         ASSERT(render_target != nullptr);
 
@@ -517,19 +534,21 @@ namespace gui::font_provider::platform {
 
         DWRITE_GLYPH_RUN glyph_run = {};
         glyph_run.fontFace = impl->font_face;
-        glyph_run.fontEmSize = size * POINTS_TO_DIPS;
+        glyph_run.fontEmSize = size;
         glyph_run.glyphCount = glyph_count;
         glyph_run.glyphIndices = glyph_indices;
         glyph_run.glyphAdvances = glyph_advances;
 
         RECT bounding_box = {};
-        hr = render_target->DrawGlyphRun(1.0f,
-                                         baseline_y,
-                                         DWRITE_MEASURING_MODE_GDI_NATURAL,
-                                         &glyph_run,
-                                         impl->context->rendering_params,
-                                         RGB(255, 255, 255),
-                                         &bounding_box);
+        hr = render_target->DrawGlyphRun(
+            1.0f,
+            baseline_y,
+            TEXT_MEASURING_MODE,
+            &glyph_run,
+            impl->context->rendering_params,
+            RGB(255, 255, 255),
+            &bounding_box
+        );
         ASSERT(SUCCEEDED(hr));
 
         DIBSECTION dib = {};
@@ -567,8 +586,8 @@ namespace gui::font_provider::platform {
         out_raster.stride = out_pitch;
         out_raster.rgba_pixels = out_pixels;
         out_raster.advance = advance;
-        out_raster.offset_y = static_cast<float>(bounding_box.top);
-        out_raster.height = static_cast<float>(bounding_box.bottom - bounding_box.top);
+        out_raster.offset_y = 2.0f;
+        out_raster.height = static_cast<float>(bitmap_height);
 
         release_com(render_target);
     }
