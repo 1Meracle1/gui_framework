@@ -49,13 +49,47 @@ namespace gui::font_provider {
         float capital_height = 0.0f;
     };
 
+    enum class RasterFormat : uint8_t {
+        ALPHA,
+    };
+
     struct RasterResult {
         SizeU32 size = {};
         uint32_t stride = 0u;
-        uint8_t* rgba_pixels = nullptr;
+        uint8_t* pixels = nullptr;
+        RasterFormat format = RasterFormat::ALPHA;
         float advance = 0.0f;
         float offset_y = 0.0f;
         float height = 0.0f;
+    };
+
+    struct GlyphRaster {
+        SizeU32 size = {};
+        uint32_t stride = 0u;
+        uint8_t* pixels = nullptr;
+        RasterFormat format = RasterFormat::ALPHA;
+        float offset_x = 0.0f;
+        float offset_y = 0.0f;
+    };
+
+    struct ShapedGlyph {
+        uint16_t glyph_index = 0u;
+        uint32_t cluster = 0u;
+        float x = 0.0f;
+        float advance = 0.0f;
+        float offset_x = 0.0f;
+        float offset_y = 0.0f;
+    };
+
+    struct ShapedText {
+        ShapedGlyph* glyphs = nullptr;
+        size_t glyph_count = 0u;
+        float advance = 0.0f;
+        float origin_x = 0.0f;
+        float origin_y = 0.0f;
+        float baseline_y = 0.0f;
+        float height = 0.0f;
+        SizeU32 size = {};
     };
 
     [[nodiscard]] auto result_succeeded(Result result) -> bool;
@@ -74,6 +108,10 @@ namespace gui::font_provider {
 
     auto metrics_from_font(Font font, float size, Metrics& out_metrics) -> void;
     [[nodiscard]] auto text_advance(Font font, float size, StrRef text) -> float;
+    auto shape_text(Font font, float size, StrRef text, Arena& arena, ShapedText& out_text) -> void;
+    auto
+    raster_glyph(Font font, float size, uint16_t glyph_index, Arena& arena, GlyphRaster& out_raster)
+        -> void;
     auto raster_text(Font font, float size, StrRef text, Arena& arena, RasterResult& out_raster)
         -> void;
 

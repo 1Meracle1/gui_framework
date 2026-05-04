@@ -72,9 +72,11 @@ namespace gui::render::d3d11 {
         struct D3D11Texture {
             TextureHeader header = {Backend::D3D11};
             D3D11Context* context = nullptr;
+            ID3D11Texture2D* resource = nullptr;
             ID3D11ShaderResourceView* view = nullptr;
             ID3D11RenderTargetView* render_target_view = nullptr;
             SizeU32 size = {};
+            bool updatable = false;
         };
 
         struct D3D11Sampler {
@@ -263,6 +265,17 @@ namespace gui::render::d3d11 {
             return DXGI_FORMAT_UNKNOWN;
         }
 
+        [[nodiscard]] auto d3d_format(TextureFormat format) -> DXGI_FORMAT {
+            switch (format) {
+            case TextureFormat::RGBA8_UNORM:
+                return DXGI_FORMAT_R8G8B8A8_UNORM;
+            case TextureFormat::R8_UNORM:
+                return DXGI_FORMAT_R8_UNORM;
+            }
+
+            return DXGI_FORMAT_UNKNOWN;
+        }
+
         [[nodiscard]] auto d3d_topology(PrimitiveTopology topology) -> D3D_PRIMITIVE_TOPOLOGY {
             switch (topology) {
             case PrimitiveTopology::TRIANGLE_LIST:
@@ -365,9 +378,9 @@ namespace gui::render::d3d11 {
             return nullptr;
         }
 
-        [[nodiscard]] auto try_create_device(D3D_DRIVER_TYPE driver_type,
-                                             UINT creation_flags,
-                                             D3D11Context& out_context) -> HRESULT {
+        [[nodiscard]] auto try_create_device(
+            D3D_DRIVER_TYPE driver_type, UINT creation_flags, D3D11Context& out_context
+        ) -> HRESULT {
             D3D_FEATURE_LEVEL levels_with_11_1[] = {
                 D3D_FEATURE_LEVEL_11_1,
                 D3D_FEATURE_LEVEL_11_0,
@@ -394,22 +407,26 @@ namespace gui::render::d3d11 {
                 D3D11_SDK_VERSION,
                 &device,
                 &feature_level,
-                &device_context);
+                &device_context
+            );
 
             if (hr == E_INVALIDARG) {
                 release_com(device);
                 release_com(device_context);
-                hr = D3D11CreateDevice(nullptr,
-                                       driver_type,
-                                       nullptr,
-                                       creation_flags,
-                                       levels_without_11_1,
-                                       static_cast<UINT>(sizeof(levels_without_11_1) /
-                                                         sizeof(levels_without_11_1[0u])),
-                                       D3D11_SDK_VERSION,
-                                       &device,
-                                       &feature_level,
-                                       &device_context);
+                hr = D3D11CreateDevice(
+                    nullptr,
+                    driver_type,
+                    nullptr,
+                    creation_flags,
+                    levels_without_11_1,
+                    static_cast<UINT>(
+                        sizeof(levels_without_11_1) / sizeof(levels_without_11_1[0u])
+                    ),
+                    D3D11_SDK_VERSION,
+                    &device,
+                    &feature_level,
+                    &device_context
+                );
             }
 
             if (FAILED(hr)) {
@@ -474,7 +491,8 @@ namespace gui::render::d3d11 {
             }
 
             hr = context->device->CreateRenderTargetView(
-                back_buffer, nullptr, &window->render_target_view);
+                back_buffer, nullptr, &window->render_target_view
+            );
             release_com(back_buffer);
 
             if (FAILED(hr) || window->render_target_view == nullptr) {
@@ -596,7 +614,8 @@ namespace gui::render::d3d11 {
         swap_desc.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
 
         HRESULT hr = context_impl->factory->CreateSwapChain(
-            context_impl->device, &swap_desc, &window->swap_chain);
+            context_impl->device, &swap_desc, &window->swap_chain
+        );
         if (FAILED(hr) || window->swap_chain == nullptr) {
             arena.reset_to(marker);
             return Result::WINDOW_CREATION_FAILED;
@@ -647,7 +666,8 @@ namespace gui::render::d3d11 {
 
         ID3D11Buffer* resource = nullptr;
         HRESULT const hr = context_impl->device->CreateBuffer(
-            &buffer_desc, desc.initial_data != nullptr ? &initial_data : nullptr, &resource);
+            &buffer_desc, desc.initial_data != nullptr ? &initial_data : nullptr, &resource
+        );
         if (FAILED(hr) || resource == nullptr) {
             return Result::BUFFER_CREATION_FAILED;
         }
@@ -686,7 +706,8 @@ namespace gui::render::d3d11 {
 
         D3D11_MAPPED_SUBRESOURCE mapped = {};
         HRESULT const hr = context_impl->device_context->Map(
-            buffer_impl->resource, 0u, D3D11_MAP_WRITE_DISCARD, 0u, &mapped);
+            buffer_impl->resource, 0u, D3D11_MAP_WRITE_DISCARD, 0u, &mapped
+        );
         ASSERT(SUCCEEDED(hr));
 
         std::memcpy(mapped.pData, data, byte_size);
@@ -724,7 +745,8 @@ namespace gui::render::d3d11 {
             D3D11_MAP const map_type = frame_buffer.used_size == 0u ? D3D11_MAP_WRITE_DISCARD
                                                                     : D3D11_MAP_WRITE_NO_OVERWRITE;
             HRESULT const hr = context_impl->device_context->Map(
-                frame_buffer.buffer.resource, 0u, map_type, 0u, &mapped);
+                frame_buffer.buffer.resource, 0u, map_type, 0u, &mapped
+            );
             ASSERT(SUCCEEDED(hr));
             frame_buffer.mapped_data = static_cast<uint8_t*>(mapped.pData);
         }
@@ -749,9 +771,10 @@ namespace gui::render::d3d11 {
         texture_desc.Height = desc.size.height;
         texture_desc.MipLevels = 1u;
         texture_desc.ArraySize = 1u;
-        texture_desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        texture_desc.Format = d3d_format(desc.format);
         texture_desc.SampleDesc.Count = 1u;
-        texture_desc.Usage = desc.render_target ? D3D11_USAGE_DEFAULT : D3D11_USAGE_IMMUTABLE;
+        texture_desc.Usage =
+            desc.render_target || desc.updatable ? D3D11_USAGE_DEFAULT : D3D11_USAGE_IMMUTABLE;
         texture_desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
         if (desc.render_target) {
             texture_desc.BindFlags |= D3D11_BIND_RENDER_TARGET;
@@ -790,13 +813,43 @@ namespace gui::render::d3d11 {
             }
         }
 
-        release_com(texture);
         D3D11Texture* texture_impl = arena_new<D3D11Texture>(*context_impl->arena);
+        texture_impl->header.format = desc.format;
         texture_impl->context = context_impl;
+        texture_impl->resource = texture;
         texture_impl->view = view;
         texture_impl->render_target_view = render_target_view;
         texture_impl->size = desc.size;
+        texture_impl->updatable = desc.updatable;
         out_texture.handle = texture_impl;
+        return Result::OK;
+    }
+
+    auto update_texture(Context context, Texture texture, TextureUpdateDesc const& desc) -> Result {
+        D3D11Context* context_impl = context_from_handle(context);
+        D3D11Texture* texture_impl = texture_from_handle(texture);
+        ASSERT(context_impl != nullptr);
+        ASSERT(texture_impl != nullptr);
+        ASSERT(texture_impl->context == context_impl);
+        ASSERT(texture_impl->resource != nullptr);
+        ASSERT(texture_impl->updatable);
+        ASSERT(desc.x <= texture_impl->size.width);
+        ASSERT(desc.y <= texture_impl->size.height);
+        ASSERT(desc.size.width <= texture_impl->size.width - desc.x);
+        ASSERT(desc.size.height <= texture_impl->size.height - desc.y);
+
+        D3D11_BOX box = {};
+        box.left = desc.x;
+        box.top = desc.y;
+        box.front = 0u;
+        box.right = desc.x + desc.size.width;
+        box.bottom = desc.y + desc.size.height;
+        box.back = 1u;
+
+        unbind_shader_resources(context_impl);
+        context_impl->device_context->UpdateSubresource(
+            texture_impl->resource, 0u, &box, desc.pixels, desc.bytes_per_row, 0u
+        );
         return Result::OK;
     }
 
@@ -809,6 +862,7 @@ namespace gui::render::d3d11 {
         unbind_shader_resources(context_impl);
         release_com(impl->render_target_view);
         release_com(impl->view);
+        release_com(impl->resource);
         impl->size = {};
         impl->context = nullptr;
         texture.handle = nullptr;
@@ -869,11 +923,13 @@ namespace gui::render::d3d11 {
         switch (desc.stage) {
         case ShaderStage::VERTEX:
             hr = context_impl->device->CreateVertexShader(
-                bytecode, desc.byte_size, nullptr, &shader->vertex_shader);
+                bytecode, desc.byte_size, nullptr, &shader->vertex_shader
+            );
             break;
         case ShaderStage::PIXEL:
             hr = context_impl->device->CreatePixelShader(
-                bytecode, desc.byte_size, nullptr, &shader->pixel_shader);
+                bytecode, desc.byte_size, nullptr, &shader->pixel_shader
+            );
             break;
         }
 
@@ -887,10 +943,9 @@ namespace gui::render::d3d11 {
         return Result::OK;
     }
 
-    auto create_shader_from_source(Arena& arena,
-                                   Context context,
-                                   ShaderSourceDesc const& desc,
-                                   Shader& out_shader) -> Result {
+    auto create_shader_from_source(
+        Arena& arena, Context context, ShaderSourceDesc const& desc, Shader& out_shader
+    ) -> Result {
         ID3DBlob* shader_blob = nullptr;
         UINT compile_flags = D3DCOMPILE_ENABLE_STRICTNESS;
 #if BASE_DEBUG
@@ -900,17 +955,19 @@ namespace gui::render::d3d11 {
         char const* const target = shader_target(desc.stage);
         ASSERT(target != nullptr);
 
-        HRESULT const hr = D3DCompile(desc.source.data(),
-                                      desc.source.size(),
-                                      nullptr,
-                                      nullptr,
-                                      nullptr,
-                                      desc.entry_point,
-                                      target,
-                                      compile_flags,
-                                      0u,
-                                      &shader_blob,
-                                      nullptr);
+        HRESULT const hr = D3DCompile(
+            desc.source.data(),
+            desc.source.size(),
+            nullptr,
+            nullptr,
+            nullptr,
+            desc.entry_point,
+            target,
+            compile_flags,
+            0u,
+            &shader_blob,
+            nullptr
+        );
         if (FAILED(hr) || shader_blob == nullptr) {
             release_com(shader_blob);
             return Result::SHADER_COMPILATION_FAILED;
@@ -986,7 +1043,8 @@ namespace gui::render::d3d11 {
                 static_cast<UINT>(desc.vertex_attribute_count),
                 vertex_shader->bytecode,
                 vertex_shader->byte_size,
-                &pipeline->input_layout);
+                &pipeline->input_layout
+            );
             if (FAILED(hr)) {
                 destroy_pipeline_impl(pipeline);
                 arena.reset_to(marker);
@@ -1037,13 +1095,13 @@ namespace gui::render::d3d11 {
         context_impl->device_context->PSSetShader(pipeline_impl->pixel_shader, nullptr, 0u);
         float blend_factor[] = {0.0f, 0.0f, 0.0f, 0.0f};
         context_impl->device_context->OMSetBlendState(
-            pipeline_impl->blend_state, blend_factor, 0xffffffffu);
+            pipeline_impl->blend_state, blend_factor, 0xffffffffu
+        );
     }
 
-    auto create_bind_group(Arena& arena,
-                           Context context,
-                           BindGroupDesc const& desc,
-                           BindGroup& out_group) -> Result {
+    auto create_bind_group(
+        Arena& arena, Context context, BindGroupDesc const& desc, BindGroup& out_group
+    ) -> Result {
         D3D11Context* context_impl = context_from_handle(context);
         ASSERT(context_impl != nullptr);
 
@@ -1233,7 +1291,8 @@ namespace gui::render::d3d11 {
         release_render_target(window_impl);
 
         HRESULT const hr = window_impl->swap_chain->ResizeBuffers(
-            0u, size.width, size.height, DXGI_FORMAT_UNKNOWN, 0u);
+            0u, size.width, size.height, DXGI_FORMAT_UNKNOWN, 0u
+        );
         if (FAILED(hr)) {
             return Result::RESIZE_FAILED;
         }
@@ -1276,12 +1335,14 @@ namespace gui::render::d3d11 {
         viewport.MaxDepth = 1.0f;
 
         ScissorRect const scissor_rect = {
-            0u, 0u, window_impl->size.width, window_impl->size.height};
+            0u, 0u, window_impl->size.width, window_impl->size.height
+        };
         D3D11_RECT const scissor = d3d_scissor_rect(scissor_rect);
 
         unbind_shader_resources(context_impl);
         context_impl->device_context->OMSetRenderTargets(
-            1u, &window_impl->render_target_view, nullptr);
+            1u, &window_impl->render_target_view, nullptr
+        );
         context_impl->device_context->RSSetState(context_impl->rasterizer_state);
         context_impl->device_context->RSSetViewports(1u, &viewport);
         context_impl->device_context->RSSetScissorRects(1u, &scissor);
@@ -1293,8 +1354,9 @@ namespace gui::render::d3d11 {
         case LoadOp::CLEAR: {
             Color const color = desc.clear_color;
             float const clear_color[] = {color.r, color.g, color.b, color.a};
-            context_impl->device_context->ClearRenderTargetView(window_impl->render_target_view,
-                                                                clear_color);
+            context_impl->device_context->ClearRenderTargetView(
+                window_impl->render_target_view, clear_color
+            );
             break;
         }
         }
@@ -1322,12 +1384,14 @@ namespace gui::render::d3d11 {
         viewport.MaxDepth = 1.0f;
 
         ScissorRect const scissor_rect = {
-            0u, 0u, texture_impl->size.width, texture_impl->size.height};
+            0u, 0u, texture_impl->size.width, texture_impl->size.height
+        };
         D3D11_RECT const scissor = d3d_scissor_rect(scissor_rect);
 
         unbind_shader_resources(context_impl);
         context_impl->device_context->OMSetRenderTargets(
-            1u, &texture_impl->render_target_view, nullptr);
+            1u, &texture_impl->render_target_view, nullptr
+        );
         context_impl->device_context->RSSetState(context_impl->rasterizer_state);
         context_impl->device_context->RSSetViewports(1u, &viewport);
         context_impl->device_context->RSSetScissorRects(1u, &scissor);
@@ -1339,8 +1403,9 @@ namespace gui::render::d3d11 {
         case LoadOp::CLEAR: {
             Color const color = desc.clear_color;
             float const clear_color[] = {color.r, color.g, color.b, color.a};
-            context_impl->device_context->ClearRenderTargetView(texture_impl->render_target_view,
-                                                                clear_color);
+            context_impl->device_context->ClearRenderTargetView(
+                texture_impl->render_target_view, clear_color
+            );
             break;
         }
         }

@@ -891,7 +891,7 @@ namespace code_editor {
 
         render::Context render_context = {};
         render::ContextDesc context_desc = {};
-        context_desc.backend = render::Backend::D3D11;
+        context_desc.backend = render::Backend::D3D12;
 #if BASE_DEBUG
         context_desc.enable_debug_layer = true;
 #endif

@@ -4,16 +4,53 @@
 
 namespace {
 
-    [[nodiscard]] auto raster_has_alpha(gui::font_provider::RasterResult const& raster) -> bool {
-        if (raster.rgba_pixels == nullptr) {
+    [[nodiscard]] auto raster_has_coverage(gui::font_provider::RasterResult const& raster) -> bool {
+        if (raster.pixels == nullptr) {
             return false;
         }
 
         for (uint32_t y = 0u; y < raster.size.height; ++y) {
-            uint8_t const* const line =
-                raster.rgba_pixels + (static_cast<size_t>(y) * raster.stride);
+            uint8_t const* const line = raster.pixels + (static_cast<size_t>(y) * raster.stride);
             for (uint32_t x = 0u; x < raster.size.width; ++x) {
-                if (line[(static_cast<size_t>(x) * 4u) + 3u] != 0u) {
+                if (line[x] != 0u) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    [[nodiscard]] auto raster_has_antialias_coverage(gui::font_provider::RasterResult const& raster)
+        -> bool {
+        if (raster.pixels == nullptr) {
+            return false;
+        }
+
+        for (uint32_t y = 0u; y < raster.size.height; ++y) {
+            uint8_t const* const line = raster.pixels + (static_cast<size_t>(y) * raster.stride);
+            for (uint32_t x = 0u; x < raster.size.width; ++x) {
+                uint8_t const coverage = line[x];
+                if (coverage != 0u && coverage != 255u) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    [[nodiscard]] auto glyph_has_antialias_coverage(gui::font_provider::GlyphRaster const& raster)
+        -> bool {
+        if (raster.pixels == nullptr) {
+            return false;
+        }
+
+        for (uint32_t y = 0u; y < raster.size.height; ++y) {
+            uint8_t const* const line = raster.pixels + (static_cast<size_t>(y) * raster.stride);
+            for (uint32_t x = 0u; x < raster.size.width; ++x) {
+                uint8_t const coverage = line[x];
+                if (coverage != 0u && coverage != 255u) {
                     return true;
                 }
             }
@@ -27,12 +64,15 @@ namespace {
         TEST_EXPECT(context, !gui::font_provider::result_failed(gui::font_provider::Result::OK));
         TEST_EXPECT(
             context,
-            gui::font_provider::result_failed(gui::font_provider::Result::UNSUPPORTED_PLATFORM));
-        TEST_EXPECT(context,
-                    gui::font_provider::result_name(gui::font_provider::Result::OK)[0] != '\0');
-        TEST_EXPECT(context,
-                    gui::font_provider::backend_name(gui::font_provider::Backend::DEFAULT)[0] !=
-                        '\0');
+            gui::font_provider::result_failed(gui::font_provider::Result::UNSUPPORTED_PLATFORM)
+        );
+        TEST_EXPECT(
+            context, gui::font_provider::result_name(gui::font_provider::Result::OK)[0] != '\0'
+        );
+        TEST_EXPECT(
+            context,
+            gui::font_provider::backend_name(gui::font_provider::Backend::DEFAULT)[0] != '\0'
+        );
     }
 
     TEST_CASE(font_provider_handles_start_empty_and_validate_by_handle_value) {
@@ -68,20 +108,48 @@ namespace {
         TEST_EXPECT(context, metrics.ascent > 0.0f);
         TEST_EXPECT(context, metrics.descent >= 0.0f);
         TEST_EXPECT(context, gui::font_provider::text_advance(font, 16.0f, "hello") > 0.0f);
-        TEST_EXPECT(context,
-                    gui::font_provider::text_advance(font, 16.0f, "iiii") <
-                        gui::font_provider::text_advance(font, 16.0f, "WWWW"));
+        TEST_EXPECT(
+            context,
+            gui::font_provider::text_advance(font, 16.0f, "iiii") <
+                gui::font_provider::text_advance(font, 16.0f, "WWWW")
+        );
 
         Arena arena = {};
         arena.init({4u * 1024u * 1024u, DEFAULT_ARENA_COMMIT_SIZE});
+        gui::font_provider::ShapedText shaped = {};
+        gui::font_provider::shape_text(font, 20.0f, "fi", arena, shaped);
+        TEST_EXPECT(context, shaped.glyphs != nullptr);
+        TEST_EXPECT(context, shaped.glyph_count > 0u);
+        TEST_EXPECT(context, shaped.advance > 0.0f);
+        TEST_EXPECT(context, shaped.size.width > 0u);
+
+        gui::font_provider::ShapedText combining = {};
+        gui::font_provider::shape_text(font, 20.0f, "e\xcc\x81", arena, combining);
+        TEST_EXPECT(context, combining.glyph_count > 0u);
+        TEST_EXPECT(context, combining.advance > 0.0f);
+        TEST_EXPECT(
+            context, combining.advance < gui::font_provider::text_advance(font, 20.0f, "e ") + 1.0f
+        );
+
+        gui::font_provider::GlyphRaster glyph = {};
+        gui::font_provider::raster_glyph(font, 20.0f, shaped.glyphs[0u].glyph_index, arena, glyph);
+        TEST_EXPECT(context, glyph.size.width > 0u);
+        TEST_EXPECT(context, glyph.size.height > 0u);
+        TEST_EXPECT(context, glyph.stride == glyph.size.width);
+        TEST_EXPECT(context, glyph.pixels != nullptr);
+        TEST_EXPECT(context, glyph.format == gui::font_provider::RasterFormat::ALPHA);
+        TEST_EXPECT(context, glyph_has_antialias_coverage(glyph));
+
         gui::font_provider::RasterResult raster = {};
         gui::font_provider::raster_text(font, 16.0f, "hello", arena, raster);
         TEST_EXPECT(context, raster.size.width > 0u);
         TEST_EXPECT(context, raster.size.height > 0u);
-        TEST_EXPECT(context, raster.stride >= raster.size.width * 4u);
-        TEST_EXPECT(context, raster.rgba_pixels != nullptr);
+        TEST_EXPECT(context, raster.stride == raster.size.width);
+        TEST_EXPECT(context, raster.pixels != nullptr);
+        TEST_EXPECT(context, raster.format == gui::font_provider::RasterFormat::ALPHA);
         TEST_EXPECT(context, raster.advance > 0.0f);
-        TEST_EXPECT(context, raster_has_alpha(raster));
+        TEST_EXPECT(context, raster_has_coverage(raster));
+        TEST_EXPECT(context, raster_has_antialias_coverage(raster));
         arena.destroy();
 
         gui::font_provider::close_font(font);

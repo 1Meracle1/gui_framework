@@ -19,6 +19,7 @@ namespace gui::render {
 
     struct TextureHeader {
         Backend backend = Backend::D3D11;
+        TextureFormat format = TextureFormat::RGBA8_UNORM;
     };
 
     struct SamplerHeader {

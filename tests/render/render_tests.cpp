@@ -1,7 +1,51 @@
+#include <base/config.h>
 #include <render/render.h>
 #include <test/test.h>
 
 namespace {
+
+#if BASE_PLATFORM_WINDOWS
+    auto expect_r8_texture_subrect_update(test::Context* context, gui::render::Backend backend)
+        -> void {
+        Arena owner_arena = {};
+        owner_arena.init();
+
+        gui::render::ContextDesc context_desc = {};
+        context_desc.backend = backend;
+        gui::render::Context render_context = {};
+        gui::render::Result result =
+            gui::render::create_context(owner_arena, context_desc, render_context);
+        TEST_EXPECT(context, result == gui::render::Result::OK);
+        if (result != gui::render::Result::OK) {
+            owner_arena.destroy();
+            return;
+        }
+
+        gui::render::TextureDesc texture_desc = {};
+        texture_desc.size = {8u, 8u};
+        texture_desc.format = gui::render::TextureFormat::R8_UNORM;
+        texture_desc.updatable = true;
+        gui::render::Texture texture = {};
+        result = gui::render::create_texture(render_context, texture_desc, texture);
+        TEST_EXPECT(context, result == gui::render::Result::OK);
+
+        uint8_t pixels[] = {0u, 64u, 128u, 255u};
+        gui::render::TextureUpdateDesc update_desc = {};
+        update_desc.x = 2u;
+        update_desc.y = 3u;
+        update_desc.size = {2u, 2u};
+        update_desc.bytes_per_row = 2u;
+        update_desc.pixels = pixels;
+        if (gui::render::texture_valid(texture)) {
+            result = gui::render::update_texture(render_context, texture, update_desc);
+            TEST_EXPECT(context, result == gui::render::Result::OK);
+            gui::render::destroy_texture(render_context, texture);
+        }
+
+        gui::render::destroy_context(render_context);
+        owner_arena.destroy();
+    }
+#endif
 
     TEST_CASE(render_result_helpers_classify_status_and_errors) {
         TEST_EXPECT(context, gui::render::result_succeeded(gui::render::Result::OK));
@@ -123,9 +167,24 @@ namespace {
 
         TEST_EXPECT(context, desc.size.width == 0u);
         TEST_EXPECT(context, desc.size.height == 0u);
+        TEST_EXPECT(context, desc.format == gui::render::TextureFormat::RGBA8_UNORM);
         TEST_EXPECT(context, desc.bytes_per_row == 0u);
         TEST_EXPECT(context, desc.rgba_pixels == nullptr);
         TEST_EXPECT(context, !desc.render_target);
+        TEST_EXPECT(context, !desc.updatable);
+    }
+
+    TEST_CASE(render_texture_desc_can_request_r8_upload) {
+        uint8_t pixels[8u] = {};
+        gui::render::TextureDesc desc = {};
+        desc.size = {4u, 2u};
+        desc.format = gui::render::TextureFormat::R8_UNORM;
+        desc.bytes_per_row = 4u;
+        desc.rgba_pixels = pixels;
+
+        TEST_EXPECT(context, desc.format == gui::render::TextureFormat::R8_UNORM);
+        TEST_EXPECT(context, desc.bytes_per_row == desc.size.width);
+        TEST_EXPECT(context, desc.rgba_pixels == pixels);
     }
 
     TEST_CASE(render_target_texture_desc_keeps_upload_optional) {
@@ -138,6 +197,44 @@ namespace {
         TEST_EXPECT(context, desc.bytes_per_row == 0u);
         TEST_EXPECT(context, desc.rgba_pixels == nullptr);
         TEST_EXPECT(context, desc.render_target);
+    }
+
+    TEST_CASE(render_updatable_texture_desc_keeps_upload_optional) {
+        gui::render::TextureDesc desc = {};
+        desc.size = {16u, 8u};
+        desc.format = gui::render::TextureFormat::R8_UNORM;
+        desc.updatable = true;
+
+        TEST_EXPECT(context, desc.size.width == 16u);
+        TEST_EXPECT(context, desc.size.height == 8u);
+        TEST_EXPECT(context, desc.bytes_per_row == 0u);
+        TEST_EXPECT(context, desc.rgba_pixels == nullptr);
+        TEST_EXPECT(context, desc.updatable);
+    }
+
+    TEST_CASE(render_texture_update_desc_describes_subrect_upload) {
+        uint8_t pixels[4u] = {};
+        gui::render::TextureUpdateDesc desc = {};
+        desc.x = 2u;
+        desc.y = 3u;
+        desc.size = {2u, 2u};
+        desc.bytes_per_row = 2u;
+        desc.pixels = pixels;
+
+        TEST_EXPECT(context, desc.x == 2u);
+        TEST_EXPECT(context, desc.y == 3u);
+        TEST_EXPECT(context, desc.size.width == 2u);
+        TEST_EXPECT(context, desc.bytes_per_row == 2u);
+        TEST_EXPECT(context, desc.pixels == pixels);
+    }
+
+    TEST_CASE(render_updates_r8_texture_subrect_on_supported_backends) {
+#if BASE_PLATFORM_WINDOWS
+        expect_r8_texture_subrect_update(context, gui::render::Backend::D3D11);
+        expect_r8_texture_subrect_update(context, gui::render::Backend::D3D12);
+#else
+        TEST_EXPECT(context, true);
+#endif
     }
 
     TEST_CASE(render_sampler_defaults_describe_linear_clamp) {

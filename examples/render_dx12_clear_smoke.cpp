@@ -607,11 +607,14 @@ float4 ps_main(PSInput input) : SV_Target
             gui::render::allocate_frame_vertex_buffer(context, 1u, 1u);
         gui::render::FrameBufferSlice const second =
             gui::render::allocate_frame_vertex_buffer(context, 1u, 3u);
-        if (first.data == nullptr || second.data == nullptr || first.byte_offset != 0u ||
-            second.byte_offset != 3u) {
-            fmt::eprintf("DX12 frame upload alignment smoke failed: offsets=%zu,%zu\n",
+        gui::render::FrameBufferSlice const grow =
+            gui::render::allocate_frame_vertex_buffer(context, 96u * 1024u, 16u);
+        if (first.data == nullptr || second.data == nullptr || grow.data == nullptr ||
+            first.byte_offset != 0u || second.byte_offset != 3u || grow.byte_offset != 16u) {
+            fmt::eprintf("DX12 frame upload alignment smoke failed: offsets=%zu,%zu,%zu\n",
                          first.byte_offset,
-                         second.byte_offset);
+                         second.byte_offset,
+                         grow.byte_offset);
             return false;
         }
         return true;

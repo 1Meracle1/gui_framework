@@ -1544,15 +1544,15 @@ namespace code_editor {
         float client_height,
         bool buffers
     ) -> void {
-        float constexpr modal_margin = 24.0f;
-        float constexpr dialog_padding = 8.0f;
-        float constexpr dialog_gap = 8.0f;
-        float constexpr query_height = 36.0f;
+        float constexpr MODAL_MARGIN = 24.0f;
+        float constexpr DIALOG_PADDING = 8.0f;
+        float constexpr DIALOG_GAP = 8.0f;
+        float constexpr QUERY_HEIGHT = 36.0f;
         float const results_height = std::min(
             FILE_SEARCH_ROW_HEIGHT * static_cast<float>(FILE_SEARCH_RESULT_LIMIT),
             std::max(
                 FILE_SEARCH_ROW_HEIGHT,
-                client_height - 2.0f * (modal_margin + dialog_padding) - query_height - dialog_gap
+                client_height - 2.0f * (MODAL_MARGIN + DIALOG_PADDING) - QUERY_HEIGHT - DIALOG_GAP
             )
         );
 
@@ -1568,7 +1568,7 @@ namespace code_editor {
                 {
                     .layout =
                         {
-                            .padding = gui::insets(modal_margin),
+                            .padding = gui::insets(MODAL_MARGIN),
                             .align_x = gui::Align::CENTER,
                             .align_y = gui::Align::CENTER,
                         },
@@ -1583,8 +1583,8 @@ namespace code_editor {
                                 .width = gui::fill(),
                                 .height = gui::children(),
                                 .max_width = gui::px(860.0f),
-                                .padding = gui::insets(dialog_padding),
-                                .gap = dialog_gap,
+                                .padding = gui::insets(DIALOG_PADDING),
+                                .gap = DIALOG_GAP,
                                 .align_x = gui::Align::STRETCH,
                             },
                         .style = {
@@ -1601,7 +1601,7 @@ namespace code_editor {
                             .layout =
                                 {
                                     .width = gui::fill(),
-                                    .height = gui::px(query_height),
+                                    .height = gui::px(QUERY_HEIGHT),
                                     .padding = gui::insets(0.0f, 10.0f),
                                     .gap = 6.0f,
                                     .align_y = gui::Align::CENTER,

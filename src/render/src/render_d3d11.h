@@ -17,13 +17,15 @@ namespace gui::render::d3d11 {
         -> Result;
     auto destroy_buffer(Context context, Buffer& buffer) -> void;
     auto update_buffer(Context context, Buffer buffer, void const* data, size_t byte_size) -> void;
-    [[nodiscard]] auto allocate_frame_vertex_buffer(Context context,
-                                                    size_t byte_size,
-                                                    size_t byte_alignment) -> FrameBufferSlice;
+    [[nodiscard]] auto
+    allocate_frame_vertex_buffer(Context context, size_t byte_size, size_t byte_alignment)
+        -> FrameBufferSlice;
     auto commit_frame_uploads(Context context) -> void;
 
     [[nodiscard]] auto
     create_texture(Context context, TextureDesc const& desc, Texture& out_texture) -> Result;
+    [[nodiscard]] auto
+    update_texture(Context context, Texture texture, TextureUpdateDesc const& desc) -> Result;
     auto destroy_texture(Context context, Texture& texture) -> void;
     [[nodiscard]] auto
     create_sampler(Context context, SamplerDesc const& desc, Sampler& out_sampler) -> Result;
@@ -32,10 +34,9 @@ namespace gui::render::d3d11 {
     [[nodiscard]] auto
     create_shader(Arena& arena, Context context, ShaderDesc const& desc, Shader& out_shader)
         -> Result;
-    [[nodiscard]] auto create_shader_from_source(Arena& arena,
-                                                 Context context,
-                                                 ShaderSourceDesc const& desc,
-                                                 Shader& out_shader) -> Result;
+    [[nodiscard]] auto create_shader_from_source(
+        Arena& arena, Context context, ShaderSourceDesc const& desc, Shader& out_shader
+    ) -> Result;
     auto destroy_shader(Context context, Shader& shader) -> void;
 
     [[nodiscard]] auto
@@ -44,10 +45,9 @@ namespace gui::render::d3d11 {
     auto destroy_pipeline(Context context, Pipeline& pipeline) -> void;
     auto bind_pipeline(Context context, Pipeline pipeline) -> void;
 
-    [[nodiscard]] auto create_bind_group(Arena& arena,
-                                         Context context,
-                                         BindGroupDesc const& desc,
-                                         BindGroup& out_group) -> Result;
+    [[nodiscard]] auto create_bind_group(
+        Arena& arena, Context context, BindGroupDesc const& desc, BindGroup& out_group
+    ) -> Result;
     auto destroy_bind_group(Context context, BindGroup& bind_group) -> void;
     auto bind_group(Context context, BindGroup bind_group) -> void;
     auto set_scissor_rect(Context context, ScissorRect rect) -> void;

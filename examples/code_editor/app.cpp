@@ -174,8 +174,11 @@ namespace code_editor {
 
     [[nodiscard]] auto
     create_runtime(Arena& arena, ModuleRuntimeContext const& context, Runtime* runtime) -> bool {
-        render::Result render_result =
-            draw::create_renderer(arena, context.render_context, {}, runtime->draw_renderer);
+        draw::RendererDesc renderer_desc = {};
+        renderer_desc.text_texture_cache_capacity = 4096u;
+        render::Result render_result = draw::create_renderer(
+            arena, context.render_context, renderer_desc, runtime->draw_renderer
+        );
         if (render::result_failed(render_result)) {
             log_render_result("draw::create_renderer", render_result);
             return false;

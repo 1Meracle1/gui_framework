@@ -39,6 +39,25 @@ namespace gui::font_provider::platform {
         return 0.0f;
     }
 
+    auto shape_text(Font font, float size, StrRef text, Arena& arena, ShapedText& out_text)
+        -> void {
+        BASE_UNUSED(font);
+        BASE_UNUSED(size);
+        BASE_UNUSED(text);
+        BASE_UNUSED(arena);
+        out_text = {};
+    }
+
+    auto
+    raster_glyph(Font font, float size, uint16_t glyph_index, Arena& arena, GlyphRaster& out_raster)
+        -> void {
+        BASE_UNUSED(font);
+        BASE_UNUSED(size);
+        BASE_UNUSED(glyph_index);
+        BASE_UNUSED(arena);
+        out_raster = {};
+    }
+
     auto raster_text(Font font, float size, StrRef text, Arena& arena, RasterResult& out_raster)
         -> void {
         BASE_UNUSED(font);

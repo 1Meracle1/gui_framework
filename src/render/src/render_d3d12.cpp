@@ -38,8 +38,10 @@ namespace gui::render::d3d12 {
         constexpr size_t MAX_D3D12_BUFFER_VIEW_BYTE_SIZE = 0xffffffffu;
         constexpr size_t DEFERRED_RELEASE_CAPACITY = 4096u;
         constexpr D3D12_RESOURCE_STATES TEXTURE_SHADER_RESOURCE_STATE =
-            static_cast<D3D12_RESOURCE_STATES>(D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE |
-                                               D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+            static_cast<D3D12_RESOURCE_STATES>(
+                D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE |
+                D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE
+            );
 
         enum RootParameter : uint32_t {
             ROOT_VS_CBV,
@@ -68,6 +70,7 @@ namespace gui::render::d3d12 {
             ID3D12Resource* resource = nullptr;
             ID3D12DescriptorHeap* rtv_heap = nullptr;
             SizeU32 size = {};
+            DXGI_FORMAT format = DXGI_FORMAT_R8G8B8A8_UNORM;
             D3D12_RESOURCE_STATES state = TEXTURE_SHADER_RESOURCE_STATE;
         };
 
@@ -275,6 +278,17 @@ namespace gui::render::d3d12 {
             return DXGI_FORMAT_UNKNOWN;
         }
 
+        [[nodiscard]] auto d3d_format(TextureFormat format) -> DXGI_FORMAT {
+            switch (format) {
+            case TextureFormat::RGBA8_UNORM:
+                return DXGI_FORMAT_R8G8B8A8_UNORM;
+            case TextureFormat::R8_UNORM:
+                return DXGI_FORMAT_R8_UNORM;
+            }
+
+            return DXGI_FORMAT_UNKNOWN;
+        }
+
         [[nodiscard]] auto d3d_topology(PrimitiveTopology topology) -> D3D12_PRIMITIVE_TOPOLOGY {
             switch (topology) {
             case PrimitiveTopology::TRIANGLE_LIST:
@@ -339,9 +353,9 @@ namespace gui::render::d3d12 {
             return texture->rtv_heap->GetCPUDescriptorHandleForHeapStart();
         }
 
-        auto transition_texture(D3D12Context* context,
-                                D3D12Texture* texture,
-                                D3D12_RESOURCE_STATES state) -> void {
+        auto transition_texture(
+            D3D12Context* context, D3D12Texture* texture, D3D12_RESOURCE_STATES state
+        ) -> void {
             if (texture->state == state) {
                 return;
             }
@@ -422,9 +436,9 @@ namespace gui::render::d3d12 {
             return 1u << slot;
         }
 
-        [[nodiscard]] auto descriptor_cpu_handle(D3D12Context const* context,
-                                                 uint32_t root_parameter,
-                                                 uint32_t index) -> D3D12_CPU_DESCRIPTOR_HANDLE {
+        [[nodiscard]] auto
+        descriptor_cpu_handle(D3D12Context const* context, uint32_t root_parameter, uint32_t index)
+            -> D3D12_CPU_DESCRIPTOR_HANDLE {
             return root_uses_sampler(root_parameter) ? sampler_cpu_handle(context, index)
                                                      : shader_cpu_handle(context, index);
         }
@@ -435,9 +449,9 @@ namespace gui::render::d3d12 {
                                                      : D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
         }
 
-        [[nodiscard]] auto descriptor_index(D3D12Context const* context,
-                                            uint32_t root_parameter,
-                                            D3D12_GPU_DESCRIPTOR_HANDLE handle) -> uint32_t {
+        [[nodiscard]] auto descriptor_index(
+            D3D12Context const* context, uint32_t root_parameter, D3D12_GPU_DESCRIPTOR_HANDLE handle
+        ) -> uint32_t {
             D3D12_GPU_DESCRIPTOR_HANDLE const base =
                 root_uses_sampler(root_parameter)
                     ? context->sampler_heap->GetGPUDescriptorHandleForHeapStart()
@@ -458,10 +472,9 @@ namespace gui::render::d3d12 {
             return count;
         }
 
-        [[nodiscard]] auto allocate_frame_descriptor_table(D3D12Context* context,
-                                                           uint32_t root_parameter,
-                                                           uint32_t mask)
-            -> D3D12_GPU_DESCRIPTOR_HANDLE {
+        [[nodiscard]] auto allocate_frame_descriptor_table(
+            D3D12Context* context, uint32_t root_parameter, uint32_t mask
+        ) -> D3D12_GPU_DESCRIPTOR_HANDLE {
             if (root_uses_sampler(root_parameter)) {
                 uint32_t const index =
                     allocate_frame_sampler_descriptors(context, descriptor_count(mask));
@@ -473,11 +486,13 @@ namespace gui::render::d3d12 {
             return shader_gpu_handle(context, index);
         }
 
-        auto copy_descriptor(D3D12Context* context,
-                             uint32_t root_parameter,
-                             D3D12_GPU_DESCRIPTOR_HANDLE target_table,
-                             D3D12_GPU_DESCRIPTOR_HANDLE source_table,
-                             uint32_t slot) -> void {
+        auto copy_descriptor(
+            D3D12Context* context,
+            uint32_t root_parameter,
+            D3D12_GPU_DESCRIPTOR_HANDLE target_table,
+            D3D12_GPU_DESCRIPTOR_HANDLE source_table,
+            uint32_t slot
+        ) -> void {
             uint32_t const target_index =
                 descriptor_index(context, root_parameter, target_table) + slot;
             uint32_t const source_index =
@@ -486,13 +501,16 @@ namespace gui::render::d3d12 {
                 1u,
                 descriptor_cpu_handle(context, root_parameter, target_index),
                 descriptor_cpu_handle(context, root_parameter, source_index),
-                descriptor_heap_type(root_parameter));
+                descriptor_heap_type(root_parameter)
+            );
         }
 
-        auto copy_table(D3D12Context* context,
-                        uint32_t root_parameter,
-                        D3D12_GPU_DESCRIPTOR_HANDLE target,
-                        D3D12DescriptorTable source) -> void {
+        auto copy_table(
+            D3D12Context* context,
+            uint32_t root_parameter,
+            D3D12_GPU_DESCRIPTOR_HANDLE target,
+            D3D12DescriptorTable source
+        ) -> void {
             for (uint32_t slot = 0u; slot < DESCRIPTOR_SLOT_COUNT; ++slot) {
                 if ((source.mask & descriptor_mask(slot)) != 0u) {
                     copy_descriptor(context, root_parameter, target, source.gpu, slot);
@@ -500,26 +518,28 @@ namespace gui::render::d3d12 {
             }
         }
 
-        [[nodiscard]] auto writable_descriptor_table(D3D12Context* context,
-                                                     D3D12DescriptorTable* tables,
-                                                     uint32_t root_parameter,
-                                                     uint32_t update_mask)
-            -> D3D12DescriptorTable& {
+        [[nodiscard]] auto writable_descriptor_table(
+            D3D12Context* context,
+            D3D12DescriptorTable* tables,
+            uint32_t root_parameter,
+            uint32_t update_mask
+        ) -> D3D12DescriptorTable& {
             D3D12DescriptorTable& table = tables[root_parameter];
             if (table.gpu.ptr == 0u) {
                 table.mask = context->bound_tables[root_parameter].mask | update_mask;
                 table.gpu = allocate_frame_descriptor_table(context, root_parameter, table.mask);
                 copy_table(
-                    context, root_parameter, table.gpu, context->bound_tables[root_parameter]);
+                    context, root_parameter, table.gpu, context->bound_tables[root_parameter]
+                );
             } else {
                 ASSERT((update_mask & ~table.mask) == 0u);
             }
             return table;
         }
 
-        auto commit_descriptor_table(D3D12Context* context,
-                                     uint32_t root_parameter,
-                                     D3D12DescriptorTable table) -> void {
+        auto commit_descriptor_table(
+            D3D12Context* context, uint32_t root_parameter, D3D12DescriptorTable table
+        ) -> void {
             context->bound_tables[root_parameter] = table;
             context->command_list->SetGraphicsRootDescriptorTable(root_parameter, table.gpu);
         }
@@ -528,8 +548,9 @@ namespace gui::render::d3d12 {
             for (uint32_t root_parameter = 0u; root_parameter < ROOT_COUNT; ++root_parameter) {
                 D3D12DescriptorTable const table = context->bound_tables[root_parameter];
                 if (table.mask != 0u) {
-                    context->command_list->SetGraphicsRootDescriptorTable(root_parameter,
-                                                                          table.gpu);
+                    context->command_list->SetGraphicsRootDescriptorTable(
+                        root_parameter, table.gpu
+                    );
                 }
             }
         }
@@ -639,11 +660,13 @@ namespace gui::render::d3d12 {
             return value;
         }
 
-        [[nodiscard]] auto create_buffer_resource(D3D12Context* context,
-                                                  size_t byte_size,
-                                                  D3D12_HEAP_TYPE heap_type,
-                                                  D3D12_RESOURCE_STATES initial_state,
-                                                  ID3D12Resource*& out_resource) -> Result {
+        [[nodiscard]] auto create_buffer_resource(
+            D3D12Context* context,
+            size_t byte_size,
+            D3D12_HEAP_TYPE heap_type,
+            D3D12_RESOURCE_STATES initial_state,
+            ID3D12Resource*& out_resource
+        ) -> Result {
             if (byte_size > MAX_D3D12_BUFFER_VIEW_BYTE_SIZE) {
                 return Result::BUFFER_CREATION_FAILED;
             }
@@ -660,13 +683,14 @@ namespace gui::render::d3d12 {
             resource_desc.SampleDesc.Count = 1u;
             resource_desc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
 
-            HRESULT const hr =
-                context->device->CreateCommittedResource(&heap_properties,
-                                                         D3D12_HEAP_FLAG_NONE,
-                                                         &resource_desc,
-                                                         initial_state,
-                                                         nullptr,
-                                                         IID_PPV_ARGS(&out_resource));
+            HRESULT const hr = context->device->CreateCommittedResource(
+                &heap_properties,
+                D3D12_HEAP_FLAG_NONE,
+                &resource_desc,
+                initial_state,
+                nullptr,
+                IID_PPV_ARGS(&out_resource)
+            );
             if (FAILED(hr) || out_resource == nullptr) {
                 return Result::BUFFER_CREATION_FAILED;
             }
@@ -674,15 +698,19 @@ namespace gui::render::d3d12 {
             return Result::OK;
         }
 
-        [[nodiscard]] auto create_upload_buffer(D3D12Context* context,
-                                                size_t byte_size,
-                                                ID3D12Resource*& out_resource,
-                                                uint8_t*& out_mapped_data) -> Result {
-            Result const result = create_buffer_resource(context,
-                                                         byte_size,
-                                                         D3D12_HEAP_TYPE_UPLOAD,
-                                                         D3D12_RESOURCE_STATE_GENERIC_READ,
-                                                         out_resource);
+        [[nodiscard]] auto create_upload_buffer(
+            D3D12Context* context,
+            size_t byte_size,
+            ID3D12Resource*& out_resource,
+            uint8_t*& out_mapped_data
+        ) -> Result {
+            Result const result = create_buffer_resource(
+                context,
+                byte_size,
+                D3D12_HEAP_TYPE_UPLOAD,
+                D3D12_RESOURCE_STATE_GENERIC_READ,
+                out_resource
+            );
             if (result_failed(result)) {
                 return result;
             }
@@ -697,10 +725,9 @@ namespace gui::render::d3d12 {
             return Result::OK;
         }
 
-        auto record_buffer_upload(D3D12Context* context,
-                                  ID3D12Resource* buffer,
-                                  ID3D12Resource* upload,
-                                  size_t byte_size) -> void {
+        auto record_buffer_upload(
+            D3D12Context* context, ID3D12Resource* buffer, ID3D12Resource* upload, size_t byte_size
+        ) -> void {
             context->command_list->CopyBufferRegion(buffer, 0u, upload, 0u, byte_size);
 
             D3D12_RESOURCE_BARRIER barrier = {};
@@ -712,10 +739,9 @@ namespace gui::render::d3d12 {
             context->command_list->ResourceBarrier(1u, &barrier);
         }
 
-        [[nodiscard]] auto upload_buffer(D3D12Context* context,
-                                         ID3D12Resource* buffer,
-                                         ID3D12Resource* upload,
-                                         size_t byte_size) -> Result {
+        [[nodiscard]] auto upload_buffer(
+            D3D12Context* context, ID3D12Resource* buffer, ID3D12Resource* upload, size_t byte_size
+        ) -> Result {
             if (context->frame_active) {
                 record_buffer_upload(context, buffer, upload, byte_size);
                 return Result::OK;
@@ -759,19 +785,32 @@ namespace gui::render::d3d12 {
             frame_buffer->used_size = 0u;
         }
 
-        auto ensure_frame_buffer(D3D12Context* context,
-                                 D3D12FrameBuffer* frame_buffer,
-                                 size_t byte_size) -> void {
+        auto
+        ensure_frame_buffer(D3D12Context* context, D3D12FrameBuffer* frame_buffer, size_t byte_size)
+            -> void {
             if (byte_size <= frame_buffer->capacity) {
                 return;
             }
 
-            release_frame_buffer(context, frame_buffer);
+            ID3D12Resource* const old_resource = frame_buffer->buffer.resource;
+            uint8_t* const old_mapped_data = frame_buffer->mapped_data;
+            size_t const old_used_size = frame_buffer->used_size;
 
             ID3D12Resource* resource = nullptr;
             uint8_t* mapped_data = nullptr;
             Result const result = create_upload_buffer(context, byte_size, resource, mapped_data);
             ASSERT(result_succeeded(result));
+
+            if (old_used_size != 0u) {
+                ASSERT(old_mapped_data != nullptr);
+                std::memcpy(mapped_data, old_mapped_data, old_used_size);
+            }
+            if (old_resource != nullptr) {
+                if (old_mapped_data != nullptr) {
+                    old_resource->Unmap(0u, nullptr);
+                }
+                defer_release(context, old_resource);
+            }
 
             frame_buffer->buffer.context = context;
             frame_buffer->buffer.resource = resource;
@@ -780,6 +819,7 @@ namespace gui::render::d3d12 {
             frame_buffer->buffer.byte_size = byte_size;
             frame_buffer->mapped_data = mapped_data;
             frame_buffer->capacity = byte_size;
+            frame_buffer->used_size = old_used_size;
         }
 
         [[nodiscard]] auto create_render_targets(D3D12Context* context, D3D12Window* window)
@@ -798,14 +838,16 @@ namespace gui::render::d3d12 {
                 context->device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
 
             for (uint32_t index = 0u; index < window->buffer_count; ++index) {
-                hr = window->swap_chain->GetBuffer(index,
-                                                   IID_PPV_ARGS(&window->back_buffers[index]));
+                hr = window->swap_chain->GetBuffer(
+                    index, IID_PPV_ARGS(&window->back_buffers[index])
+                );
                 if (FAILED(hr) || window->back_buffers[index] == nullptr) {
                     return Result::RENDER_TARGET_CREATION_FAILED;
                 }
 
                 context->device->CreateRenderTargetView(
-                    window->back_buffers[index], nullptr, rtv_handle(window, index));
+                    window->back_buffers[index], nullptr, rtv_handle(window, index)
+                );
             }
 
             window->frame_index = window->swap_chain->GetCurrentBackBufferIndex();
@@ -906,7 +948,8 @@ namespace gui::render::d3d12 {
                 adapter->GetDesc1(&adapter_desc);
                 if ((adapter_desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) == 0u &&
                     SUCCEEDED(D3D12CreateDevice(
-                        adapter, D3D_FEATURE_LEVEL_11_0, __uuidof(ID3D12Device), nullptr))) {
+                        adapter, D3D_FEATURE_LEVEL_11_0, __uuidof(ID3D12Device), nullptr
+                    ))) {
                     context->adapter = adapter;
                     adapter = nullptr;
                     break;
@@ -920,7 +963,8 @@ namespace gui::render::d3d12 {
             }
 
             HRESULT const hr = D3D12CreateDevice(
-                context->adapter, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&context->device));
+                context->adapter, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&context->device)
+            );
             if (FAILED(hr) || context->device == nullptr) {
                 return Result::DEVICE_CREATION_FAILED;
             }
@@ -932,14 +976,16 @@ namespace gui::render::d3d12 {
             D3D12_COMMAND_QUEUE_DESC queue_desc = {};
             queue_desc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
 
-            HRESULT hr = context->device->CreateCommandQueue(&queue_desc,
-                                                             IID_PPV_ARGS(&context->command_queue));
+            HRESULT hr = context->device->CreateCommandQueue(
+                &queue_desc, IID_PPV_ARGS(&context->command_queue)
+            );
             if (FAILED(hr) || context->command_queue == nullptr) {
                 return Result::DEVICE_CREATION_FAILED;
             }
 
             hr = context->device->CreateCommandAllocator(
-                D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&context->upload_command_allocator));
+                D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&context->upload_command_allocator)
+            );
             if (FAILED(hr) || context->upload_command_allocator == nullptr) {
                 return Result::DEVICE_CREATION_FAILED;
             }
@@ -947,17 +993,20 @@ namespace gui::render::d3d12 {
             for (uint32_t index = 0u; index < FRAME_RESOURCE_COUNT; ++index) {
                 hr = context->device->CreateCommandAllocator(
                     D3D12_COMMAND_LIST_TYPE_DIRECT,
-                    IID_PPV_ARGS(&context->frame_resources[index].command_allocator));
+                    IID_PPV_ARGS(&context->frame_resources[index].command_allocator)
+                );
                 if (FAILED(hr) || context->frame_resources[index].command_allocator == nullptr) {
                     return Result::DEVICE_CREATION_FAILED;
                 }
             }
 
-            hr = context->device->CreateCommandList(0u,
-                                                    D3D12_COMMAND_LIST_TYPE_DIRECT,
-                                                    context->upload_command_allocator,
-                                                    nullptr,
-                                                    IID_PPV_ARGS(&context->command_list));
+            hr = context->device->CreateCommandList(
+                0u,
+                D3D12_COMMAND_LIST_TYPE_DIRECT,
+                context->upload_command_allocator,
+                nullptr,
+                IID_PPV_ARGS(&context->command_list)
+            );
             if (FAILED(hr) || context->command_list == nullptr) {
                 return Result::DEVICE_CREATION_FAILED;
             }
@@ -968,7 +1017,8 @@ namespace gui::render::d3d12 {
             }
 
             hr = context->device->CreateFence(
-                0u, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&context->fence));
+                0u, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&context->fence)
+            );
             if (FAILED(hr) || context->fence == nullptr) {
                 return Result::DEVICE_CREATION_FAILED;
             }
@@ -987,8 +1037,9 @@ namespace gui::render::d3d12 {
             shader_heap_desc.NumDescriptors = SHADER_DESCRIPTOR_COUNT;
             shader_heap_desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
 
-            HRESULT hr = context->device->CreateDescriptorHeap(&shader_heap_desc,
-                                                               IID_PPV_ARGS(&context->shader_heap));
+            HRESULT hr = context->device->CreateDescriptorHeap(
+                &shader_heap_desc, IID_PPV_ARGS(&context->shader_heap)
+            );
             if (FAILED(hr) || context->shader_heap == nullptr) {
                 return Result::DEVICE_CREATION_FAILED;
             }
@@ -998,29 +1049,35 @@ namespace gui::render::d3d12 {
             sampler_heap_desc.NumDescriptors = SAMPLER_DESCRIPTOR_COUNT;
             sampler_heap_desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
 
-            hr = context->device->CreateDescriptorHeap(&sampler_heap_desc,
-                                                       IID_PPV_ARGS(&context->sampler_heap));
+            hr = context->device->CreateDescriptorHeap(
+                &sampler_heap_desc, IID_PPV_ARGS(&context->sampler_heap)
+            );
             if (FAILED(hr) || context->sampler_heap == nullptr) {
                 return Result::DEVICE_CREATION_FAILED;
             }
 
             context->shader_descriptor_size = context->device->GetDescriptorHandleIncrementSize(
-                D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+                D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV
+            );
             context->sampler_descriptor_size = context->device->GetDescriptorHandleIncrementSize(
-                D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER);
+                D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER
+            );
             return Result::OK;
         }
 
         [[nodiscard]] auto create_root_signature(D3D12Context* context) -> Result {
             D3D12_DESCRIPTOR_RANGE ranges[ROOT_COUNT] = {};
             ranges[ROOT_VS_CBV] = {
-                D3D12_DESCRIPTOR_RANGE_TYPE_CBV, DESCRIPTOR_SLOT_COUNT, 0u, 0u, 0u};
+                D3D12_DESCRIPTOR_RANGE_TYPE_CBV, DESCRIPTOR_SLOT_COUNT, 0u, 0u, 0u
+            };
             ranges[ROOT_PS_CBV] = ranges[ROOT_VS_CBV];
             ranges[ROOT_VS_SRV] = {
-                D3D12_DESCRIPTOR_RANGE_TYPE_SRV, DESCRIPTOR_SLOT_COUNT, 0u, 0u, 0u};
+                D3D12_DESCRIPTOR_RANGE_TYPE_SRV, DESCRIPTOR_SLOT_COUNT, 0u, 0u, 0u
+            };
             ranges[ROOT_PS_SRV] = ranges[ROOT_VS_SRV];
             ranges[ROOT_VS_SAMPLER] = {
-                D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER, DESCRIPTOR_SLOT_COUNT, 0u, 0u, 0u};
+                D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER, DESCRIPTOR_SLOT_COUNT, 0u, 0u, 0u
+            };
             ranges[ROOT_PS_SAMPLER] = ranges[ROOT_VS_SAMPLER];
 
             D3D12_ROOT_PARAMETER parameters[ROOT_COUNT] = {};
@@ -1045,17 +1102,20 @@ namespace gui::render::d3d12 {
             ID3DBlob* signature = nullptr;
             ID3DBlob* error = nullptr;
             HRESULT hr = D3D12SerializeRootSignature(
-                &desc, D3D_ROOT_SIGNATURE_VERSION_1, &signature, &error);
+                &desc, D3D_ROOT_SIGNATURE_VERSION_1, &signature, &error
+            );
             release_com(error);
             if (FAILED(hr) || signature == nullptr) {
                 release_com(signature);
                 return Result::DEVICE_CREATION_FAILED;
             }
 
-            hr = context->device->CreateRootSignature(0u,
-                                                      signature->GetBufferPointer(),
-                                                      signature->GetBufferSize(),
-                                                      IID_PPV_ARGS(&context->root_signature));
+            hr = context->device->CreateRootSignature(
+                0u,
+                signature->GetBufferPointer(),
+                signature->GetBufferSize(),
+                IID_PPV_ARGS(&context->root_signature)
+            );
             release_com(signature);
             if (FAILED(hr) || context->root_signature == nullptr) {
                 return Result::DEVICE_CREATION_FAILED;
@@ -1064,10 +1124,12 @@ namespace gui::render::d3d12 {
             return Result::OK;
         }
 
-        auto record_texture_upload(D3D12Context* context,
-                                   ID3D12Resource* texture,
-                                   ID3D12Resource* upload_resource,
-                                   D3D12_PLACED_SUBRESOURCE_FOOTPRINT const& layout) -> void {
+        auto record_texture_upload(
+            D3D12Context* context,
+            ID3D12Resource* texture,
+            ID3D12Resource* upload_resource,
+            D3D12_PLACED_SUBRESOURCE_FOOTPRINT const& layout
+        ) -> void {
             D3D12_TEXTURE_COPY_LOCATION source = {};
             source.pResource = upload_resource;
             source.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
@@ -1089,11 +1151,35 @@ namespace gui::render::d3d12 {
             context->command_list->ResourceBarrier(1u, &barrier);
         }
 
-        [[nodiscard]] auto upload_texture(D3D12Context* context,
-                                          ID3D12Resource* texture,
-                                          ID3D12Resource* upload_resource,
-                                          D3D12_PLACED_SUBRESOURCE_FOOTPRINT const& layout)
-            -> Result {
+        auto record_texture_update(
+            D3D12Context* context,
+            D3D12Texture* texture,
+            ID3D12Resource* upload_resource,
+            D3D12_PLACED_SUBRESOURCE_FOOTPRINT const& layout,
+            TextureUpdateDesc const& desc
+        ) -> void {
+            transition_texture(context, texture, D3D12_RESOURCE_STATE_COPY_DEST);
+
+            D3D12_TEXTURE_COPY_LOCATION source = {};
+            source.pResource = upload_resource;
+            source.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+            source.PlacedFootprint = layout;
+
+            D3D12_TEXTURE_COPY_LOCATION target = {};
+            target.pResource = texture->resource;
+            target.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+            target.SubresourceIndex = 0u;
+
+            context->command_list->CopyTextureRegion(&target, desc.x, desc.y, 0u, &source, nullptr);
+            transition_texture(context, texture, TEXTURE_SHADER_RESOURCE_STATE);
+        }
+
+        [[nodiscard]] auto upload_texture(
+            D3D12Context* context,
+            ID3D12Resource* texture,
+            ID3D12Resource* upload_resource,
+            D3D12_PLACED_SUBRESOURCE_FOOTPRINT const& layout
+        ) -> Result {
             if (context->frame_active) {
                 record_texture_upload(context, texture, upload_resource, layout);
                 return Result::OK;
@@ -1111,6 +1197,43 @@ namespace gui::render::d3d12 {
             }
 
             record_texture_upload(context, texture, upload_resource, layout);
+
+            hr = context->command_list->Close();
+            if (FAILED(hr)) {
+                return Result::TEXTURE_CREATION_FAILED;
+            }
+
+            ID3D12CommandList* command_lists[] = {context->command_list};
+            context->command_queue->ExecuteCommandLists(1u, command_lists);
+            signal_gpu(context);
+            wait_for_gpu(context);
+            return Result::OK;
+        }
+
+        [[nodiscard]] auto upload_texture_update(
+            D3D12Context* context,
+            D3D12Texture* texture,
+            ID3D12Resource* upload_resource,
+            D3D12_PLACED_SUBRESOURCE_FOOTPRINT const& layout,
+            TextureUpdateDesc const& desc
+        ) -> Result {
+            if (context->frame_active) {
+                record_texture_update(context, texture, upload_resource, layout, desc);
+                return Result::OK;
+            }
+
+            wait_for_gpu(context);
+            HRESULT hr = context->upload_command_allocator->Reset();
+            if (FAILED(hr)) {
+                return Result::TEXTURE_CREATION_FAILED;
+            }
+
+            hr = context->command_list->Reset(context->upload_command_allocator, nullptr);
+            if (FAILED(hr)) {
+                return Result::TEXTURE_CREATION_FAILED;
+            }
+
+            record_texture_update(context, texture, upload_resource, layout, desc);
 
             hr = context->command_list->Close();
             if (FAILED(hr)) {
@@ -1259,13 +1382,14 @@ namespace gui::render::d3d12 {
         swap_desc.Scaling = DXGI_SCALING_STRETCH;
 
         IDXGISwapChain1* swap_chain = nullptr;
-        HRESULT hr =
-            context_impl->factory->CreateSwapChainForHwnd(context_impl->command_queue,
-                                                          static_cast<HWND>(desc.native_window),
-                                                          &swap_desc,
-                                                          nullptr,
-                                                          nullptr,
-                                                          &swap_chain);
+        HRESULT hr = context_impl->factory->CreateSwapChainForHwnd(
+            context_impl->command_queue,
+            static_cast<HWND>(desc.native_window),
+            &swap_desc,
+            nullptr,
+            nullptr,
+            &swap_chain
+        );
         if (FAILED(hr) || swap_chain == nullptr) {
             destroy_window_impl(window);
             arena.reset_to(marker);
@@ -1280,8 +1404,9 @@ namespace gui::render::d3d12 {
             return Result::WINDOW_CREATION_FAILED;
         }
 
-        context_impl->factory->MakeWindowAssociation(static_cast<HWND>(desc.native_window),
-                                                     DXGI_MWA_NO_ALT_ENTER);
+        context_impl->factory->MakeWindowAssociation(
+            static_cast<HWND>(desc.native_window), DXGI_MWA_NO_ALT_ENTER
+        );
 
         window->buffer_count = desc.buffer_count;
         window->size = desc.size;
@@ -1327,11 +1452,13 @@ namespace gui::render::d3d12 {
             }
             resource->Unmap(0u, nullptr);
         } else {
-            Result result = create_buffer_resource(context_impl,
-                                                   resource_size,
-                                                   D3D12_HEAP_TYPE_DEFAULT,
-                                                   D3D12_RESOURCE_STATE_COPY_DEST,
-                                                   resource);
+            Result result = create_buffer_resource(
+                context_impl,
+                resource_size,
+                D3D12_HEAP_TYPE_DEFAULT,
+                D3D12_RESOURCE_STATE_COPY_DEST,
+                resource
+            );
             if (result_failed(result)) {
                 return result;
             }
@@ -1409,11 +1536,12 @@ namespace gui::render::d3d12 {
         D3D12FrameBuffer& frame_buffer = frame.frame_vertex_buffer;
         ASSERT(frame_buffer.used_size <= MAX_D3D12_BUFFER_VIEW_BYTE_SIZE);
         size_t const offset = align_up(frame_buffer.used_size, byte_alignment);
-        ASSERT(offset <= MAX_D3D12_BUFFER_VIEW_BYTE_SIZE &&
-               byte_size <= MAX_D3D12_BUFFER_VIEW_BYTE_SIZE - offset);
+        ASSERT(
+            offset <= MAX_D3D12_BUFFER_VIEW_BYTE_SIZE &&
+            byte_size <= MAX_D3D12_BUFFER_VIEW_BYTE_SIZE - offset
+        );
         size_t const needed_size = offset + byte_size;
         if (needed_size > frame_buffer.capacity) {
-            ASSERT(frame_buffer.used_size == 0u);
             size_t new_capacity = frame_buffer.capacity == 0u ? FRAME_VERTEX_BUFFER_DEFAULT_SIZE
                                                               : frame_buffer.capacity;
             while (new_capacity < needed_size) {
@@ -1444,7 +1572,7 @@ namespace gui::render::d3d12 {
         texture_desc.Height = desc.size.height;
         texture_desc.DepthOrArraySize = 1u;
         texture_desc.MipLevels = 1u;
-        texture_desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        texture_desc.Format = d3d_format(desc.format);
         texture_desc.SampleDesc.Count = 1u;
         texture_desc.Flags =
             desc.render_target ? D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET : D3D12_RESOURCE_FLAG_NONE;
@@ -1456,12 +1584,14 @@ namespace gui::render::d3d12 {
                                                   ? D3D12_RESOURCE_STATE_COPY_DEST
                                                   : D3D12_RESOURCE_STATE_COMMON;
         ID3D12Resource* texture = nullptr;
-        HRESULT hr = context_impl->device->CreateCommittedResource(&default_heap,
-                                                                   D3D12_HEAP_FLAG_NONE,
-                                                                   &texture_desc,
-                                                                   texture_state,
-                                                                   nullptr,
-                                                                   IID_PPV_ARGS(&texture));
+        HRESULT hr = context_impl->device->CreateCommittedResource(
+            &default_heap,
+            D3D12_HEAP_FLAG_NONE,
+            &texture_desc,
+            texture_state,
+            nullptr,
+            IID_PPV_ARGS(&texture)
+        );
         if (FAILED(hr) || texture == nullptr) {
             release_com(texture);
             return Result::TEXTURE_CREATION_FAILED;
@@ -1473,12 +1603,14 @@ namespace gui::render::d3d12 {
             UINT64 row_size = 0u;
             UINT64 upload_size = 0u;
             context_impl->device->GetCopyableFootprints(
-                &texture_desc, 0u, 1u, 0u, &layout, &row_count, &row_size, &upload_size);
+                &texture_desc, 0u, 1u, 0u, &layout, &row_count, &row_size, &upload_size
+            );
 
             ID3D12Resource* upload = nullptr;
             uint8_t* upload_data = nullptr;
             Result result = create_upload_buffer(
-                context_impl, static_cast<size_t>(upload_size), upload, upload_data);
+                context_impl, static_cast<size_t>(upload_size), upload, upload_data
+            );
             if (result_failed(result)) {
                 release_com(texture);
                 return Result::TEXTURE_CREATION_FAILED;
@@ -1486,10 +1618,12 @@ namespace gui::render::d3d12 {
 
             uint8_t const* const source = static_cast<uint8_t const*>(desc.rgba_pixels);
             for (UINT row = 0u; row < row_count; ++row) {
-                std::memcpy(upload_data + layout.Offset +
-                                (static_cast<size_t>(row) * layout.Footprint.RowPitch),
-                            source + (static_cast<size_t>(row) * desc.bytes_per_row),
-                            static_cast<size_t>(row_size));
+                std::memcpy(
+                    upload_data + layout.Offset +
+                        (static_cast<size_t>(row) * layout.Footprint.RowPitch),
+                    source + (static_cast<size_t>(row) * desc.bytes_per_row),
+                    static_cast<size_t>(row_size)
+                );
             }
 
             upload->Unmap(0u, nullptr);
@@ -1523,17 +1657,76 @@ namespace gui::render::d3d12 {
             }
 
             context_impl->device->CreateRenderTargetView(
-                texture, nullptr, rtv_heap->GetCPUDescriptorHandleForHeapStart());
+                texture, nullptr, rtv_heap->GetCPUDescriptorHandleForHeapStart()
+            );
         }
 
         D3D12Texture* texture_impl = arena_new<D3D12Texture>(*context_impl->arena);
+        texture_impl->header.format = desc.format;
         texture_impl->context = context_impl;
         texture_impl->resource = texture;
         texture_impl->rtv_heap = rtv_heap;
         texture_impl->size = desc.size;
+        texture_impl->format = texture_desc.Format;
         texture_impl->state = texture_state;
         out_texture.handle = texture_impl;
         return Result::OK;
+    }
+
+    auto update_texture(Context context, Texture texture, TextureUpdateDesc const& desc) -> Result {
+        D3D12Context* context_impl = context_from_handle(context);
+        D3D12Texture* texture_impl = texture_from_handle(texture);
+        ASSERT(context_impl != nullptr);
+        ASSERT(texture_impl != nullptr);
+        ASSERT(texture_impl->context == context_impl);
+        ASSERT(texture_impl->resource != nullptr);
+        ASSERT(desc.x <= texture_impl->size.width);
+        ASSERT(desc.y <= texture_impl->size.height);
+        ASSERT(desc.size.width <= texture_impl->size.width - desc.x);
+        ASSERT(desc.size.height <= texture_impl->size.height - desc.y);
+
+        D3D12_RESOURCE_DESC texture_desc = {};
+        texture_desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+        texture_desc.Width = desc.size.width;
+        texture_desc.Height = desc.size.height;
+        texture_desc.DepthOrArraySize = 1u;
+        texture_desc.MipLevels = 1u;
+        texture_desc.Format = texture_impl->format;
+        texture_desc.SampleDesc.Count = 1u;
+
+        D3D12_PLACED_SUBRESOURCE_FOOTPRINT layout = {};
+        UINT row_count = 0u;
+        UINT64 row_size = 0u;
+        UINT64 upload_size = 0u;
+        context_impl->device->GetCopyableFootprints(
+            &texture_desc, 0u, 1u, 0u, &layout, &row_count, &row_size, &upload_size
+        );
+
+        ID3D12Resource* upload = nullptr;
+        uint8_t* upload_data = nullptr;
+        Result result = create_upload_buffer(
+            context_impl, static_cast<size_t>(upload_size), upload, upload_data
+        );
+        if (result_failed(result)) {
+            return Result::TEXTURE_CREATION_FAILED;
+        }
+
+        uint8_t const* const source = static_cast<uint8_t const*>(desc.pixels);
+        for (UINT row = 0u; row < row_count; ++row) {
+            std::memcpy(
+                upload_data + layout.Offset +
+                    (static_cast<size_t>(row) * layout.Footprint.RowPitch),
+                source + (static_cast<size_t>(row) * desc.bytes_per_row),
+                static_cast<size_t>(row_size)
+            );
+        }
+
+        upload->Unmap(0u, nullptr);
+        upload_data = nullptr;
+
+        result = upload_texture_update(context_impl, texture_impl, upload, layout, desc);
+        defer_release(context_impl, upload);
+        return result;
     }
 
     auto destroy_texture(Context context, Texture& texture) -> void {
@@ -1597,10 +1790,9 @@ namespace gui::render::d3d12 {
         return Result::OK;
     }
 
-    auto create_shader_from_source(Arena& arena,
-                                   Context context,
-                                   ShaderSourceDesc const& desc,
-                                   Shader& out_shader) -> Result {
+    auto create_shader_from_source(
+        Arena& arena, Context context, ShaderSourceDesc const& desc, Shader& out_shader
+    ) -> Result {
         ID3DBlob* shader_blob = nullptr;
         UINT compile_flags = D3DCOMPILE_ENABLE_STRICTNESS;
 #if BASE_DEBUG
@@ -1610,17 +1802,19 @@ namespace gui::render::d3d12 {
         char const* const target = shader_target(desc.stage);
         ASSERT(target != nullptr);
 
-        HRESULT const hr = D3DCompile(desc.source.data(),
-                                      desc.source.size(),
-                                      nullptr,
-                                      nullptr,
-                                      nullptr,
-                                      desc.entry_point,
-                                      target,
-                                      compile_flags,
-                                      0u,
-                                      &shader_blob,
-                                      nullptr);
+        HRESULT const hr = D3DCompile(
+            desc.source.data(),
+            desc.source.size(),
+            nullptr,
+            nullptr,
+            nullptr,
+            desc.entry_point,
+            target,
+            compile_flags,
+            0u,
+            &shader_blob,
+            nullptr
+        );
         if (FAILED(hr) || shader_blob == nullptr) {
             release_com(shader_blob);
             return Result::SHADER_COMPILATION_FAILED;
@@ -1669,8 +1863,9 @@ namespace gui::render::d3d12 {
         ArenaTemp input_temp = begin_thread_temp_arena();
         D3D12_INPUT_ELEMENT_DESC* input_elements = nullptr;
         if (desc.vertex_attribute_count != 0u) {
-            input_elements = arena_alloc<D3D12_INPUT_ELEMENT_DESC>(*input_temp.arena(),
-                                                                   desc.vertex_attribute_count);
+            input_elements = arena_alloc<D3D12_INPUT_ELEMENT_DESC>(
+                *input_temp.arena(), desc.vertex_attribute_count
+            );
             for (size_t index = 0u; index < desc.vertex_attribute_count; ++index) {
                 VertexAttributeDesc const& attribute = desc.vertex_attributes[index];
                 ASSERT(attribute.semantic_name != nullptr);
@@ -1702,15 +1897,17 @@ namespace gui::render::d3d12 {
         pipeline_desc.RasterizerState = rasterizer_desc;
         pipeline_desc.DepthStencilState.DepthEnable = FALSE;
         pipeline_desc.DepthStencilState.StencilEnable = FALSE;
-        pipeline_desc.InputLayout = {input_elements,
-                                     static_cast<UINT>(desc.vertex_attribute_count)};
+        pipeline_desc.InputLayout = {
+            input_elements, static_cast<UINT>(desc.vertex_attribute_count)
+        };
         pipeline_desc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
         pipeline_desc.NumRenderTargets = 1u;
         pipeline_desc.RTVFormats[0u] = DXGI_FORMAT_R8G8B8A8_UNORM;
         pipeline_desc.SampleDesc.Count = 1u;
 
         HRESULT const hr = context_impl->device->CreateGraphicsPipelineState(
-            &pipeline_desc, IID_PPV_ARGS(&pipeline->pipeline_state));
+            &pipeline_desc, IID_PPV_ARGS(&pipeline->pipeline_state)
+        );
         if (FAILED(hr) || pipeline->pipeline_state == nullptr) {
             destroy_pipeline_impl(context_impl, pipeline);
             arena.reset_to(marker);
@@ -1747,10 +1944,9 @@ namespace gui::render::d3d12 {
         bind_current_descriptor_tables(context_impl);
     }
 
-    auto create_bind_group(Arena& arena,
-                           Context context,
-                           BindGroupDesc const& desc,
-                           BindGroup& out_group) -> Result {
+    auto create_bind_group(
+        Arena& arena, Context context, BindGroupDesc const& desc, BindGroup& out_group
+    ) -> Result {
         D3D12Context* context_impl = context_from_handle(context);
         ASSERT(context_impl != nullptr);
 
@@ -1877,7 +2073,8 @@ namespace gui::render::d3d12 {
             uint32_t const root_parameter =
                 binding.stage == ShaderStage::VERTEX ? ROOT_VS_CBV : ROOT_PS_CBV;
             D3D12DescriptorTable& table = writable_descriptor_table(
-                context_impl, tables, root_parameter, update_masks[root_parameter]);
+                context_impl, tables, root_parameter, update_masks[root_parameter]
+            );
 
             uint32_t const descriptor_offset =
                 descriptor_index(context_impl, root_parameter, table.gpu);
@@ -1891,7 +2088,9 @@ namespace gui::render::d3d12 {
             context_impl->device->CreateConstantBufferView(
                 &view_desc,
                 descriptor_cpu_handle(
-                    context_impl, root_parameter, descriptor_offset + binding.slot));
+                    context_impl, root_parameter, descriptor_offset + binding.slot
+                )
+            );
         }
 
         for (size_t index = 0u; index < group->texture_count; ++index) {
@@ -1904,12 +2103,13 @@ namespace gui::render::d3d12 {
             uint32_t const root_parameter =
                 binding.stage == ShaderStage::VERTEX ? ROOT_VS_SRV : ROOT_PS_SRV;
             D3D12DescriptorTable& table = writable_descriptor_table(
-                context_impl, tables, root_parameter, update_masks[root_parameter]);
+                context_impl, tables, root_parameter, update_masks[root_parameter]
+            );
 
             uint32_t const descriptor_offset =
                 descriptor_index(context_impl, root_parameter, table.gpu);
             D3D12_SHADER_RESOURCE_VIEW_DESC view_desc = {};
-            view_desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+            view_desc.Format = texture->format;
             view_desc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
             view_desc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
             view_desc.Texture2D.MipLevels = 1u;
@@ -1917,7 +2117,9 @@ namespace gui::render::d3d12 {
                 texture->resource,
                 &view_desc,
                 descriptor_cpu_handle(
-                    context_impl, root_parameter, descriptor_offset + binding.slot));
+                    context_impl, root_parameter, descriptor_offset + binding.slot
+                )
+            );
         }
 
         for (size_t index = 0u; index < group->sampler_count; ++index) {
@@ -1928,14 +2130,17 @@ namespace gui::render::d3d12 {
             uint32_t const root_parameter =
                 binding.stage == ShaderStage::VERTEX ? ROOT_VS_SAMPLER : ROOT_PS_SAMPLER;
             D3D12DescriptorTable& table = writable_descriptor_table(
-                context_impl, tables, root_parameter, update_masks[root_parameter]);
+                context_impl, tables, root_parameter, update_masks[root_parameter]
+            );
 
             uint32_t const descriptor_offset =
                 descriptor_index(context_impl, root_parameter, table.gpu);
             context_impl->device->CreateSampler(
                 &sampler->desc,
                 descriptor_cpu_handle(
-                    context_impl, root_parameter, descriptor_offset + binding.slot));
+                    context_impl, root_parameter, descriptor_offset + binding.slot
+                )
+            );
         }
 
         for (uint32_t root_parameter = 0u; root_parameter < ROOT_COUNT; ++root_parameter) {
@@ -1997,7 +2202,8 @@ namespace gui::render::d3d12 {
         release_render_targets(window_impl);
 
         HRESULT const hr = window_impl->swap_chain->ResizeBuffers(
-            0u, size.width, size.height, DXGI_FORMAT_UNKNOWN, 0u);
+            0u, size.width, size.height, DXGI_FORMAT_UNKNOWN, 0u
+        );
         if (FAILED(hr)) {
             return Result::RESIZE_FAILED;
         }
@@ -2061,7 +2267,8 @@ namespace gui::render::d3d12 {
         viewport.MaxDepth = 1.0f;
 
         ScissorRect const scissor_rect = {
-            0u, 0u, window_impl->size.width, window_impl->size.height};
+            0u, 0u, window_impl->size.width, window_impl->size.height
+        };
         D3D12_RECT const scissor = d3d_scissor_rect(scissor_rect);
 
         D3D12_CPU_DESCRIPTOR_HANDLE const target =
@@ -2076,7 +2283,8 @@ namespace gui::render::d3d12 {
             break;
         case LoadOp::CLEAR: {
             float const clear_color[] = {
-                desc.clear_color.r, desc.clear_color.g, desc.clear_color.b, desc.clear_color.a};
+                desc.clear_color.r, desc.clear_color.g, desc.clear_color.b, desc.clear_color.a
+            };
             context_impl->command_list->ClearRenderTargetView(target, clear_color, 0u, nullptr);
             break;
         }
@@ -2106,7 +2314,8 @@ namespace gui::render::d3d12 {
         viewport.MaxDepth = 1.0f;
 
         ScissorRect const scissor_rect = {
-            0u, 0u, texture_impl->size.width, texture_impl->size.height};
+            0u, 0u, texture_impl->size.width, texture_impl->size.height
+        };
         D3D12_RECT const scissor = d3d_scissor_rect(scissor_rect);
 
         D3D12_CPU_DESCRIPTOR_HANDLE const target = rtv_handle(texture_impl);
@@ -2120,7 +2329,8 @@ namespace gui::render::d3d12 {
             break;
         case LoadOp::CLEAR: {
             float const clear_color[] = {
-                desc.clear_color.r, desc.clear_color.g, desc.clear_color.b, desc.clear_color.a};
+                desc.clear_color.r, desc.clear_color.g, desc.clear_color.b, desc.clear_color.a
+            };
             context_impl->command_list->ClearRenderTargetView(target, clear_color, 0u, nullptr);
             break;
         }
@@ -2151,7 +2361,8 @@ namespace gui::render::d3d12 {
 
         if (context_impl->active_texture != nullptr) {
             transition_texture(
-                context_impl, context_impl->active_texture, TEXTURE_SHADER_RESOURCE_STATE);
+                context_impl, context_impl->active_texture, TEXTURE_SHADER_RESOURCE_STATE
+            );
             context_impl->active_texture = nullptr;
         }
         context_impl->render_pass_active = false;

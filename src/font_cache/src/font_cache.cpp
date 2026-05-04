@@ -37,6 +37,14 @@ namespace gui::font_cache {
             float advance = 0.0f;
         };
 
+        struct GlyphEntry {
+            GlyphEntry* next = nullptr;
+            CacheFont* font = nullptr;
+            uint32_t size_bits = 0u;
+            uint16_t glyph_index = 0u;
+            font_provider::GlyphRaster raster = {};
+        };
+
         struct CacheImpl {
             Arena persistent_arena = {};
             Arena cache_arena = {};
@@ -44,6 +52,7 @@ namespace gui::font_cache {
             CacheFont* first_font = nullptr;
             CacheEntry** slots = nullptr;
             AdvanceEntry** advance_slots = nullptr;
+            GlyphEntry** glyph_slots = nullptr;
             size_t slot_count = 0u;
         };
 
@@ -86,6 +95,15 @@ namespace gui::font_cache {
             return result;
         }
 
+        [[nodiscard]] auto
+        glyph_hash(CacheFont const* font, uint32_t size_bits, uint16_t glyph_index) -> uint64_t {
+            uint64_t result = FNV64_OFFSET;
+            result = hash_size(result, reinterpret_cast<size_t>(font));
+            result = hash_bytes(result, &size_bits, sizeof(size_bits));
+            result = hash_bytes(result, &glyph_index, sizeof(glyph_index));
+            return result;
+        }
+
         [[nodiscard]] auto pixel_byte_count(font_provider::SizeU32 size, uint32_t stride)
             -> size_t {
             if (size.height == 0u || stride == 0u) {
@@ -107,6 +125,51 @@ namespace gui::font_cache {
             char* const data = arena_alloc<char>(arena, text.size());
             std::memcpy(data, text.data(), text.size());
             out_text = StrRef(data, text.size());
+        }
+
+        auto copy_glyph_raster(
+            Arena& arena, font_provider::GlyphRaster const& raster, font_provider::GlyphRaster& out
+        ) -> void {
+            out = raster;
+            size_t const bytes = pixel_byte_count(raster.size, raster.stride);
+            if (bytes == 0u) {
+                out.pixels = nullptr;
+                return;
+            }
+
+            uint8_t* const data = arena_alloc<uint8_t>(arena, bytes);
+            std::memcpy(data, raster.pixels, bytes);
+            out.pixels = data;
+        }
+
+        [[nodiscard]] auto cached_glyph_raster(
+            CacheImpl* cache, CacheFont* font, uint32_t size_bits, float size, uint16_t glyph_index
+        ) -> font_provider::GlyphRaster {
+            uint64_t const hash = glyph_hash(font, size_bits, glyph_index);
+            size_t const slot_index = static_cast<size_t>(hash % cache->slot_count);
+
+            for (GlyphEntry* entry = cache->glyph_slots[slot_index]; entry != nullptr;
+                 entry = entry->next) {
+                if (entry->font == font && entry->size_bits == size_bits &&
+                    entry->glyph_index == glyph_index) {
+                    return entry->raster;
+                }
+            }
+
+            ArenaTemp temp = begin_thread_temp_arena();
+            font_provider::GlyphRaster raster = {};
+            font_provider::raster_glyph(
+                font->provider_font, size, glyph_index, *temp.arena(), raster
+            );
+
+            GlyphEntry* const entry = arena_new<GlyphEntry>(cache->cache_arena);
+            entry->font = font;
+            entry->size_bits = size_bits;
+            entry->glyph_index = glyph_index;
+            copy_glyph_raster(cache->cache_arena, raster, entry->raster);
+            entry->next = cache->glyph_slots[slot_index];
+            cache->glyph_slots[slot_index] = entry;
+            return entry->raster;
         }
 
         auto close_fonts(CacheImpl* impl) -> void {
@@ -159,9 +222,11 @@ namespace gui::font_cache {
         impl->slots = arena_alloc<CacheEntry*>(impl->persistent_arena, desc.cache_slot_count);
         impl->advance_slots =
             arena_alloc<AdvanceEntry*>(impl->persistent_arena, desc.cache_slot_count);
+        impl->glyph_slots = arena_alloc<GlyphEntry*>(impl->persistent_arena, desc.cache_slot_count);
         size_t const slot_bytes = sizeof(CacheEntry*) * desc.cache_slot_count;
         std::memset(impl->slots, 0, slot_bytes);
         std::memset(impl->advance_slots, 0, sizeof(AdvanceEntry*) * desc.cache_slot_count);
+        std::memset(impl->glyph_slots, 0, sizeof(GlyphEntry*) * desc.cache_slot_count);
         impl->slot_count = desc.cache_slot_count;
         impl->provider = provider;
         out_cache.handle = impl;
@@ -174,6 +239,7 @@ namespace gui::font_cache {
         close_fonts(impl);
         impl->slots = nullptr;
         impl->advance_slots = nullptr;
+        impl->glyph_slots = nullptr;
         impl->slot_count = 0u;
         impl->cache_arena.destroy();
         impl->persistent_arena.destroy();
@@ -189,6 +255,7 @@ namespace gui::font_cache {
         size_t const slot_bytes = sizeof(CacheEntry*) * impl->slot_count;
         std::memset(impl->slots, 0, slot_bytes);
         std::memset(impl->advance_slots, 0, sizeof(AdvanceEntry*) * impl->slot_count);
+        std::memset(impl->glyph_slots, 0, sizeof(GlyphEntry*) * impl->slot_count);
         impl->cache_arena.reset();
     }
 
@@ -260,6 +327,11 @@ namespace gui::font_cache {
         ASSERT(font_impl != nullptr);
         ASSERT(size > 0.0f);
 
+        if (text.empty()) {
+            out_run = {};
+            return;
+        }
+
         uint32_t const size_bits = float_bits(size);
         uint64_t const hash = text_run_hash(font_impl, size_bits, text);
         size_t const slot_index = static_cast<size_t>(hash % impl->slot_count);
@@ -273,10 +345,8 @@ namespace gui::font_cache {
         }
 
         ArenaTemp temp = begin_thread_temp_arena();
-        font_provider::RasterResult raster = {};
-        font_provider::raster_text(font_impl->provider_font, size, text, *temp.arena(), raster);
-
-        size_t const bytes = pixel_byte_count(raster.size, raster.stride);
+        font_provider::ShapedText shaped = {};
+        font_provider::shape_text(font_impl->provider_font, size, text, *temp.arena(), shaped);
 
         CacheEntry* const entry = arena_new<CacheEntry>(impl->cache_arena);
         entry->font = font_impl;
@@ -284,18 +354,33 @@ namespace gui::font_cache {
         entry->text_hash = hash;
         copy_text(impl->cache_arena, text, entry->text);
 
-        entry->run.size = raster.size;
-        entry->run.stride = raster.stride;
+        entry->run.size = shaped.size;
+        entry->run.format = font_provider::RasterFormat::ALPHA;
+        entry->run.advance = shaped.advance;
+        entry->run.origin_x = shaped.origin_x;
+        entry->run.origin_y = shaped.origin_y;
+        entry->run.baseline_y = shaped.baseline_y;
+        entry->run.offset_y = shaped.origin_y;
+        entry->run.height = shaped.height;
+        entry->run.glyph_count = shaped.glyph_count;
 
-        if (bytes) {
-            auto data = arena_alloc<uint8_t>(impl->cache_arena, bytes);
-            std::memcpy(data, raster.rgba_pixels, bytes);
-            entry->run.rgba_pixels = data;
+        if (shaped.glyph_count != 0u) {
+            TextGlyph* const glyphs = arena_alloc<TextGlyph>(impl->cache_arena, shaped.glyph_count);
+            for (size_t index = 0u; index < shaped.glyph_count; ++index) {
+                font_provider::ShapedGlyph const& shaped_glyph = shaped.glyphs[index];
+                TextGlyph& glyph = glyphs[index];
+                glyph.glyph_index = shaped_glyph.glyph_index;
+                glyph.cluster = shaped_glyph.cluster;
+                glyph.x = shaped_glyph.x;
+                glyph.advance = shaped_glyph.advance;
+                glyph.offset_x = shaped_glyph.offset_x;
+                glyph.offset_y = shaped_glyph.offset_y;
+                glyph.raster =
+                    cached_glyph_raster(impl, font_impl, size_bits, size, shaped_glyph.glyph_index);
+            }
+            entry->run.glyphs = glyphs;
         }
 
-        entry->run.advance = raster.advance;
-        entry->run.offset_y = raster.offset_y;
-        entry->run.height = raster.height;
         entry->next = impl->slots[slot_index];
         impl->slots[slot_index] = entry;
 

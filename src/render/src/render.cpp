@@ -1,13 +1,28 @@
+#include "render_backend.h"
+
 #include <base/config.h>
 #include <render/render.h>
 
 #if BASE_PLATFORM_WINDOWS
-#include "render_backend.h"
 #include "render_d3d11.h"
 #include "render_d3d12.h"
 #endif
 
 namespace gui::render {
+    namespace {
+
+        [[nodiscard]] auto texture_format_byte_size(TextureFormat format) -> uint32_t {
+            switch (format) {
+            case TextureFormat::RGBA8_UNORM:
+                return 4u;
+            case TextureFormat::R8_UNORM:
+                return 1u;
+            }
+
+            return 0u;
+        }
+
+    } // namespace
 
     auto result_succeeded(Result result) -> bool {
         return static_cast<int32_t>(result) >= 0;
@@ -294,8 +309,12 @@ namespace gui::render {
         ASSERT(out_texture.handle == nullptr);
         ASSERT(desc.size.width != 0u);
         ASSERT(desc.size.height != 0u);
-        ASSERT(desc.render_target || desc.rgba_pixels != nullptr);
-        ASSERT(desc.rgba_pixels == nullptr || desc.bytes_per_row >= desc.size.width * 4u);
+        ASSERT(desc.render_target || desc.updatable || desc.rgba_pixels != nullptr);
+        ASSERT(
+            desc.rgba_pixels == nullptr ||
+            static_cast<size_t>(desc.bytes_per_row) >=
+                static_cast<size_t>(desc.size.width) * texture_format_byte_size(desc.format)
+        );
 
 #if BASE_PLATFORM_WINDOWS
         switch (context_backend(context)) {
@@ -310,6 +329,35 @@ namespace gui::render {
         BASE_UNUSED(context);
         BASE_UNUSED(desc);
         BASE_UNUSED(out_texture);
+        return Result::UNSUPPORTED_PLATFORM;
+#endif
+    }
+
+    auto update_texture(Context context, Texture texture, TextureUpdateDesc const& desc) -> Result {
+        ASSERT(context_valid(context));
+        ASSERT(texture_valid(texture));
+        ASSERT(desc.pixels != nullptr);
+        ASSERT(desc.size.width != 0u);
+        ASSERT(desc.size.height != 0u);
+        ASSERT(
+            static_cast<size_t>(desc.bytes_per_row) >=
+            static_cast<size_t>(desc.size.width) *
+                texture_format_byte_size(static_cast<TextureHeader const*>(texture.handle)->format)
+        );
+
+#if BASE_PLATFORM_WINDOWS
+        switch (context_backend(context)) {
+        case Backend::D3D11:
+            return d3d11::update_texture(context, texture, desc);
+        case Backend::D3D12:
+            return d3d12::update_texture(context, texture, desc);
+        }
+
+        return Result::UNSUPPORTED_BACKEND;
+#else
+        BASE_UNUSED(context);
+        BASE_UNUSED(texture);
+        BASE_UNUSED(desc);
         return Result::UNSUPPORTED_PLATFORM;
 #endif
     }

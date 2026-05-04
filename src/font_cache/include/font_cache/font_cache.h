@@ -22,22 +22,37 @@ namespace gui::font_cache {
         void* handle = nullptr;
     };
 
+    struct TextGlyph {
+        uint16_t glyph_index = 0u;
+        uint32_t cluster = 0u;
+        float x = 0.0f;
+        float advance = 0.0f;
+        float offset_x = 0.0f;
+        float offset_y = 0.0f;
+        font_provider::GlyphRaster raster = {};
+    };
+
     struct TextRun {
         font_provider::SizeU32 size = {};
         uint32_t stride = 0u;
-        uint8_t const* rgba_pixels = nullptr;
+        uint8_t const* pixels = nullptr;
+        font_provider::RasterFormat format = font_provider::RasterFormat::ALPHA;
         float advance = 0.0f;
+        float origin_x = 0.0f;
+        float origin_y = 0.0f;
+        float baseline_y = 0.0f;
         float offset_y = 0.0f;
         float height = 0.0f;
+        TextGlyph const* glyphs = nullptr;
+        size_t glyph_count = 0u;
     };
 
     [[nodiscard]] auto cache_valid(Cache cache) -> bool;
     [[nodiscard]] auto font_valid(Font font) -> bool;
 
-    auto create_cache(Arena& arena,
-                      font_provider::Context provider,
-                      CacheDesc const& desc,
-                      Cache& out_cache) -> void;
+    auto create_cache(
+        Arena& arena, font_provider::Context provider, CacheDesc const& desc, Cache& out_cache
+    ) -> void;
     auto destroy_cache(Cache& cache) -> void;
     auto clear_cache(Cache cache) -> void;
 

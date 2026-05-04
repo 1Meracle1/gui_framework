@@ -17,13 +17,14 @@ namespace {
         expect_position(context, rect.max, expected.max.x, expected.max.y);
     }
 
-    auto expect_transform(test::Context* context,
-                          gui::draw::Transform2D transform,
-                          gui::draw::Transform2D expected) -> void {
+    auto expect_transform(
+        test::Context* context, gui::draw::Transform2D transform, gui::draw::Transform2D expected
+    ) -> void {
         expect_position(context, transform.x_axis, expected.x_axis.x, expected.x_axis.y);
         expect_position(context, transform.y_axis, expected.y_axis.x, expected.y_axis.y);
         expect_position(
-            context, transform.translation, expected.translation.x, expected.translation.y);
+            context, transform.translation, expected.translation.x, expected.translation.y
+        );
     }
 
     TEST_CASE(draw_context_starts_empty) {
@@ -62,6 +63,35 @@ namespace {
         gui::render::Context render_context = {};
         gui::render::Result const context_result =
             gui::render::create_context(owner_arena, {}, render_context);
+
+#if BASE_PLATFORM_WINDOWS
+        TEST_EXPECT(context, context_result == gui::render::Result::OK);
+        if (context_result == gui::render::Result::OK) {
+            gui::draw::Renderer renderer = {};
+            gui::render::Result const renderer_result =
+                gui::draw::create_renderer(owner_arena, render_context, {}, renderer);
+            TEST_EXPECT(context, renderer_result == gui::render::Result::OK);
+            TEST_EXPECT(context, gui::draw::renderer_valid(renderer));
+            if (gui::draw::renderer_valid(renderer)) {
+                gui::draw::destroy_renderer(render_context, renderer);
+            }
+            gui::render::destroy_context(render_context);
+        }
+#else
+        TEST_EXPECT(context, context_result == gui::render::Result::UNSUPPORTED_PLATFORM);
+#endif
+    }
+
+    TEST_CASE(draw_renderer_create_builds_d3d12_pipelines) {
+        Arena owner_arena = {};
+        owner_arena.init();
+
+        gui::render::ContextDesc desc = {};
+        desc.backend = gui::render::Backend::D3D12;
+
+        gui::render::Context render_context = {};
+        gui::render::Result const context_result =
+            gui::render::create_context(owner_arena, desc, render_context);
 
 #if BASE_PLATFORM_WINDOWS
         TEST_EXPECT(context, context_result == gui::render::Result::OK);
@@ -163,7 +193,8 @@ namespace {
 
         gui::draw::begin_frame(draw_context);
         gui::draw::draw_rect_filled(
-            draw_context, {{1.0f, 2.0f}, {11.0f, 7.0f}}, {0.25f, 0.5f, 0.75f, 1.0f}, 0.0f);
+            draw_context, {{1.0f, 2.0f}, {11.0f, 7.0f}}, {0.25f, 0.5f, 0.75f, 1.0f}, 0.0f
+        );
 
         TEST_EXPECT(context, gui::draw::primitive_command_count(draw_context) == 1u);
 
@@ -198,13 +229,16 @@ namespace {
 
         gui::draw::begin_frame(draw_context);
         gui::draw::draw_triangle_filled(
-            draw_context, {0.0f, 0.0f}, {4.0f, 0.0f}, {0.0f, 4.0f}, {1.0f, 0.5f, 0.25f, 1.0f});
-        gui::draw::draw_quad_filled(draw_context,
-                                    {6.0f, 0.0f},
-                                    {10.0f, 0.0f},
-                                    {10.0f, 4.0f},
-                                    {6.0f, 4.0f},
-                                    {0.25f, 0.5f, 1.0f, 1.0f});
+            draw_context, {0.0f, 0.0f}, {4.0f, 0.0f}, {0.0f, 4.0f}, {1.0f, 0.5f, 0.25f, 1.0f}
+        );
+        gui::draw::draw_quad_filled(
+            draw_context,
+            {6.0f, 0.0f},
+            {10.0f, 0.0f},
+            {10.0f, 4.0f},
+            {6.0f, 4.0f},
+            {0.25f, 0.5f, 1.0f, 1.0f}
+        );
 
         TEST_EXPECT(context, gui::draw::primitive_command_count(draw_context) == 2u);
         TEST_EXPECT(context, gui::draw::primitive_batch_count(draw_context) == 1u);
@@ -249,21 +283,28 @@ namespace {
 
         gui::draw::begin_frame(draw_context);
         gui::draw::draw_rect_filled(
-            draw_context, {{0.0f, 0.0f}, {4.0f, 4.0f}}, {1.0f, 0.0f, 0.0f, 1.0f}, 0.0f);
+            draw_context, {{0.0f, 0.0f}, {4.0f, 4.0f}}, {1.0f, 0.0f, 0.0f, 1.0f}, 0.0f
+        );
         gui::draw::draw_triangle_filled(
-            draw_context, {6.0f, 0.0f}, {10.0f, 0.0f}, {6.0f, 4.0f}, {0.0f, 1.0f, 0.0f, 1.0f});
-        gui::draw::draw_image(draw_context,
-                              texture,
-                              {{12.0f, 0.0f}, {16.0f, 4.0f}},
-                              {{0.0f, 0.0f}, {1.0f, 1.0f}},
-                              {1.0f, 1.0f, 1.0f, 1.0f});
-        gui::draw::draw_image(draw_context,
-                              texture,
-                              {{18.0f, 0.0f}, {22.0f, 4.0f}},
-                              {{0.0f, 0.0f}, {1.0f, 1.0f}},
-                              {1.0f, 1.0f, 1.0f, 1.0f});
+            draw_context, {6.0f, 0.0f}, {10.0f, 0.0f}, {6.0f, 4.0f}, {0.0f, 1.0f, 0.0f, 1.0f}
+        );
+        gui::draw::draw_image(
+            draw_context,
+            texture,
+            {{12.0f, 0.0f}, {16.0f, 4.0f}},
+            {{0.0f, 0.0f}, {1.0f, 1.0f}},
+            {1.0f, 1.0f, 1.0f, 1.0f}
+        );
+        gui::draw::draw_image(
+            draw_context,
+            texture,
+            {{18.0f, 0.0f}, {22.0f, 4.0f}},
+            {{0.0f, 0.0f}, {1.0f, 1.0f}},
+            {1.0f, 1.0f, 1.0f, 1.0f}
+        );
         gui::draw::draw_rect_filled(
-            draw_context, {{24.0f, 0.0f}, {28.0f, 4.0f}}, {0.0f, 0.0f, 1.0f, 1.0f}, 0.0f);
+            draw_context, {{24.0f, 0.0f}, {28.0f, 4.0f}}, {0.0f, 0.0f, 1.0f, 1.0f}, 0.0f
+        );
 
         TEST_EXPECT(context, gui::draw::primitive_command_count(draw_context) == 5u);
         TEST_EXPECT(context, gui::draw::primitive_batch_count(draw_context) == 3u);
@@ -312,10 +353,12 @@ namespace {
         gui::draw::push_clip_rect(draw_context, outer);
         gui::draw::push_clip_rect(draw_context, inner);
         gui::draw::draw_rect_filled(
-            draw_context, {{0.0f, 0.0f}, {4.0f, 4.0f}}, {1.0f, 1.0f, 1.0f, 1.0f}, 0.0f);
+            draw_context, {{0.0f, 0.0f}, {4.0f, 4.0f}}, {1.0f, 1.0f, 1.0f, 1.0f}, 0.0f
+        );
         gui::draw::pop_clip_rect(draw_context);
         gui::draw::draw_rect_filled(
-            draw_context, {{6.0f, 0.0f}, {10.0f, 4.0f}}, {1.0f, 1.0f, 1.0f, 1.0f}, 0.0f);
+            draw_context, {{6.0f, 0.0f}, {10.0f, 4.0f}}, {1.0f, 1.0f, 1.0f, 1.0f}, 0.0f
+        );
 
         TEST_EXPECT(context, gui::draw::primitive_command_count(draw_context) == 2u);
         TEST_EXPECT(context, gui::draw::primitive_batch_count(draw_context) == 2u);
@@ -354,7 +397,8 @@ namespace {
         gui::draw::push_transform(draw_context, transform);
         gui::draw::push_clip_rect(draw_context, clip_after_transform);
         gui::draw::draw_triangle_filled(
-            draw_context, {1.0f, 2.0f}, {3.0f, 2.0f}, {1.0f, 4.0f}, {1.0f, 1.0f, 1.0f, 1.0f});
+            draw_context, {1.0f, 2.0f}, {3.0f, 2.0f}, {1.0f, 4.0f}, {1.0f, 1.0f, 1.0f, 1.0f}
+        );
 
         gui::draw::PrimitiveCommand const* command = gui::draw::primitive_command(draw_context, 0u);
         TEST_EXPECT(context, command != nullptr);
@@ -368,7 +412,8 @@ namespace {
         gui::draw::push_clip_rect(draw_context, clip_before_transform);
         gui::draw::push_transform(draw_context, transform);
         gui::draw::draw_triangle_filled(
-            draw_context, {2.0f, 1.0f}, {4.0f, 1.0f}, {2.0f, 3.0f}, {1.0f, 1.0f, 1.0f, 1.0f});
+            draw_context, {2.0f, 1.0f}, {4.0f, 1.0f}, {2.0f, 3.0f}, {1.0f, 1.0f, 1.0f, 1.0f}
+        );
 
         command = gui::draw::primitive_command(draw_context, 0u);
         TEST_EXPECT(context, command != nullptr);
@@ -383,7 +428,8 @@ namespace {
         gui::draw::push_clip_rect(draw_context, outer);
         gui::draw::push_clip_rect(draw_context, inner);
         gui::draw::draw_triangle_filled(
-            draw_context, {0.0f, 0.0f}, {1.0f, 0.0f}, {0.0f, 1.0f}, {1.0f, 1.0f, 1.0f, 1.0f});
+            draw_context, {0.0f, 0.0f}, {1.0f, 0.0f}, {0.0f, 1.0f}, {1.0f, 1.0f, 1.0f, 1.0f}
+        );
 
         command = gui::draw::primitive_command(draw_context, 0u);
         TEST_EXPECT(context, command != nullptr);
@@ -402,29 +448,35 @@ namespace {
 
         gui::draw::begin_frame(draw_context);
         gui::draw::draw_rect_filled(
-            draw_context, {{0.0f, 0.0f}, {4.0f, 4.0f}}, {1.0f, 1.0f, 1.0f, 1.0f}, 0.0f);
+            draw_context, {{0.0f, 0.0f}, {4.0f, 4.0f}}, {1.0f, 1.0f, 1.0f, 1.0f}, 0.0f
+        );
 
         gui::draw::Rect const clip = {{1.0f, 1.0f}, {8.0f, 8.0f}};
         gui::draw::push_clip_rect(draw_context, clip);
         gui::draw::draw_rect_filled(
-            draw_context, {{6.0f, 0.0f}, {10.0f, 4.0f}}, {1.0f, 1.0f, 1.0f, 1.0f}, 0.0f);
+            draw_context, {{6.0f, 0.0f}, {10.0f, 4.0f}}, {1.0f, 1.0f, 1.0f, 1.0f}, 0.0f
+        );
         gui::draw::draw_rect_filled(
-            draw_context, {{12.0f, 0.0f}, {16.0f, 4.0f}}, {1.0f, 1.0f, 1.0f, 1.0f}, 0.0f);
+            draw_context, {{12.0f, 0.0f}, {16.0f, 4.0f}}, {1.0f, 1.0f, 1.0f, 1.0f}, 0.0f
+        );
         gui::draw::pop_clip_rect(draw_context);
 
         gui::draw::Transform2D const transform = {{1.0f, 0.0f}, {0.0f, 1.0f}, {2.0f, 3.0f}};
         gui::draw::push_transform(draw_context, transform);
         gui::draw::draw_rect_filled(
-            draw_context, {{18.0f, 0.0f}, {22.0f, 4.0f}}, {1.0f, 1.0f, 1.0f, 1.0f}, 0.0f);
+            draw_context, {{18.0f, 0.0f}, {22.0f, 4.0f}}, {1.0f, 1.0f, 1.0f, 1.0f}, 0.0f
+        );
         gui::draw::pop_transform(draw_context);
 
         gui::draw::push_opacity(draw_context, 0.5f);
         gui::draw::draw_rect_filled(
-            draw_context, {{24.0f, 0.0f}, {28.0f, 4.0f}}, {1.0f, 1.0f, 1.0f, 1.0f}, 0.0f);
+            draw_context, {{24.0f, 0.0f}, {28.0f, 4.0f}}, {1.0f, 1.0f, 1.0f, 1.0f}, 0.0f
+        );
         gui::draw::pop_opacity(draw_context);
 
         gui::draw::draw_rect_filled(
-            draw_context, {{30.0f, 0.0f}, {34.0f, 4.0f}}, {1.0f, 1.0f, 1.0f, 1.0f}, 0.0f);
+            draw_context, {{30.0f, 0.0f}, {34.0f, 4.0f}}, {1.0f, 1.0f, 1.0f, 1.0f}, 0.0f
+        );
 
         TEST_EXPECT(context, gui::draw::primitive_command_count(draw_context) == 6u);
         TEST_EXPECT(context, gui::draw::primitive_batch_count(draw_context) == 5u);
@@ -486,15 +538,19 @@ namespace {
 
         gui::draw::begin_frame(draw_context);
         gui::draw::draw_rect_filled(
-            draw_context, {{0.0f, 0.0f}, {4.0f, 4.0f}}, {1.0f, 1.0f, 1.0f, 1.0f}, 0.0f);
+            draw_context, {{0.0f, 0.0f}, {4.0f, 4.0f}}, {1.0f, 1.0f, 1.0f, 1.0f}, 0.0f
+        );
         gui::draw::draw_triangle_filled(
-            draw_context, {6.0f, 0.0f}, {10.0f, 0.0f}, {6.0f, 4.0f}, {1.0f, 1.0f, 1.0f, 1.0f});
+            draw_context, {6.0f, 0.0f}, {10.0f, 0.0f}, {6.0f, 4.0f}, {1.0f, 1.0f, 1.0f, 1.0f}
+        );
         gui::draw::draw_text(draw_context, {0.0f, 8.0f}, style, "middle", nullptr);
         gui::draw::draw_rect_filled(
-            draw_context, {{12.0f, 0.0f}, {16.0f, 4.0f}}, {1.0f, 1.0f, 1.0f, 1.0f}, 0.0f);
+            draw_context, {{12.0f, 0.0f}, {16.0f, 4.0f}}, {1.0f, 1.0f, 1.0f, 1.0f}, 0.0f
+        );
         gui::draw::draw_text(draw_context, {0.0f, 24.0f}, style, "end", nullptr);
         gui::draw::draw_rect_filled(
-            draw_context, {{18.0f, 0.0f}, {22.0f, 4.0f}}, {1.0f, 1.0f, 1.0f, 1.0f}, 0.0f);
+            draw_context, {{18.0f, 0.0f}, {22.0f, 4.0f}}, {1.0f, 1.0f, 1.0f, 1.0f}, 0.0f
+        );
 
         TEST_EXPECT(context, gui::draw::primitive_command_count(draw_context) == 4u);
         TEST_EXPECT(context, gui::draw::primitive_batch_count(draw_context) == 3u);
@@ -565,11 +621,13 @@ namespace {
         gui::draw::push_clip_rect(draw_context, clip);
         gui::draw::push_transform(draw_context, transform);
         gui::draw::push_opacity(draw_context, 0.25f);
-        gui::draw::draw_image(draw_context,
-                              texture,
-                              {{1.0f, 2.0f}, {4.0f, 6.0f}},
-                              {{0.1f, 0.2f}, {0.7f, 0.8f}},
-                              {0.4f, 0.5f, 0.6f, 0.8f});
+        gui::draw::draw_image(
+            draw_context,
+            texture,
+            {{1.0f, 2.0f}, {4.0f, 6.0f}},
+            {{0.1f, 0.2f}, {0.7f, 0.8f}},
+            {0.4f, 0.5f, 0.6f, 0.8f}
+        );
 
         gui::draw::PrimitiveCommand const* command = gui::draw::primitive_command(draw_context, 0u);
         TEST_EXPECT(context, command != nullptr);
@@ -601,7 +659,8 @@ namespace {
 
         gui::draw::begin_frame(draw_context);
         gui::draw::draw_rect_filled(
-            draw_context, {{0.0f, 0.0f}, {4.0f, 4.0f}}, {1.0f, 1.0f, 1.0f, 1.0f}, 0.0f);
+            draw_context, {{0.0f, 0.0f}, {4.0f, 4.0f}}, {1.0f, 1.0f, 1.0f, 1.0f}, 0.0f
+        );
 
         gui::draw::Rect const clip = {{2.0f, 3.0f}, {20.0f, 30.0f}};
         gui::draw::Transform2D const transform = {{2.0f, 0.0f}, {0.0f, 3.0f}, {5.0f, 7.0f}};
@@ -626,7 +685,8 @@ namespace {
         gui::draw::pop_clip_rect(draw_context);
 
         gui::draw::draw_triangle_filled(
-            draw_context, {6.0f, 0.0f}, {10.0f, 0.0f}, {6.0f, 4.0f}, {1.0f, 1.0f, 1.0f, 1.0f});
+            draw_context, {6.0f, 0.0f}, {10.0f, 0.0f}, {6.0f, 4.0f}, {1.0f, 1.0f, 1.0f, 1.0f}
+        );
 
         TEST_EXPECT(context, gui::draw::primitive_command_count(draw_context) == 2u);
         TEST_EXPECT(context, gui::draw::primitive_batch_count(draw_context) == 2u);
@@ -730,7 +790,8 @@ namespace {
 
         gui::draw::begin_frame(draw_context);
         gui::draw::draw_rect_filled(
-            draw_context, {{0.0f, 0.0f}, {4.0f, 4.0f}}, {1.0f, 1.0f, 1.0f, 1.0f}, 0.0f);
+            draw_context, {{0.0f, 0.0f}, {4.0f, 4.0f}}, {1.0f, 1.0f, 1.0f, 1.0f}, 0.0f
+        );
 
         gui::draw::Rect const clip = {{0.0f, 0.0f}, {50.0f, 50.0f}};
         gui::draw::Rect const bounds = {{10.0f, 10.0f}, {70.0f, 70.0f}};
@@ -742,15 +803,18 @@ namespace {
         gui::draw::push_layer(draw_context, layer);
         expect_rect(context, gui::draw::top_clip_rect(draw_context), clipped_bounds);
         gui::draw::draw_rect_filled(
-            draw_context, {{12.0f, 12.0f}, {36.0f, 36.0f}}, {1.0f, 0.0f, 0.0f, 0.5f}, 0.0f);
+            draw_context, {{12.0f, 12.0f}, {36.0f, 36.0f}}, {1.0f, 0.0f, 0.0f, 0.5f}, 0.0f
+        );
         gui::draw::draw_rect_filled(
-            draw_context, {{24.0f, 24.0f}, {48.0f, 48.0f}}, {0.0f, 0.0f, 1.0f, 0.5f}, 0.0f);
+            draw_context, {{24.0f, 24.0f}, {48.0f, 48.0f}}, {0.0f, 0.0f, 1.0f, 0.5f}, 0.0f
+        );
         gui::draw::pop_layer(draw_context);
         expect_rect(context, gui::draw::top_clip_rect(draw_context), clip);
         gui::draw::pop_clip_rect(draw_context);
 
         gui::draw::draw_rect_filled(
-            draw_context, {{80.0f, 0.0f}, {84.0f, 4.0f}}, {1.0f, 1.0f, 1.0f, 1.0f}, 0.0f);
+            draw_context, {{80.0f, 0.0f}, {84.0f, 4.0f}}, {1.0f, 1.0f, 1.0f, 1.0f}, 0.0f
+        );
 
         TEST_EXPECT(context, gui::draw::layer_command_count(draw_context) == 1u);
         TEST_EXPECT(context, gui::draw::primitive_command_count(draw_context) == 4u);
@@ -848,11 +912,13 @@ namespace {
         TEST_EXPECT(context, command->desc.drop_shadow.offset.y == 4.0f);
         TEST_EXPECT(context, command->desc.drop_shadow.blur_radius == 5.0f);
         TEST_EXPECT(context, command->desc.drop_shadow.color.g == 0.2f);
-        TEST_EXPECT(context,
-                    gui::draw::LayerBlendMode::PREMULTIPLIED_NORMAL !=
-                        gui::draw::LayerBlendMode::ADDITIVE);
-        TEST_EXPECT(context,
-                    gui::draw::LayerBlendMode::MULTIPLY != gui::draw::LayerBlendMode::SCREEN);
+        TEST_EXPECT(
+            context,
+            gui::draw::LayerBlendMode::PREMULTIPLIED_NORMAL != gui::draw::LayerBlendMode::ADDITIVE
+        );
+        TEST_EXPECT(
+            context, gui::draw::LayerBlendMode::MULTIPLY != gui::draw::LayerBlendMode::SCREEN
+        );
 
         gui::draw::begin_frame(draw_context);
         layer.clip_radius = 100.0f;
@@ -883,7 +949,8 @@ namespace {
         gui::draw::push_transform(draw_context, transform);
         gui::draw::push_opacity(draw_context, 0.25f);
         gui::draw::draw_rect_filled(
-            draw_context, {{1.0f, 2.0f}, {4.0f, 6.0f}}, {0.4f, 0.5f, 0.6f, 0.8f}, 0.0f);
+            draw_context, {{1.0f, 2.0f}, {4.0f, 6.0f}}, {0.4f, 0.5f, 0.6f, 0.8f}, 0.0f
+        );
 
         gui::draw::PrimitiveCommand const* command = gui::draw::primitive_command(draw_context, 0u);
         TEST_EXPECT(context, command != nullptr);
@@ -947,7 +1014,8 @@ namespace {
         gui::draw::push_transform(draw_context, transform);
         gui::draw::push_opacity(draw_context, 0.5f);
         gui::draw::draw_line(
-            draw_context, {0.0f, 0.0f}, {10.0f, 0.0f}, {1.0f, 1.0f, 1.0f, 1.0f}, 0.5f);
+            draw_context, {0.0f, 0.0f}, {10.0f, 0.0f}, {1.0f, 1.0f, 1.0f, 1.0f}, 0.5f
+        );
 
         gui::draw::PrimitiveCommand const* command = gui::draw::primitive_command(draw_context, 0u);
         TEST_EXPECT(context, command != nullptr);
@@ -972,12 +1040,9 @@ namespace {
         gui::draw::create_context(owner_arena, {}, draw_context);
 
         gui::draw::begin_frame(draw_context);
-        gui::draw::draw_triangle(draw_context,
-                                 {0.0f, 0.0f},
-                                 {10.0f, 0.0f},
-                                 {0.0f, 10.0f},
-                                 {1.0f, 1.0f, 1.0f, 1.0f},
-                                 2.0f);
+        gui::draw::draw_triangle(
+            draw_context, {0.0f, 0.0f}, {10.0f, 0.0f}, {0.0f, 10.0f}, {1.0f, 1.0f, 1.0f, 1.0f}, 2.0f
+        );
 
         gui::draw::PrimitiveCommand const* triangle_command =
             gui::draw::primitive_command(draw_context, 0u);
@@ -991,7 +1056,8 @@ namespace {
 
         gui::draw::begin_frame(draw_context);
         gui::draw::draw_rect(
-            draw_context, {{0.0f, 0.0f}, {10.0f, 8.0f}}, {1.0f, 1.0f, 1.0f, 1.0f}, 2.0f, 0.0f);
+            draw_context, {{0.0f, 0.0f}, {10.0f, 8.0f}}, {1.0f, 1.0f, 1.0f, 1.0f}, 2.0f, 0.0f
+        );
 
         gui::draw::PrimitiveCommand const* rect_command =
             gui::draw::primitive_command(draw_context, 0u);
@@ -1082,9 +1148,11 @@ namespace {
 
         gui::draw::begin_frame(draw_context);
         gui::draw::draw_circle_filled(
-            draw_context, {4.0f, 4.0f}, 8.0f, {1.0f, 1.0f, 1.0f, 1.0f}, 1);
+            draw_context, {4.0f, 4.0f}, 8.0f, {1.0f, 1.0f, 1.0f, 1.0f}, 1
+        );
         gui::draw::draw_ellipse(
-            draw_context, {16.0f, 16.0f}, {8.0f, 4.0f}, {1.0f, 1.0f, 1.0f, 1.0f}, 2.0f, 200);
+            draw_context, {16.0f, 16.0f}, {8.0f, 4.0f}, {1.0f, 1.0f, 1.0f, 1.0f}, 2.0f, 200
+        );
 
         gui::draw::PrimitiveCommand const* circle_command =
             gui::draw::primitive_command(draw_context, 0u);
@@ -1108,15 +1176,19 @@ namespace {
 
         gui::draw::begin_frame(draw_context);
         gui::draw::draw_line(
-            draw_context, {0.0f, 0.0f}, {10.0f, 0.0f}, {1.0f, 0.0f, 0.0f, 1.0f}, 2.0f);
-        gui::draw::draw_rect_filled_multicolor(draw_context,
-                                               {{0.0f, 0.0f}, {4.0f, 3.0f}},
-                                               {1.0f, 0.0f, 0.0f, 1.0f},
-                                               {0.0f, 1.0f, 0.0f, 1.0f},
-                                               {0.0f, 0.0f, 1.0f, 1.0f},
-                                               {1.0f, 1.0f, 1.0f, 1.0f});
+            draw_context, {0.0f, 0.0f}, {10.0f, 0.0f}, {1.0f, 0.0f, 0.0f, 1.0f}, 2.0f
+        );
+        gui::draw::draw_rect_filled_multicolor(
+            draw_context,
+            {{0.0f, 0.0f}, {4.0f, 3.0f}},
+            {1.0f, 0.0f, 0.0f, 1.0f},
+            {0.0f, 1.0f, 0.0f, 1.0f},
+            {0.0f, 0.0f, 1.0f, 1.0f},
+            {1.0f, 1.0f, 1.0f, 1.0f}
+        );
         gui::draw::draw_circle_filled(
-            draw_context, {8.0f, 8.0f}, 5.0f, {0.0f, 1.0f, 1.0f, 1.0f}, 8);
+            draw_context, {8.0f, 8.0f}, 5.0f, {0.0f, 1.0f, 1.0f, 1.0f}, 8
+        );
         gui::draw::path_line_to(draw_context, {0.0f, 0.0f});
         gui::draw::path_line_to(draw_context, {2.0f, 0.0f});
         gui::draw::path_line_to(draw_context, {0.0f, 2.0f});
@@ -1197,7 +1269,9 @@ namespace {
         TEST_EXPECT(context, command->position.x == 8.0f);
         TEST_EXPECT(context, command->position.y == 12.0f);
         TEST_EXPECT(context, command->text == StrRef("draw text"));
-        TEST_EXPECT(context, command->run.rgba_pixels != nullptr);
+        TEST_EXPECT(context, command->run.glyphs != nullptr);
+        TEST_EXPECT(context, command->run.glyph_count > 0u);
+        TEST_EXPECT(context, command->run.format == gui::font_provider::RasterFormat::ALPHA);
         expect_rect(context, command->clip_rect, clipped);
         expect_transform(context, command->transform, transform);
         TEST_EXPECT(context, command->opacity == 0.5f);
@@ -1225,7 +1299,7 @@ namespace {
         TEST_EXPECT(context, provider_result == gui::font_provider::Result::OK);
 
         gui::font_cache::CacheDesc cache_desc = {};
-        cache_desc.arena_reserve_size = 64u * 1024u;
+        cache_desc.arena_reserve_size = 4u * 1024u * 1024u;
         gui::font_cache::Cache cache = {};
         gui::font_cache::create_cache(owner_arena, provider, cache_desc, cache);
 

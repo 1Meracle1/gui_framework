@@ -39,14 +39,27 @@ namespace {
         gui::font_cache::TextRun second = {};
         gui::font_cache::text_run(cache, font, 18.0f, "cached text", first);
         gui::font_cache::text_run(cache, font, 18.0f, "cached text", second);
-        TEST_EXPECT(context, first.rgba_pixels != nullptr);
-        TEST_EXPECT(context, first.rgba_pixels == second.rgba_pixels);
+        TEST_EXPECT(context, first.glyphs != nullptr);
+        TEST_EXPECT(context, first.glyph_count > 0u);
+        TEST_EXPECT(context, first.glyphs == second.glyphs);
+        TEST_EXPECT(context, first.glyph_count > 2u);
+        TEST_EXPECT(context, first.glyphs[1u].glyph_index != 0u);
+        TEST_EXPECT(context, first.glyphs[1u].x > first.glyphs[0u].x);
+        TEST_EXPECT(context, first.glyphs[2u].x > first.glyphs[1u].x);
+        TEST_EXPECT(context, first.format == gui::font_provider::RasterFormat::ALPHA);
+        TEST_EXPECT(
+            context, first.glyphs[0u].raster.format == gui::font_provider::RasterFormat::ALPHA
+        );
         TEST_EXPECT(context, first.advance == second.advance);
-        TEST_EXPECT(context,
-                    gui::font_cache::text_advance(font, 18.0f, "cached text") == first.advance);
-        TEST_EXPECT(context,
-                    gui::font_cache::text_advance(font, 18.0f, "iiii") <
-                        gui::font_cache::text_advance(font, 18.0f, "WWWW"));
+        TEST_EXPECT(context, first.baseline_y > 0.0f);
+        TEST_EXPECT(
+            context, gui::font_cache::text_advance(font, 18.0f, "cached text") == first.advance
+        );
+        TEST_EXPECT(
+            context,
+            gui::font_cache::text_advance(font, 18.0f, "iiii") <
+                gui::font_cache::text_advance(font, 18.0f, "WWWW")
+        );
 
         gui::font_cache::destroy_cache(cache);
         TEST_EXPECT(context, !gui::font_cache::cache_valid(cache));

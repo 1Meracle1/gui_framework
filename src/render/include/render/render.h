@@ -80,6 +80,11 @@ namespace gui::render {
         SCREEN,
     };
 
+    enum class TextureFormat : uint8_t {
+        RGBA8_UNORM,
+        R8_UNORM,
+    };
+
     enum class SamplerFilter : uint8_t {
         NEAREST,
         LINEAR,
@@ -184,9 +189,19 @@ namespace gui::render {
 
     struct TextureDesc {
         SizeU32 size = {};
+        TextureFormat format = TextureFormat::RGBA8_UNORM;
         uint32_t bytes_per_row = 0u;
         void const* rgba_pixels = nullptr;
         bool render_target = false;
+        bool updatable = false;
+    };
+
+    struct TextureUpdateDesc {
+        uint32_t x = 0u;
+        uint32_t y = 0u;
+        SizeU32 size = {};
+        uint32_t bytes_per_row = 0u;
+        void const* pixels = nullptr;
     };
 
     struct SamplerDesc {
@@ -301,6 +316,8 @@ namespace gui::render {
 
     [[nodiscard]] auto
     create_texture(Context context, TextureDesc const& desc, Texture& out_texture) -> Result;
+    [[nodiscard]] auto
+    update_texture(Context context, Texture texture, TextureUpdateDesc const& desc) -> Result;
     [[nodiscard]] auto
     load_image_texture_from_file(Context context, StrRef path, Texture& out_texture) -> Result;
     [[nodiscard]] auto load_image_texture_from_memory(

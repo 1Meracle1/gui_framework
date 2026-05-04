@@ -16,8 +16,8 @@ namespace gui::draw {
         constexpr uint32_t STYLED_RECT_VERTICES_PER_COMMAND = 12u;
         constexpr uint32_t MASK_VERTEX_COUNT = 6u;
         constexpr float BLUR_KERNEL_EXTENT = 4.0f;
-        constexpr uint64_t FNV64_OFFSET = 14695981039346656037ull;
-        constexpr uint64_t FNV64_PRIME = 1099511628211ull;
+        constexpr gui::render::SizeU32 TEXT_ATLAS_SIZE = {1024u, 1024u};
+        constexpr uint32_t TEXT_ATLAS_PADDING = 1u;
 
         struct RenderVertex {
             float position[2];
@@ -45,19 +45,18 @@ namespace gui::draw {
             float params[4];
         };
 
-        struct TextTextureKey {
+        struct TextAtlasKey {
             size_t font = 0u;
             uint32_t size_bits = 0u;
-            uint64_t text_hash = 0u;
-            uint32_t width = 0u;
-            uint32_t height = 0u;
-            uint32_t stride = 0u;
+            uint16_t glyph_index = 0u;
         };
 
-        struct TextTextureCacheEntry {
-            TextTextureKey key = {};
-            gui::render::Texture texture = {};
-            gui::render::BindGroup bind_group = {};
+        struct TextAtlasEntry {
+            TextAtlasKey key = {};
+            float uv_rect[4] = {};
+            uint32_t width = 0u;
+            uint32_t height = 0u;
+            bool valid = false;
         };
 
         struct RendererImpl {
@@ -65,6 +64,8 @@ namespace gui::draw {
             gui::render::Shader vertex_shader = {};
             gui::render::Shader pixel_shader = {};
             gui::render::Pipeline pipeline = {};
+            gui::render::Shader text_pixel_shader = {};
+            gui::render::Pipeline text_pipeline = {};
             gui::render::Shader layer_pixel_shader = {};
             gui::render::Pipeline layer_pipeline = {};
             gui::render::Pipeline layer_additive_pipeline = {};
@@ -82,16 +83,28 @@ namespace gui::draw {
             gui::render::Pipeline styled_rect_pipeline = {};
             gui::render::Pipeline styled_rect_instance_pipeline = {};
             gui::render::Texture white_texture = {};
+            gui::render::Texture text_atlas = {};
             gui::render::Sampler sampler = {};
-            TextTextureCacheEntry* text_texture_cache = nullptr;
-            size_t text_texture_cache_capacity = 0u;
+            gui::render::BindGroup sampler_bind_group = {};
+            gui::render::BindGroup text_atlas_bind_group = {};
+            TextAtlasEntry* text_atlas_entries = nullptr;
+            size_t text_atlas_capacity = 0u;
+            uint32_t text_atlas_x = 0u;
+            uint32_t text_atlas_y = 0u;
+            uint32_t text_atlas_row_height = 0u;
+        };
+
+        struct TextDraw {
+            uint32_t first_vertex = 0u;
+            uint32_t vertex_count = 0u;
         };
 
         struct DrawUpload {
             gui::render::VertexBufferBinding vertex_buffer = {};
             gui::render::VertexBufferBinding styled_rect_vertex_buffer = {};
             gui::render::VertexBufferBinding styled_rect_instance_buffer = {};
-            uint32_t text_first_vertex = 0u;
+            TextDraw* text_draws = nullptr;
+            size_t text_draw_count = 0u;
         };
 
         struct RenderTarget {
@@ -111,80 +124,45 @@ namespace gui::draw {
             return static_cast<RendererImpl*>(renderer.handle);
         }
 
-        [[nodiscard]] auto hash_bytes(uint64_t seed, void const* data, size_t size) -> uint64_t {
-            uint64_t result = seed;
-            auto const* bytes = static_cast<uint8_t const*>(data);
-
-            for (size_t index = 0u; index < size; ++index) {
-                result ^= static_cast<uint64_t>(bytes[index]);
-                result *= FNV64_PRIME;
-            }
-
-            return result;
-        }
-
         [[nodiscard]] auto float_bits(float value) -> uint32_t {
             uint32_t bits = 0u;
             std::memcpy(&bits, &value, sizeof(bits));
             return bits;
         }
 
-        [[nodiscard]] auto text_texture_key(TextCommand const& command) -> TextTextureKey {
-            font_cache::TextRun const& run = command.run;
+        [[nodiscard]] auto
+        text_atlas_key(TextCommand const& command, font_cache::TextGlyph const& glyph)
+            -> TextAtlasKey {
             return {
                 reinterpret_cast<size_t>(command.style.font.handle),
                 float_bits(command.style.size),
-                hash_bytes(FNV64_OFFSET, command.text.data(), command.text.size()),
-                run.size.width,
-                run.size.height,
-                run.stride
+                glyph.glyph_index
             };
         }
 
-        [[nodiscard]] auto text_texture_key_equal(TextTextureKey lhs, TextTextureKey rhs) -> bool {
+        [[nodiscard]] auto text_atlas_key_equal(TextAtlasKey lhs, TextAtlasKey rhs) -> bool {
             return lhs.font == rhs.font && lhs.size_bits == rhs.size_bits &&
-                   lhs.text_hash == rhs.text_hash && lhs.width == rhs.width &&
-                   lhs.height == rhs.height && lhs.stride == rhs.stride;
+                   lhs.glyph_index == rhs.glyph_index;
         }
 
-        [[nodiscard]] auto hash_text_texture_key(TextTextureKey key) -> size_t {
+        [[nodiscard]] auto hash_text_atlas_key(TextAtlasKey key) -> size_t {
             size_t result = key.font;
             result ^=
                 static_cast<size_t>(key.size_bits) + 0x9e3779b9u + (result << 6u) + (result >> 2u);
-            result ^=
-                static_cast<size_t>(key.text_hash) + 0x9e3779b9u + (result << 6u) + (result >> 2u);
-            result ^=
-                static_cast<size_t>(key.width) + 0x9e3779b9u + (result << 6u) + (result >> 2u);
-            result ^=
-                static_cast<size_t>(key.height) + 0x9e3779b9u + (result << 6u) + (result >> 2u);
-            result ^=
-                static_cast<size_t>(key.stride) + 0x9e3779b9u + (result << 6u) + (result >> 2u);
+            result ^= static_cast<size_t>(key.glyph_index) + 0x9e3779b9u + (result << 6u) +
+                      (result >> 2u);
             return result;
         }
 
-        auto
-        destroy_text_texture_cache_entry(gui::render::Context context, TextTextureCacheEntry& entry)
-            -> void {
-            if (gui::render::bind_group_valid(entry.bind_group)) {
-                gui::render::destroy_bind_group(context, entry.bind_group);
+        auto clear_text_atlas(RendererImpl& renderer) -> void {
+            if (renderer.text_atlas_entries != nullptr) {
+                for (size_t index = 0u; index < renderer.text_atlas_capacity; ++index) {
+                    renderer.text_atlas_entries[index] = {};
+                }
             }
-            if (gui::render::texture_valid(entry.texture)) {
-                gui::render::destroy_texture(context, entry.texture);
-            }
-            entry = {};
-        }
-
-        auto destroy_text_texture_cache(gui::render::Context context, RendererImpl* renderer)
-            -> void {
-            if (renderer == nullptr || renderer->text_texture_cache == nullptr) {
-                return;
-            }
-
-            for (size_t index = 0u; index < renderer->text_texture_cache_capacity; ++index) {
-                destroy_text_texture_cache_entry(context, renderer->text_texture_cache[index]);
-            }
-            renderer->text_texture_cache = nullptr;
-            renderer->text_texture_cache_capacity = 0u;
+            renderer.text_atlas_x = 0u;
+            renderer.text_atlas_y = 0u;
+            renderer.text_atlas_row_height = 0u;
         }
 
         auto destroy_renderer_resources(gui::render::Context context, RendererImpl* renderer)
@@ -193,16 +171,26 @@ namespace gui::draw {
                 return;
             }
 
-            destroy_text_texture_cache(context, renderer);
-
+            if (gui::render::bind_group_valid(renderer->text_atlas_bind_group)) {
+                gui::render::destroy_bind_group(context, renderer->text_atlas_bind_group);
+            }
+            if (gui::render::bind_group_valid(renderer->sampler_bind_group)) {
+                gui::render::destroy_bind_group(context, renderer->sampler_bind_group);
+            }
             if (gui::render::sampler_valid(renderer->sampler)) {
                 gui::render::destroy_sampler(context, renderer->sampler);
+            }
+            if (gui::render::texture_valid(renderer->text_atlas)) {
+                gui::render::destroy_texture(context, renderer->text_atlas);
             }
             if (gui::render::texture_valid(renderer->white_texture)) {
                 gui::render::destroy_texture(context, renderer->white_texture);
             }
             if (gui::render::pipeline_valid(renderer->pipeline)) {
                 gui::render::destroy_pipeline(context, renderer->pipeline);
+            }
+            if (gui::render::pipeline_valid(renderer->text_pipeline)) {
+                gui::render::destroy_pipeline(context, renderer->text_pipeline);
             }
             if (gui::render::pipeline_valid(renderer->layer_pipeline)) {
                 gui::render::destroy_pipeline(context, renderer->layer_pipeline);
@@ -233,6 +221,9 @@ namespace gui::draw {
             }
             if (gui::render::shader_valid(renderer->pixel_shader)) {
                 gui::render::destroy_shader(context, renderer->pixel_shader);
+            }
+            if (gui::render::shader_valid(renderer->text_pixel_shader)) {
+                gui::render::destroy_shader(context, renderer->text_pixel_shader);
             }
             if (gui::render::shader_valid(renderer->layer_pixel_shader)) {
                 gui::render::destroy_shader(context, renderer->layer_pixel_shader);
@@ -285,19 +276,13 @@ namespace gui::draw {
             return gui::render::create_texture(context, texture_desc, out_texture);
         }
 
-        [[nodiscard]] auto create_text_texture(
-            gui::render::Context context,
-            font_cache::TextRun const& run,
-            gui::render::Texture& out_texture
-        ) -> gui::render::Result {
-            ASSERT(run.rgba_pixels != nullptr);
-            ASSERT(run.size.width != 0u);
-            ASSERT(run.size.height != 0u);
-
+        [[nodiscard]] auto
+        create_text_atlas(gui::render::Context context, gui::render::Texture& out_texture)
+            -> gui::render::Result {
             gui::render::TextureDesc texture_desc = {};
-            texture_desc.size = {run.size.width, run.size.height};
-            texture_desc.bytes_per_row = run.stride;
-            texture_desc.rgba_pixels = run.rgba_pixels;
+            texture_desc.size = TEXT_ATLAS_SIZE;
+            texture_desc.format = gui::render::TextureFormat::R8_UNORM;
+            texture_desc.updatable = true;
 
             return gui::render::create_texture(context, texture_desc, out_texture);
         }
@@ -426,7 +411,12 @@ namespace gui::draw {
 
         [[nodiscard]] auto text_command_visible(TextCommand const& command) -> bool {
             font_cache::TextRun const& run = command.run;
-            return run.rgba_pixels != nullptr && run.size.width != 0u && run.size.height != 0u;
+            return run.glyphs != nullptr && run.glyph_count != 0u;
+        }
+
+        [[nodiscard]] auto glyph_visible(font_cache::TextGlyph const& glyph) -> bool {
+            return glyph.raster.pixels != nullptr && glyph.raster.size.width != 0u &&
+                   glyph.raster.size.height != 0u;
         }
 
         [[nodiscard]] auto clip_rect_to_scissor(Rect rect, gui::render::SizeU32 target_size)
@@ -487,14 +477,20 @@ namespace gui::draw {
             };
         }
 
-        auto
-        write_text_vertices(RenderVertex* vertices, RenderTarget target, TextCommand const& command)
-            -> void {
+        auto write_text_vertices(
+            RenderVertex* vertices,
+            RenderTarget target,
+            TextCommand const& command,
+            font_cache::TextGlyph const& glyph,
+            TextAtlasEntry const& atlas
+        ) -> void {
             font_cache::TextRun const& run = command.run;
-            float const x0 = std::round(command.position.x);
-            float const y0 = std::round(command.position.y);
-            float const x1 = x0 + static_cast<float>(run.size.width);
-            float const y1 = y0 + static_cast<float>(run.size.height);
+            float const x0 =
+                std::round(command.position.x) + glyph.x + glyph.offset_x + glyph.raster.offset_x;
+            float const y0 = std::round(command.position.y) + run.baseline_y - glyph.offset_y +
+                             glyph.raster.offset_y;
+            float const x1 = x0 + static_cast<float>(glyph.raster.size.width);
+            float const y1 = y0 + static_cast<float>(glyph.raster.size.height);
             Vec2 const p0 = target_position(target, transform_point(command.transform, {x0, y0}));
             Vec2 const p1 = target_position(target, transform_point(command.transform, {x1, y0}));
             Vec2 const p2 = target_position(target, transform_point(command.transform, {x1, y1}));
@@ -505,19 +501,19 @@ namespace gui::draw {
             vertices[0u] = {
                 {pixel_to_ndc_x(p0.x, target_width(target)),
                  pixel_to_ndc_y(p0.y, target_height(target))},
-                {0.0f, 0.0f},
+                {atlas.uv_rect[0u], atlas.uv_rect[1u]},
                 {color.r, color.g, color.b, color.a}
             };
             vertices[1u] = {
                 {pixel_to_ndc_x(p1.x, target_width(target)),
                  pixel_to_ndc_y(p1.y, target_height(target))},
-                {1.0f, 0.0f},
+                {atlas.uv_rect[2u], atlas.uv_rect[1u]},
                 {color.r, color.g, color.b, color.a}
             };
             vertices[2u] = {
                 {pixel_to_ndc_x(p2.x, target_width(target)),
                  pixel_to_ndc_y(p2.y, target_height(target))},
-                {1.0f, 1.0f},
+                {atlas.uv_rect[2u], atlas.uv_rect[3u]},
                 {color.r, color.g, color.b, color.a}
             };
             vertices[3u] = vertices[0u];
@@ -525,7 +521,7 @@ namespace gui::draw {
             vertices[5u] = {
                 {pixel_to_ndc_x(p3.x, target_width(target)),
                  pixel_to_ndc_y(p3.y, target_height(target))},
-                {0.0f, 1.0f},
+                {atlas.uv_rect[0u], atlas.uv_rect[3u]},
                 {color.r, color.g, color.b, color.a}
             };
         }
@@ -678,8 +674,16 @@ namespace gui::draw {
             return result;
         }
 
+        [[nodiscard]] auto
+        find_text_atlas_entry(RendererImpl& renderer, TextAtlasKey key, bool& out_hit)
+            -> TextAtlasEntry*;
+
         [[nodiscard]] auto upload_draw_vertices(
-            gui::render::Context render_context, RenderTarget target, Context draw_context
+            Arena& arena,
+            gui::render::Context render_context,
+            RendererImpl& renderer,
+            RenderTarget target,
+            Context draw_context
         ) -> DrawUpload {
             DrawUpload result = {};
             size_t const primitive_count = primitive_command_count(draw_context);
@@ -691,7 +695,30 @@ namespace gui::draw {
             }
 
             size_t const text_count = text_command_count(draw_context);
-            size_t const total_vertex_count = primitive_vertex_count + (text_count * 6u);
+            size_t text_vertex_count = 0u;
+            for (size_t index = 0u; index < text_count; ++index) {
+                TextCommand const* const command = text_command(draw_context, index);
+                ASSERT(command != nullptr);
+                if (!text_command_visible(*command)) {
+                    continue;
+                }
+                for (size_t glyph_index = 0u; glyph_index < command->run.glyph_count;
+                     ++glyph_index) {
+                    if (glyph_visible(command->run.glyphs[glyph_index])) {
+                        text_vertex_count += 6u;
+                    }
+                }
+            }
+
+            if (text_count != 0u) {
+                result.text_draws = arena_alloc<TextDraw>(arena, text_count);
+                result.text_draw_count = text_count;
+                for (size_t index = 0u; index < text_count; ++index) {
+                    result.text_draws[index] = {};
+                }
+            }
+
+            size_t const total_vertex_count = primitive_vertex_count + text_vertex_count;
             if (total_vertex_count != 0u) {
                 gui::render::FrameBufferSlice const upload =
                     gui::render::allocate_frame_vertex_buffer(
@@ -717,20 +744,46 @@ namespace gui::draw {
                     vertex_offset += command->vertex_count;
                 }
 
-                uint32_t const text_first_vertex = static_cast<uint32_t>(primitive_vertex_count);
-                RenderVertex* const text_vertices = vertices + primitive_vertex_count;
+                uint32_t text_vertex = static_cast<uint32_t>(primitive_vertex_count);
+                RenderVertex* text_vertices = vertices + primitive_vertex_count;
                 for (size_t index = 0u; index < text_count; ++index) {
                     TextCommand const* const command = text_command(draw_context, index);
                     ASSERT(command != nullptr);
-                    if (text_command_visible(*command)) {
-                        write_text_vertices(text_vertices + (index * 6u), target, *command);
+                    if (result.text_draws != nullptr) {
+                        result.text_draws[index].first_vertex = text_vertex;
+                    }
+                    if (!text_command_visible(*command)) {
+                        continue;
+                    }
+
+                    uint32_t command_vertex_count = 0u;
+                    for (size_t glyph_index = 0u; glyph_index < command->run.glyph_count;
+                         ++glyph_index) {
+                        font_cache::TextGlyph const& glyph = command->run.glyphs[glyph_index];
+                        if (!glyph_visible(glyph)) {
+                            continue;
+                        }
+
+                        bool hit = false;
+                        TextAtlasEntry const* const atlas =
+                            find_text_atlas_entry(renderer, text_atlas_key(*command, glyph), hit);
+                        if (!hit || atlas == nullptr) {
+                            continue;
+                        }
+
+                        write_text_vertices(text_vertices, target, *command, glyph, *atlas);
+                        text_vertices += 6u;
+                        text_vertex += 6u;
+                        command_vertex_count += 6u;
+                    }
+                    if (result.text_draws != nullptr) {
+                        result.text_draws[index].vertex_count = command_vertex_count;
                     }
                 }
 
                 result.vertex_buffer.buffer = upload.buffer;
                 result.vertex_buffer.byte_stride = static_cast<uint32_t>(sizeof(RenderVertex));
                 result.vertex_buffer.byte_offset = static_cast<uint32_t>(upload.byte_offset);
-                result.text_first_vertex = text_first_vertex;
             }
 
             size_t const styled_rect_count = styled_rect_command_count(draw_context);
@@ -794,6 +847,26 @@ namespace gui::draw {
             return result;
         }
 
+        auto create_sampler_bind_group(
+            Arena& arena,
+            gui::render::Context render_context,
+            RendererImpl const& renderer,
+            gui::render::BindGroup& out_bind_group
+        ) -> gui::render::Result {
+            gui::render::BindGroupSamplerBinding sampler_binding = {};
+            sampler_binding.stage = gui::render::ShaderStage::PIXEL;
+            sampler_binding.slot = 0u;
+            sampler_binding.sampler = renderer.sampler;
+
+            gui::render::BindGroupDesc bind_group_desc = {};
+            bind_group_desc.samplers = &sampler_binding;
+            bind_group_desc.sampler_count = 1u;
+
+            return gui::render::create_bind_group(
+                arena, render_context, bind_group_desc, out_bind_group
+            );
+        }
+
         auto bind_texture(
             Arena& arena,
             gui::render::Context render_context,
@@ -829,20 +902,43 @@ namespace gui::draw {
             return true;
         }
 
-        [[nodiscard]] auto find_text_texture_cache_entry(RendererImpl& renderer, TextTextureKey key)
-            -> TextTextureCacheEntry* {
-            if (renderer.text_texture_cache == nullptr ||
-                renderer.text_texture_cache_capacity == 0u) {
+        auto create_texture_bind_group(
+            Arena& arena,
+            gui::render::Context render_context,
+            gui::render::Texture texture,
+            gui::render::BindGroup& out_bind_group
+        ) -> gui::render::Result {
+            gui::render::BindGroupTextureBinding texture_binding = {};
+            texture_binding.stage = gui::render::ShaderStage::PIXEL;
+            texture_binding.slot = 0u;
+            texture_binding.texture = texture;
+
+            gui::render::BindGroupDesc bind_group_desc = {};
+            bind_group_desc.textures = &texture_binding;
+            bind_group_desc.texture_count = 1u;
+
+            return gui::render::create_bind_group(
+                arena, render_context, bind_group_desc, out_bind_group
+            );
+        }
+
+        [[nodiscard]] auto
+        find_text_atlas_entry(RendererImpl& renderer, TextAtlasKey key, bool& out_hit)
+            -> TextAtlasEntry* {
+            out_hit = false;
+            if (renderer.text_atlas_entries == nullptr || renderer.text_atlas_capacity == 0u) {
                 return nullptr;
             }
 
-            size_t const first_index =
-                hash_text_texture_key(key) % renderer.text_texture_cache_capacity;
-            for (size_t offset = 0u; offset < renderer.text_texture_cache_capacity; ++offset) {
-                size_t const index = (first_index + offset) % renderer.text_texture_cache_capacity;
-                TextTextureCacheEntry& entry = renderer.text_texture_cache[index];
-                if (!gui::render::texture_valid(entry.texture) ||
-                    text_texture_key_equal(entry.key, key)) {
+            size_t const first_index = hash_text_atlas_key(key) % renderer.text_atlas_capacity;
+            for (size_t offset = 0u; offset < renderer.text_atlas_capacity; ++offset) {
+                size_t const index = (first_index + offset) % renderer.text_atlas_capacity;
+                TextAtlasEntry& entry = renderer.text_atlas_entries[index];
+                if (entry.valid && text_atlas_key_equal(entry.key, key)) {
+                    out_hit = true;
+                    return &entry;
+                }
+                if (!entry.valid) {
                     return &entry;
                 }
             }
@@ -850,39 +946,158 @@ namespace gui::draw {
             return nullptr;
         }
 
-        [[nodiscard]] auto bind_cached_text_texture(
-            gui::render::Context render_context, RendererImpl& renderer, TextCommand const& command
+        [[nodiscard]] auto alloc_text_atlas_rect(
+            RendererImpl& renderer,
+            uint32_t width,
+            uint32_t height,
+            uint32_t& out_x,
+            uint32_t& out_y
         ) -> bool {
-            TextTextureCacheEntry* const entry =
-                find_text_texture_cache_entry(renderer, text_texture_key(command));
-            if (entry == nullptr) {
+            uint32_t const alloc_width = width + (TEXT_ATLAS_PADDING * 2u);
+            uint32_t const alloc_height = height + (TEXT_ATLAS_PADDING * 2u);
+            if (alloc_width > TEXT_ATLAS_SIZE.width || alloc_height > TEXT_ATLAS_SIZE.height) {
                 return false;
             }
 
-            if (gui::render::texture_valid(entry->texture)) {
-                ASSERT(gui::render::bind_group_valid(entry->bind_group));
-                gui::render::bind_group(render_context, entry->bind_group);
-                return true;
+            if (renderer.text_atlas_x + alloc_width > TEXT_ATLAS_SIZE.width) {
+                renderer.text_atlas_x = 0u;
+                renderer.text_atlas_y += renderer.text_atlas_row_height;
+                renderer.text_atlas_row_height = 0u;
             }
-
-            ASSERT(renderer.arena != nullptr);
-            entry->key = text_texture_key(command);
-            gui::render::Result const texture_result =
-                create_text_texture(render_context, command.run, entry->texture);
-            ASSERT(gui::render::result_succeeded(texture_result));
-            if (gui::render::result_failed(texture_result)) {
-                *entry = {};
+            if (renderer.text_atlas_y + alloc_height > TEXT_ATLAS_SIZE.height) {
                 return false;
             }
 
-            if (!bind_texture(
-                    *renderer.arena, render_context, renderer, entry->texture, entry->bind_group
-                )) {
-                destroy_text_texture_cache_entry(render_context, *entry);
-                return false;
-            }
-
+            out_x = renderer.text_atlas_x + TEXT_ATLAS_PADDING;
+            out_y = renderer.text_atlas_y + TEXT_ATLAS_PADDING;
+            renderer.text_atlas_x += alloc_width;
+            renderer.text_atlas_row_height = std::max(renderer.text_atlas_row_height, alloc_height);
             return true;
+        }
+
+        [[nodiscard]] auto ensure_text_atlas_entry(
+            gui::render::Context render_context,
+            RendererImpl& renderer,
+            TextCommand const& command,
+            font_cache::TextGlyph const& glyph,
+            bool& out_cleared
+        ) -> TextAtlasEntry* {
+            out_cleared = false;
+            if (!glyph_visible(glyph)) {
+                return nullptr;
+            }
+
+            bool hit = false;
+            TextAtlasKey const key = text_atlas_key(command, glyph);
+            TextAtlasEntry* entry = find_text_atlas_entry(renderer, key, hit);
+            if (hit) {
+                return entry;
+            }
+            if (entry == nullptr) {
+                clear_text_atlas(renderer);
+                out_cleared = true;
+                return nullptr;
+            }
+
+            uint32_t atlas_x = 0u;
+            uint32_t atlas_y = 0u;
+            if (!alloc_text_atlas_rect(
+                    renderer, glyph.raster.size.width, glyph.raster.size.height, atlas_x, atlas_y
+                )) {
+                clear_text_atlas(renderer);
+                out_cleared = true;
+                return nullptr;
+            }
+
+            uint32_t const upload_width = glyph.raster.size.width + (TEXT_ATLAS_PADDING * 2u);
+            uint32_t const upload_height = glyph.raster.size.height + (TEXT_ATLAS_PADDING * 2u);
+            ArenaTemp temp = begin_thread_temp_arena();
+            uint8_t* const upload_pixels =
+                arena_alloc<uint8_t>(*temp.arena(), upload_width * upload_height);
+            std::memset(upload_pixels, 0, upload_width * upload_height);
+            for (uint32_t y = 0u; y < glyph.raster.size.height; ++y) {
+                uint8_t const* const src =
+                    glyph.raster.pixels + (static_cast<size_t>(y) * glyph.raster.stride);
+                uint8_t* const dst = upload_pixels +
+                                     (static_cast<size_t>(y + TEXT_ATLAS_PADDING) * upload_width) +
+                                     TEXT_ATLAS_PADDING;
+                std::memcpy(dst, src, glyph.raster.size.width);
+            }
+
+            gui::render::TextureUpdateDesc update_desc = {};
+            update_desc.x = atlas_x - TEXT_ATLAS_PADDING;
+            update_desc.y = atlas_y - TEXT_ATLAS_PADDING;
+            update_desc.size = {upload_width, upload_height};
+            update_desc.bytes_per_row = upload_width;
+            update_desc.pixels = upload_pixels;
+            gui::render::Result const result =
+                gui::render::update_texture(render_context, renderer.text_atlas, update_desc);
+            ASSERT(gui::render::result_succeeded(result));
+            if (gui::render::result_failed(result)) {
+                *entry = {};
+                return nullptr;
+            }
+
+            float const atlas_width = static_cast<float>(TEXT_ATLAS_SIZE.width);
+            float const atlas_height = static_cast<float>(TEXT_ATLAS_SIZE.height);
+            entry->key = key;
+            entry->uv_rect[0u] = static_cast<float>(atlas_x) / atlas_width;
+            entry->uv_rect[1u] = static_cast<float>(atlas_y) / atlas_height;
+            entry->uv_rect[2u] =
+                static_cast<float>(atlas_x + glyph.raster.size.width) / atlas_width;
+            entry->uv_rect[3u] =
+                static_cast<float>(atlas_y + glyph.raster.size.height) / atlas_height;
+            entry->width = glyph.raster.size.width;
+            entry->height = glyph.raster.size.height;
+            entry->valid = true;
+            return entry;
+        }
+
+        [[nodiscard]] auto prepare_text_atlas(
+            gui::render::Context render_context,
+            RendererImpl& renderer,
+            Context draw_context,
+            size_t first_command,
+            size_t end_command
+        ) -> bool {
+            for (uint32_t attempt = 0u; attempt < 2u; ++attempt) {
+                bool cleared = false;
+                for (size_t index = first_command; index < end_command && !cleared; ++index) {
+                    Command const* const draw_command = command(draw_context, index);
+                    ASSERT(draw_command != nullptr);
+                    if (draw_command->kind != CommandKind::TEXT) {
+                        continue;
+                    }
+
+                    TextCommand const* const text = text_command(draw_context, draw_command->index);
+                    ASSERT(text != nullptr);
+                    if (!text_command_visible(*text)) {
+                        continue;
+                    }
+
+                    for (size_t glyph_index = 0u; glyph_index < text->run.glyph_count;
+                         ++glyph_index) {
+                        bool glyph_cleared = false;
+                        TextAtlasEntry const* const entry = ensure_text_atlas_entry(
+                            render_context,
+                            renderer,
+                            *text,
+                            text->run.glyphs[glyph_index],
+                            glyph_cleared
+                        );
+                        BASE_UNUSED(entry);
+                        if (glyph_cleared) {
+                            cleared = true;
+                            break;
+                        }
+                    }
+                }
+                if (!cleared) {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         [[nodiscard]] auto
@@ -1072,12 +1287,16 @@ namespace gui::draw {
             TextCommand const& command,
             size_t text_index
         ) -> void {
+            if (upload.text_draws == nullptr || text_index >= upload.text_draw_count ||
+                upload.text_draws[text_index].vertex_count == 0u) {
+                return;
+            }
+
             gui::render::DrawDesc draw_desc = {};
             draw_desc.vertex_buffers = &upload.vertex_buffer;
             draw_desc.vertex_buffer_count = 1u;
-            draw_desc.vertex_count = 6u;
-            draw_desc.first_vertex =
-                upload.text_first_vertex + static_cast<uint32_t>(text_index * 6u);
+            draw_desc.vertex_count = upload.text_draws[text_index].vertex_count;
+            draw_desc.first_vertex = upload.text_draws[text_index].first_vertex;
 
             gui::render::set_scissor_rect(
                 render_context, target_clip_rect_to_scissor(command.clip_rect, target)
@@ -1088,7 +1307,6 @@ namespace gui::draw {
         auto submit_text_command(
             gui::render::Context render_context,
             RenderTarget target,
-            RendererImpl& renderer,
             DrawUpload const& upload,
             TextCommand const& command,
             size_t text_index
@@ -1097,27 +1315,7 @@ namespace gui::draw {
                 return;
             }
 
-            if (bind_cached_text_texture(render_context, renderer, command)) {
-                submit_text_draw(render_context, target, upload, command, text_index);
-                return;
-            }
-
-            gui::render::Texture texture = {};
-            gui::render::Result const texture_result =
-                create_text_texture(render_context, command.run, texture);
-            ASSERT(gui::render::result_succeeded(texture_result));
-            if (gui::render::result_failed(texture_result)) {
-                return;
-            }
-
-            ArenaTemp temp = begin_thread_temp_arena();
-            gui::render::BindGroup bind_group = {};
-            if (bind_texture(*temp.arena(), render_context, renderer, texture, bind_group)) {
-                submit_text_draw(render_context, target, upload, command, text_index);
-                gui::render::destroy_bind_group(render_context, bind_group);
-            }
-
-            gui::render::destroy_texture(render_context, texture);
+            submit_text_draw(render_context, target, upload, command, text_index);
         }
 
         [[nodiscard]] auto
@@ -1565,9 +1763,17 @@ namespace gui::draw {
             size_t first_command,
             size_t end_command
         ) -> void {
-            DrawUpload const upload = upload_draw_vertices(render_context, target, draw_context);
+            bool const atlas_ready = prepare_text_atlas(
+                render_context, renderer, draw_context, first_command, end_command
+            );
+            BASE_UNUSED(atlas_ready);
+            ArenaTemp temp = begin_thread_temp_arena();
+            DrawUpload const upload =
+                upload_draw_vertices(*temp.arena(), render_context, renderer, target, draw_context);
             gui::render::commit_frame_uploads(render_context);
 
+            bool text_sampler_bound = false;
+            bool text_atlas_bound = false;
             for (size_t index = first_command; index < end_command; ++index) {
                 Command const* const draw_command = command(draw_context, index);
                 ASSERT(draw_command != nullptr);
@@ -1585,6 +1791,7 @@ namespace gui::draw {
                         *batch,
                         primitive_batch_first_vertex(draw_context, *batch)
                     );
+                    text_atlas_bound = false;
                 } else if (draw_command->kind == CommandKind::STYLED_RECT) {
                     StyledRectCommand const* const styled_rect =
                         styled_rect_command(draw_context, draw_command->index);
@@ -1622,13 +1829,20 @@ namespace gui::draw {
                             draw_command->index
                         );
                     }
+                    text_atlas_bound = false;
                 } else if (draw_command->kind == CommandKind::TEXT) {
                     TextCommand const* const text = text_command(draw_context, draw_command->index);
                     ASSERT(text != nullptr);
-                    gui::render::bind_pipeline(render_context, renderer.pipeline);
-                    submit_text_command(
-                        render_context, target, renderer, upload, *text, draw_command->index
-                    );
+                    if (!text_sampler_bound) {
+                        gui::render::bind_group(render_context, renderer.sampler_bind_group);
+                        text_sampler_bound = true;
+                    }
+                    if (!text_atlas_bound) {
+                        gui::render::bind_group(render_context, renderer.text_atlas_bind_group);
+                        text_atlas_bound = true;
+                    }
+                    gui::render::bind_pipeline(render_context, renderer.text_pipeline);
+                    submit_text_command(render_context, target, upload, *text, draw_command->index);
                 } else if (draw_command->kind == CommandKind::LAYER_BEGIN) {
                     LayerCommand const* const layer =
                         layer_command(draw_context, draw_command->index);
@@ -1637,6 +1851,7 @@ namespace gui::draw {
                         renderer, render_context, target, *layer, layer_renders[draw_command->index]
                     );
                     index = layer->end_command_index;
+                    text_atlas_bound = false;
                 }
             }
         }
@@ -1733,6 +1948,24 @@ float4 ps_main(PSInput input) : SV_Target
 {
     float4 sample_value = g_texture.Sample(g_sampler, input.uv);
     return float4(input.color.rgb * sample_value.rgb, input.color.a * sample_value.a);
+}
+)hlsl";
+
+        constexpr StrRef TEXT_SHADER_SOURCE = R"hlsl(
+Texture2D g_texture : register(t0);
+SamplerState g_sampler : register(s0);
+
+struct PSInput
+{
+    float4 position : SV_POSITION;
+    float2 uv : TEXCOORD0;
+    float4 color : COLOR0;
+};
+
+float4 ps_main(PSInput input) : SV_Target
+{
+    float coverage = g_texture.Sample(g_sampler, input.uv).r;
+    return float4(input.color.rgb, input.color.a * coverage);
 }
 )hlsl";
 
@@ -1973,11 +2206,11 @@ PSInput vs_main(VSInput input)
         RendererImpl* const renderer = arena_new<RendererImpl>(arena);
         renderer->arena = &arena;
         if (desc.text_texture_cache_capacity != 0u) {
-            renderer->text_texture_cache =
-                arena_alloc<TextTextureCacheEntry>(arena, desc.text_texture_cache_capacity);
-            renderer->text_texture_cache_capacity = desc.text_texture_cache_capacity;
-            for (size_t index = 0u; index < renderer->text_texture_cache_capacity; ++index) {
-                renderer->text_texture_cache[index] = {};
+            renderer->text_atlas_entries =
+                arena_alloc<TextAtlasEntry>(arena, desc.text_texture_cache_capacity);
+            renderer->text_atlas_capacity = desc.text_texture_cache_capacity;
+            for (size_t index = 0u; index < renderer->text_atlas_capacity; ++index) {
+                renderer->text_atlas_entries[index] = {};
             }
         }
 
@@ -2037,6 +2270,29 @@ PSInput vs_main(VSInput input)
 
         result =
             gui::render::create_pipeline(arena, render_context, pipeline_desc, renderer->pipeline);
+        if (gui::render::result_failed(result)) {
+            destroy_renderer_resources(render_context, renderer);
+            return result;
+        }
+
+        shader_desc.source = TEXT_SHADER_SOURCE;
+        shader_desc.stage = gui::render::ShaderStage::PIXEL;
+        shader_desc.entry_point = "ps_main";
+
+        result = gui::render::create_shader_from_source(
+            arena, render_context, shader_desc, renderer->text_pixel_shader
+        );
+        if (gui::render::result_failed(result)) {
+            destroy_renderer_resources(render_context, renderer);
+            return result;
+        }
+
+        pipeline_desc.pixel_shader = renderer->text_pixel_shader;
+        pipeline_desc.blend_mode = gui::render::BlendMode::ALPHA;
+
+        result = gui::render::create_pipeline(
+            arena, render_context, pipeline_desc, renderer->text_pipeline
+        );
         if (gui::render::result_failed(result)) {
             destroy_renderer_resources(render_context, renderer);
             return result;
@@ -2348,6 +2604,28 @@ PSInput vs_main(VSInput input)
         }
 
         result = gui::render::create_sampler(render_context, renderer->sampler);
+        if (gui::render::result_failed(result)) {
+            destroy_renderer_resources(render_context, renderer);
+            return result;
+        }
+
+        result = create_sampler_bind_group(
+            arena, render_context, *renderer, renderer->sampler_bind_group
+        );
+        if (gui::render::result_failed(result)) {
+            destroy_renderer_resources(render_context, renderer);
+            return result;
+        }
+
+        result = create_text_atlas(render_context, renderer->text_atlas);
+        if (gui::render::result_failed(result)) {
+            destroy_renderer_resources(render_context, renderer);
+            return result;
+        }
+
+        result = create_texture_bind_group(
+            arena, render_context, renderer->text_atlas, renderer->text_atlas_bind_group
+        );
         if (gui::render::result_failed(result)) {
             destroy_renderer_resources(render_context, renderer);
             return result;

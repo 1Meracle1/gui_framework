@@ -105,10 +105,12 @@ namespace gui::draw {
         }
 
         [[nodiscard]] auto transform_point(Transform2D const& transform, Vec2 point) -> Vec2 {
-            return {(point.x * transform.x_axis.x) + (point.y * transform.y_axis.x) +
-                        transform.translation.x,
-                    (point.x * transform.x_axis.y) + (point.y * transform.y_axis.y) +
-                        transform.translation.y};
+            return {
+                (point.x * transform.x_axis.x) + (point.y * transform.y_axis.x) +
+                    transform.translation.x,
+                (point.x * transform.x_axis.y) + (point.y * transform.y_axis.y) +
+                    transform.translation.y
+            };
         }
 
         [[nodiscard]] auto vec2_add(Vec2 lhs, Vec2 rhs) -> Vec2 {
@@ -124,13 +126,17 @@ namespace gui::draw {
         }
 
         [[nodiscard]] auto rect_normalized(Rect rect) -> Rect {
-            return {{std::min(rect.min.x, rect.max.x), std::min(rect.min.y, rect.max.y)},
-                    {std::max(rect.min.x, rect.max.x), std::max(rect.min.y, rect.max.y)}};
+            return {
+                {std::min(rect.min.x, rect.max.x), std::min(rect.min.y, rect.max.y)},
+                {std::max(rect.min.x, rect.max.x), std::max(rect.min.y, rect.max.y)}
+            };
         }
 
         [[nodiscard]] auto rect_intersect(Rect lhs, Rect rhs) -> Rect {
-            return {{std::max(lhs.min.x, rhs.min.x), std::max(lhs.min.y, rhs.min.y)},
-                    {std::min(lhs.max.x, rhs.max.x), std::min(lhs.max.y, rhs.max.y)}};
+            return {
+                {std::max(lhs.min.x, rhs.min.x), std::max(lhs.min.y, rhs.min.y)},
+                {std::min(lhs.max.x, rhs.max.x), std::min(lhs.max.y, rhs.max.y)}
+            };
         }
 
         [[nodiscard]] auto rect_width(Rect rect) -> float {
@@ -171,9 +177,9 @@ namespace gui::draw {
             return std::clamp(segment_count, MIN_SEGMENTS, MAX_SEGMENTS);
         }
 
-        [[nodiscard]] auto clamped_arc_segment_count(float radius,
-                                                     float angle_delta,
-                                                     int32_t segment_count) -> int32_t {
+        [[nodiscard]] auto
+        clamped_arc_segment_count(float radius, float angle_delta, int32_t segment_count)
+            -> int32_t {
             if (segment_count > 0) {
                 return std::clamp(segment_count, 1, MAX_SEGMENTS);
             }
@@ -184,8 +190,9 @@ namespace gui::draw {
             return std::clamp(result, 1, MAX_SEGMENTS);
         }
 
-        [[nodiscard]] auto primitive_commands_compatible(PrimitiveCommand const& lhs,
-                                                         PrimitiveCommand const& rhs) -> bool {
+        [[nodiscard]] auto
+        primitive_commands_compatible(PrimitiveCommand const& lhs, PrimitiveCommand const& rhs)
+            -> bool {
             return lhs.texture.handle == rhs.texture.handle &&
                    rect_equal(lhs.clip_rect, rhs.clip_rect) &&
                    transform_equal(lhs.transform, rhs.transform) && lhs.opacity == rhs.opacity;
@@ -237,9 +244,9 @@ namespace gui::draw {
             append_command(impl, CommandKind::PRIMITIVE_BATCH, batch_index);
         }
 
-        [[nodiscard]] auto push_primitive_vertices(ContextImpl* impl,
-                                                   size_t vertex_count,
-                                                   gui::render::Texture texture = {}) -> Vertex* {
+        [[nodiscard]] auto push_primitive_vertices(
+            ContextImpl* impl, size_t vertex_count, gui::render::Texture texture = {}
+        ) -> Vertex* {
             ASSERT(impl != nullptr);
             ASSERT(vertex_count != 0u);
             ASSERT(impl->primitive_command_count < impl->command_capacity);
@@ -297,18 +304,16 @@ namespace gui::draw {
         }
 
         auto write_triangle(
-            ContextImpl const* impl, Vertex* vertices, Vec2 p0, Vec2 p1, Vec2 p2, Color color)
-            -> void {
+            ContextImpl const* impl, Vertex* vertices, Vec2 p0, Vec2 p1, Vec2 p2, Color color
+        ) -> void {
             write_vertex(impl, vertices[0u], p0, color);
             write_vertex(impl, vertices[1u], p1, color);
             write_vertex(impl, vertices[2u], p2, color);
         }
 
-        auto write_rect_vertices(ContextImpl const* impl,
-                                 Vertex* vertices,
-                                 Rect rect,
-                                 Rect uv_rect,
-                                 Color color) -> void {
+        auto write_rect_vertices(
+            ContextImpl const* impl, Vertex* vertices, Rect rect, Rect uv_rect, Color color
+        ) -> void {
             Vec2 const p0 = rect.min;
             Vec2 const p1 = {rect.max.x, rect.min.y};
             Vec2 const p2 = rect.max;
@@ -353,13 +358,15 @@ namespace gui::draw {
             return vec2_mul(average, inverse_length_sqr * half_thickness);
         }
 
-        auto write_stroke_segment(ContextImpl const* impl,
-                                  Vertex* vertices,
-                                  Vec2 p0,
-                                  Vec2 p1,
-                                  Vec2 offset0,
-                                  Vec2 offset1,
-                                  Color color) -> void {
+        auto write_stroke_segment(
+            ContextImpl const* impl,
+            Vertex* vertices,
+            Vec2 p0,
+            Vec2 p1,
+            Vec2 offset0,
+            Vec2 offset1,
+            Color color
+        ) -> void {
             Vec2 const a = vec2_add(p0, offset0);
             Vec2 const b = vec2_add(p1, offset1);
             Vec2 const c = vec2_sub(p1, offset1);
@@ -369,14 +376,16 @@ namespace gui::draw {
             write_triangle(impl, vertices + 3u, a, c, d, color);
         }
 
-        auto write_fringe_segment(ContextImpl const* impl,
-                                  Vertex* vertices,
-                                  Vec2 p0,
-                                  Vec2 p1,
-                                  Vec2 offset0,
-                                  Vec2 offset1,
-                                  Color inner_color,
-                                  Color outer_color) -> void {
+        auto write_fringe_segment(
+            ContextImpl const* impl,
+            Vertex* vertices,
+            Vec2 p0,
+            Vec2 p1,
+            Vec2 offset0,
+            Vec2 offset1,
+            Color inner_color,
+            Color outer_color
+        ) -> void {
             Vec2 const a = p0;
             Vec2 const b = p1;
             Vec2 const c = vec2_add(p1, offset1);
@@ -390,20 +399,23 @@ namespace gui::draw {
             write_vertex(impl, vertices[5u], d, outer_color);
         }
 
-        auto write_stroke_cap(ContextImpl const* impl,
-                              Vertex* vertices,
-                              Vec2 point,
-                              Vec2 inner_offset,
-                              Vec2 outer_offset,
-                              Vec2 cap_offset,
-                              Color inner_color,
-                              Color outer_color) -> void {
+        auto write_stroke_cap(
+            ContextImpl const* impl,
+            Vertex* vertices,
+            Vec2 point,
+            Vec2 inner_offset,
+            Vec2 outer_offset,
+            Vec2 cap_offset,
+            Color inner_color,
+            Color outer_color
+        ) -> void {
             Vec2 const p0 = vec2_sub(point, inner_offset);
             Vec2 const p1 = vec2_add(point, inner_offset);
             Vec2 const offset0 = vec2_add(vec2_sub(inner_offset, outer_offset), cap_offset);
             Vec2 const offset1 = vec2_add(vec2_sub(outer_offset, inner_offset), cap_offset);
             write_fringe_segment(
-                impl, vertices, p0, p1, offset0, offset1, inner_color, outer_color);
+                impl, vertices, p0, p1, offset0, offset1, inner_color, outer_color
+            );
         }
 
         auto
@@ -471,12 +483,14 @@ namespace gui::draw {
             size_t const vertex_count = fill_vertex_count + (points.size() * 6u);
             Vertex* const vertices = push_primitive_vertices(impl, vertex_count);
             for (size_t index = 1u; index + 1u < points.size(); ++index) {
-                write_triangle(impl,
-                               vertices + ((index - 1u) * 3u),
-                               points[0u],
-                               points[index],
-                               points[index + 1u],
-                               color);
+                write_triangle(
+                    impl,
+                    vertices + ((index - 1u) * 3u),
+                    points[0u],
+                    points[index],
+                    points[index + 1u],
+                    color
+                );
             }
 
             float const normal_scale = area_twice > 0.0f ? -1.0f : 1.0f;
@@ -497,14 +511,16 @@ namespace gui::draw {
             Vertex* const fringe_vertices = vertices + fill_vertex_count;
             for (size_t index = 0u; index < points.size(); ++index) {
                 size_t const next_index = (index + 1u) % points.size();
-                write_fringe_segment(impl,
-                                     fringe_vertices + (index * 6u),
-                                     points[index],
-                                     points[next_index],
-                                     fringe_offsets[index],
-                                     fringe_offsets[next_index],
-                                     color,
-                                     outer_color);
+                write_fringe_segment(
+                    impl,
+                    fringe_vertices + (index * 6u),
+                    points[index],
+                    points[next_index],
+                    fringe_offsets[index],
+                    fringe_offsets[next_index],
+                    color,
+                    outer_color
+                );
             }
         }
 
@@ -559,8 +575,9 @@ namespace gui::draw {
             for (int32_t index = 0; index < segments; ++index) {
                 float const angle =
                     TWO_PI * static_cast<float>(index) / static_cast<float>(segments);
-                points[index] = {center.x + (std::cos(angle) * radius.x),
-                                 center.y + (std::sin(angle) * radius.y)};
+                points[index] = {
+                    center.x + (std::cos(angle) * radius.x), center.y + (std::sin(angle) * radius.y)
+                };
             }
 
             return {points, static_cast<size_t>(segments)};
@@ -591,8 +608,9 @@ namespace gui::draw {
 
         ContextImpl* const impl = arena_new<ContextImpl>(arena);
 
-        ArenaOptions const arena_options = {desc.frame_arena_reserve_size,
-                                            desc.frame_arena_commit_size};
+        ArenaOptions const arena_options = {
+            desc.frame_arena_reserve_size, desc.frame_arena_commit_size
+        };
         impl->frame_arena.init(arena_options);
 
         impl->primitive_commands =
@@ -638,9 +656,6 @@ namespace gui::draw {
         ContextImpl* const impl = context_from_handle(context);
         ASSERT(impl != nullptr);
 
-        if (font_cache::cache_valid(impl->font_cache)) {
-            font_cache::clear_cache(impl->font_cache);
-        }
         impl->frame_arena.reset();
         impl->primitive_command_count = 0u;
         impl->primitive_batch_count = 0u;
@@ -798,11 +813,9 @@ namespace gui::draw {
         draw_polyline(context, {p0, p1}, color, thickness, false);
     }
 
-    auto draw_polyline(Context context,
-                       Slice<Vec2 const> points,
-                       Color color,
-                       float thickness,
-                       bool closed) -> void {
+    auto draw_polyline(
+        Context context, Slice<Vec2 const> points, Color color, float thickness, bool closed
+    ) -> void {
         ContextImpl* const impl = context_from_handle(context);
         ASSERT(impl != nullptr);
 
@@ -836,9 +849,11 @@ namespace gui::draw {
             for (size_t index = 0u; index < point_count; ++index) {
                 size_t const prev_index = (index + segment_count - 1u) % segment_count;
                 point_offsets[index] = stroke_join_offset(
-                    segment_normals[prev_index], segment_normals[index], half_thickness);
+                    segment_normals[prev_index], segment_normals[index], half_thickness
+                );
                 outer_point_offsets[index] = stroke_join_offset(
-                    segment_normals[prev_index], segment_normals[index], outer_half_thickness);
+                    segment_normals[prev_index], segment_normals[index], outer_half_thickness
+                );
             }
         } else {
             point_offsets[0u] = vec2_mul(segment_normals[0u], half_thickness);
@@ -849,9 +864,11 @@ namespace gui::draw {
                 vec2_mul(segment_normals[segment_count - 1u], outer_half_thickness);
             for (size_t index = 1u; index + 1u < point_count; ++index) {
                 point_offsets[index] = stroke_join_offset(
-                    segment_normals[index - 1u], segment_normals[index], half_thickness);
+                    segment_normals[index - 1u], segment_normals[index], half_thickness
+                );
                 outer_point_offsets[index] = stroke_join_offset(
-                    segment_normals[index - 1u], segment_normals[index], outer_half_thickness);
+                    segment_normals[index - 1u], segment_normals[index], outer_half_thickness
+                );
             }
         }
 
@@ -859,16 +876,19 @@ namespace gui::draw {
         size_t const side_fringe_vertex_count = segment_count * 12u;
         size_t const cap_vertex_count = closed ? 0u : 12u;
         Vertex* const vertices = push_primitive_vertices(
-            impl, core_vertex_count + side_fringe_vertex_count + cap_vertex_count);
+            impl, core_vertex_count + side_fringe_vertex_count + cap_vertex_count
+        );
         for (size_t index = 0u; index < segment_count; ++index) {
             size_t const next_index = (index + 1u) % point_count;
-            write_stroke_segment(impl,
-                                 vertices + (index * 6u),
-                                 stroke_points[index],
-                                 stroke_points[next_index],
-                                 point_offsets[index],
-                                 point_offsets[next_index],
-                                 inner_color);
+            write_stroke_segment(
+                impl,
+                vertices + (index * 6u),
+                stroke_points[index],
+                stroke_points[next_index],
+                point_offsets[index],
+                point_offsets[next_index],
+                inner_color
+            );
         }
 
         Vertex* const fringe_vertices = vertices + core_vertex_count;
@@ -880,44 +900,52 @@ namespace gui::draw {
             Vec2 const negative_delta0 = vec2_sub(point_offsets[index], outer_point_offsets[index]);
             Vec2 const negative_delta1 =
                 vec2_sub(point_offsets[next_index], outer_point_offsets[next_index]);
-            write_fringe_segment(impl,
-                                 fringe_vertices + (index * 12u),
-                                 vec2_add(stroke_points[index], point_offsets[index]),
-                                 vec2_add(stroke_points[next_index], point_offsets[next_index]),
-                                 positive_delta0,
-                                 positive_delta1,
-                                 inner_color,
-                                 outer_color);
-            write_fringe_segment(impl,
-                                 fringe_vertices + (index * 12u) + 6u,
-                                 vec2_sub(stroke_points[index], point_offsets[index]),
-                                 vec2_sub(stroke_points[next_index], point_offsets[next_index]),
-                                 negative_delta0,
-                                 negative_delta1,
-                                 inner_color,
-                                 outer_color);
+            write_fringe_segment(
+                impl,
+                fringe_vertices + (index * 12u),
+                vec2_add(stroke_points[index], point_offsets[index]),
+                vec2_add(stroke_points[next_index], point_offsets[next_index]),
+                positive_delta0,
+                positive_delta1,
+                inner_color,
+                outer_color
+            );
+            write_fringe_segment(
+                impl,
+                fringe_vertices + (index * 12u) + 6u,
+                vec2_sub(stroke_points[index], point_offsets[index]),
+                vec2_sub(stroke_points[next_index], point_offsets[next_index]),
+                negative_delta0,
+                negative_delta1,
+                inner_color,
+                outer_color
+            );
         }
 
         if (!closed) {
             Vec2 const start_tangent = tangent_from_normal(segment_normals[0u]);
             Vec2 const end_tangent = tangent_from_normal(segment_normals[segment_count - 1u]);
             Vertex* const cap_vertices = fringe_vertices + side_fringe_vertex_count;
-            write_stroke_cap(impl,
-                             cap_vertices,
-                             stroke_points[0u],
-                             point_offsets[0u],
-                             outer_point_offsets[0u],
-                             vec2_mul(start_tangent, -AA_FRINGE_SIZE),
-                             inner_color,
-                             outer_color);
-            write_stroke_cap(impl,
-                             cap_vertices + 6u,
-                             stroke_points[point_count - 1u],
-                             point_offsets[point_count - 1u],
-                             outer_point_offsets[point_count - 1u],
-                             vec2_mul(end_tangent, AA_FRINGE_SIZE),
-                             inner_color,
-                             outer_color);
+            write_stroke_cap(
+                impl,
+                cap_vertices,
+                stroke_points[0u],
+                point_offsets[0u],
+                outer_point_offsets[0u],
+                vec2_mul(start_tangent, -AA_FRINGE_SIZE),
+                inner_color,
+                outer_color
+            );
+            write_stroke_cap(
+                impl,
+                cap_vertices + 6u,
+                stroke_points[point_count - 1u],
+                point_offsets[point_count - 1u],
+                outer_point_offsets[point_count - 1u],
+                vec2_mul(end_tangent, AA_FRINGE_SIZE),
+                inner_color,
+                outer_color
+            );
         }
     }
 
@@ -1004,12 +1032,14 @@ namespace gui::draw {
         write_rect_vertices(impl, vertices, rect, uv_rect, color);
     }
 
-    auto draw_rect_filled_multicolor(Context context,
-                                     Rect rect,
-                                     Color top_left,
-                                     Color top_right,
-                                     Color bottom_right,
-                                     Color bottom_left) -> void {
+    auto draw_rect_filled_multicolor(
+        Context context,
+        Rect rect,
+        Color top_left,
+        Color top_right,
+        Color bottom_right,
+        Color bottom_left
+    ) -> void {
         ContextImpl* const impl = context_from_handle(context);
         ASSERT(impl != nullptr);
 
@@ -1032,26 +1062,31 @@ namespace gui::draw {
         write_vertex(impl, vertices[5u], p3, bottom_left);
     }
 
-    auto draw_circle(Context context,
-                     Vec2 center,
-                     float radius,
-                     Color color,
-                     float thickness,
-                     int32_t segment_count) -> void {
+    auto draw_circle(
+        Context context,
+        Vec2 center,
+        float radius,
+        Color color,
+        float thickness,
+        int32_t segment_count
+    ) -> void {
         draw_ellipse(context, center, {radius, radius}, color, thickness, segment_count);
     }
 
     auto draw_circle_filled(
-        Context context, Vec2 center, float radius, Color color, int32_t segment_count) -> void {
+        Context context, Vec2 center, float radius, Color color, int32_t segment_count
+    ) -> void {
         draw_ellipse_filled(context, center, {radius, radius}, color, segment_count);
     }
 
-    auto draw_ellipse(Context context,
-                      Vec2 center,
-                      Vec2 radius,
-                      Color color,
-                      float thickness,
-                      int32_t segment_count) -> void {
+    auto draw_ellipse(
+        Context context,
+        Vec2 center,
+        Vec2 radius,
+        Color color,
+        float thickness,
+        int32_t segment_count
+    ) -> void {
         ContextImpl* const impl = context_from_handle(context);
         ASSERT(impl != nullptr);
 
@@ -1064,7 +1099,8 @@ namespace gui::draw {
     }
 
     auto draw_ellipse_filled(
-        Context context, Vec2 center, Vec2 radius, Color color, int32_t segment_count) -> void {
+        Context context, Vec2 center, Vec2 radius, Color color, int32_t segment_count
+    ) -> void {
         ContextImpl* const impl = context_from_handle(context);
         ASSERT(impl != nullptr);
 
@@ -1088,12 +1124,14 @@ namespace gui::draw {
         append_path_point(impl, p);
     }
 
-    auto path_arc_to(Context context,
-                     Vec2 center,
-                     float radius,
-                     float angle_min,
-                     float angle_max,
-                     int32_t segment_count) -> void {
+    auto path_arc_to(
+        Context context,
+        Vec2 center,
+        float radius,
+        float angle_min,
+        float angle_max,
+        int32_t segment_count
+    ) -> void {
         ContextImpl* const impl = context_from_handle(context);
         ASSERT(impl != nullptr);
 
@@ -1108,8 +1146,8 @@ namespace gui::draw {
         for (int32_t index = 0; index <= segments; ++index) {
             float const angle = angle_min + (step * static_cast<float>(index));
             append_path_point(
-                impl,
-                {center.x + (std::cos(angle) * radius), center.y + (std::sin(angle) * radius)});
+                impl, {center.x + (std::cos(angle) * radius), center.y + (std::sin(angle) * radius)}
+            );
         }
     }
 
@@ -1125,15 +1163,17 @@ namespace gui::draw {
         for (int32_t index = 1; index <= segments; ++index) {
             float const t = static_cast<float>(index) / static_cast<float>(segments);
             float const u = 1.0f - t;
-            Vec2 const point =
-                vec2_add(vec2_add(vec2_mul(start, u * u), vec2_mul(control, 2.0f * u * t)),
-                         vec2_mul(end, t * t));
+            Vec2 const point = vec2_add(
+                vec2_add(vec2_mul(start, u * u), vec2_mul(control, 2.0f * u * t)),
+                vec2_mul(end, t * t)
+            );
             append_path_point(impl, point);
         }
     }
 
     auto path_bezier_cubic_to(
-        Context context, Vec2 control0, Vec2 control1, Vec2 end, int32_t segment_count) -> void {
+        Context context, Vec2 control0, Vec2 control1, Vec2 end, int32_t segment_count
+    ) -> void {
         ContextImpl* const impl = context_from_handle(context);
         ASSERT(impl != nullptr);
         ASSERT(impl->path_last != nullptr);
@@ -1144,9 +1184,10 @@ namespace gui::draw {
         for (int32_t index = 1; index <= segments; ++index) {
             float const t = static_cast<float>(index) / static_cast<float>(segments);
             float const u = 1.0f - t;
-            Vec2 const point =
-                vec2_add(vec2_add(vec2_mul(start, u * u * u), vec2_mul(control0, 3.0f * u * u * t)),
-                         vec2_add(vec2_mul(control1, 3.0f * u * t * t), vec2_mul(end, t * t * t)));
+            Vec2 const point = vec2_add(
+                vec2_add(vec2_mul(start, u * u * u), vec2_mul(control0, 3.0f * u * u * t)),
+                vec2_add(vec2_mul(control1, 3.0f * u * t * t), vec2_mul(end, t * t * t))
+            );
             append_path_point(impl, point);
         }
     }
@@ -1171,13 +1212,17 @@ namespace gui::draw {
         }
 
         path_arc_to(
-            context, {rect.max.x - rounding, rect.min.y + rounding}, rounding, -HALF_PI, 0.0f, 0);
+            context, {rect.max.x - rounding, rect.min.y + rounding}, rounding, -HALF_PI, 0.0f, 0
+        );
         path_arc_to(
-            context, {rect.max.x - rounding, rect.max.y - rounding}, rounding, 0.0f, HALF_PI, 0);
+            context, {rect.max.x - rounding, rect.max.y - rounding}, rounding, 0.0f, HALF_PI, 0
+        );
         path_arc_to(
-            context, {rect.min.x + rounding, rect.max.y - rounding}, rounding, HALF_PI, PI, 0);
+            context, {rect.min.x + rounding, rect.max.y - rounding}, rounding, HALF_PI, PI, 0
+        );
         path_arc_to(
-            context, {rect.min.x + rounding, rect.min.y + rounding}, rounding, PI, PI + HALF_PI, 0);
+            context, {rect.min.x + rounding, rect.min.y + rounding}, rounding, PI, PI + HALF_PI, 0
+        );
     }
 
     auto path_stroke(Context context, Color color, bool closed, float thickness) -> void {
@@ -1198,10 +1243,9 @@ namespace gui::draw {
         clear_path(impl);
     }
 
-    auto measure_text(Context context,
-                      TextStyle const& style,
-                      StrRef text,
-                      font_cache::TextRun& out_run) -> void {
+    auto
+    measure_text(Context context, TextStyle const& style, StrRef text, font_cache::TextRun& out_run)
+        -> void {
         ContextImpl* const impl = context_from_handle(context);
         ASSERT(impl != nullptr);
         ASSERT(font_cache::cache_valid(impl->font_cache));
@@ -1209,11 +1253,9 @@ namespace gui::draw {
         font_cache::text_run(impl->font_cache, style.font, style.size, text, out_run);
     }
 
-    auto draw_text(Context context,
-                   Vec2 position,
-                   TextStyle const& style,
-                   StrRef text,
-                   float* out_advance) -> void {
+    auto draw_text(
+        Context context, Vec2 position, TextStyle const& style, StrRef text, float* out_advance
+    ) -> void {
         ContextImpl* const impl = context_from_handle(context);
         ASSERT(impl != nullptr);
 

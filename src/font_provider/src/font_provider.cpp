@@ -101,6 +101,29 @@ namespace gui::font_provider {
         return text.empty() ? 0.0f : platform::text_advance(font, size, text);
     }
 
+    auto shape_text(Font font, float size, StrRef text, Arena& arena, ShapedText& out_text)
+        -> void {
+        ASSERT(font_valid(font));
+        ASSERT(size > 0.0f);
+
+        out_text = {};
+        if (text.empty()) {
+            return;
+        }
+
+        platform::shape_text(font, size, text, arena, out_text);
+    }
+
+    auto
+    raster_glyph(Font font, float size, uint16_t glyph_index, Arena& arena, GlyphRaster& out_raster)
+        -> void {
+        ASSERT(font_valid(font));
+        ASSERT(size > 0.0f);
+
+        out_raster = {};
+        platform::raster_glyph(font, size, glyph_index, arena, out_raster);
+    }
+
     auto raster_text(Font font, float size, StrRef text, Arena& arena, RasterResult& out_raster)
         -> void {
         ASSERT(font_valid(font));
