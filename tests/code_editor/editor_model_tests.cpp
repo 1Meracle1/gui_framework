@@ -1495,6 +1495,50 @@ namespace {
         );
     }
 
+    TEST_CASE(editor_shared_buffer_load_restores_state) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "abc");
+        editor.current_file_name = "main.cpp";
+        editor.current_file_path = "C:\\repo\\main.cpp";
+
+        send_text(editor, " wv");
+        size_t const left = editor.split_nodes[editor.root_split].first;
+        size_t const right = editor.split_nodes[editor.root_split].second;
+        code_editor::focus_editor_split(editor, left);
+
+        editor.cursor_column = 3u;
+        editor.preferred_column = 3u;
+        editor.scroll_y = 12.0f;
+        editor.set_flag(EditorFlag::INSERT_MODE, true);
+        send_text(editor, "Z");
+
+        code_editor::focus_editor_split(editor, right);
+        code_editor::set_editor_text(editor, "other");
+        editor.current_file_name = "other.cpp";
+        editor.current_file_path = "C:\\repo\\other.cpp";
+
+        TEST_EXPECT(
+            context,
+            code_editor::load_shared_editor_buffer(editor, "main.cpp", "C:\\repo\\main.cpp")
+        );
+        TEST_EXPECT(context, editor.cursor_column == 4u);
+        TEST_EXPECT(context, editor.preferred_column == 4u);
+        TEST_EXPECT(context, editor.scroll_y == 12.0f);
+        TEST_EXPECT(context, editor.flag(EditorFlag::INSERT_MODE));
+        TEST_EXPECT(
+            context, code_editor::editor_line_text(code_editor::editor_line(editor, 0u)) == "abcZ"
+        );
+
+        press_key(editor, gui::Key::Z, gui::KEY_MOD_CTRL);
+        TEST_EXPECT(
+            context, code_editor::editor_line_text(code_editor::editor_line(editor, 0u)) == "abc"
+        );
+        TEST_EXPECT(context, editor.cursor_column == 3u);
+    }
+
     TEST_CASE(editor_split_focus_does_not_reclone_unchanged_text) {
         Arena arena = {};
         arena.init();

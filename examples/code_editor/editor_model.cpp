@@ -347,6 +347,15 @@ namespace code_editor {
             editor.undo_stack = pane->undo_stack;
             editor.redo_stack = pane->redo_stack;
             editor.file_write_stamp = pane->file_write_stamp;
+            editor.cursor_line = pane->cursor_line;
+            editor.cursor_column = pane->cursor_column;
+            editor.preferred_column = pane->preferred_column;
+            editor.selection_anchor_line = pane->selection_anchor_line;
+            editor.selection_anchor_column = pane->selection_anchor_column;
+            editor.selection_mode = pane->selection_mode;
+            editor.scroll_y = pane->scroll_y;
+            editor.set_flag(EditorFlag::INSERT_MODE, pane->insert_mode);
+            editor.set_flag(EditorFlag::SELECTION_ACTIVE, pane->selection_active);
             editor.set_flag(EditorFlag::DIRTY, pane->dirty);
             editor.set_flag(EditorFlag::EXTERNAL_CHANGE_PENDING, pane->external_change_pending);
             editor.set_flag(EditorFlag::FILE_DELETED_ON_DISK, pane->file_deleted_on_disk);
@@ -3073,7 +3082,19 @@ namespace code_editor {
             hash = hash_bytes(hash, &file_saved_text_size, sizeof(file_saved_text_size));
             hash = hash_bytes(hash, file.saved_text.data(), file.saved_text.size());
             hash = hash_bytes(hash, &file.file_write_stamp, sizeof(file.file_write_stamp));
+            hash = hash_bytes(hash, &file.cursor_line, sizeof(file.cursor_line));
+            hash = hash_bytes(hash, &file.cursor_column, sizeof(file.cursor_column));
+            hash = hash_bytes(hash, &file.preferred_column, sizeof(file.preferred_column));
+            hash =
+                hash_bytes(hash, &file.selection_anchor_line, sizeof(file.selection_anchor_line));
+            hash = hash_bytes(
+                hash, &file.selection_anchor_column, sizeof(file.selection_anchor_column)
+            );
+            hash = hash_bytes(hash, &file.selection_mode, sizeof(file.selection_mode));
+            hash = hash_bytes(hash, &file.scroll_y, sizeof(file.scroll_y));
             hash = hash_bytes(hash, &file.text_valid, sizeof(file.text_valid));
+            hash = hash_bytes(hash, &file.insert_mode, sizeof(file.insert_mode));
+            hash = hash_bytes(hash, &file.selection_active, sizeof(file.selection_active));
             hash = hash_bytes(hash, &file.dirty, sizeof(file.dirty));
             hash = hash_bytes(
                 hash, &file.external_change_pending, sizeof(file.external_change_pending)

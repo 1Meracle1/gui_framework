@@ -236,8 +236,19 @@ namespace code_editor {
         }
         file->text = text_buffer_copy(editor.text, *editor.text.arena);
         file->saved_text = editor.saved_text;
+        file->undo_stack = editor.undo_stack;
+        file->redo_stack = editor.redo_stack;
         file->file_write_stamp = editor.file_write_stamp;
+        file->cursor_line = editor.cursor_line;
+        file->cursor_column = editor.cursor_column;
+        file->preferred_column = editor.preferred_column;
+        file->selection_anchor_line = editor.selection_anchor_line;
+        file->selection_anchor_column = editor.selection_anchor_column;
+        file->selection_mode = editor.selection_mode;
+        file->scroll_y = editor.scroll_y;
         file->text_valid = true;
+        file->insert_mode = editor.flag(EditorFlag::INSERT_MODE);
+        file->selection_active = editor.flag(EditorFlag::SELECTION_ACTIVE);
         file->dirty = editor.flag(EditorFlag::DIRTY);
         file->external_change_pending = editor.flag(EditorFlag::EXTERNAL_CHANGE_PENDING);
         file->file_deleted_on_disk = editor.flag(EditorFlag::FILE_DELETED_ON_DISK);
@@ -248,7 +259,18 @@ namespace code_editor {
         editor.current_file_name = file.name;
         editor.current_file_path = file.path;
         editor.saved_text = file.saved_text;
+        editor.undo_stack = file.undo_stack;
+        editor.redo_stack = file.redo_stack;
         editor.file_write_stamp = file.file_write_stamp;
+        editor.cursor_line = file.cursor_line;
+        editor.cursor_column = file.cursor_column;
+        editor.preferred_column = file.preferred_column;
+        editor.selection_anchor_line = file.selection_anchor_line;
+        editor.selection_anchor_column = file.selection_anchor_column;
+        editor.selection_mode = file.selection_mode;
+        editor.scroll_y = file.scroll_y;
+        editor.set_flag(EditorFlag::INSERT_MODE, file.insert_mode);
+        editor.set_flag(EditorFlag::SELECTION_ACTIVE, file.selection_active);
         editor.set_flag(EditorFlag::DIRTY, file.dirty);
         editor.set_flag(EditorFlag::EXTERNAL_CHANGE_PENDING, file.external_change_pending);
         editor.set_flag(EditorFlag::FILE_DELETED_ON_DISK, file.file_deleted_on_disk);
@@ -600,8 +622,19 @@ namespace code_editor {
         if (read_tree_file_display_text(*editor.arena, file.path, text)) {
             file.text = text;
             file.saved_text = text;
+            file.undo_stack = nullptr;
+            file.redo_stack = nullptr;
             file.file_write_stamp = stamp;
+            file.cursor_line = 0u;
+            file.cursor_column = 0u;
+            file.preferred_column = 0u;
+            file.selection_anchor_line = 0u;
+            file.selection_anchor_column = 0u;
+            file.selection_mode = EditorSelectionMode::NONE;
+            file.scroll_y = 0.0f;
             file.text_valid = true;
+            file.insert_mode = false;
+            file.selection_active = false;
             file.dirty = false;
             file.external_change_pending = false;
             file.file_deleted_on_disk = false;
