@@ -541,6 +541,20 @@ namespace {
         code_editor::EditorState editor = {};
         code_editor::init_editor(arena, editor, "");
 
+        press_key(editor, gui::Key::S, gui::KEY_MOD_CTRL);
+        TEST_EXPECT(context, editor.save_path_open);
+        TEST_EXPECT(context, !editor.save_requested);
+
+        code_editor::close_save_path_popup(editor);
+        send_text(editor, ":w");
+        press_key(editor, gui::Key::ENTER);
+        TEST_EXPECT(context, editor.save_path_open);
+        TEST_EXPECT(context, !editor.save_requested);
+        TEST_EXPECT(context, !editor.command_line_active);
+
+        code_editor::close_save_path_popup(editor);
+        editor.current_file_name = "file.cpp";
+        editor.current_file_path = "C:\\src\\file.cpp";
         send_text(editor, ":w");
         press_key(editor, gui::Key::ENTER);
         TEST_EXPECT(context, editor.save_requested);
@@ -1386,6 +1400,8 @@ namespace {
 
         send_text(editor, " wq");
         TEST_EXPECT(context, code_editor::editor_split_leaf_count(editor) == 1u);
+        TEST_EXPECT(context, editor.close_app_requested);
+        editor.close_app_requested = false;
 
         send_text(editor, " wv");
         TEST_EXPECT(context, code_editor::editor_split_leaf_count(editor) == 2u);
@@ -1395,6 +1411,28 @@ namespace {
 
         send_text(editor, " wq");
         TEST_EXPECT(context, code_editor::editor_split_leaf_count(editor) == 1u);
+        TEST_EXPECT(context, editor.close_app_requested);
+    }
+
+    TEST_CASE(editor_space_w_q_closes_app_when_last_code_split_has_filesystem_sibling) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "");
+
+        send_text(editor, " e");
+        TEST_EXPECT(context, editor.sidebar_visible);
+        TEST_EXPECT(context, code_editor::editor_split_leaf_count(editor) == 2u);
+        TEST_EXPECT(
+            context,
+            code_editor::editor_focused_pane_kind(editor) == code_editor::EditorPaneKind::CODE
+        );
+
+        send_text(editor, " wq");
+
+        TEST_EXPECT(context, editor.close_app_requested);
+        TEST_EXPECT(context, code_editor::editor_split_leaf_count(editor) == 2u);
     }
 
     TEST_CASE(editor_split_clones_view_and_shares_text_for_same_file) {

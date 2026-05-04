@@ -283,6 +283,16 @@ namespace code_editor {
         Runtime runtime = {};
     };
 
+    auto request_window_close(Runtime& runtime) -> void {
+        if (!runtime.editor.close_app_requested) {
+            return;
+        }
+        runtime.editor.close_app_requested = false;
+        if (runtime.native_window != nullptr) {
+            PostMessageW(static_cast<HWND>(runtime.native_window), WM_CLOSE, 0u, 0l);
+        }
+    }
+
     [[nodiscard]] auto draw_command_counts(draw::Context context) -> DrawCommandCounts {
         return {
             .command_count = draw::command_count(context),
@@ -331,6 +341,7 @@ namespace code_editor {
 
         FrameResult frame_result = {};
         frame_result.frame = build_ui_commands(&module->runtime, window_size, input, delta_time);
+        request_window_close(module->runtime);
         gui::BoxInfo const* const hit_box = frame_result.frame.hit_test(input.mouse_pos);
         frame_result.mouse_hit_id = hit_box != nullptr ? hit_box->id : gui::Id{};
 

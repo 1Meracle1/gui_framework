@@ -474,6 +474,19 @@ namespace code_editor {
         return leaf_count(editor, node.first) + leaf_count(editor, node.second);
     }
 
+    [[nodiscard]] auto
+    leaf_count_by_kind(EditorState const& editor, size_t split, EditorPaneKind kind) -> size_t {
+        if (!split_valid(editor, split)) {
+            return 0u;
+        }
+        EditorSplitNode const& node = editor.split_nodes[split];
+        if (node.kind == EditorSplitKind::LEAF) {
+            return pane_kind(editor, node.pane) == kind ? 1u : 0u;
+        }
+        return leaf_count_by_kind(editor, node.first, kind) +
+               leaf_count_by_kind(editor, node.second, kind);
+    }
+
     [[nodiscard]] auto editor_split_leaf_count(EditorState const& editor) -> size_t {
         return leaf_count(editor, editor.root_split);
     }
@@ -618,8 +631,15 @@ namespace code_editor {
     }
 
     auto close_focused_split(EditorState& editor) -> void {
-        if (editor.focused_split == editor.root_split ||
-            !split_leaf(editor, editor.focused_split)) {
+        if (!split_leaf(editor, editor.focused_split)) {
+            return;
+        }
+        if (focused_pane_kind(editor) == EditorPaneKind::CODE &&
+            leaf_count_by_kind(editor, editor.root_split, EditorPaneKind::CODE) <= 1u) {
+            editor.close_app_requested = true;
+            return;
+        }
+        if (editor.focused_split == editor.root_split) {
             return;
         }
         sync_shared_panes(editor);
@@ -911,6 +931,17 @@ namespace code_editor {
     auto close_save_path_popup(EditorState& editor) -> void {
         editor.save_path_open = false;
         editor.save_path_error = EditorSavePathError::NONE;
+    }
+
+    auto request_editor_save(EditorState& editor) -> void {
+        if (focused_pane_kind(editor) != EditorPaneKind::CODE) {
+            return;
+        }
+        if (editor.current_file_path.empty()) {
+            open_save_path_popup(editor);
+            return;
+        }
+        editor.save_requested = true;
     }
 
     [[nodiscard]] auto line_size(EditorState const& editor, size_t line) -> size_t {
@@ -1714,7 +1745,7 @@ namespace code_editor {
     auto run_editor_command(EditorState& editor, size_t index) -> void {
         switch (index) {
         case 0u:
-            editor.save_requested = true;
+            request_editor_save(editor);
             break;
         case 1u:
             close_focused_split(editor);
@@ -2495,7 +2526,7 @@ namespace code_editor {
             return;
         }
         if (shortcut_key(event, gui::Key::S)) {
-            editor.save_requested = true;
+            request_editor_save(editor);
             return;
         }
         if (shortcut_key(event, gui::Key::A)) {
@@ -2919,6 +2950,7 @@ namespace code_editor {
         hash = hash_bytes(
             hash, &editor.close_current_requested, sizeof(editor.close_current_requested)
         );
+        hash = hash_bytes(hash, &editor.close_app_requested, sizeof(editor.close_app_requested));
         hash = hash_bytes(hash, &editor.root_split, sizeof(editor.root_split));
         hash = hash_bytes(hash, &editor.focused_split, sizeof(editor.focused_split));
         EditorPaneKind const active_kind = focused_pane_kind(editor);
