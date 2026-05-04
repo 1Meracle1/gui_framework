@@ -214,9 +214,8 @@ namespace code_editor {
         draw::create_context(arena, draw_desc, runtime->draw_context);
 
         Palette const palette = {};
-        gui::ThemeDesc const theme = code_editor_theme(
-            runtime->ui_font, palette, editor_scaled_font_size(runtime->editor, EDITOR_UI_FONT_SIZE)
-        );
+        gui::ThemeDesc const theme =
+            code_editor_theme(runtime->ui_font, palette, runtime->editor.font_size);
         gui::create_context(
             arena, {.initial_box_capacity = 1024u, .theme = &theme}, runtime->ui_context
         );
@@ -264,9 +263,8 @@ namespace code_editor {
             1.0f, font_cache::text_advance(runtime->editor_font, runtime->editor.font_size, "M")
         );
         Palette const palette = {};
-        gui::ThemeDesc const theme = code_editor_theme(
-            runtime->ui_font, palette, editor_scaled_font_size(runtime->editor, EDITOR_UI_FONT_SIZE)
-        );
+        gui::ThemeDesc const theme =
+            code_editor_theme(runtime->ui_font, palette, runtime->editor.font_size);
         gui::set_theme(runtime->ui_context, theme);
 
         gui::Frame ui = gui::begin_frame(

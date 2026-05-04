@@ -18,7 +18,6 @@ namespace code_editor {
     inline constexpr float EDITOR_MIN_FONT_SIZE = 8.0f;
     inline constexpr float EDITOR_MAX_FONT_SIZE = 24.0f;
     inline constexpr float EDITOR_FONT_SIZE_STEP = 1.0f;
-    inline constexpr float EDITOR_UI_FONT_SIZE = 13.0f;
     inline constexpr float EDITOR_LINE_HEIGHT = 21.0f;
     inline constexpr float EDITOR_PADDING_X = 18.0f;
     inline constexpr float EDITOR_PADDING_Y = 14.0f;

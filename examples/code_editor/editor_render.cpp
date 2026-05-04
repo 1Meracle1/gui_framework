@@ -37,7 +37,6 @@ namespace code_editor {
     inline constexpr float OPEN_TAB_HEADER_PADDING = 6.0f;
     inline constexpr float OPEN_TAB_PADDING = 12.0f;
     inline constexpr float OPEN_TAB_CLOSE_SIZE = 18.0f;
-    inline constexpr float OPEN_TAB_FONT_SIZE = 13.0f;
     inline constexpr float FILE_SEARCH_ROW_HEIGHT = 27.0f;
     inline constexpr float COMMAND_OVERLAY_HEIGHT = 88.0f;
     inline constexpr float COMMAND_LIST_HEIGHT = 30.0f;
@@ -1015,7 +1014,7 @@ namespace code_editor {
         draw::draw_rect(draw_context, panel, to_draw_color(palette.border), 1.0f, 6.0f);
         draw::push_clip_rect(draw_context, panel);
 
-        float const font_size = editor_scaled_font_size(editor, 12.0f);
+        float const font_size = editor.font_size;
         draw::TextStyle text_style = {
             .font = editor_font,
             .size = font_size,
@@ -1145,7 +1144,7 @@ namespace code_editor {
                         .background = selected ? gui::rgb(34, 45, 58) : gui::Color{},
                         .foreground = selected ? palette.text : gui::Color{},
                         .radius = selected ? 5.0f : -1.0f,
-                        .font_size = editor_scaled_font_size(editor, 12.5f),
+                        .font_size = editor.font_size,
                     },
                 }
             );
@@ -1205,7 +1204,7 @@ namespace code_editor {
                          .padding = gui::insets(0.0f, 8.0f, 0.0f, 4.0f)},
                     .style = {
                         .role = gui::StyleRole::TEXT_MUTED,
-                        .font_size = editor_scaled_font_size(editor, 12.5f),
+                        .font_size = editor.font_size,
                     },
                 }
             );
@@ -1624,7 +1623,7 @@ namespace code_editor {
                                     .layout = {.width = gui::fill(), .height = gui::fill()},
                                     .style = {
                                         .foreground = selected ? palette.text : palette.muted,
-                                        .font_size = editor_scaled_font_size(editor, 12.5f),
+                                        .font_size = editor.font_size,
                                     },
                                 }
                             );
@@ -1774,7 +1773,7 @@ namespace code_editor {
                             },
                         .style = {
                             .foreground = error.empty() ? gui::Color{} : palette.preprocessor,
-                            .font_size = editor_scaled_font_size(editor, 12.0f),
+                            .font_size = editor.font_size,
                         },
                     }
                 );
@@ -1803,7 +1802,7 @@ namespace code_editor {
                             .border = palette.border,
                             .border_thickness = 1.0f,
                             .radius = 4.0f,
-                            .font_size = editor_scaled_font_size(editor, 12.0f),
+                            .font_size = editor.font_size,
                         },
                     };
                     ui.spacer({.layout = {.width = gui::fill(), .height = gui::px(1.0f)}});
@@ -1872,7 +1871,7 @@ namespace code_editor {
                         .foreground = deleted    ? palette.preprocessor
                                       : selected ? palette.text
                                                  : palette.muted,
-                        .font_size = editor_scaled_font_size(editor, OPEN_TAB_FONT_SIZE),
+                        .font_size = editor.font_size,
                     },
                 }
             );
@@ -1894,7 +1893,7 @@ namespace code_editor {
                         .layout = {.width = gui::text(), .height = gui::fill()},
                         .style = {
                             .foreground = palette.muted,
-                            .font_size = editor_scaled_font_size(editor, 12.0f),
+                            .font_size = editor.font_size,
                         },
                     }
                 );
@@ -1999,7 +1998,7 @@ namespace code_editor {
                     .layout = {.width = gui::fill(), .height = gui::px(26.0f)},
                     .style = {
                         .foreground = palette.text,
-                        .font_size = editor_scaled_font_size(editor, 15.0f),
+                        .font_size = editor.font_size,
                     },
                 }
             );
@@ -2017,7 +2016,7 @@ namespace code_editor {
                         },
                     .style = {
                         .foreground = palette.muted,
-                        .font_size = editor_scaled_font_size(editor, 12.5f),
+                        .font_size = editor.font_size,
                     },
                 }
             );
@@ -2045,7 +2044,7 @@ namespace code_editor {
                         .border = palette.border,
                         .border_thickness = 1.0f,
                         .radius = 5.0f,
-                        .font_size = editor_scaled_font_size(editor, 12.5f),
+                        .font_size = editor.font_size,
                     },
                 };
                 close = ui.button(gui::id("file_deleted_close"), "Close buffer", button_desc)
@@ -2108,7 +2107,7 @@ namespace code_editor {
                     .layout = {.width = gui::fill(), .height = gui::px(26.0f)},
                     .style = {
                         .foreground = palette.text,
-                        .font_size = editor_scaled_font_size(editor, 15.0f),
+                        .font_size = editor.font_size,
                     },
                 }
             );
@@ -2127,7 +2126,7 @@ namespace code_editor {
                         },
                     .style = {
                         .foreground = palette.muted,
-                        .font_size = editor_scaled_font_size(editor, 12.5f),
+                        .font_size = editor.font_size,
                     },
                 }
             );
@@ -2155,7 +2154,7 @@ namespace code_editor {
                         .border = gui::color_alpha(palette.preprocessor, 0.55f),
                         .border_thickness = 1.0f,
                         .radius = 5.0f,
-                        .font_size = editor_scaled_font_size(editor, 12.5f),
+                        .font_size = editor.font_size,
                     },
                 };
                 gui::BoxDesc const reload_desc = {
@@ -2171,7 +2170,7 @@ namespace code_editor {
                         .border = gui::color_alpha(palette.cursor, 0.72f),
                         .border_thickness = 1.0f,
                         .radius = 5.0f,
-                        .font_size = editor_scaled_font_size(editor, 12.5f),
+                        .font_size = editor.font_size,
                     },
                 };
                 overwrite =
@@ -2506,7 +2505,7 @@ namespace code_editor {
                             .layout = {.width = gui::text(), .height = gui::fill()},
                             .style = {
                                 .foreground = mode_color,
-                                .font_size = editor_scaled_font_size(editor, 12.0f),
+                                .font_size = editor.font_size,
                             },
                         }
                     );
@@ -2518,7 +2517,7 @@ namespace code_editor {
                             .layout = {.width = gui::text(), .height = gui::fill()},
                             .style = {
                                 .foreground = palette.muted,
-                                .font_size = editor_scaled_font_size(editor, 12.0f),
+                                .font_size = editor.font_size,
                             },
                         }
                     );
@@ -2528,7 +2527,7 @@ namespace code_editor {
                             .layout = {.width = gui::text(), .height = gui::fill()},
                             .style = {
                                 .foreground = palette.muted,
-                                .font_size = editor_scaled_font_size(editor, 12.0f),
+                                .font_size = editor.font_size,
                             },
                         }
                     );
@@ -2558,7 +2557,7 @@ namespace code_editor {
                                 .layout = {.width = gui::fill(), .height = gui::fill()},
                                 .style = {
                                     .foreground = palette.text,
-                                    .font_size = editor_scaled_font_size(editor, 12.0f),
+                                    .font_size = editor.font_size,
                                 },
                             }
                         );
