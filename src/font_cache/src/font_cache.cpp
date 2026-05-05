@@ -202,6 +202,10 @@ namespace gui::font_cache {
             -> void {
             font_provider::Font provider_font = {};
             font_provider::open_font(impl->persistent_arena, impl->provider, desc, provider_font);
+            if (!font_provider::font_valid(provider_font)) {
+                out_font = {};
+                return;
+            }
 
             CacheFont* const font = arena_new<CacheFont>(impl->persistent_arena);
             font->cache = impl;
@@ -292,6 +296,15 @@ namespace gui::font_cache {
         ASSERT(out_font.handle == nullptr);
 
         open_provider_font(impl, font_provider::FontDesc{{}, file_path}, out_font);
+    }
+
+    auto open_font_data(Cache cache, Slice<uint8_t const> data, Font& out_font) -> void {
+        CacheImpl* const impl = cache_from_handle(cache);
+        ASSERT(impl != nullptr);
+        ASSERT(!data.empty());
+        ASSERT(out_font.handle == nullptr);
+
+        open_provider_font(impl, font_provider::FontDesc{{}, {}, data}, out_font);
     }
 
     auto metrics_from_font(Font font, float size, font_provider::Metrics& out_metrics) -> void {

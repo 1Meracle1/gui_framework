@@ -104,6 +104,7 @@ namespace code_editor {
     struct FileSearchMatch {
         size_t tree_file_index = 0u;
         int32_t score = 0;
+        uint8_t priority = 0u;
     };
 
     struct BufferSearchMatch {

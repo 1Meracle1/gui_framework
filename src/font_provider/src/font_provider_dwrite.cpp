@@ -19,7 +19,7 @@
 #include <limits>
 #include <windows.h>
 
-namespace gui::font_provider::platform {
+namespace gui::font_provider::platform::dwrite {
     namespace {
 
         constexpr StrRef DEFAULT_FONT_FAMILY = "Segoe UI";
@@ -360,7 +360,7 @@ namespace gui::font_provider::platform {
         [[nodiscard]] auto metrics_scale(DWRITE_FONT_METRICS const& metrics, float size) -> float;
 
         [[nodiscard]] auto font_handle(FontImpl* font) -> Font {
-            return {font};
+            return {font, Backend::DWRITE};
         }
 
         [[nodiscard]] auto run_end(uint32_t start, uint32_t length) -> uint32_t {
@@ -1759,6 +1759,9 @@ namespace gui::font_provider::platform {
         ContextImpl* const impl = context_from_handle(context);
         ASSERT(impl != nullptr);
 
+        if (!desc.data.empty()) {
+            return;
+        }
         if (!desc.file_path.empty()) {
             open_file_font(arena, impl, desc.file_path, out_font);
             return;
@@ -1895,4 +1898,4 @@ namespace gui::font_provider::platform {
         return impl->font_face;
     }
 
-} // namespace gui::font_provider::platform
+} // namespace gui::font_provider::platform::dwrite

@@ -1764,8 +1764,58 @@ namespace code_editor {
     }
 
     [[nodiscard]] auto
+    file_search_folder_score(StrRef path, StrRef query, bool exact, int32_t& out_score) -> bool {
+        bool matched = false;
+        size_t start = 0u;
+        while (start < path.size()) {
+            size_t const slash = path.find_first_of("\\/", start);
+            if (slash == StrRef::NPOS) {
+                break;
+            }
+
+            StrRef const folder = path.substr(start, slash - start);
+            int32_t score = 0;
+            bool const found = exact ? folder.equals_ignore_ascii_case(query)
+                                     : file_search_fuzzy_score(folder, query, score);
+            if (found && (!matched || score < out_score)) {
+                out_score = score;
+                matched = true;
+            }
+            start = slash + 1u;
+        }
+        return matched;
+    }
+
+    [[nodiscard]] auto
+    file_search_match(FileTreeEntry const& entry, StrRef query, FileSearchMatch& match) -> bool {
+        StrRef const name = !entry.name.empty() ? entry.name : file_search_entry_text(entry);
+        if (!query.empty() && name.equals_ignore_ascii_case(query)) {
+            match.priority = 0u;
+            match.score = 0;
+            return true;
+        }
+        if (file_search_fuzzy_score(name, query, match.score)) {
+            match.priority = 1u;
+            return true;
+        }
+        if (!query.empty() &&
+            file_search_folder_score(file_search_entry_text(entry), query, true, match.score)) {
+            match.priority = 2u;
+            return true;
+        }
+        if (file_search_folder_score(file_search_entry_text(entry), query, false, match.score)) {
+            match.priority = 3u;
+            return true;
+        }
+        return false;
+    }
+
+    [[nodiscard]] auto
     file_search_match_less(EditorState const& editor, FileSearchMatch lhs, FileSearchMatch rhs)
         -> bool {
+        if (lhs.priority != rhs.priority) {
+            return lhs.priority < rhs.priority;
+        }
         if (lhs.score != rhs.score) {
             return lhs.score < rhs.score;
         }
@@ -1787,7 +1837,7 @@ namespace code_editor {
             }
 
             FileSearchMatch match = {.tree_file_index = index};
-            if (!file_search_fuzzy_score(file_search_entry_text(entry), query, match.score)) {
+            if (!file_search_match(entry, query, match)) {
                 continue;
             }
 

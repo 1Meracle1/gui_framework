@@ -17,6 +17,10 @@ set(CODE_EDITOR_RELOAD_SOURCES
     text_buffer.h
 )
 
+set_source_files_properties(resources/code_editor.rc PROPERTIES
+    OBJECT_DEPENDS "${PROJECT_SOURCE_DIR}/third_party/source_code_pro/SourceCodePro-Regular.ttf"
+)
+
 if(WIN32)
     add_library(code_editor_module SHARED
         ${CODE_EDITOR_RELOAD_SOURCES}

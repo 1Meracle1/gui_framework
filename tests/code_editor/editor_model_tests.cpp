@@ -540,6 +540,44 @@ namespace {
         TEST_EXPECT(context, editor.file_search_open_file == 1u);
     }
 
+    TEST_CASE(file_search_prioritizes_file_names_before_folders) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::FileTreeEntry tree[] = {
+            {.name = "src", .path = "C:\\repo\\docs\\src", .relative_path = "docs\\src"},
+            {
+                .name = "source.cpp",
+                .path = "C:\\repo\\include\\source.cpp",
+                .relative_path = "include\\source.cpp",
+            },
+            {.name = "main.cpp",
+             .path = "C:\\repo\\src\\main.cpp",
+             .relative_path = "src\\main.cpp"},
+            {
+                .name = "main.cpp",
+                .path = "C:\\repo\\source\\main.cpp",
+                .relative_path = "source\\main.cpp",
+            },
+        };
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "");
+        editor.tree_files = Slice<code_editor::FileTreeEntry>(tree);
+        editor.file_search_text_size =
+            StrRef("src").copy_to(editor.file_search_text, code_editor::FILE_SEARCH_TEXT_CAPACITY);
+        editor.file_search_text[editor.file_search_text_size] = '\0';
+
+        code_editor::FileSearchMatch matches[code_editor::FILE_SEARCH_RESULT_LIMIT] = {};
+        size_t const count = code_editor::collect_file_search_matches(editor, matches);
+
+        TEST_EXPECT(context, count == 4u);
+        TEST_EXPECT(context, matches[0u].tree_file_index == 0u);
+        TEST_EXPECT(context, matches[1u].tree_file_index == 1u);
+        TEST_EXPECT(context, matches[2u].tree_file_index == 2u);
+        TEST_EXPECT(context, matches[3u].tree_file_index == 3u);
+    }
+
     TEST_CASE(editor_colon_opens_completes_and_closes_command_line) {
         Arena arena = {};
         arena.init();

@@ -17,6 +17,7 @@
 #include <base/config.h>
 #include <base/fmt.h>
 #include <base/memory.h>
+#include <base/slice.h>
 #include <base/unicode.h>
 #include <cstring>
 #if defined(_WIN32)
@@ -33,6 +34,9 @@ namespace code_editor {
     namespace font_cache = gui::font_cache;
     namespace font_provider = gui::font_provider;
     namespace render = gui::render;
+
+    constexpr int SOURCE_CODE_PRO_FONT_ID = 102;
+    constexpr int WINDOWS_RCDATA_ID = 10;
 
     struct Runtime {
         font_provider::Context provider = {};
@@ -61,6 +65,23 @@ namespace code_editor {
 
     static auto log_font_result(char const* operation, font_provider::Result result) -> void {
         fmt::eprintf("%s failed: %s\n", operation, font_provider::result_name(result));
+    }
+
+    [[nodiscard]] auto embedded_source_code_pro_font() -> Slice<uint8_t const> {
+        HMODULE const module = GetModuleHandleW(nullptr);
+        HRSRC const resource = FindResourceW(
+            module, MAKEINTRESOURCEW(SOURCE_CODE_PRO_FONT_ID), MAKEINTRESOURCEW(WINDOWS_RCDATA_ID)
+        );
+        if (resource == nullptr) {
+            return {};
+        }
+        HGLOBAL const loaded = LoadResource(module, resource);
+        void const* const data = loaded != nullptr ? LockResource(loaded) : nullptr;
+        DWORD const size = SizeofResource(module, resource);
+        if (data == nullptr || size == 0u) {
+            return {};
+        }
+        return {static_cast<uint8_t const*>(data), static_cast<size_t>(size)};
     }
 
     [[nodiscard]] static auto sync_shared_file_tree(Runtime& runtime) -> bool {
@@ -186,8 +207,10 @@ namespace code_editor {
             return false;
         }
 
+        font_provider::ContextDesc font_desc = {};
+        font_desc.backend = font_provider::Backend::FREETYPE;
         font_provider::Result font_result =
-            font_provider::create_context(arena, {}, runtime->provider);
+            font_provider::create_context(arena, font_desc, runtime->provider);
         if (font_provider::result_failed(font_result)) {
             log_font_result("font_provider::create_context", font_result);
             return false;
@@ -202,7 +225,13 @@ namespace code_editor {
         if (!font_cache::font_valid(runtime->icon_font)) {
             runtime->icon_font = runtime->ui_font;
         }
-        font_cache::open_system_font(runtime->cache, "Cascadia Mono", runtime->editor_font);
+        Slice<uint8_t const> const source_code_pro = embedded_source_code_pro_font();
+        if (!source_code_pro.empty()) {
+            font_cache::open_font_data(runtime->cache, source_code_pro, runtime->editor_font);
+        }
+        if (!font_cache::font_valid(runtime->editor_font)) {
+            font_cache::open_system_font(runtime->cache, "Cascadia Mono", runtime->editor_font);
+        }
         if (!font_cache::font_valid(runtime->editor_font)) {
             font_cache::open_system_font(runtime->cache, "Consolas", runtime->editor_font);
         }

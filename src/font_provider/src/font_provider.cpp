@@ -33,6 +33,8 @@ namespace gui::font_provider {
             return "default";
         case Backend::DWRITE:
             return "dwrite";
+        case Backend::FREETYPE:
+            return "freetype";
         case Backend::CORE_TEXT:
             return "core text";
         }
@@ -52,7 +54,8 @@ namespace gui::font_provider {
         ASSERT(out_context.handle == nullptr);
 
 #if BASE_PLATFORM_WINDOWS
-        if (desc.backend != Backend::DEFAULT && desc.backend != Backend::DWRITE) {
+        if (desc.backend != Backend::DEFAULT && desc.backend != Backend::DWRITE &&
+            desc.backend != Backend::FREETYPE) {
             return Result::UNSUPPORTED_BACKEND;
         }
 #elif BASE_PLATFORM_MACOS

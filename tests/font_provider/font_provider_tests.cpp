@@ -147,6 +147,10 @@ namespace {
             context,
             gui::font_provider::backend_name(gui::font_provider::Backend::DEFAULT)[0] != '\0'
         );
+        TEST_EXPECT(
+            context,
+            gui::font_provider::backend_name(gui::font_provider::Backend::FREETYPE)[0] != '\0'
+        );
     }
 
     TEST_CASE(font_provider_handles_start_empty_and_validate_by_handle_value) {
@@ -354,6 +358,63 @@ namespace {
         TEST_EXPECT(context, create_result == gui::font_provider::Result::UNSUPPORTED_PLATFORM);
         TEST_EXPECT(context, !gui::font_provider::context_valid(provider));
 #endif
+    }
+
+    TEST_CASE(font_provider_can_use_freetype_backend_on_windows) {
+        Arena owner_arena = {};
+        owner_arena.init();
+
+        gui::font_provider::Context provider = {};
+        gui::font_provider::ContextDesc desc = {};
+        desc.backend = gui::font_provider::Backend::FREETYPE;
+        gui::font_provider::Result const create_result =
+            gui::font_provider::create_context(owner_arena, desc, provider);
+
+#if BASE_PLATFORM_WINDOWS
+        TEST_EXPECT(context, create_result == gui::font_provider::Result::OK);
+        TEST_EXPECT(context, gui::font_provider::context_valid(provider));
+        TEST_EXPECT(context, provider.backend == gui::font_provider::Backend::FREETYPE);
+        TEST_EXPECT(context, gui::font_provider::native_factory(provider) != nullptr);
+
+        gui::font_provider::Font font = {};
+        gui::font_provider::open_font(owner_arena, provider, {}, font);
+        TEST_EXPECT(context, gui::font_provider::font_valid(font));
+        TEST_EXPECT(context, font.backend == gui::font_provider::Backend::FREETYPE);
+        TEST_EXPECT(context, gui::font_provider::native_font_face(font) != nullptr);
+
+        Arena arena = {};
+        arena.init({1024u * 1024u, DEFAULT_ARENA_COMMIT_SIZE});
+        gui::font_provider::ShapedText shaped = {};
+        gui::font_provider::shape_text(font, 18.0f, "FreeType", arena, shaped);
+        TEST_EXPECT(context, shaped.glyph_count == 8u);
+        TEST_EXPECT(context, shaped.advance > 0.0f);
+        for (size_t index = 0u; index < shaped.glyph_count; ++index) {
+            TEST_EXPECT(context, shaped.glyphs[index].offset_x == 0.0f);
+            TEST_EXPECT(context, shaped.glyphs[index].offset_y == 0.0f);
+        }
+
+        gui::font_provider::GlyphRaster glyph = {};
+        gui::font_provider::raster_glyph(font, 18.0f, shaped.glyphs[0u].glyph_index, arena, glyph);
+        TEST_EXPECT(context, glyph.size.width > 0u);
+        TEST_EXPECT(context, glyph.size.height > 0u);
+        TEST_EXPECT(context, glyph.stride == glyph.size.width);
+        TEST_EXPECT(context, glyph.format == gui::font_provider::RasterFormat::ALPHA);
+        TEST_EXPECT(context, glyph_has_antialias_coverage(glyph));
+
+        gui::font_provider::RasterResult raster = {};
+        gui::font_provider::raster_text(font, 18.0f, "FreeType", arena, raster);
+        TEST_EXPECT(context, raster_has_coverage(raster));
+        TEST_EXPECT(context, raster_has_antialias_coverage(raster));
+        arena.destroy();
+
+        gui::font_provider::close_font(font);
+        gui::font_provider::destroy_context(provider);
+#else
+        TEST_EXPECT(context, create_result == gui::font_provider::Result::UNSUPPORTED_BACKEND);
+        TEST_EXPECT(context, !gui::font_provider::context_valid(provider));
+#endif
+
+        owner_arena.destroy();
     }
 
 } // namespace

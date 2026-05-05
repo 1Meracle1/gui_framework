@@ -1,6 +1,7 @@
 #pragma once
 
 #include <base/memory.h>
+#include <base/slice.h>
 #include <base/str_ref.h>
 #include <cstdint>
 
@@ -11,6 +12,7 @@ namespace gui::font_provider {
     enum class Backend : uint8_t {
         DEFAULT,
         DWRITE,
+        FREETYPE,
         CORE_TEXT,
     };
 
@@ -33,15 +35,18 @@ namespace gui::font_provider {
 
     struct Context {
         void* handle = nullptr;
+        Backend backend = Backend::DEFAULT;
     };
 
     struct FontDesc {
         StrRef family_name = {};
         StrRef file_path = {};
+        Slice<uint8_t const> data = {};
     };
 
     struct Font {
         void* handle = nullptr;
+        Backend backend = Backend::DEFAULT;
     };
 
     struct Metrics {
