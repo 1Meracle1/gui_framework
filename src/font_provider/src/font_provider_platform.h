@@ -17,6 +17,15 @@ namespace gui::font_provider::platform {
     auto
     raster_glyph(Font font, float size, uint16_t glyph_index, Arena& arena, GlyphRaster& out_raster)
         -> void;
+    auto raster_glyph(
+        Font font,
+        float size,
+        uint16_t glyph_index,
+        uint8_t phase_x,
+        uint8_t phase_y,
+        Arena& arena,
+        GlyphRaster& out_raster
+    ) -> void;
     auto raster_text(Font font, float size, StrRef text, Arena& arena, RasterResult& out_raster)
         -> void;
 

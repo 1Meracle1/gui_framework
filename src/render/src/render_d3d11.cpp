@@ -353,6 +353,12 @@ namespace gui::render::d3d11 {
                 desc.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ONE;
                 desc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_INV_SRC_ALPHA;
                 break;
+            case BlendMode::DESTINATION_ATTENUATE:
+                desc.RenderTarget[0].SrcBlend = D3D11_BLEND_ZERO;
+                desc.RenderTarget[0].DestBlend = D3D11_BLEND_INV_SRC_COLOR;
+                desc.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ZERO;
+                desc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_INV_SRC_ALPHA;
+                break;
             }
 
             return desc;
@@ -850,6 +856,39 @@ namespace gui::render::d3d11 {
         context_impl->device_context->UpdateSubresource(
             texture_impl->resource, 0u, &box, desc.pixels, desc.bytes_per_row, 0u
         );
+        return Result::OK;
+    }
+
+    auto update_texture_batch(Context context, Texture texture, TextureUpdateBatchDesc const& desc)
+        -> Result {
+        D3D11Context* context_impl = context_from_handle(context);
+        D3D11Texture* texture_impl = texture_from_handle(texture);
+        ASSERT(context_impl != nullptr);
+        ASSERT(texture_impl != nullptr);
+        ASSERT(texture_impl->context == context_impl);
+        ASSERT(texture_impl->resource != nullptr);
+        ASSERT(texture_impl->updatable);
+
+        unbind_shader_resources(context_impl);
+        for (size_t index = 0u; index < desc.update_count; ++index) {
+            TextureUpdateDesc const& update = desc.updates[index];
+            ASSERT(update.x <= texture_impl->size.width);
+            ASSERT(update.y <= texture_impl->size.height);
+            ASSERT(update.size.width <= texture_impl->size.width - update.x);
+            ASSERT(update.size.height <= texture_impl->size.height - update.y);
+
+            D3D11_BOX box = {};
+            box.left = update.x;
+            box.top = update.y;
+            box.front = 0u;
+            box.right = update.x + update.size.width;
+            box.bottom = update.y + update.size.height;
+            box.back = 1u;
+            context_impl->device_context->UpdateSubresource(
+                texture_impl->resource, 0u, &box, update.pixels, update.bytes_per_row, 0u
+            );
+        }
+
         return Result::OK;
     }
 

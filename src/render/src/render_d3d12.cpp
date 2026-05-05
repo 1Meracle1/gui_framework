@@ -139,6 +139,7 @@ namespace gui::render::d3d12 {
         struct D3D12FrameResource {
             ID3D12CommandAllocator* command_allocator = nullptr;
             D3D12FrameBuffer frame_vertex_buffer = {};
+            D3D12FrameBuffer frame_texture_upload_buffer = {};
             uint32_t frame_shader_descriptor_count = 0u;
             uint32_t frame_sampler_descriptor_count = 0u;
             uint64_t fence_value = 0u;
@@ -822,6 +823,40 @@ namespace gui::render::d3d12 {
             frame_buffer->used_size = old_used_size;
         }
 
+        [[nodiscard]] auto allocate_frame_buffer(
+            D3D12Context* context,
+            D3D12FrameBuffer& frame_buffer,
+            size_t byte_size,
+            size_t byte_alignment,
+            size_t default_capacity
+        ) -> FrameBufferSlice {
+            ASSERT(context != nullptr);
+            ASSERT(context->frame_active);
+            ASSERT(frame_buffer.used_size <= MAX_D3D12_BUFFER_VIEW_BYTE_SIZE);
+
+            size_t const offset = align_up(frame_buffer.used_size, byte_alignment);
+            ASSERT(
+                offset <= MAX_D3D12_BUFFER_VIEW_BYTE_SIZE &&
+                byte_size <= MAX_D3D12_BUFFER_VIEW_BYTE_SIZE - offset
+            );
+            size_t const needed_size = offset + byte_size;
+            if (needed_size > frame_buffer.capacity) {
+                size_t new_capacity =
+                    frame_buffer.capacity == 0u ? default_capacity : frame_buffer.capacity;
+                while (new_capacity < needed_size) {
+                    if (new_capacity > MAX_D3D12_BUFFER_VIEW_BYTE_SIZE / 2u) {
+                        new_capacity = needed_size;
+                        break;
+                    }
+                    new_capacity *= 2u;
+                }
+                ensure_frame_buffer(context, &frame_buffer, new_capacity);
+            }
+
+            frame_buffer.used_size = needed_size;
+            return {{&frame_buffer.buffer}, frame_buffer.mapped_data + offset, offset, byte_size};
+        }
+
         [[nodiscard]] auto create_render_targets(D3D12Context* context, D3D12Window* window)
             -> Result {
             D3D12_DESCRIPTOR_HEAP_DESC heap_desc = {};
@@ -878,6 +913,9 @@ namespace gui::render::d3d12 {
 
             for (uint32_t index = 0u; index < FRAME_RESOURCE_COUNT; ++index) {
                 release_frame_buffer(context, &context->frame_resources[index].frame_vertex_buffer);
+                release_frame_buffer(
+                    context, &context->frame_resources[index].frame_texture_upload_buffer
+                );
             }
             if (can_wait) {
                 wait_for_gpu(context);
@@ -1151,15 +1189,13 @@ namespace gui::render::d3d12 {
             context->command_list->ResourceBarrier(1u, &barrier);
         }
 
-        auto record_texture_update(
+        auto record_texture_update_copy(
             D3D12Context* context,
             D3D12Texture* texture,
             ID3D12Resource* upload_resource,
             D3D12_PLACED_SUBRESOURCE_FOOTPRINT const& layout,
             TextureUpdateDesc const& desc
         ) -> void {
-            transition_texture(context, texture, D3D12_RESOURCE_STATE_COPY_DEST);
-
             D3D12_TEXTURE_COPY_LOCATION source = {};
             source.pResource = upload_resource;
             source.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
@@ -1171,7 +1207,53 @@ namespace gui::render::d3d12 {
             target.SubresourceIndex = 0u;
 
             context->command_list->CopyTextureRegion(&target, desc.x, desc.y, 0u, &source, nullptr);
+        }
+
+        auto record_texture_update(
+            D3D12Context* context,
+            D3D12Texture* texture,
+            ID3D12Resource* upload_resource,
+            D3D12_PLACED_SUBRESOURCE_FOOTPRINT const& layout,
+            TextureUpdateDesc const& desc
+        ) -> void {
+            transition_texture(context, texture, D3D12_RESOURCE_STATE_COPY_DEST);
+            record_texture_update_copy(context, texture, upload_resource, layout, desc);
             transition_texture(context, texture, TEXTURE_SHADER_RESOURCE_STATE);
+        }
+
+        auto record_texture_updates(
+            D3D12Context* context,
+            D3D12Texture* texture,
+            ID3D12Resource* upload_resource,
+            D3D12_PLACED_SUBRESOURCE_FOOTPRINT const* layouts,
+            TextureUpdateDesc const* updates,
+            size_t update_count
+        ) -> void {
+            transition_texture(context, texture, D3D12_RESOURCE_STATE_COPY_DEST);
+            for (size_t index = 0u; index < update_count; ++index) {
+                record_texture_update_copy(
+                    context, texture, upload_resource, layouts[index], updates[index]
+                );
+            }
+            transition_texture(context, texture, TEXTURE_SHADER_RESOURCE_STATE);
+        }
+
+        auto copy_texture_update_rows(
+            uint8_t* upload_data,
+            D3D12_PLACED_SUBRESOURCE_FOOTPRINT const& layout,
+            UINT row_count,
+            UINT64 row_size,
+            TextureUpdateDesc const& desc
+        ) -> void {
+            uint8_t const* const source = static_cast<uint8_t const*>(desc.pixels);
+            for (UINT row = 0u; row < row_count; ++row) {
+                std::memcpy(
+                    upload_data + layout.Offset +
+                        (static_cast<size_t>(row) * layout.Footprint.RowPitch),
+                    source + (static_cast<size_t>(row) * desc.bytes_per_row),
+                    static_cast<size_t>(row_size)
+                );
+            }
         }
 
         [[nodiscard]] auto upload_texture(
@@ -1247,6 +1329,48 @@ namespace gui::render::d3d12 {
             return Result::OK;
         }
 
+        [[nodiscard]] auto upload_texture_updates(
+            D3D12Context* context,
+            D3D12Texture* texture,
+            ID3D12Resource* upload_resource,
+            D3D12_PLACED_SUBRESOURCE_FOOTPRINT const* layouts,
+            TextureUpdateDesc const* updates,
+            size_t update_count
+        ) -> Result {
+            if (context->frame_active) {
+                record_texture_updates(
+                    context, texture, upload_resource, layouts, updates, update_count
+                );
+                return Result::OK;
+            }
+
+            wait_for_gpu(context);
+            HRESULT hr = context->upload_command_allocator->Reset();
+            if (FAILED(hr)) {
+                return Result::TEXTURE_CREATION_FAILED;
+            }
+
+            hr = context->command_list->Reset(context->upload_command_allocator, nullptr);
+            if (FAILED(hr)) {
+                return Result::TEXTURE_CREATION_FAILED;
+            }
+
+            record_texture_updates(
+                context, texture, upload_resource, layouts, updates, update_count
+            );
+
+            hr = context->command_list->Close();
+            if (FAILED(hr)) {
+                return Result::TEXTURE_CREATION_FAILED;
+            }
+
+            ID3D12CommandList* command_lists[] = {context->command_list};
+            context->command_queue->ExecuteCommandLists(1u, command_lists);
+            signal_gpu(context);
+            wait_for_gpu(context);
+            return Result::OK;
+        }
+
         [[nodiscard]] auto blend_desc(BlendMode blend_mode) -> D3D12_BLEND_DESC {
             D3D12_BLEND_DESC desc = {};
             desc.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
@@ -1293,6 +1417,13 @@ namespace gui::render::d3d12 {
                 desc.RenderTarget[0].SrcBlend = D3D12_BLEND_ONE;
                 desc.RenderTarget[0].DestBlend = D3D12_BLEND_INV_SRC_COLOR;
                 desc.RenderTarget[0].SrcBlendAlpha = D3D12_BLEND_ONE;
+                desc.RenderTarget[0].DestBlendAlpha = D3D12_BLEND_INV_SRC_ALPHA;
+                break;
+            case BlendMode::DESTINATION_ATTENUATE:
+                desc.RenderTarget[0].BlendEnable = TRUE;
+                desc.RenderTarget[0].SrcBlend = D3D12_BLEND_ZERO;
+                desc.RenderTarget[0].DestBlend = D3D12_BLEND_INV_SRC_COLOR;
+                desc.RenderTarget[0].SrcBlendAlpha = D3D12_BLEND_ZERO;
                 desc.RenderTarget[0].DestBlendAlpha = D3D12_BLEND_INV_SRC_ALPHA;
                 break;
             }
@@ -1533,29 +1664,13 @@ namespace gui::render::d3d12 {
 
         D3D12FrameResource& frame =
             context_impl->frame_resources[context_impl->active_frame_resource_index];
-        D3D12FrameBuffer& frame_buffer = frame.frame_vertex_buffer;
-        ASSERT(frame_buffer.used_size <= MAX_D3D12_BUFFER_VIEW_BYTE_SIZE);
-        size_t const offset = align_up(frame_buffer.used_size, byte_alignment);
-        ASSERT(
-            offset <= MAX_D3D12_BUFFER_VIEW_BYTE_SIZE &&
-            byte_size <= MAX_D3D12_BUFFER_VIEW_BYTE_SIZE - offset
+        return allocate_frame_buffer(
+            context_impl,
+            frame.frame_vertex_buffer,
+            byte_size,
+            byte_alignment,
+            FRAME_VERTEX_BUFFER_DEFAULT_SIZE
         );
-        size_t const needed_size = offset + byte_size;
-        if (needed_size > frame_buffer.capacity) {
-            size_t new_capacity = frame_buffer.capacity == 0u ? FRAME_VERTEX_BUFFER_DEFAULT_SIZE
-                                                              : frame_buffer.capacity;
-            while (new_capacity < needed_size) {
-                if (new_capacity > MAX_D3D12_BUFFER_VIEW_BYTE_SIZE / 2u) {
-                    new_capacity = needed_size;
-                    break;
-                }
-                new_capacity *= 2u;
-            }
-            ensure_frame_buffer(context_impl, &frame_buffer, new_capacity);
-        }
-
-        frame_buffer.used_size = needed_size;
-        return {{&frame_buffer.buffer}, frame_buffer.mapped_data + offset, offset, byte_size};
     }
 
     auto commit_frame_uploads(Context context) -> void {
@@ -1702,6 +1817,34 @@ namespace gui::render::d3d12 {
             &texture_desc, 0u, 1u, 0u, &layout, &row_count, &row_size, &upload_size
         );
 
+        if (context_impl->frame_active) {
+            D3D12FrameResource& frame =
+                context_impl->frame_resources[context_impl->active_frame_resource_index];
+            FrameBufferSlice const upload = allocate_frame_buffer(
+                context_impl,
+                frame.frame_texture_upload_buffer,
+                static_cast<size_t>(upload_size),
+                D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT,
+                FRAME_VERTEX_BUFFER_DEFAULT_SIZE
+            );
+            layout.Offset = upload.byte_offset;
+
+            uint8_t const* const source = static_cast<uint8_t const*>(desc.pixels);
+            uint8_t* const upload_data = static_cast<uint8_t*>(upload.data);
+            for (UINT row = 0u; row < row_count; ++row) {
+                std::memcpy(
+                    upload_data + (static_cast<size_t>(row) * layout.Footprint.RowPitch),
+                    source + (static_cast<size_t>(row) * desc.bytes_per_row),
+                    static_cast<size_t>(row_size)
+                );
+            }
+
+            D3D12Buffer* const upload_buffer = buffer_from_handle(upload.buffer);
+            return upload_texture_update(
+                context_impl, texture_impl, upload_buffer->resource, layout, desc
+            );
+        }
+
         ID3D12Resource* upload = nullptr;
         uint8_t* upload_data = nullptr;
         Result result = create_upload_buffer(
@@ -1725,6 +1868,121 @@ namespace gui::render::d3d12 {
         upload_data = nullptr;
 
         result = upload_texture_update(context_impl, texture_impl, upload, layout, desc);
+        defer_release(context_impl, upload);
+        return result;
+    }
+
+    auto update_texture_batch(Context context, Texture texture, TextureUpdateBatchDesc const& desc)
+        -> Result {
+        D3D12Context* context_impl = context_from_handle(context);
+        D3D12Texture* texture_impl = texture_from_handle(texture);
+        ASSERT(context_impl != nullptr);
+        ASSERT(texture_impl != nullptr);
+        ASSERT(texture_impl->context == context_impl);
+        ASSERT(texture_impl->resource != nullptr);
+
+        if (desc.update_count == 0u) {
+            return Result::OK;
+        }
+
+        ArenaTemp temp = begin_thread_temp_arena();
+        D3D12_PLACED_SUBRESOURCE_FOOTPRINT* const layouts =
+            arena_alloc<D3D12_PLACED_SUBRESOURCE_FOOTPRINT>(*temp.arena(), desc.update_count);
+        UINT* const row_counts = arena_alloc<UINT>(*temp.arena(), desc.update_count);
+        UINT64* const row_sizes = arena_alloc<UINT64>(*temp.arena(), desc.update_count);
+
+        UINT64 upload_size = 0u;
+        for (size_t index = 0u; index < desc.update_count; ++index) {
+            TextureUpdateDesc const& update = desc.updates[index];
+            ASSERT(update.x <= texture_impl->size.width);
+            ASSERT(update.y <= texture_impl->size.height);
+            ASSERT(update.size.width <= texture_impl->size.width - update.x);
+            ASSERT(update.size.height <= texture_impl->size.height - update.y);
+
+            D3D12_RESOURCE_DESC texture_desc = {};
+            texture_desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+            texture_desc.Width = update.size.width;
+            texture_desc.Height = update.size.height;
+            texture_desc.DepthOrArraySize = 1u;
+            texture_desc.MipLevels = 1u;
+            texture_desc.Format = texture_impl->format;
+            texture_desc.SampleDesc.Count = 1u;
+
+            upload_size =
+                align_up(static_cast<size_t>(upload_size), D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT);
+            UINT64 update_upload_size = 0u;
+            context_impl->device->GetCopyableFootprints(
+                &texture_desc,
+                0u,
+                1u,
+                upload_size,
+                &layouts[index],
+                &row_counts[index],
+                &row_sizes[index],
+                &update_upload_size
+            );
+            upload_size = layouts[index].Offset + update_upload_size;
+        }
+
+        if (context_impl->frame_active) {
+            D3D12FrameResource& frame =
+                context_impl->frame_resources[context_impl->active_frame_resource_index];
+            FrameBufferSlice const upload = allocate_frame_buffer(
+                context_impl,
+                frame.frame_texture_upload_buffer,
+                static_cast<size_t>(upload_size),
+                D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT,
+                FRAME_VERTEX_BUFFER_DEFAULT_SIZE
+            );
+
+            uint8_t* const upload_data = static_cast<uint8_t*>(upload.data);
+            for (size_t index = 0u; index < desc.update_count; ++index) {
+                copy_texture_update_rows(
+                    upload_data,
+                    layouts[index],
+                    row_counts[index],
+                    row_sizes[index],
+                    desc.updates[index]
+                );
+                layouts[index].Offset += upload.byte_offset;
+            }
+
+            D3D12Buffer* const upload_buffer = buffer_from_handle(upload.buffer);
+            return upload_texture_updates(
+                context_impl,
+                texture_impl,
+                upload_buffer->resource,
+                layouts,
+                desc.updates,
+                desc.update_count
+            );
+        }
+
+        ID3D12Resource* upload = nullptr;
+        uint8_t* upload_data = nullptr;
+        Result result = create_upload_buffer(
+            context_impl, static_cast<size_t>(upload_size), upload, upload_data
+        );
+        if (result_failed(result)) {
+            return Result::TEXTURE_CREATION_FAILED;
+        }
+
+        for (size_t index = 0u; index < desc.update_count; ++index) {
+            copy_texture_update_rows(
+                upload_data,
+                layouts[index],
+                row_counts[index],
+                row_sizes[index],
+                desc.updates[index]
+            );
+        }
+
+        upload->Unmap(0u, nullptr);
+        upload_data = nullptr;
+
+        result = upload_texture_updates(
+            context_impl, texture_impl, upload, layouts, desc.updates, desc.update_count
+        );
         defer_release(context_impl, upload);
         return result;
     }
@@ -2232,6 +2490,7 @@ namespace gui::render::d3d12 {
         frame.frame_shader_descriptor_count = 0u;
         frame.frame_sampler_descriptor_count = 0u;
         frame.frame_vertex_buffer.used_size = 0u;
+        frame.frame_texture_upload_buffer.used_size = 0u;
         reset_bound_descriptor_tables(context_impl);
 
         HRESULT hr = frame.command_allocator->Reset();

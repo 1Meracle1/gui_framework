@@ -362,6 +362,45 @@ namespace gui::render {
 #endif
     }
 
+    auto update_texture_batch(Context context, Texture texture, TextureUpdateBatchDesc const& desc)
+        -> Result {
+        ASSERT(context_valid(context));
+        ASSERT(texture_valid(texture));
+        if (desc.update_count == 0u) {
+            return Result::OK;
+        }
+
+        ASSERT(desc.updates != nullptr);
+        TextureHeader const* const header = static_cast<TextureHeader const*>(texture.handle);
+        uint32_t const bytes_per_pixel = texture_format_byte_size(header->format);
+        for (size_t index = 0u; index < desc.update_count; ++index) {
+            TextureUpdateDesc const& update = desc.updates[index];
+            ASSERT(update.pixels != nullptr);
+            ASSERT(update.size.width != 0u);
+            ASSERT(update.size.height != 0u);
+            ASSERT(
+                static_cast<size_t>(update.bytes_per_row) >=
+                static_cast<size_t>(update.size.width) * bytes_per_pixel
+            );
+        }
+
+#if BASE_PLATFORM_WINDOWS
+        switch (context_backend(context)) {
+        case Backend::D3D11:
+            return d3d11::update_texture_batch(context, texture, desc);
+        case Backend::D3D12:
+            return d3d12::update_texture_batch(context, texture, desc);
+        }
+
+        return Result::UNSUPPORTED_BACKEND;
+#else
+        BASE_UNUSED(context);
+        BASE_UNUSED(texture);
+        BASE_UNUSED(desc);
+        return Result::UNSUPPORTED_PLATFORM;
+#endif
+    }
+
     auto destroy_texture(Context context, Texture& texture) -> void {
         ASSERT(context_valid(context));
         ASSERT(texture_valid(texture));

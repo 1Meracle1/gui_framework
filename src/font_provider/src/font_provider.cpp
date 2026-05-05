@@ -117,11 +117,23 @@ namespace gui::font_provider {
     auto
     raster_glyph(Font font, float size, uint16_t glyph_index, Arena& arena, GlyphRaster& out_raster)
         -> void {
+        raster_glyph(font, size, glyph_index, 0u, 0u, arena, out_raster);
+    }
+
+    auto raster_glyph(
+        Font font,
+        float size,
+        uint16_t glyph_index,
+        uint8_t phase_x,
+        uint8_t phase_y,
+        Arena& arena,
+        GlyphRaster& out_raster
+    ) -> void {
         ASSERT(font_valid(font));
         ASSERT(size > 0.0f);
 
         out_raster = {};
-        platform::raster_glyph(font, size, glyph_index, arena, out_raster);
+        platform::raster_glyph(font, size, glyph_index, phase_x, phase_y, arena, out_raster);
     }
 
     auto raster_text(Font font, float size, StrRef text, Arena& arena, RasterResult& out_raster)

@@ -26,6 +26,9 @@ namespace gui::render::d3d11 {
     create_texture(Context context, TextureDesc const& desc, Texture& out_texture) -> Result;
     [[nodiscard]] auto
     update_texture(Context context, Texture texture, TextureUpdateDesc const& desc) -> Result;
+    [[nodiscard]] auto
+    update_texture_batch(Context context, Texture texture, TextureUpdateBatchDesc const& desc)
+        -> Result;
     auto destroy_texture(Context context, Texture& texture) -> void;
     [[nodiscard]] auto
     create_sampler(Context context, SamplerDesc const& desc, Sampler& out_sampler) -> Result;

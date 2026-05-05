@@ -78,6 +78,7 @@ namespace gui::render {
         ADDITIVE,
         MULTIPLY,
         SCREEN,
+        DESTINATION_ATTENUATE,
     };
 
     enum class TextureFormat : uint8_t {
@@ -204,6 +205,11 @@ namespace gui::render {
         void const* pixels = nullptr;
     };
 
+    struct TextureUpdateBatchDesc {
+        TextureUpdateDesc const* updates = nullptr;
+        size_t update_count = 0u;
+    };
+
     struct SamplerDesc {
         SamplerFilter filter = SamplerFilter::LINEAR;
         SamplerAddressMode address_mode = SamplerAddressMode::CLAMP;
@@ -318,6 +324,9 @@ namespace gui::render {
     create_texture(Context context, TextureDesc const& desc, Texture& out_texture) -> Result;
     [[nodiscard]] auto
     update_texture(Context context, Texture texture, TextureUpdateDesc const& desc) -> Result;
+    [[nodiscard]] auto
+    update_texture_batch(Context context, Texture texture, TextureUpdateBatchDesc const& desc)
+        -> Result;
     [[nodiscard]] auto
     load_image_texture_from_file(Context context, StrRef path, Texture& out_texture) -> Result;
     [[nodiscard]] auto load_image_texture_from_memory(

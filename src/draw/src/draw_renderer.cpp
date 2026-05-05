@@ -49,11 +49,16 @@ namespace gui::draw {
             size_t font = 0u;
             uint32_t size_bits = 0u;
             uint16_t glyph_index = 0u;
+            uint8_t phase_x = 0u;
+            uint8_t phase_y = 0u;
+            uint8_t format = 0u;
         };
 
         struct TextAtlasEntry {
             TextAtlasKey key = {};
             float uv_rect[4] = {};
+            float offset_x = 0.0f;
+            float offset_y = 0.0f;
             uint32_t width = 0u;
             uint32_t height = 0u;
             bool valid = false;
@@ -65,7 +70,10 @@ namespace gui::draw {
             gui::render::Shader pixel_shader = {};
             gui::render::Pipeline pipeline = {};
             gui::render::Shader text_pixel_shader = {};
+            gui::render::Shader text_lcd_mask_pixel_shader = {};
             gui::render::Pipeline text_pipeline = {};
+            gui::render::Pipeline text_lcd_mask_pipeline = {};
+            gui::render::Pipeline text_lcd_add_pipeline = {};
             gui::render::Shader layer_pixel_shader = {};
             gui::render::Pipeline layer_pipeline = {};
             gui::render::Pipeline layer_additive_pipeline = {};
@@ -85,7 +93,9 @@ namespace gui::draw {
             gui::render::Texture white_texture = {};
             gui::render::Texture text_atlas = {};
             gui::render::Sampler sampler = {};
+            gui::render::Sampler text_sampler = {};
             gui::render::BindGroup sampler_bind_group = {};
+            gui::render::BindGroup text_sampler_bind_group = {};
             gui::render::BindGroup text_atlas_bind_group = {};
             TextAtlasEntry* text_atlas_entries = nullptr;
             size_t text_atlas_capacity = 0u;
@@ -130,19 +140,68 @@ namespace gui::draw {
             return bits;
         }
 
+        struct QuantizedGlyphOrigin {
+            float origin = 0.0f;
+            uint8_t phase = 0u;
+        };
+
+        [[nodiscard]] auto glyph_phase_value(uint8_t phase) -> float {
+            return static_cast<float>(phase % font_provider::GLYPH_RASTER_PHASE_COUNT) /
+                   static_cast<float>(font_provider::GLYPH_RASTER_PHASE_COUNT);
+        }
+
+        [[nodiscard]] auto quantize_glyph_origin(float value) -> QuantizedGlyphOrigin {
+            float const scaled = std::floor(
+                value * static_cast<float>(font_provider::GLYPH_RASTER_PHASE_COUNT) + 0.5f
+            );
+            int32_t phase = static_cast<int32_t>(scaled) %
+                            static_cast<int32_t>(font_provider::GLYPH_RASTER_PHASE_COUNT);
+            if (phase < 0) {
+                phase += static_cast<int32_t>(font_provider::GLYPH_RASTER_PHASE_COUNT);
+            }
+            return {
+                scaled / static_cast<float>(font_provider::GLYPH_RASTER_PHASE_COUNT),
+                static_cast<uint8_t>(phase)
+            };
+        }
+
+        [[nodiscard]] auto
+        glyph_origin_x(TextCommand const& command, font_cache::TextGlyph const& glyph)
+            -> QuantizedGlyphOrigin {
+            return quantize_glyph_origin(command.position.x + glyph.x + glyph.offset_x);
+        }
+
+        [[nodiscard]] auto
+        glyph_origin_y(TextCommand const& command, font_cache::TextGlyph const& glyph)
+            -> QuantizedGlyphOrigin {
+            return quantize_glyph_origin(
+                command.position.y + command.run.baseline_y - glyph.offset_y
+            );
+        }
+
+        [[nodiscard]] auto glyph_origin_base(QuantizedGlyphOrigin origin) -> float {
+            return origin.origin - glyph_phase_value(origin.phase);
+        }
+
         [[nodiscard]] auto
         text_atlas_key(TextCommand const& command, font_cache::TextGlyph const& glyph)
             -> TextAtlasKey {
+            QuantizedGlyphOrigin const x = glyph_origin_x(command, glyph);
+            QuantizedGlyphOrigin const y = glyph_origin_y(command, glyph);
             return {
-                reinterpret_cast<size_t>(command.style.font.handle),
-                float_bits(command.style.size),
-                glyph.glyph_index
+                reinterpret_cast<size_t>(glyph.font.handle),
+                float_bits(glyph.size),
+                glyph.glyph_index,
+                x.phase,
+                y.phase,
+                static_cast<uint8_t>(glyph.raster.format)
             };
         }
 
         [[nodiscard]] auto text_atlas_key_equal(TextAtlasKey lhs, TextAtlasKey rhs) -> bool {
             return lhs.font == rhs.font && lhs.size_bits == rhs.size_bits &&
-                   lhs.glyph_index == rhs.glyph_index;
+                   lhs.glyph_index == rhs.glyph_index && lhs.phase_x == rhs.phase_x &&
+                   lhs.phase_y == rhs.phase_y && lhs.format == rhs.format;
         }
 
         [[nodiscard]] auto hash_text_atlas_key(TextAtlasKey key) -> size_t {
@@ -151,7 +210,24 @@ namespace gui::draw {
                 static_cast<size_t>(key.size_bits) + 0x9e3779b9u + (result << 6u) + (result >> 2u);
             result ^= static_cast<size_t>(key.glyph_index) + 0x9e3779b9u + (result << 6u) +
                       (result >> 2u);
+            result ^=
+                static_cast<size_t>(key.phase_x) + 0x9e3779b9u + (result << 6u) + (result >> 2u);
+            result ^=
+                static_cast<size_t>(key.phase_y) + 0x9e3779b9u + (result << 6u) + (result >> 2u);
+            result ^=
+                static_cast<size_t>(key.format) + 0x9e3779b9u + (result << 6u) + (result >> 2u);
             return result;
+        }
+
+        [[nodiscard]] auto raster_bytes_per_pixel(font_provider::RasterFormat format) -> uint32_t {
+            switch (format) {
+            case font_provider::RasterFormat::ALPHA:
+                return 1u;
+            case font_provider::RasterFormat::LCD_RGB:
+                return 4u;
+            }
+
+            return 1u;
         }
 
         auto clear_text_atlas(RendererImpl& renderer) -> void {
@@ -174,8 +250,14 @@ namespace gui::draw {
             if (gui::render::bind_group_valid(renderer->text_atlas_bind_group)) {
                 gui::render::destroy_bind_group(context, renderer->text_atlas_bind_group);
             }
+            if (gui::render::bind_group_valid(renderer->text_sampler_bind_group)) {
+                gui::render::destroy_bind_group(context, renderer->text_sampler_bind_group);
+            }
             if (gui::render::bind_group_valid(renderer->sampler_bind_group)) {
                 gui::render::destroy_bind_group(context, renderer->sampler_bind_group);
+            }
+            if (gui::render::sampler_valid(renderer->text_sampler)) {
+                gui::render::destroy_sampler(context, renderer->text_sampler);
             }
             if (gui::render::sampler_valid(renderer->sampler)) {
                 gui::render::destroy_sampler(context, renderer->sampler);
@@ -191,6 +273,12 @@ namespace gui::draw {
             }
             if (gui::render::pipeline_valid(renderer->text_pipeline)) {
                 gui::render::destroy_pipeline(context, renderer->text_pipeline);
+            }
+            if (gui::render::pipeline_valid(renderer->text_lcd_mask_pipeline)) {
+                gui::render::destroy_pipeline(context, renderer->text_lcd_mask_pipeline);
+            }
+            if (gui::render::pipeline_valid(renderer->text_lcd_add_pipeline)) {
+                gui::render::destroy_pipeline(context, renderer->text_lcd_add_pipeline);
             }
             if (gui::render::pipeline_valid(renderer->layer_pipeline)) {
                 gui::render::destroy_pipeline(context, renderer->layer_pipeline);
@@ -224,6 +312,9 @@ namespace gui::draw {
             }
             if (gui::render::shader_valid(renderer->text_pixel_shader)) {
                 gui::render::destroy_shader(context, renderer->text_pixel_shader);
+            }
+            if (gui::render::shader_valid(renderer->text_lcd_mask_pixel_shader)) {
+                gui::render::destroy_shader(context, renderer->text_lcd_mask_pixel_shader);
             }
             if (gui::render::shader_valid(renderer->layer_pixel_shader)) {
                 gui::render::destroy_shader(context, renderer->layer_pixel_shader);
@@ -281,7 +372,6 @@ namespace gui::draw {
             -> gui::render::Result {
             gui::render::TextureDesc texture_desc = {};
             texture_desc.size = TEXT_ATLAS_SIZE;
-            texture_desc.format = gui::render::TextureFormat::R8_UNORM;
             texture_desc.updatable = true;
 
             return gui::render::create_texture(context, texture_desc, out_texture);
@@ -484,13 +574,12 @@ namespace gui::draw {
             font_cache::TextGlyph const& glyph,
             TextAtlasEntry const& atlas
         ) -> void {
-            font_cache::TextRun const& run = command.run;
-            float const x0 =
-                std::round(command.position.x) + glyph.x + glyph.offset_x + glyph.raster.offset_x;
-            float const y0 = std::round(command.position.y) + run.baseline_y - glyph.offset_y +
-                             glyph.raster.offset_y;
-            float const x1 = x0 + static_cast<float>(glyph.raster.size.width);
-            float const y1 = y0 + static_cast<float>(glyph.raster.size.height);
+            QuantizedGlyphOrigin const x = glyph_origin_x(command, glyph);
+            QuantizedGlyphOrigin const y = glyph_origin_y(command, glyph);
+            float const x0 = glyph_origin_base(x) + atlas.offset_x;
+            float const y0 = glyph_origin_base(y) + atlas.offset_y;
+            float const x1 = x0 + static_cast<float>(atlas.width);
+            float const y1 = y0 + static_cast<float>(atlas.height);
             Vec2 const p0 = target_position(target, transform_point(command.transform, {x0, y0}));
             Vec2 const p1 = target_position(target, transform_point(command.transform, {x1, y0}));
             Vec2 const p2 = target_position(target, transform_point(command.transform, {x1, y1}));
@@ -850,13 +939,13 @@ namespace gui::draw {
         auto create_sampler_bind_group(
             Arena& arena,
             gui::render::Context render_context,
-            RendererImpl const& renderer,
+            gui::render::Sampler sampler,
             gui::render::BindGroup& out_bind_group
         ) -> gui::render::Result {
             gui::render::BindGroupSamplerBinding sampler_binding = {};
             sampler_binding.stage = gui::render::ShaderStage::PIXEL;
             sampler_binding.slot = 0u;
-            sampler_binding.sampler = renderer.sampler;
+            sampler_binding.sampler = sampler;
 
             gui::render::BindGroupDesc bind_group_desc = {};
             bind_group_desc.samplers = &sampler_binding;
@@ -976,10 +1065,13 @@ namespace gui::draw {
         }
 
         [[nodiscard]] auto ensure_text_atlas_entry(
-            gui::render::Context render_context,
+            Arena& upload_arena,
             RendererImpl& renderer,
             TextCommand const& command,
             font_cache::TextGlyph const& glyph,
+            gui::render::TextureUpdateDesc* updates,
+            size_t update_capacity,
+            size_t& update_count,
             bool& out_cleared
         ) -> TextAtlasEntry* {
             out_cleared = false;
@@ -999,56 +1091,68 @@ namespace gui::draw {
                 return nullptr;
             }
 
+            font_provider::GlyphRaster const raster =
+                font_cache::glyph_raster(command.style.font, glyph, key.phase_x, key.phase_y);
+            if (raster.pixels == nullptr || raster.size.width == 0u || raster.size.height == 0u) {
+                return nullptr;
+            }
+            uint32_t const raster_bytes_per_pixel_value = raster_bytes_per_pixel(raster.format);
+            ASSERT(raster.stride >= raster.size.width * raster_bytes_per_pixel_value);
+
             uint32_t atlas_x = 0u;
             uint32_t atlas_y = 0u;
             if (!alloc_text_atlas_rect(
-                    renderer, glyph.raster.size.width, glyph.raster.size.height, atlas_x, atlas_y
+                    renderer, raster.size.width, raster.size.height, atlas_x, atlas_y
                 )) {
                 clear_text_atlas(renderer);
                 out_cleared = true;
                 return nullptr;
             }
 
-            uint32_t const upload_width = glyph.raster.size.width + (TEXT_ATLAS_PADDING * 2u);
-            uint32_t const upload_height = glyph.raster.size.height + (TEXT_ATLAS_PADDING * 2u);
-            ArenaTemp temp = begin_thread_temp_arena();
+            uint32_t const upload_width = raster.size.width + (TEXT_ATLAS_PADDING * 2u);
+            uint32_t const upload_height = raster.size.height + (TEXT_ATLAS_PADDING * 2u);
             uint8_t* const upload_pixels =
-                arena_alloc<uint8_t>(*temp.arena(), upload_width * upload_height);
-            std::memset(upload_pixels, 0, upload_width * upload_height);
-            for (uint32_t y = 0u; y < glyph.raster.size.height; ++y) {
-                uint8_t const* const src =
-                    glyph.raster.pixels + (static_cast<size_t>(y) * glyph.raster.stride);
-                uint8_t* const dst = upload_pixels +
-                                     (static_cast<size_t>(y + TEXT_ATLAS_PADDING) * upload_width) +
-                                     TEXT_ATLAS_PADDING;
-                std::memcpy(dst, src, glyph.raster.size.width);
+                arena_alloc<uint8_t>(upload_arena, upload_width * upload_height * 4u);
+            std::memset(upload_pixels, 0, upload_width * upload_height * 4u);
+            for (uint32_t y = 0u; y < raster.size.height; ++y) {
+                uint8_t const* const src = raster.pixels + (static_cast<size_t>(y) * raster.stride);
+                uint8_t* const dst =
+                    upload_pixels +
+                    (static_cast<size_t>(y + TEXT_ATLAS_PADDING) * upload_width * 4u) +
+                    (TEXT_ATLAS_PADDING * 4u);
+                if (raster.format == font_provider::RasterFormat::LCD_RGB) {
+                    std::memcpy(dst, src, raster.size.width * 4u);
+                } else {
+                    for (uint32_t x = 0u; x < raster.size.width; ++x) {
+                        uint8_t const coverage = src[x];
+                        dst[x * 4u + 0u] = coverage;
+                        dst[x * 4u + 1u] = coverage;
+                        dst[x * 4u + 2u] = coverage;
+                        dst[x * 4u + 3u] = coverage;
+                    }
+                }
             }
 
-            gui::render::TextureUpdateDesc update_desc = {};
+            ASSERT(update_count < update_capacity);
+            gui::render::TextureUpdateDesc& update_desc = updates[update_count];
             update_desc.x = atlas_x - TEXT_ATLAS_PADDING;
             update_desc.y = atlas_y - TEXT_ATLAS_PADDING;
             update_desc.size = {upload_width, upload_height};
-            update_desc.bytes_per_row = upload_width;
+            update_desc.bytes_per_row = upload_width * 4u;
             update_desc.pixels = upload_pixels;
-            gui::render::Result const result =
-                gui::render::update_texture(render_context, renderer.text_atlas, update_desc);
-            ASSERT(gui::render::result_succeeded(result));
-            if (gui::render::result_failed(result)) {
-                *entry = {};
-                return nullptr;
-            }
+            update_count += 1u;
 
             float const atlas_width = static_cast<float>(TEXT_ATLAS_SIZE.width);
             float const atlas_height = static_cast<float>(TEXT_ATLAS_SIZE.height);
             entry->key = key;
             entry->uv_rect[0u] = static_cast<float>(atlas_x) / atlas_width;
             entry->uv_rect[1u] = static_cast<float>(atlas_y) / atlas_height;
-            entry->uv_rect[2u] =
-                static_cast<float>(atlas_x + glyph.raster.size.width) / atlas_width;
-            entry->uv_rect[3u] =
-                static_cast<float>(atlas_y + glyph.raster.size.height) / atlas_height;
-            entry->width = glyph.raster.size.width;
-            entry->height = glyph.raster.size.height;
+            entry->uv_rect[2u] = static_cast<float>(atlas_x + raster.size.width) / atlas_width;
+            entry->uv_rect[3u] = static_cast<float>(atlas_y + raster.size.height) / atlas_height;
+            entry->offset_x = raster.offset_x;
+            entry->offset_y = raster.offset_y;
+            entry->width = raster.size.width;
+            entry->height = raster.size.height;
             entry->valid = true;
             return entry;
         }
@@ -1060,8 +1164,18 @@ namespace gui::draw {
             size_t first_command,
             size_t end_command
         ) -> bool {
+            if (renderer.text_atlas_capacity == 0u) {
+                return false;
+            }
+
+            ArenaTemp upload_temp = begin_thread_temp_arena();
+            gui::render::TextureUpdateDesc* const updates =
+                arena_alloc<gui::render::TextureUpdateDesc>(
+                    *upload_temp.arena(), renderer.text_atlas_capacity
+                );
             for (uint32_t attempt = 0u; attempt < 2u; ++attempt) {
                 bool cleared = false;
+                size_t update_count = 0u;
                 for (size_t index = first_command; index < end_command && !cleared; ++index) {
                     Command const* const draw_command = command(draw_context, index);
                     ASSERT(draw_command != nullptr);
@@ -1079,10 +1193,13 @@ namespace gui::draw {
                          ++glyph_index) {
                         bool glyph_cleared = false;
                         TextAtlasEntry const* const entry = ensure_text_atlas_entry(
-                            render_context,
+                            *upload_temp.arena(),
                             renderer,
                             *text,
                             text->run.glyphs[glyph_index],
+                            updates,
+                            renderer.text_atlas_capacity,
+                            update_count,
                             glyph_cleared
                         );
                         BASE_UNUSED(entry);
@@ -1093,6 +1210,17 @@ namespace gui::draw {
                     }
                 }
                 if (!cleared) {
+                    gui::render::TextureUpdateBatchDesc update_desc = {};
+                    update_desc.updates = updates;
+                    update_desc.update_count = update_count;
+                    gui::render::Result const result = gui::render::update_texture_batch(
+                        render_context, renderer.text_atlas, update_desc
+                    );
+                    ASSERT(gui::render::result_succeeded(result));
+                    if (gui::render::result_failed(result)) {
+                        clear_text_atlas(renderer);
+                        return false;
+                    }
                     return true;
                 }
             }
@@ -1791,6 +1919,7 @@ namespace gui::draw {
                         *batch,
                         primitive_batch_first_vertex(draw_context, *batch)
                     );
+                    text_sampler_bound = false;
                     text_atlas_bound = false;
                 } else if (draw_command->kind == CommandKind::STYLED_RECT) {
                     StyledRectCommand const* const styled_rect =
@@ -1829,20 +1958,34 @@ namespace gui::draw {
                             draw_command->index
                         );
                     }
+                    text_sampler_bound = false;
                     text_atlas_bound = false;
                 } else if (draw_command->kind == CommandKind::TEXT) {
                     TextCommand const* const text = text_command(draw_context, draw_command->index);
                     ASSERT(text != nullptr);
                     if (!text_sampler_bound) {
-                        gui::render::bind_group(render_context, renderer.sampler_bind_group);
+                        gui::render::bind_group(render_context, renderer.text_sampler_bind_group);
                         text_sampler_bound = true;
                     }
                     if (!text_atlas_bound) {
                         gui::render::bind_group(render_context, renderer.text_atlas_bind_group);
                         text_atlas_bound = true;
                     }
-                    gui::render::bind_pipeline(render_context, renderer.text_pipeline);
-                    submit_text_command(render_context, target, upload, *text, draw_command->index);
+                    if (text->run.format == font_provider::RasterFormat::LCD_RGB) {
+                        gui::render::bind_pipeline(render_context, renderer.text_lcd_mask_pipeline);
+                        submit_text_command(
+                            render_context, target, upload, *text, draw_command->index
+                        );
+                        gui::render::bind_pipeline(render_context, renderer.text_lcd_add_pipeline);
+                        submit_text_command(
+                            render_context, target, upload, *text, draw_command->index
+                        );
+                    } else {
+                        gui::render::bind_pipeline(render_context, renderer.text_pipeline);
+                        submit_text_command(
+                            render_context, target, upload, *text, draw_command->index
+                        );
+                    }
                 } else if (draw_command->kind == CommandKind::LAYER_BEGIN) {
                     LayerCommand const* const layer =
                         layer_command(draw_context, draw_command->index);
@@ -1851,6 +1994,7 @@ namespace gui::draw {
                         renderer, render_context, target, *layer, layer_renders[draw_command->index]
                     );
                     index = layer->end_command_index;
+                    text_sampler_bound = false;
                     text_atlas_bound = false;
                 }
             }
@@ -1964,8 +2108,26 @@ struct PSInput
 
 float4 ps_main(PSInput input) : SV_Target
 {
-    float coverage = g_texture.Sample(g_sampler, input.uv).r;
-    return float4(input.color.rgb, input.color.a * coverage);
+    float4 coverage = g_texture.Sample(g_sampler, input.uv);
+    return float4(input.color.rgb * coverage.rgb * input.color.a, input.color.a * coverage.a);
+}
+)hlsl";
+
+        constexpr StrRef TEXT_LCD_MASK_SHADER_SOURCE = R"hlsl(
+Texture2D g_texture : register(t0);
+SamplerState g_sampler : register(s0);
+
+struct PSInput
+{
+    float4 position : SV_POSITION;
+    float2 uv : TEXCOORD0;
+    float4 color : COLOR0;
+};
+
+float4 ps_main(PSInput input) : SV_Target
+{
+    float4 coverage = g_texture.Sample(g_sampler, input.uv);
+    return float4(coverage.rgb * input.color.a, coverage.a * input.color.a);
 }
 )hlsl";
 
@@ -2287,11 +2449,40 @@ PSInput vs_main(VSInput input)
             return result;
         }
 
+        shader_desc.source = TEXT_LCD_MASK_SHADER_SOURCE;
+        result = gui::render::create_shader_from_source(
+            arena, render_context, shader_desc, renderer->text_lcd_mask_pixel_shader
+        );
+        if (gui::render::result_failed(result)) {
+            destroy_renderer_resources(render_context, renderer);
+            return result;
+        }
+
         pipeline_desc.pixel_shader = renderer->text_pixel_shader;
-        pipeline_desc.blend_mode = gui::render::BlendMode::ALPHA;
+        pipeline_desc.blend_mode = gui::render::BlendMode::PREMULTIPLIED_ALPHA;
 
         result = gui::render::create_pipeline(
             arena, render_context, pipeline_desc, renderer->text_pipeline
+        );
+        if (gui::render::result_failed(result)) {
+            destroy_renderer_resources(render_context, renderer);
+            return result;
+        }
+
+        pipeline_desc.pixel_shader = renderer->text_lcd_mask_pixel_shader;
+        pipeline_desc.blend_mode = gui::render::BlendMode::DESTINATION_ATTENUATE;
+        result = gui::render::create_pipeline(
+            arena, render_context, pipeline_desc, renderer->text_lcd_mask_pipeline
+        );
+        if (gui::render::result_failed(result)) {
+            destroy_renderer_resources(render_context, renderer);
+            return result;
+        }
+
+        pipeline_desc.pixel_shader = renderer->text_pixel_shader;
+        pipeline_desc.blend_mode = gui::render::BlendMode::ADDITIVE;
+        result = gui::render::create_pipeline(
+            arena, render_context, pipeline_desc, renderer->text_lcd_add_pipeline
         );
         if (gui::render::result_failed(result)) {
             destroy_renderer_resources(render_context, renderer);
@@ -2610,7 +2801,21 @@ PSInput vs_main(VSInput input)
         }
 
         result = create_sampler_bind_group(
-            arena, render_context, *renderer, renderer->sampler_bind_group
+            arena, render_context, renderer->sampler, renderer->sampler_bind_group
+        );
+        if (gui::render::result_failed(result)) {
+            destroy_renderer_resources(render_context, renderer);
+            return result;
+        }
+
+        result = gui::render::create_sampler(render_context, renderer->text_sampler);
+        if (gui::render::result_failed(result)) {
+            destroy_renderer_resources(render_context, renderer);
+            return result;
+        }
+
+        result = create_sampler_bind_group(
+            arena, render_context, renderer->text_sampler, renderer->text_sampler_bind_group
         );
         if (gui::render::result_failed(result)) {
             destroy_renderer_resources(render_context, renderer);

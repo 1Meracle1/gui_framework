@@ -6,6 +6,8 @@
 
 namespace gui::font_provider {
 
+    inline constexpr uint8_t GLYPH_RASTER_PHASE_COUNT = 4u;
+
     enum class Backend : uint8_t {
         DEFAULT,
         DWRITE,
@@ -51,6 +53,7 @@ namespace gui::font_provider {
 
     enum class RasterFormat : uint8_t {
         ALPHA,
+        LCD_RGB,
     };
 
     struct RasterResult {
@@ -73,8 +76,10 @@ namespace gui::font_provider {
     };
 
     struct ShapedGlyph {
+        Font font = {};
         uint16_t glyph_index = 0u;
         uint32_t cluster = 0u;
+        float size = 0.0f;
         float x = 0.0f;
         float advance = 0.0f;
         float offset_x = 0.0f;
@@ -112,6 +117,15 @@ namespace gui::font_provider {
     auto
     raster_glyph(Font font, float size, uint16_t glyph_index, Arena& arena, GlyphRaster& out_raster)
         -> void;
+    auto raster_glyph(
+        Font font,
+        float size,
+        uint16_t glyph_index,
+        uint8_t phase_x,
+        uint8_t phase_y,
+        Arena& arena,
+        GlyphRaster& out_raster
+    ) -> void;
     auto raster_text(Font font, float size, StrRef text, Arena& arena, RasterResult& out_raster)
         -> void;
 

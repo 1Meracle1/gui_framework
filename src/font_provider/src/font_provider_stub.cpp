@@ -58,6 +58,24 @@ namespace gui::font_provider::platform {
         out_raster = {};
     }
 
+    auto raster_glyph(
+        Font font,
+        float size,
+        uint16_t glyph_index,
+        uint8_t phase_x,
+        uint8_t phase_y,
+        Arena& arena,
+        GlyphRaster& out_raster
+    ) -> void {
+        BASE_UNUSED(font);
+        BASE_UNUSED(size);
+        BASE_UNUSED(glyph_index);
+        BASE_UNUSED(phase_x);
+        BASE_UNUSED(phase_y);
+        BASE_UNUSED(arena);
+        out_raster = {};
+    }
+
     auto raster_text(Font font, float size, StrRef text, Arena& arena, RasterResult& out_raster)
         -> void {
         BASE_UNUSED(font);

@@ -1271,7 +1271,7 @@ namespace {
         TEST_EXPECT(context, command->text == StrRef("draw text"));
         TEST_EXPECT(context, command->run.glyphs != nullptr);
         TEST_EXPECT(context, command->run.glyph_count > 0u);
-        TEST_EXPECT(context, command->run.format == gui::font_provider::RasterFormat::ALPHA);
+        TEST_EXPECT(context, command->run.format == gui::font_provider::RasterFormat::LCD_RGB);
         expect_rect(context, command->clip_rect, clipped);
         expect_transform(context, command->transform, transform);
         TEST_EXPECT(context, command->opacity == 0.5f);
