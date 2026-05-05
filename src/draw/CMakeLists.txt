@@ -1,6 +1,7 @@
 target_sources(gui_framework PRIVATE
     src/draw.cpp
     src/draw_renderer.cpp
+    src/text_atlas.cpp
 )
 
 target_include_directories(gui_framework

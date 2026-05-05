@@ -25,7 +25,7 @@ namespace gui::font_provider::platform::dwrite {
         constexpr StrRef DEFAULT_FONT_FAMILY = "Segoe UI";
         constexpr DWRITE_MEASURING_MODE TEXT_MEASURING_MODE = DWRITE_MEASURING_MODE_GDI_NATURAL;
         constexpr DWRITE_MEASURING_MODE TEXT_BITMAP_MEASURING_MODE = DWRITE_MEASURING_MODE_NATURAL;
-        constexpr DWRITE_RENDERING_MODE TEXT_RENDERING_MODE = DWRITE_RENDERING_MODE_NATURAL;
+        constexpr DWRITE_RENDERING_MODE TEXT_RENDERING_MODE = DWRITE_RENDERING_MODE_GDI_NATURAL;
         constexpr DWRITE_GRID_FIT_MODE TEXT_GRID_FIT_MODE = DWRITE_GRID_FIT_MODE_ENABLED;
         constexpr DWRITE_TEXT_ANTIALIAS_MODE TEXT_ANTIALIAS_MODE =
             DWRITE_TEXT_ANTIALIAS_MODE_GRAYSCALE;
@@ -291,6 +291,35 @@ namespace gui::font_provider::platform::dwrite {
                 value->Release();
                 value = nullptr;
             }
+        }
+
+        [[nodiscard]] auto create_text_rendering_params(ContextImpl* context) -> HRESULT {
+            ASSERT(context != nullptr);
+            ASSERT(context->factory != nullptr);
+            ASSERT(context->factory2 != nullptr);
+
+            IDWriteRenderingParams* base_params = nullptr;
+            HRESULT hr = context->factory->CreateRenderingParams(&base_params);
+            if (FAILED(hr)) {
+                return hr;
+            }
+
+            FLOAT const enhanced_contrast = base_params->GetEnhancedContrast();
+            release_com(base_params);
+
+            IDWriteRenderingParams2* params = nullptr;
+            hr = context->factory2->CreateCustomRenderingParams(
+                1.0f,
+                enhanced_contrast,
+                enhanced_contrast,
+                0.0f,
+                DWRITE_PIXEL_GEOMETRY_FLAT,
+                TEXT_RENDERING_MODE,
+                TEXT_GRID_FIT_MODE,
+                &params
+            );
+            context->rendering_params = params;
+            return hr;
         }
 
         [[nodiscard]] auto context_from_handle(Context context) -> ContextImpl* {
@@ -1715,7 +1744,7 @@ namespace gui::font_provider::platform::dwrite {
             hr = context->factory->CreateTextAnalyzer(&context->analyzer);
         }
         if (SUCCEEDED(hr)) {
-            hr = context->factory->CreateRenderingParams(&context->rendering_params);
+            hr = create_text_rendering_params(context);
         }
         if (FAILED(hr)) {
             release_com(context->bitmap_target1);
