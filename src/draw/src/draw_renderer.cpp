@@ -230,6 +230,11 @@ namespace gui::draw {
             return 1u;
         }
 
+        [[nodiscard]] auto text_coverage(uint8_t value) -> uint8_t {
+            float const coverage = static_cast<float>(value) / 255.0f;
+            return static_cast<uint8_t>(std::round(std::pow(coverage, 1.0f / 2.2f) * 255.0f));
+        }
+
         auto clear_text_atlas(RendererImpl& renderer) -> void {
             if (renderer.text_atlas_entries != nullptr) {
                 for (size_t index = 0u; index < renderer.text_atlas_capacity; ++index) {
@@ -1121,10 +1126,15 @@ namespace gui::draw {
                     (static_cast<size_t>(y + TEXT_ATLAS_PADDING) * upload_width * 4u) +
                     (TEXT_ATLAS_PADDING * 4u);
                 if (raster.format == font_provider::RasterFormat::LCD_RGB) {
-                    std::memcpy(dst, src, raster.size.width * 4u);
+                    for (uint32_t x = 0u; x < raster.size.width; ++x) {
+                        dst[x * 4u + 0u] = text_coverage(src[x * 4u + 0u]);
+                        dst[x * 4u + 1u] = text_coverage(src[x * 4u + 1u]);
+                        dst[x * 4u + 2u] = text_coverage(src[x * 4u + 2u]);
+                        dst[x * 4u + 3u] = text_coverage(src[x * 4u + 3u]);
+                    }
                 } else {
                     for (uint32_t x = 0u; x < raster.size.width; ++x) {
-                        uint8_t const coverage = src[x];
+                        uint8_t const coverage = text_coverage(src[x]);
                         dst[x * 4u + 0u] = coverage;
                         dst[x * 4u + 1u] = coverage;
                         dst[x * 4u + 2u] = coverage;
