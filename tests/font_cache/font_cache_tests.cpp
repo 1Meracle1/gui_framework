@@ -48,17 +48,14 @@ namespace {
         TEST_EXPECT(context, first.glyphs[2u].x > first.glyphs[1u].x);
         TEST_EXPECT(context, gui::font_provider::font_valid(first.glyphs[0u].font));
         TEST_EXPECT(context, first.glyphs[0u].size == 18.0f);
-        TEST_EXPECT(context, first.format == gui::font_provider::RasterFormat::LCD_RGB);
-        TEST_EXPECT(
-            context, first.glyphs[0u].raster.format == gui::font_provider::RasterFormat::LCD_RGB
-        );
         gui::font_provider::GlyphRaster phase0 =
             gui::font_cache::glyph_raster(font, first.glyphs[0u], 0u, 0u);
         gui::font_provider::GlyphRaster phase1 =
             gui::font_cache::glyph_raster(font, first.glyphs[0u], 1u, 0u);
         gui::font_provider::GlyphRaster phase1_again =
             gui::font_cache::glyph_raster(font, first.glyphs[0u], 1u, 0u);
-        TEST_EXPECT(context, phase0.pixels == first.glyphs[0u].raster.pixels);
+        TEST_EXPECT(context, phase0.format == gui::font_provider::RasterFormat::ALPHA);
+        TEST_EXPECT(context, phase0.pixels != nullptr);
         TEST_EXPECT(context, phase1.pixels == phase1_again.pixels);
         TEST_EXPECT(context, phase1.pixels != nullptr);
         TEST_EXPECT(context, phase1.pixels != phase0.pixels);

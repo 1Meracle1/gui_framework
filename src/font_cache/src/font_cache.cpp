@@ -23,6 +23,7 @@ namespace gui::font_cache {
             CacheEntry* next = nullptr;
             CacheFont* font = nullptr;
             uint32_t size_bits = 0u;
+            font_provider::RasterPolicy raster_policy = font_provider::RasterPolicy::SHARP_HINTED;
             uint64_t text_hash = 0u;
             StrRef text = {};
             TextRun run = {};
@@ -42,6 +43,7 @@ namespace gui::font_cache {
             font_provider::Font font = {};
             uint32_t size_bits = 0u;
             uint16_t glyph_index = 0u;
+            font_provider::RasterPolicy raster_policy = font_provider::RasterPolicy::SHARP_HINTED;
             uint8_t phase_x = 0u;
             uint8_t phase_y = 0u;
             font_provider::GlyphRaster raster = {};
@@ -97,17 +99,35 @@ namespace gui::font_cache {
             return result;
         }
 
+        [[nodiscard]] auto text_run_hash(
+            CacheFont const* font,
+            uint32_t size_bits,
+            font_provider::RasterPolicy raster_policy,
+            StrRef text
+        ) -> uint64_t {
+            uint8_t const policy = static_cast<uint8_t>(raster_policy);
+            uint64_t result = FNV64_OFFSET;
+            result = hash_size(result, reinterpret_cast<size_t>(font));
+            result = hash_bytes(result, &size_bits, sizeof(size_bits));
+            result = hash_bytes(result, &policy, sizeof(policy));
+            result = hash_bytes(result, text.data(), text.size());
+            return result;
+        }
+
         [[nodiscard]] auto glyph_hash(
             font_provider::Font font,
             uint32_t size_bits,
             uint16_t glyph_index,
+            font_provider::RasterPolicy raster_policy,
             uint8_t phase_x,
             uint8_t phase_y
         ) -> uint64_t {
+            uint8_t const policy = static_cast<uint8_t>(raster_policy);
             uint64_t result = FNV64_OFFSET;
             result = hash_size(result, reinterpret_cast<size_t>(font.handle));
             result = hash_bytes(result, &size_bits, sizeof(size_bits));
             result = hash_bytes(result, &glyph_index, sizeof(glyph_index));
+            result = hash_bytes(result, &policy, sizeof(policy));
             result = hash_bytes(result, &phase_x, sizeof(phase_x));
             result = hash_bytes(result, &phase_y, sizeof(phase_y));
             return result;
@@ -157,17 +177,19 @@ namespace gui::font_cache {
             uint32_t size_bits,
             float size,
             uint16_t glyph_index,
+            font_provider::RasterPolicy raster_policy,
             uint8_t phase_x,
             uint8_t phase_y
         ) -> font_provider::GlyphRaster {
-            uint64_t const hash = glyph_hash(font, size_bits, glyph_index, phase_x, phase_y);
+            uint64_t const hash =
+                glyph_hash(font, size_bits, glyph_index, raster_policy, phase_x, phase_y);
             size_t const slot_index = static_cast<size_t>(hash % cache->slot_count);
 
             for (GlyphEntry* entry = cache->glyph_slots[slot_index]; entry != nullptr;
                  entry = entry->next) {
                 if (entry->font.handle == font.handle && entry->size_bits == size_bits &&
-                    entry->glyph_index == glyph_index && entry->phase_x == phase_x &&
-                    entry->phase_y == phase_y) {
+                    entry->glyph_index == glyph_index && entry->raster_policy == raster_policy &&
+                    entry->phase_x == phase_x && entry->phase_y == phase_y) {
                     return entry->raster;
                 }
             }
@@ -175,13 +197,14 @@ namespace gui::font_cache {
             ArenaTemp temp = begin_thread_temp_arena();
             font_provider::GlyphRaster raster = {};
             font_provider::raster_glyph(
-                font, size, glyph_index, phase_x, phase_y, *temp.arena(), raster
+                font, size, glyph_index, raster_policy, phase_x, phase_y, *temp.arena(), raster
             );
 
             GlyphEntry* const entry = arena_new<GlyphEntry>(cache->cache_arena);
             entry->font = font;
             entry->size_bits = size_bits;
             entry->glyph_index = glyph_index;
+            entry->raster_policy = raster_policy;
             entry->phase_x = phase_x;
             entry->phase_y = phase_y;
             copy_glyph_raster(cache->cache_arena, raster, entry->raster);
@@ -352,6 +375,17 @@ namespace gui::font_cache {
     }
 
     auto text_run(Cache cache, Font font, float size, StrRef text, TextRun& out_run) -> void {
+        text_run(cache, font, size, text, font_provider::RasterPolicy::SHARP_HINTED, out_run);
+    }
+
+    auto text_run(
+        Cache cache,
+        Font font,
+        float size,
+        StrRef text,
+        font_provider::RasterPolicy raster_policy,
+        TextRun& out_run
+    ) -> void {
         CacheImpl* const impl = cache_from_handle(cache);
         CacheFont* const font_impl = font_from_handle(font);
         ASSERT(impl != nullptr);
@@ -360,16 +394,18 @@ namespace gui::font_cache {
 
         if (text.empty()) {
             out_run = {};
+            out_run.raster_policy = raster_policy;
             return;
         }
 
         uint32_t const size_bits = float_bits(size);
-        uint64_t const hash = text_run_hash(font_impl, size_bits, text);
+        uint64_t const hash = text_run_hash(font_impl, size_bits, raster_policy, text);
         size_t const slot_index = static_cast<size_t>(hash % impl->slot_count);
 
         for (CacheEntry* entry = impl->slots[slot_index]; entry != nullptr; entry = entry->next) {
             if (entry->font == font_impl && entry->size_bits == size_bits &&
-                entry->text_hash == hash && entry->text == text) {
+                entry->raster_policy == raster_policy && entry->text_hash == hash &&
+                entry->text == text) {
                 out_run = entry->run;
                 return;
             }
@@ -382,10 +418,12 @@ namespace gui::font_cache {
         CacheEntry* const entry = arena_new<CacheEntry>(impl->cache_arena);
         entry->font = font_impl;
         entry->size_bits = size_bits;
+        entry->raster_policy = raster_policy;
         entry->text_hash = hash;
         copy_text(impl->cache_arena, text, entry->text);
 
         entry->run.size = shaped.size;
+        entry->run.raster_policy = raster_policy;
         entry->run.advance = shaped.advance;
         entry->run.origin_x = shaped.origin_x;
         entry->run.origin_y = shaped.origin_y;
@@ -401,24 +439,12 @@ namespace gui::font_cache {
                 TextGlyph& glyph = glyphs[index];
                 glyph.font = shaped_glyph.font;
                 glyph.glyph_index = shaped_glyph.glyph_index;
-                glyph.cluster = shaped_glyph.cluster;
                 glyph.size = shaped_glyph.size;
+                glyph.raster_policy = raster_policy;
                 glyph.x = shaped_glyph.x;
                 glyph.advance = shaped_glyph.advance;
                 glyph.offset_x = shaped_glyph.offset_x;
                 glyph.offset_y = shaped_glyph.offset_y;
-                glyph.raster = cached_glyph_raster(
-                    impl,
-                    shaped_glyph.font,
-                    float_bits(shaped_glyph.size),
-                    shaped_glyph.size,
-                    shaped_glyph.glyph_index,
-                    0u,
-                    0u
-                );
-                if (index == 0u) {
-                    entry->run.format = glyph.raster.format;
-                }
             }
             entry->run.glyphs = glyphs;
         }
@@ -431,6 +457,16 @@ namespace gui::font_cache {
 
     auto glyph_raster(Font font, TextGlyph const& glyph, uint8_t phase_x, uint8_t phase_y)
         -> font_provider::GlyphRaster {
+        return glyph_raster(font, glyph, glyph.raster_policy, phase_x, phase_y);
+    }
+
+    auto glyph_raster(
+        Font font,
+        TextGlyph const& glyph,
+        font_provider::RasterPolicy raster_policy,
+        uint8_t phase_x,
+        uint8_t phase_y
+    ) -> font_provider::GlyphRaster {
         CacheFont* const impl = font_from_handle(font);
         ASSERT(impl != nullptr);
         ASSERT(impl->cache != nullptr);
@@ -443,6 +479,7 @@ namespace gui::font_cache {
             float_bits(glyph.size),
             glyph.size,
             glyph.glyph_index,
+            raster_policy,
             phase_x,
             phase_y
         );

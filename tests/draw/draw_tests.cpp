@@ -1271,10 +1271,23 @@ namespace {
         TEST_EXPECT(context, command->text == StrRef("draw text"));
         TEST_EXPECT(context, command->run.glyphs != nullptr);
         TEST_EXPECT(context, command->run.glyph_count > 0u);
-        TEST_EXPECT(context, command->run.format == gui::font_provider::RasterFormat::LCD_RGB);
+        TEST_EXPECT(
+            context, command->run.raster_policy == gui::font_provider::RasterPolicy::SHARP_HINTED
+        );
         expect_rect(context, command->clip_rect, clipped);
         expect_transform(context, command->transform, transform);
         TEST_EXPECT(context, command->opacity == 0.5f);
+
+        gui::draw::TextStyle alpha_style = style;
+        alpha_style.raster_policy = gui::font_provider::RasterPolicy::SHARP_HINTED_ALPHA;
+        gui::draw::draw_text(draw_context, {8.0f, 32.0f}, alpha_style, "draw text", nullptr);
+        TEST_EXPECT(context, gui::draw::text_command_count(draw_context) == 2u);
+        gui::draw::TextCommand const* alpha_command = gui::draw::text_command(draw_context, 1u);
+        TEST_EXPECT(context, alpha_command != nullptr);
+        TEST_EXPECT(
+            context,
+            alpha_command->run.raster_policy == gui::font_provider::RasterPolicy::SHARP_HINTED_ALPHA
+        );
 
         gui::draw::begin_frame(draw_context);
         TEST_EXPECT(context, gui::draw::text_command_count(draw_context) == 0u);

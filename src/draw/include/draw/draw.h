@@ -122,6 +122,7 @@ namespace gui::draw {
     struct TextStyle {
         font_cache::Font font = {};
         float size = 16.0f;
+        font_provider::RasterPolicy raster_policy = font_provider::RasterPolicy::SHARP_HINTED;
         Color color = {};
     };
 
@@ -187,11 +188,9 @@ namespace gui::draw {
     auto pop_layer(Context context) -> void;
 
     auto draw_line(Context context, Vec2 p0, Vec2 p1, Color color, float thickness) -> void;
-    auto draw_polyline(Context context,
-                       Slice<Vec2 const> points,
-                       Color color,
-                       float thickness,
-                       bool closed) -> void;
+    auto draw_polyline(
+        Context context, Slice<Vec2 const> points, Color color, float thickness, bool closed
+    ) -> void;
     auto draw_triangle(Context context, Vec2 p0, Vec2 p1, Vec2 p2, Color color, float thickness)
         -> void;
     auto draw_triangle_filled(Context context, Vec2 p0, Vec2 p1, Vec2 p2, Color color) -> void;
@@ -206,54 +205,62 @@ namespace gui::draw {
     auto
     draw_image(Context context, gui::render::Texture texture, Rect rect, Rect uv_rect, Color color)
         -> void;
-    auto draw_rect_filled_multicolor(Context context,
-                                     Rect rect,
-                                     Color top_left,
-                                     Color top_right,
-                                     Color bottom_right,
-                                     Color bottom_left) -> void;
-    auto draw_circle(Context context,
-                     Vec2 center,
-                     float radius,
-                     Color color,
-                     float thickness,
-                     int32_t segment_count) -> void;
+    auto draw_rect_filled_multicolor(
+        Context context,
+        Rect rect,
+        Color top_left,
+        Color top_right,
+        Color bottom_right,
+        Color bottom_left
+    ) -> void;
+    auto draw_circle(
+        Context context,
+        Vec2 center,
+        float radius,
+        Color color,
+        float thickness,
+        int32_t segment_count
+    ) -> void;
     auto draw_circle_filled(
-        Context context, Vec2 center, float radius, Color color, int32_t segment_count) -> void;
-    auto draw_ellipse(Context context,
-                      Vec2 center,
-                      Vec2 radius,
-                      Color color,
-                      float thickness,
-                      int32_t segment_count) -> void;
+        Context context, Vec2 center, float radius, Color color, int32_t segment_count
+    ) -> void;
+    auto draw_ellipse(
+        Context context,
+        Vec2 center,
+        Vec2 radius,
+        Color color,
+        float thickness,
+        int32_t segment_count
+    ) -> void;
     auto draw_ellipse_filled(
-        Context context, Vec2 center, Vec2 radius, Color color, int32_t segment_count) -> void;
+        Context context, Vec2 center, Vec2 radius, Color color, int32_t segment_count
+    ) -> void;
 
     auto path_clear(Context context) -> void;
     auto path_line_to(Context context, Vec2 p) -> void;
-    auto path_arc_to(Context context,
-                     Vec2 center,
-                     float radius,
-                     float angle_min,
-                     float angle_max,
-                     int32_t segment_count) -> void;
+    auto path_arc_to(
+        Context context,
+        Vec2 center,
+        float radius,
+        float angle_min,
+        float angle_max,
+        int32_t segment_count
+    ) -> void;
     auto path_bezier_quadratic_to(Context context, Vec2 control, Vec2 end, int32_t segment_count)
         -> void;
     auto path_bezier_cubic_to(
-        Context context, Vec2 control0, Vec2 control1, Vec2 end, int32_t segment_count) -> void;
+        Context context, Vec2 control0, Vec2 control1, Vec2 end, int32_t segment_count
+    ) -> void;
     auto path_rect(Context context, Rect rect, float rounding) -> void;
     auto path_stroke(Context context, Color color, bool closed, float thickness) -> void;
     auto path_fill_convex(Context context, Color color) -> void;
 
-    auto draw_text(Context context,
-                   Vec2 position,
-                   TextStyle const& style,
-                   StrRef text,
-                   float* out_advance) -> void;
-    auto measure_text(Context context,
-                      TextStyle const& style,
-                      StrRef text,
-                      font_cache::TextRun& out_run) -> void;
+    auto draw_text(
+        Context context, Vec2 position, TextStyle const& style, StrRef text, float* out_advance
+    ) -> void;
+    auto
+    measure_text(Context context, TextStyle const& style, StrRef text, font_cache::TextRun& out_run)
+        -> void;
 
     [[nodiscard]] auto primitive_command_count(Context context) -> size_t;
     [[nodiscard]] auto primitive_command(Context context, size_t index) -> PrimitiveCommand const*;

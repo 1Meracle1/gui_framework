@@ -370,11 +370,6 @@ namespace gui::draw {
             return run.glyphs != nullptr && run.glyph_count != 0u;
         }
 
-        [[nodiscard]] auto glyph_visible(font_cache::TextGlyph const& glyph) -> bool {
-            return glyph.raster.pixels != nullptr && glyph.raster.size.width != 0u &&
-                   glyph.raster.size.height != 0u;
-        }
-
         [[nodiscard]] auto clip_rect_to_scissor(Rect rect, gui::render::SizeU32 target_size)
             -> gui::render::ScissorRect {
             float const width = static_cast<float>(target_size.width);
@@ -437,12 +432,10 @@ namespace gui::draw {
             RenderVertex* vertices,
             RenderTarget target,
             TextCommand const& command,
-            font_cache::TextGlyph const& glyph,
             TextAtlasPiece const& piece
         ) -> void {
-            TextAtlasGlyphPosition const position = text_atlas_glyph_position(command, glyph);
-            float const x0 = position.x + piece.offset_x;
-            float const y0 = position.y + piece.offset_y;
+            float const x0 = piece.x;
+            float const y0 = piece.y;
             float const x1 = x0 + static_cast<float>(piece.width);
             float const y1 = y0 + static_cast<float>(piece.height);
             Vec2 const p0 = target_position(target, transform_point(command.transform, {x0, y0}));
@@ -658,9 +651,9 @@ namespace gui::draw {
         [[nodiscard]] auto upload_draw_vertices(
             Arena& arena,
             gui::render::Context render_context,
-            RendererImpl& renderer,
             RenderTarget target,
-            Context draw_context
+            Context draw_context,
+            PreparedText const& prepared_text
         ) -> DrawUpload {
             DrawUpload result = {};
             size_t const primitive_count = primitive_command_count(draw_context);
@@ -671,31 +664,17 @@ namespace gui::draw {
                 primitive_vertex_count += command->vertex_count;
             }
 
-            size_t const text_count = text_command_count(draw_context);
-            size_t text_vertex_count = 0u;
-            for (size_t index = 0u; index < text_count; ++index) {
-                TextCommand const* const command = text_command(draw_context, index);
-                ASSERT(command != nullptr);
-                if (!text_command_visible(*command)) {
-                    continue;
-                }
-                for (size_t glyph_index = 0u; glyph_index < command->run.glyph_count;
-                     ++glyph_index) {
-                    if (glyph_visible(command->run.glyphs[glyph_index])) {
-                        text_vertex_count += 6u;
-                    }
-                }
-            }
+            size_t const text_vertex_count = prepared_text.piece_count * 6u;
 
-            if (text_count != 0u) {
-                result.text_ranges = arena_alloc<TextDrawRange>(arena, text_count);
-                result.text_range_count = text_count;
-                for (size_t index = 0u; index < text_count; ++index) {
+            if (prepared_text.range_count != 0u) {
+                result.text_ranges = arena_alloc<TextDrawRange>(arena, prepared_text.range_count);
+                result.text_range_count = prepared_text.range_count;
+                for (size_t index = 0u; index < prepared_text.range_count; ++index) {
                     result.text_ranges[index] = {};
                 }
             }
             if (text_vertex_count != 0u) {
-                result.text_draw_capacity = text_vertex_count / 6u;
+                result.text_draw_capacity = prepared_text.piece_count;
                 result.text_draws = arena_alloc<TextDraw>(arena, result.text_draw_capacity);
             }
 
@@ -727,7 +706,7 @@ namespace gui::draw {
 
                 uint32_t text_vertex = static_cast<uint32_t>(primitive_vertex_count);
                 RenderVertex* text_vertices = vertices + primitive_vertex_count;
-                for (size_t index = 0u; index < text_count; ++index) {
+                for (size_t index = 0u; index < prepared_text.range_count; ++index) {
                     TextCommand const* const command = text_command(draw_context, index);
                     ASSERT(command != nullptr);
                     TextDrawRange* const range =
@@ -735,23 +714,13 @@ namespace gui::draw {
                     if (range != nullptr) {
                         range->first_draw = result.text_draw_count;
                     }
-                    if (!text_command_visible(*command)) {
-                        continue;
-                    }
 
-                    for (size_t glyph_index = 0u; glyph_index < command->run.glyph_count;
-                         ++glyph_index) {
-                        font_cache::TextGlyph const& glyph = command->run.glyphs[glyph_index];
-                        if (!glyph_visible(glyph)) {
-                            continue;
-                        }
-
-                        TextAtlasPiece piece = {};
-                        if (!text_atlas_piece(renderer.text_atlas, *command, glyph, piece)) {
-                            continue;
-                        }
-
-                        write_text_vertices(text_vertices, target, *command, glyph, piece);
+                    TextAtlasPieceRange const& piece_range = prepared_text.ranges[index];
+                    for (size_t piece_index = 0u; piece_index < piece_range.piece_count;
+                         ++piece_index) {
+                        TextAtlasPiece const& piece =
+                            prepared_text.pieces[piece_range.first_piece + piece_index];
+                        write_text_vertices(text_vertices, target, *command, piece);
                         if (range != nullptr) {
                             append_text_draw(result, *range, text_vertex, piece);
                         }
@@ -1417,6 +1386,7 @@ namespace gui::draw {
             RenderTarget target,
             Context draw_context,
             LayerRender const* layer_renders,
+            bool target_allows_lcd_text,
             size_t first_command,
             size_t end_command
         ) -> void;
@@ -1487,6 +1457,7 @@ namespace gui::draw {
                 target,
                 draw_context,
                 layer_renders,
+                false,
                 layer->begin_command_index + 1u,
                 layer->end_command_index
             );
@@ -1567,16 +1538,26 @@ namespace gui::draw {
             RenderTarget target,
             Context draw_context,
             LayerRender const* layer_renders,
+            bool target_allows_lcd_text,
             size_t first_command,
             size_t end_command
         ) -> void {
-            bool const atlas_ready = prepare_text_atlas(
-                renderer.text_atlas, render_context, draw_context, first_command, end_command
-            );
-            BASE_UNUSED(atlas_ready);
             ArenaTemp temp = begin_thread_temp_arena();
-            DrawUpload const upload =
-                upload_draw_vertices(*temp.arena(), render_context, renderer, target, draw_context);
+            PreparedText prepared_text = {};
+            bool const text_ready = prepare_text_pieces(
+                *temp.arena(),
+                renderer.text_atlas,
+                render_context,
+                draw_context,
+                first_command,
+                end_command,
+                target_allows_lcd_text,
+                prepared_text
+            );
+            BASE_UNUSED(text_ready);
+            DrawUpload const upload = upload_draw_vertices(
+                *temp.arena(), render_context, target, draw_context, prepared_text
+            );
             gui::render::commit_frame_uploads(render_context);
 
             TextRenderState text_state = {};
@@ -2461,7 +2442,10 @@ PSInput vs_main(VSInput input)
             return result;
         }
 
-        result = gui::render::create_sampler(render_context, renderer->text_sampler);
+        gui::render::SamplerDesc text_sampler_desc = {};
+        text_sampler_desc.filter = gui::render::SamplerFilter::NEAREST;
+        result =
+            gui::render::create_sampler(render_context, text_sampler_desc, renderer->text_sampler);
         if (gui::render::result_failed(result)) {
             destroy_renderer_resources(render_context, renderer);
             return result;
@@ -2476,7 +2460,7 @@ PSInput vs_main(VSInput input)
         }
 
         result = create_text_atlas(
-            arena, render_context, desc.text_texture_cache_capacity, renderer->text_atlas
+            arena, render_context, desc.text_atlas_slot_count, renderer->text_atlas
         );
         if (gui::render::result_failed(result)) {
             destroy_renderer_resources(render_context, renderer);
@@ -2527,7 +2511,7 @@ PSInput vs_main(VSInput input)
 
         RenderTarget const target = {target_size, {}};
         render_command_range(
-            *impl, render_context, target, draw_context, nullptr, 0u, command_total
+            *impl, render_context, target, draw_context, nullptr, true, 0u, command_total
         );
     }
 
@@ -2575,6 +2559,7 @@ PSInput vs_main(VSInput input)
             target,
             draw_context,
             layer_renders,
+            true,
             0u,
             command_count(draw_context)
         );

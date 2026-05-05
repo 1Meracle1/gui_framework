@@ -26,20 +26,17 @@ namespace gui::font_cache {
     struct TextGlyph {
         font_provider::Font font = {};
         uint16_t glyph_index = 0u;
-        uint32_t cluster = 0u;
         float size = 0.0f;
+        font_provider::RasterPolicy raster_policy = font_provider::RasterPolicy::SHARP_HINTED;
         float x = 0.0f;
         float advance = 0.0f;
         float offset_x = 0.0f;
         float offset_y = 0.0f;
-        font_provider::GlyphRaster raster = {};
     };
 
     struct TextRun {
         font_provider::SizeU32 size = {};
-        uint32_t stride = 0u;
-        uint8_t const* pixels = nullptr;
-        font_provider::RasterFormat format = font_provider::RasterFormat::ALPHA;
+        font_provider::RasterPolicy raster_policy = font_provider::RasterPolicy::SHARP_HINTED;
         float advance = 0.0f;
         float origin_x = 0.0f;
         float origin_y = 0.0f;
@@ -66,8 +63,23 @@ namespace gui::font_cache {
     [[nodiscard]] auto text_advance(Font font, float size, StrRef text) -> float;
 
     auto text_run(Cache cache, Font font, float size, StrRef text, TextRun& out_run) -> void;
+    auto text_run(
+        Cache cache,
+        Font font,
+        float size,
+        StrRef text,
+        font_provider::RasterPolicy raster_policy,
+        TextRun& out_run
+    ) -> void;
     [[nodiscard]] auto
     glyph_raster(Font font, TextGlyph const& glyph, uint8_t phase_x, uint8_t phase_y)
         -> font_provider::GlyphRaster;
+    [[nodiscard]] auto glyph_raster(
+        Font font,
+        TextGlyph const& glyph,
+        font_provider::RasterPolicy raster_policy,
+        uint8_t phase_x,
+        uint8_t phase_y
+    ) -> font_provider::GlyphRaster;
 
 } // namespace gui::font_cache

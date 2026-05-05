@@ -79,13 +79,18 @@ namespace gui::font_provider::platform {
         }
     }
 
-    auto
-    raster_glyph(Font font, float size, uint16_t glyph_index, Arena& arena, GlyphRaster& out_raster)
-        -> void {
+    auto raster_glyph(
+        Font font,
+        float size,
+        uint16_t glyph_index,
+        RasterPolicy raster_policy,
+        Arena& arena,
+        GlyphRaster& out_raster
+    ) -> void {
         if (font.backend == Backend::FREETYPE) {
-            freetype::raster_glyph(font, size, glyph_index, arena, out_raster);
+            freetype::raster_glyph(font, size, glyph_index, raster_policy, arena, out_raster);
         } else {
-            dwrite::raster_glyph(font, size, glyph_index, arena, out_raster);
+            dwrite::raster_glyph(font, size, glyph_index, raster_policy, arena, out_raster);
         }
     }
 
@@ -93,15 +98,20 @@ namespace gui::font_provider::platform {
         Font font,
         float size,
         uint16_t glyph_index,
+        RasterPolicy raster_policy,
         uint8_t phase_x,
         uint8_t phase_y,
         Arena& arena,
         GlyphRaster& out_raster
     ) -> void {
         if (font.backend == Backend::FREETYPE) {
-            freetype::raster_glyph(font, size, glyph_index, phase_x, phase_y, arena, out_raster);
+            freetype::raster_glyph(
+                font, size, glyph_index, raster_policy, phase_x, phase_y, arena, out_raster
+            );
         } else {
-            dwrite::raster_glyph(font, size, glyph_index, phase_x, phase_y, arena, out_raster);
+            dwrite::raster_glyph(
+                font, size, glyph_index, raster_policy, phase_x, phase_y, arena, out_raster
+            );
         }
     }
 

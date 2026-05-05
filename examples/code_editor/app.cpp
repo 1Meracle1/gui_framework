@@ -198,7 +198,7 @@ namespace code_editor {
     [[nodiscard]] auto
     create_runtime(Arena& arena, ModuleRuntimeContext const& context, Runtime* runtime) -> bool {
         draw::RendererDesc renderer_desc = {};
-        renderer_desc.text_texture_cache_capacity = 4096u;
+        renderer_desc.text_atlas_slot_count = 4096u;
         render::Result render_result = draw::create_renderer(
             arena, context.render_context, renderer_desc, runtime->draw_renderer
         );
@@ -208,7 +208,7 @@ namespace code_editor {
         }
 
         font_provider::ContextDesc font_desc = {};
-        font_desc.backend = font_provider::Backend::FREETYPE;
+        font_desc.backend = font_provider::Backend::DWRITE;
         font_provider::Result font_result =
             font_provider::create_context(arena, font_desc, runtime->provider);
         if (font_provider::result_failed(font_result)) {

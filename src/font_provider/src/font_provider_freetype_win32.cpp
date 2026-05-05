@@ -231,9 +231,6 @@ namespace gui::font_provider::platform::freetype {
                 glyph = {};
                 glyph.font = font_handle(font);
                 glyph.glyph_index = glyph_index_u16(glyph_index);
-                glyph.cluster = offset <= static_cast<size_t>(std::numeric_limits<uint32_t>::max())
-                                    ? static_cast<uint32_t>(offset)
-                                    : std::numeric_limits<uint32_t>::max();
                 glyph.size = size;
                 glyph.x = pen_x;
                 glyph.advance = advance;
@@ -517,11 +514,17 @@ namespace gui::font_provider::platform::freetype {
         shape_text(impl, size, text, arena, out_text);
     }
 
-    auto
-    raster_glyph(Font font, float size, uint16_t glyph_index, Arena& arena, GlyphRaster& out_raster)
-        -> void {
+    auto raster_glyph(
+        Font font,
+        float size,
+        uint16_t glyph_index,
+        RasterPolicy raster_policy,
+        Arena& arena,
+        GlyphRaster& out_raster
+    ) -> void {
         FontImpl* const impl = font_from_handle(font);
         ASSERT(impl != nullptr);
+        BASE_UNUSED(raster_policy);
         raster_glyph(impl, size, glyph_index, 0u, 0u, arena, out_raster);
     }
 
@@ -529,6 +532,7 @@ namespace gui::font_provider::platform::freetype {
         Font font,
         float size,
         uint16_t glyph_index,
+        RasterPolicy raster_policy,
         uint8_t phase_x,
         uint8_t phase_y,
         Arena& arena,
@@ -536,6 +540,7 @@ namespace gui::font_provider::platform::freetype {
     ) -> void {
         FontImpl* const impl = font_from_handle(font);
         ASSERT(impl != nullptr);
+        BASE_UNUSED(raster_policy);
         raster_glyph(impl, size, glyph_index, phase_x, phase_y, arena, out_raster);
     }
 

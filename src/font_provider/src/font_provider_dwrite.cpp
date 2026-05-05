@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <base/config.h>
 #include <base/memory.h>
+#include <base/unicode.h>
 #include <cmath>
 #include <cstring>
 #include <dwrite.h>
@@ -29,11 +30,7 @@ namespace gui::font_provider::platform::dwrite {
         constexpr DWRITE_GRID_FIT_MODE TEXT_GRID_FIT_MODE = DWRITE_GRID_FIT_MODE_ENABLED;
         constexpr DWRITE_TEXT_ANTIALIAS_MODE TEXT_ANTIALIAS_MODE =
             DWRITE_TEXT_ANTIALIAS_MODE_GRAYSCALE;
-        constexpr DWRITE_TEXT_ANTIALIAS_MODE TEXT_LCD_ANTIALIAS_MODE =
-            DWRITE_TEXT_ANTIALIAS_MODE_CLEARTYPE;
-        constexpr DWRITE_TEXTURE_TYPE TEXT_BOUNDS_TYPE = DWRITE_TEXTURE_ALIASED_1x1;
-        constexpr DWRITE_TEXTURE_TYPE TEXT_LCD_TEXTURE_TYPE = DWRITE_TEXTURE_CLEARTYPE_3x1;
-        constexpr float TEXT_LCD_MAX_SIZE = 20.0f;
+        constexpr DWRITE_TEXTURE_TYPE TEXT_ALPHA_BOUNDS_TYPE = DWRITE_TEXTURE_ALIASED_1x1;
         constexpr LONG GLYPH_RASTER_PADDING = 1;
         constexpr float TEXT_PADDING = 2.0f;
 
@@ -44,246 +41,15 @@ namespace gui::font_provider::platform::dwrite {
             IDWriteFactory* factory = nullptr;
             IDWriteFactory2* factory2 = nullptr;
             IDWriteGdiInterop* gdi_interop = nullptr;
-            IDWriteFontFallback* font_fallback = nullptr;
-            IDWriteTextAnalyzer* analyzer = nullptr;
             IDWriteRenderingParams* rendering_params = nullptr;
             IDWriteBitmapRenderTarget* bitmap_target = nullptr;
             IDWriteBitmapRenderTarget1* bitmap_target1 = nullptr;
-            FontImpl* first_fallback_font = nullptr;
-        };
-
-        struct FontFaceIdentity {
-            IUnknown* loader_identity = nullptr;
-            uint8_t* key = nullptr;
-            uint32_t key_size = 0u;
-            uint32_t face_index = 0u;
-            DWRITE_FONT_SIMULATIONS simulations = DWRITE_FONT_SIMULATIONS_NONE;
-            bool valid = false;
         };
 
         struct FontImpl {
-            FontImpl* next_fallback = nullptr;
             ContextImpl* context = nullptr;
-            IDWriteFontCollection* font_collection = nullptr;
-            IDWriteFont* dwrite_font = nullptr;
-            FontFaceIdentity face_identity = {};
             IDWriteFontFile* font_file = nullptr;
             IDWriteFontFace* font_face = nullptr;
-            wchar_t* family_name = nullptr;
-        };
-
-        struct ScriptRun {
-            uint32_t start = 0u;
-            uint32_t length = 0u;
-            DWRITE_SCRIPT_ANALYSIS script = {};
-        };
-
-        struct BidiRun {
-            uint32_t start = 0u;
-            uint32_t length = 0u;
-            uint8_t level = 0u;
-        };
-
-        struct FontRun {
-            uint32_t start = 0u;
-            uint32_t length = 0u;
-            FontImpl* font = nullptr;
-            float size = 0.0f;
-        };
-
-        struct ShapeRun {
-            uint32_t start = 0u;
-            uint32_t length = 0u;
-            DWRITE_SCRIPT_ANALYSIS script = {};
-            uint8_t bidi_level = 0u;
-            FontImpl* font = nullptr;
-            float size = 0.0f;
-        };
-
-        struct TextAnalysisSource final : IDWriteTextAnalysisSource {
-            wchar_t const* text = nullptr;
-            uint32_t text_length = 0u;
-            ULONG ref_count = 1u;
-
-            auto STDMETHODCALLTYPE QueryInterface(REFIID iid, void** object) -> HRESULT override {
-                if (object == nullptr) {
-                    return E_POINTER;
-                }
-
-                if (IsEqualGUID(iid, __uuidof(IUnknown)) ||
-                    IsEqualGUID(iid, __uuidof(IDWriteTextAnalysisSource))) {
-                    *object = this;
-                    AddRef();
-                    return S_OK;
-                }
-
-                *object = nullptr;
-                return E_NOINTERFACE;
-            }
-
-            auto STDMETHODCALLTYPE AddRef() -> ULONG override {
-                ref_count += 1u;
-                return ref_count;
-            }
-
-            auto STDMETHODCALLTYPE Release() -> ULONG override {
-                ref_count -= 1u;
-                return ref_count;
-            }
-
-            auto STDMETHODCALLTYPE
-            GetTextAtPosition(UINT32 text_position, WCHAR const** out_text, UINT32* out_length)
-                -> HRESULT override {
-                if (out_text == nullptr || out_length == nullptr) {
-                    return E_POINTER;
-                }
-
-                if (text_position >= text_length) {
-                    *out_text = nullptr;
-                    *out_length = 0u;
-                    return S_OK;
-                }
-
-                *out_text = text + text_position;
-                *out_length = text_length - text_position;
-                return S_OK;
-            }
-
-            auto STDMETHODCALLTYPE
-            GetTextBeforePosition(UINT32 text_position, WCHAR const** out_text, UINT32* out_length)
-                -> HRESULT override {
-                if (out_text == nullptr || out_length == nullptr) {
-                    return E_POINTER;
-                }
-
-                if (text_position == 0u || text_position > text_length) {
-                    *out_text = nullptr;
-                    *out_length = 0u;
-                    return S_OK;
-                }
-
-                *out_text = text;
-                *out_length = text_position;
-                return S_OK;
-            }
-
-            auto STDMETHODCALLTYPE GetParagraphReadingDirection()
-                -> DWRITE_READING_DIRECTION override {
-                return DWRITE_READING_DIRECTION_LEFT_TO_RIGHT;
-            }
-
-            auto STDMETHODCALLTYPE
-            GetLocaleName(UINT32 text_position, UINT32* out_length, WCHAR const** out_locale)
-                -> HRESULT override {
-                if (out_length == nullptr || out_locale == nullptr) {
-                    return E_POINTER;
-                }
-
-                static wchar_t const LOCALE_NAME[] = L"en-us";
-                *out_locale = LOCALE_NAME;
-                *out_length = text_position < text_length ? text_length - text_position : 0u;
-                return S_OK;
-            }
-
-            auto STDMETHODCALLTYPE GetNumberSubstitution(
-                UINT32 text_position,
-                UINT32* out_length,
-                IDWriteNumberSubstitution** out_substitution
-            ) -> HRESULT override {
-                if (out_length == nullptr || out_substitution == nullptr) {
-                    return E_POINTER;
-                }
-
-                *out_substitution = nullptr;
-                *out_length = text_position < text_length ? text_length - text_position : 0u;
-                return S_OK;
-            }
-        };
-
-        struct TextAnalysisSink final : IDWriteTextAnalysisSink {
-            ScriptRun* script_runs = nullptr;
-            uint32_t script_run_capacity = 0u;
-            uint32_t script_run_count = 0u;
-            BidiRun* bidi_runs = nullptr;
-            uint32_t bidi_run_capacity = 0u;
-            uint32_t bidi_run_count = 0u;
-            ULONG ref_count = 1u;
-
-            auto STDMETHODCALLTYPE QueryInterface(REFIID iid, void** object) -> HRESULT override {
-                if (object == nullptr) {
-                    return E_POINTER;
-                }
-
-                if (IsEqualGUID(iid, __uuidof(IUnknown)) ||
-                    IsEqualGUID(iid, __uuidof(IDWriteTextAnalysisSink))) {
-                    *object = this;
-                    AddRef();
-                    return S_OK;
-                }
-
-                *object = nullptr;
-                return E_NOINTERFACE;
-            }
-
-            auto STDMETHODCALLTYPE AddRef() -> ULONG override {
-                ref_count += 1u;
-                return ref_count;
-            }
-
-            auto STDMETHODCALLTYPE Release() -> ULONG override {
-                ref_count -= 1u;
-                return ref_count;
-            }
-
-            auto STDMETHODCALLTYPE SetScriptAnalysis(
-                UINT32 text_position,
-                UINT32 text_length,
-                DWRITE_SCRIPT_ANALYSIS const* script_analysis
-            ) -> HRESULT override {
-                if (script_analysis == nullptr) {
-                    return E_POINTER;
-                }
-                if (script_run_count >= script_run_capacity) {
-                    return E_FAIL;
-                }
-
-                script_runs[script_run_count] = {text_position, text_length, *script_analysis};
-                script_run_count += 1u;
-                return S_OK;
-            }
-
-            auto STDMETHODCALLTYPE SetLineBreakpoints(
-                UINT32 text_position,
-                UINT32 text_length,
-                DWRITE_LINE_BREAKPOINT const* line_breakpoints
-            ) -> HRESULT override {
-                BASE_UNUSED(text_position);
-                BASE_UNUSED(text_length);
-                BASE_UNUSED(line_breakpoints);
-                return S_OK;
-            }
-
-            auto STDMETHODCALLTYPE SetBidiLevel(
-                UINT32 text_position, UINT32 text_length, UINT8 explicit_level, UINT8 resolved_level
-            ) -> HRESULT override {
-                BASE_UNUSED(explicit_level);
-                if (bidi_run_count >= bidi_run_capacity) {
-                    return E_FAIL;
-                }
-
-                bidi_runs[bidi_run_count] = {text_position, text_length, resolved_level};
-                bidi_run_count += 1u;
-                return S_OK;
-            }
-
-            auto STDMETHODCALLTYPE SetNumberSubstitution(
-                UINT32 text_position, UINT32 text_length, IDWriteNumberSubstitution* substitution
-            ) -> HRESULT override {
-                BASE_UNUSED(text_position);
-                BASE_UNUSED(text_length);
-                BASE_UNUSED(substitution);
-                return S_OK;
-            }
         };
 
         template <typename T> auto release_com(T*& value) -> void {
@@ -376,450 +142,10 @@ namespace gui::font_provider::platform::dwrite {
             return true;
         }
 
-        [[nodiscard]] auto copy_wide(Arena& arena, wchar_t const* text, int text_len) -> wchar_t* {
-            ASSERT(text != nullptr);
-            ASSERT(text_len >= 0);
-
-            wchar_t* const result = arena_alloc<wchar_t>(arena, static_cast<size_t>(text_len) + 1u);
-            std::memcpy(result, text, sizeof(wchar_t) * static_cast<size_t>(text_len));
-            result[text_len] = L'\0';
-            return result;
-        }
-
         [[nodiscard]] auto metrics_scale(DWRITE_FONT_METRICS const& metrics, float size) -> float;
 
         [[nodiscard]] auto font_handle(FontImpl* font) -> Font {
             return {font, Backend::DWRITE};
-        }
-
-        [[nodiscard]] auto run_end(uint32_t start, uint32_t length) -> uint32_t {
-            return start + length;
-        }
-
-        [[nodiscard]] auto glyph_buffer_capacity(uint32_t text_length) -> uint32_t {
-            ASSERT(text_length <= (std::numeric_limits<uint32_t>::max() - 16u) / 3u);
-            return (text_length * 3u) + 16u;
-        }
-
-        [[nodiscard]] auto is_high_surrogate(wchar_t value) -> bool {
-            return value >= 0xd800 && value <= 0xdbff;
-        }
-
-        [[nodiscard]] auto is_low_surrogate(wchar_t value) -> bool {
-            return value >= 0xdc00 && value <= 0xdfff;
-        }
-
-        auto utf16_codepoint_at(
-            wchar_t const* text,
-            uint32_t text_length,
-            uint32_t text_position,
-            uint32_t& out_codepoint,
-            uint32_t& out_length
-        ) -> void {
-            ASSERT(text != nullptr);
-            ASSERT(text_position < text_length);
-
-            wchar_t const first = text[text_position];
-            if (is_high_surrogate(first) && text_position + 1u < text_length &&
-                is_low_surrogate(text[text_position + 1u])) {
-                uint32_t const high = static_cast<uint32_t>(first) - 0xd800u;
-                uint32_t const low = static_cast<uint32_t>(text[text_position + 1u]) - 0xdc00u;
-                out_codepoint = 0x10000u + ((high << 10u) | low);
-                out_length = 2u;
-                return;
-            }
-
-            out_codepoint = static_cast<uint32_t>(first);
-            out_length = 1u;
-        }
-
-        auto utf16_codepoint_before(
-            wchar_t const* text,
-            uint32_t text_position,
-            uint32_t& out_start,
-            uint32_t& out_codepoint,
-            uint32_t& out_length
-        ) -> void {
-            ASSERT(text != nullptr);
-            ASSERT(text_position != 0u);
-
-            out_start = text_position - 1u;
-            if (out_start != 0u && is_low_surrogate(text[out_start]) &&
-                is_high_surrogate(text[out_start - 1u])) {
-                out_start -= 1u;
-            }
-            wchar_t const first = text[out_start];
-            if (is_high_surrogate(first) && out_start + 1u < text_position &&
-                is_low_surrogate(text[out_start + 1u])) {
-                uint32_t const high = static_cast<uint32_t>(first) - 0xd800u;
-                uint32_t const low = static_cast<uint32_t>(text[out_start + 1u]) - 0xdc00u;
-                out_codepoint = 0x10000u + ((high << 10u) | low);
-                out_length = 2u;
-                return;
-            }
-
-            out_codepoint = static_cast<uint32_t>(first);
-            out_length = 1u;
-        }
-
-        [[nodiscard]] auto is_combining_codepoint(uint32_t codepoint) -> bool {
-            return (codepoint >= 0x0300u && codepoint <= 0x036fu) ||
-                   (codepoint >= 0x0591u && codepoint <= 0x05bdu) || codepoint == 0x05bfu ||
-                   (codepoint >= 0x05c1u && codepoint <= 0x05c2u) ||
-                   (codepoint >= 0x05c4u && codepoint <= 0x05c5u) || codepoint == 0x05c7u ||
-                   (codepoint >= 0x0610u && codepoint <= 0x061au) ||
-                   (codepoint >= 0x064bu && codepoint <= 0x065fu) || codepoint == 0x0670u ||
-                   (codepoint >= 0x06d6u && codepoint <= 0x06edu) ||
-                   (codepoint >= 0x1ab0u && codepoint <= 0x1affu) ||
-                   (codepoint >= 0x1dc0u && codepoint <= 0x1dffu) ||
-                   (codepoint >= 0x20d0u && codepoint <= 0x20ffu) ||
-                   (codepoint >= 0xfe20u && codepoint <= 0xfe2fu);
-        }
-
-        [[nodiscard]] auto is_variation_selector(uint32_t codepoint) -> bool {
-            return (codepoint >= 0xfe00u && codepoint <= 0xfe0fu) ||
-                   (codepoint >= 0xe0100u && codepoint <= 0xe01efu);
-        }
-
-        [[nodiscard]] auto is_cluster_extender(uint32_t codepoint) -> bool {
-            return is_combining_codepoint(codepoint) || is_variation_selector(codepoint) ||
-                   (codepoint >= 0x1f3fbu && codepoint <= 0x1f3ffu);
-        }
-
-        [[nodiscard]] auto
-        grapheme_cluster_start(wchar_t const* text, uint32_t text_length, uint32_t text_position)
-            -> uint32_t {
-            uint32_t start = text_position;
-            for (;;) {
-                uint32_t codepoint = 0u;
-                uint32_t codepoint_length = 0u;
-                utf16_codepoint_at(text, text_length, start, codepoint, codepoint_length);
-                BASE_UNUSED(codepoint_length);
-                if (start == 0u) {
-                    return start;
-                }
-
-                uint32_t previous_start = 0u;
-                uint32_t previous_codepoint = 0u;
-                uint32_t previous_length = 0u;
-                utf16_codepoint_before(
-                    text, start, previous_start, previous_codepoint, previous_length
-                );
-                BASE_UNUSED(previous_length);
-                if (!is_cluster_extender(codepoint) && codepoint != 0x200du &&
-                    previous_codepoint != 0x200du) {
-                    return start;
-                }
-                start = previous_start;
-            }
-        }
-
-        [[nodiscard]] auto
-        grapheme_cluster_end(wchar_t const* text, uint32_t text_length, uint32_t text_position)
-            -> uint32_t {
-            uint32_t position = text_position;
-            while (position < text_length) {
-                uint32_t codepoint = 0u;
-                uint32_t codepoint_length = 0u;
-                utf16_codepoint_at(text, text_length, position, codepoint, codepoint_length);
-                BASE_UNUSED(codepoint);
-                position += codepoint_length;
-
-                for (;;) {
-                    if (position >= text_length) {
-                        return position;
-                    }
-
-                    uint32_t next_codepoint = 0u;
-                    uint32_t next_length = 0u;
-                    utf16_codepoint_at(text, text_length, position, next_codepoint, next_length);
-                    if (!is_cluster_extender(next_codepoint)) {
-                        break;
-                    }
-                    position += next_length;
-                }
-
-                if (position >= text_length) {
-                    return position;
-                }
-
-                uint32_t next_codepoint = 0u;
-                uint32_t next_length = 0u;
-                utf16_codepoint_at(text, text_length, position, next_codepoint, next_length);
-                if (next_codepoint != 0x200du) {
-                    return position;
-                }
-                position += next_length;
-            }
-
-            return position;
-        }
-
-        auto build_glyph_clusters(
-            uint16_t const* cluster_map,
-            uint32_t text_length,
-            uint32_t glyph_count,
-            bool right_to_left,
-            uint32_t* logical_clusters,
-            uint32_t* glyph_clusters
-        ) -> void {
-            constexpr uint32_t INVALID_CLUSTER = UINT32_MAX;
-            for (uint32_t index = 0u; index < glyph_count; ++index) {
-                logical_clusters[index] = INVALID_CLUSTER;
-                glyph_clusters[index] = INVALID_CLUSTER;
-            }
-            for (uint32_t index = 0u; index < text_length; ++index) {
-                uint32_t const glyph_index = cluster_map[index];
-                if (glyph_index < glyph_count) {
-                    logical_clusters[glyph_index] = std::min(logical_clusters[glyph_index], index);
-                }
-            }
-
-            uint32_t start = 0u;
-            while (start < glyph_count) {
-                while (start < glyph_count && logical_clusters[start] == INVALID_CLUSTER) {
-                    start += 1u;
-                }
-                if (start >= glyph_count) {
-                    break;
-                }
-
-                uint32_t end = start + 1u;
-                while (end < glyph_count && logical_clusters[end] == INVALID_CLUSTER) {
-                    end += 1u;
-                }
-
-                uint32_t const out_start = right_to_left ? glyph_count - end : start;
-                uint32_t const out_end = right_to_left ? glyph_count - start : end;
-                for (uint32_t index = out_start; index < out_end; ++index) {
-                    glyph_clusters[index] = logical_clusters[start];
-                }
-                start = end;
-            }
-
-            uint32_t cluster = 0u;
-            for (uint32_t index = 0u; index < glyph_count; ++index) {
-                if (glyph_clusters[index] == INVALID_CLUSTER) {
-                    glyph_clusters[index] = cluster;
-                } else {
-                    cluster = glyph_clusters[index];
-                }
-            }
-        }
-
-        [[nodiscard]] auto font_supports_codepoint(FontImpl* font, uint32_t codepoint) -> bool {
-            ASSERT(font != nullptr);
-            ASSERT(font->font_face != nullptr);
-
-            UINT32 const dwrite_codepoint = codepoint;
-            UINT16 glyph_index = 0u;
-            HRESULT const hr =
-                font->font_face->GetGlyphIndices(&dwrite_codepoint, 1u, &glyph_index);
-            ASSERT(SUCCEEDED(hr));
-            BASE_UNUSED(hr);
-            return glyph_index != 0u;
-        }
-
-        auto fallback_script_run(ScriptRun* runs, uint32_t text_length, uint32_t& run_count)
-            -> void {
-            if (run_count == 0u) {
-                runs[0u] = {0u, text_length, {}};
-                run_count = 1u;
-            }
-        }
-
-        auto fallback_bidi_run(BidiRun* runs, uint32_t text_length, uint32_t& run_count) -> void {
-            if (run_count == 0u) {
-                runs[0u] = {0u, text_length, 0u};
-                run_count = 1u;
-            }
-        }
-
-        [[nodiscard]] auto is_rtl(uint8_t bidi_level) -> BOOL {
-            return (bidi_level & 1u) != 0u ? TRUE : FALSE;
-        }
-
-        auto append_shape_run(
-            ShapeRun* runs,
-            uint32_t& run_count,
-            uint32_t start,
-            uint32_t length,
-            DWRITE_SCRIPT_ANALYSIS script,
-            uint8_t bidi_level,
-            FontImpl* font,
-            float size
-        ) -> void {
-            if (length == 0u) {
-                return;
-            }
-
-            runs[run_count] = {start, length, script, bidi_level, font, size};
-            run_count += 1u;
-        }
-
-        auto build_shape_runs(
-            ScriptRun const* script_runs,
-            uint32_t script_run_count,
-            FontRun const* font_runs,
-            uint32_t font_run_count,
-            BidiRun const* bidi_runs,
-            uint32_t bidi_run_count,
-            ShapeRun* shape_runs,
-            uint32_t& shape_run_count
-        ) -> void {
-            shape_run_count = 0u;
-            uint32_t script_index = 0u;
-            uint32_t font_index = 0u;
-            uint32_t bidi_index = 0u;
-
-            while (script_index < script_run_count && font_index < font_run_count &&
-                   bidi_index < bidi_run_count) {
-                ScriptRun const& script_run = script_runs[script_index];
-                FontRun const& font_run = font_runs[font_index];
-                BidiRun const& bidi_run = bidi_runs[bidi_index];
-                uint32_t const script_end = run_end(script_run.start, script_run.length);
-                uint32_t const font_end = run_end(font_run.start, font_run.length);
-                uint32_t const bidi_end = run_end(bidi_run.start, bidi_run.length);
-                uint32_t const run_start =
-                    std::max(std::max(script_run.start, font_run.start), bidi_run.start);
-                uint32_t const run_end_pos = std::min(std::min(script_end, font_end), bidi_end);
-
-                if (run_start < run_end_pos) {
-                    append_shape_run(
-                        shape_runs,
-                        shape_run_count,
-                        run_start,
-                        run_end_pos - run_start,
-                        script_run.script,
-                        bidi_run.level,
-                        font_run.font,
-                        font_run.size
-                    );
-                }
-
-                script_index += script_end == run_end_pos ? 1u : 0u;
-                font_index += font_end == run_end_pos ? 1u : 0u;
-                bidi_index += bidi_end == run_end_pos ? 1u : 0u;
-            }
-        }
-
-        auto reorder_shape_runs(ShapeRun* runs, uint32_t run_count) -> void {
-            if (run_count == 0u) {
-                return;
-            }
-
-            uint8_t max_level = 0u;
-            uint8_t min_odd_level = UINT8_MAX;
-            for (uint32_t index = 0u; index < run_count; ++index) {
-                max_level = std::max(max_level, runs[index].bidi_level);
-                if ((runs[index].bidi_level & 1u) != 0u) {
-                    min_odd_level = std::min(min_odd_level, runs[index].bidi_level);
-                }
-            }
-            if (min_odd_level == UINT8_MAX) {
-                return;
-            }
-
-            uint8_t level = max_level;
-            for (;;) {
-                uint32_t index = 0u;
-                while (index < run_count) {
-                    while (index < run_count && runs[index].bidi_level < level) {
-                        index += 1u;
-                    }
-                    uint32_t const start = index;
-                    while (index < run_count && runs[index].bidi_level >= level) {
-                        index += 1u;
-                    }
-                    std::reverse(runs + start, runs + index);
-                }
-                if (level == min_odd_level) {
-                    break;
-                }
-                level -= 1u;
-            }
-        }
-
-        auto release_face_identity(FontFaceIdentity& identity) -> void {
-            release_com(identity.loader_identity);
-            identity.key = nullptr;
-            identity.key_size = 0u;
-            identity.face_index = 0u;
-            identity.simulations = DWRITE_FONT_SIMULATIONS_NONE;
-            identity.valid = false;
-        }
-
-        auto init_face_identity(Arena& arena, IDWriteFontFace* face, FontFaceIdentity& out_identity)
-            -> void {
-            ASSERT(face != nullptr);
-
-            UINT32 file_count = 0u;
-            HRESULT hr = face->GetFiles(&file_count, nullptr);
-            ASSERT(SUCCEEDED(hr));
-            ASSERT(file_count != 0u);
-
-            ArenaTemp temp = begin_thread_temp_arena();
-            IDWriteFontFile** const files =
-                arena_alloc<IDWriteFontFile*>(*temp.arena(), file_count);
-            hr = face->GetFiles(&file_count, files);
-            ASSERT(SUCCEEDED(hr));
-
-            IDWriteFontFileLoader* loader = nullptr;
-            hr = files[0u]->GetLoader(&loader);
-            ASSERT(SUCCEEDED(hr));
-            ASSERT(loader != nullptr);
-
-            IUnknown* loader_identity = nullptr;
-            hr = loader->QueryInterface(
-                __uuidof(IUnknown), reinterpret_cast<void**>(&loader_identity)
-            );
-            ASSERT(SUCCEEDED(hr));
-            ASSERT(loader_identity != nullptr);
-
-            void const* key = nullptr;
-            UINT32 key_size = 0u;
-            hr = files[0u]->GetReferenceKey(&key, &key_size);
-            ASSERT(SUCCEEDED(hr));
-            ASSERT(key != nullptr);
-            ASSERT(key_size != 0u);
-
-            uint8_t* const key_copy = arena_alloc<uint8_t>(arena, key_size);
-            std::memcpy(key_copy, key, key_size);
-
-            release_face_identity(out_identity);
-            out_identity.loader_identity = loader_identity;
-            out_identity.key = key_copy;
-            out_identity.key_size = key_size;
-            out_identity.face_index = face->GetIndex();
-            out_identity.simulations = face->GetSimulations();
-            out_identity.valid = true;
-
-            release_com(loader);
-            for (UINT32 index = 0u; index < file_count; ++index) {
-                release_com(files[index]);
-            }
-        }
-
-        [[nodiscard]] auto
-        face_identity_equal(FontFaceIdentity const& lhs, FontFaceIdentity const& rhs) -> bool {
-            return lhs.valid && rhs.valid && lhs.loader_identity == rhs.loader_identity &&
-                   lhs.face_index == rhs.face_index && lhs.simulations == rhs.simulations &&
-                   lhs.key_size == rhs.key_size && std::memcmp(lhs.key, rhs.key, lhs.key_size) == 0;
-        }
-
-        auto init_font_identity_from_dwrite_font(
-            Arena& arena, IDWriteFont* font, FontFaceIdentity& out_identity
-        ) -> void {
-            ASSERT(font != nullptr);
-
-            IDWriteFontFace* face = nullptr;
-            HRESULT const hr = font->CreateFontFace(&face);
-            ASSERT(SUCCEEDED(hr));
-            ASSERT(face != nullptr);
-            BASE_UNUSED(hr);
-
-            init_face_identity(arena, face, out_identity);
-            release_com(face);
         }
 
         [[nodiscard]] auto create_font_impl(Arena& arena, ContextImpl* context) -> FontImpl* {
@@ -833,10 +159,6 @@ namespace gui::font_provider::platform::dwrite {
         auto destroy_font_impl(FontImpl* font) -> void {
             release_com(font->font_face);
             release_com(font->font_file);
-            release_face_identity(font->face_identity);
-            release_com(font->dwrite_font);
-            release_com(font->font_collection);
-            font->family_name = nullptr;
             font->context = nullptr;
         }
 
@@ -876,15 +198,6 @@ namespace gui::font_provider::platform::dwrite {
             if (SUCCEEDED(hr) && dwrite_font != nullptr) {
                 hr = dwrite_font->CreateFontFace(&font->font_face);
             }
-            if (SUCCEEDED(hr) && font->font_face != nullptr) {
-                font->font_collection = collection;
-                font->font_collection->AddRef();
-                font->dwrite_font = dwrite_font;
-                font->dwrite_font->AddRef();
-                init_face_identity(arena, font->font_face, font->face_identity);
-                font->family_name = copy_wide(arena, wide_family, wide_family_len);
-            }
-
             release_com(dwrite_font);
             release_com(family);
             release_com(collection);
@@ -923,10 +236,6 @@ namespace gui::font_provider::platform::dwrite {
                     face_type, 1u, font_files, 0u, DWRITE_FONT_SIMULATIONS_NONE, &font->font_face
                 );
             }
-            if (SUCCEEDED(hr) && font->font_face != nullptr) {
-                init_face_identity(arena, font->font_face, font->face_identity);
-            }
-
             BASE_UNUSED(file_type);
             ASSERT(SUCCEEDED(hr));
             ASSERT(supported != FALSE);
@@ -934,217 +243,6 @@ namespace gui::font_provider::platform::dwrite {
             ASSERT(font->font_face != nullptr);
 
             out_font.handle = font;
-        }
-
-        [[nodiscard]] auto fallback_font_from_dwrite_font(ContextImpl* context, IDWriteFont* source)
-            -> FontImpl* {
-            ASSERT(context != nullptr);
-            ASSERT(context->arena != nullptr);
-            ASSERT(source != nullptr);
-
-            ArenaTemp temp = begin_thread_temp_arena();
-            FontFaceIdentity source_identity = {};
-            init_font_identity_from_dwrite_font(*temp.arena(), source, source_identity);
-            for (FontImpl* font = context->first_fallback_font; font != nullptr;
-                 font = font->next_fallback) {
-                if (face_identity_equal(font->face_identity, source_identity)) {
-                    release_face_identity(source_identity);
-                    return font;
-                }
-            }
-
-            FontImpl* const font = create_font_impl(*context->arena, context);
-            font->dwrite_font = source;
-            font->dwrite_font->AddRef();
-            HRESULT const hr = source->CreateFontFace(&font->font_face);
-            ASSERT(SUCCEEDED(hr));
-            ASSERT(font->font_face != nullptr);
-            BASE_UNUSED(hr);
-            init_face_identity(*context->arena, font->font_face, font->face_identity);
-            release_face_identity(source_identity);
-
-            font->next_fallback = context->first_fallback_font;
-            context->first_fallback_font = font;
-            return font;
-        }
-
-        auto append_font_run(
-            FontRun* runs,
-            uint32_t& run_count,
-            uint32_t start,
-            uint32_t length,
-            FontImpl* font,
-            float size
-        ) -> void {
-            if (length == 0u) {
-                return;
-            }
-            if (run_count != 0u) {
-                FontRun& previous = runs[run_count - 1u];
-                if (previous.font == font && previous.size == size &&
-                    run_end(previous.start, previous.length) == start) {
-                    previous.length += length;
-                    return;
-                }
-            }
-
-            runs[run_count] = {start, length, font, size};
-            run_count += 1u;
-        }
-
-        [[nodiscard]] auto mapped_font_is_base(FontImpl* impl, IDWriteFont* mapped_font) -> bool {
-            ASSERT(impl != nullptr);
-            ASSERT(mapped_font != nullptr);
-
-            ArenaTemp temp = begin_thread_temp_arena();
-            FontFaceIdentity mapped_identity = {};
-            init_font_identity_from_dwrite_font(*temp.arena(), mapped_font, mapped_identity);
-            bool const result = face_identity_equal(impl->face_identity, mapped_identity);
-            release_face_identity(mapped_identity);
-            return result;
-        }
-
-        auto append_system_font_runs(
-            FontImpl* impl,
-            TextAnalysisSource* source,
-            uint32_t text_length,
-            float size,
-            FontRun* runs,
-            uint32_t& run_count
-        ) -> void {
-            uint32_t text_position = 0u;
-            while (text_position < text_length) {
-                UINT32 mapped_length = 0u;
-                IDWriteFont* mapped_font = nullptr;
-                FLOAT scale = 1.0f;
-                HRESULT const hr = impl->context->font_fallback->MapCharacters(
-                    source,
-                    text_position,
-                    text_length - text_position,
-                    impl->font_collection,
-                    impl->family_name,
-                    DWRITE_FONT_WEIGHT_REGULAR,
-                    DWRITE_FONT_STYLE_NORMAL,
-                    DWRITE_FONT_STRETCH_NORMAL,
-                    &mapped_length,
-                    &mapped_font,
-                    &scale
-                );
-                ASSERT(SUCCEEDED(hr));
-                ASSERT(mapped_length != 0u);
-                BASE_UNUSED(hr);
-
-                FontImpl* run_font = impl;
-                if (mapped_font != nullptr) {
-                    run_font = mapped_font_is_base(impl, mapped_font)
-                                   ? impl
-                                   : fallback_font_from_dwrite_font(impl->context, mapped_font);
-                }
-
-                append_font_run(
-                    runs, run_count, text_position, mapped_length, run_font, size * scale
-                );
-                release_com(mapped_font);
-                text_position += mapped_length;
-            }
-        }
-
-        auto append_file_font_runs(
-            FontImpl* impl,
-            TextAnalysisSource* source,
-            wchar_t const* wide_text,
-            uint32_t text_length,
-            float size,
-            FontRun* runs,
-            uint32_t& run_count
-        ) -> void {
-            uint32_t base_start = 0u;
-            uint32_t text_position = 0u;
-            while (text_position < text_length) {
-                uint32_t codepoint = 0u;
-                uint32_t codepoint_length = 0u;
-                utf16_codepoint_at(
-                    wide_text, text_length, text_position, codepoint, codepoint_length
-                );
-                if (font_supports_codepoint(impl, codepoint)) {
-                    text_position += codepoint_length;
-                    continue;
-                }
-
-                uint32_t const fallback_start =
-                    grapheme_cluster_start(wide_text, text_length, text_position);
-                uint32_t const fallback_end =
-                    grapheme_cluster_end(wide_text, text_length, fallback_start);
-                append_font_run(
-                    runs, run_count, base_start, fallback_start - base_start, impl, size
-                );
-
-                UINT32 mapped_length = 0u;
-                IDWriteFont* mapped_font = nullptr;
-                FLOAT scale = 1.0f;
-                HRESULT const hr = impl->context->font_fallback->MapCharacters(
-                    source,
-                    fallback_start,
-                    fallback_end - fallback_start,
-                    nullptr,
-                    nullptr,
-                    DWRITE_FONT_WEIGHT_REGULAR,
-                    DWRITE_FONT_STYLE_NORMAL,
-                    DWRITE_FONT_STRETCH_NORMAL,
-                    &mapped_length,
-                    &mapped_font,
-                    &scale
-                );
-                ASSERT(SUCCEEDED(hr));
-                ASSERT(mapped_length != 0u);
-                BASE_UNUSED(hr);
-
-                FontImpl* run_font =
-                    mapped_font != nullptr
-                        ? fallback_font_from_dwrite_font(impl->context, mapped_font)
-                        : impl;
-                append_font_run(
-                    runs,
-                    run_count,
-                    fallback_start,
-                    std::max(mapped_length, fallback_end - fallback_start),
-                    run_font,
-                    size * scale
-                );
-                release_com(mapped_font);
-                text_position = fallback_end;
-                base_start = text_position;
-            }
-
-            append_font_run(runs, run_count, base_start, text_length - base_start, impl, size);
-        }
-
-        auto build_font_runs(
-            FontImpl* impl,
-            TextAnalysisSource* source,
-            StrRef text,
-            wchar_t const* wide_text,
-            uint32_t text_length,
-            float size,
-            FontRun* runs,
-            uint32_t& run_count
-        ) -> void {
-            ASSERT(impl != nullptr);
-            ASSERT(source != nullptr);
-            ASSERT(runs != nullptr);
-
-            run_count = 0u;
-            if (text.is_ascii() || impl->context->font_fallback == nullptr) {
-                append_font_run(runs, run_count, 0u, text_length, impl, size);
-                return;
-            }
-
-            if (impl->font_collection != nullptr && impl->family_name != nullptr) {
-                append_system_font_runs(impl, source, text_length, size, runs, run_count);
-                return;
-            }
-
-            append_file_font_runs(impl, source, wide_text, text_length, size, runs, run_count);
         }
 
         [[nodiscard]] auto metrics_scale(DWRITE_FONT_METRICS const& metrics, float size) -> float {
@@ -1227,6 +325,11 @@ namespace gui::font_provider::platform::dwrite {
                 }
             }
 
+            HRESULT const pixels_hr = context->bitmap_target->SetPixelsPerDip(1.0f);
+            if (FAILED(pixels_hr)) {
+                return pixels_hr;
+            }
+
             return context->bitmap_target1->SetTextAntialiasMode(TEXT_ANTIALIAS_MODE);
         }
 
@@ -1288,218 +391,91 @@ namespace gui::font_provider::platform::dwrite {
             }
         }
 
-        auto lcd_texture_to_rgba(
-            uint8_t const* texture, uint32_t width, uint32_t height, uint8_t* pixels
-        ) -> void {
-            for (uint32_t y = 0u; y < height; ++y) {
-                uint8_t const* src = texture + (static_cast<size_t>(y) * width * 3u);
-                uint8_t* dst = pixels + (static_cast<size_t>(y) * width * 4u);
-                for (uint32_t x = 0u; x < width; ++x) {
-                    uint8_t const r = src[0u];
-                    uint8_t const g = src[1u];
-                    uint8_t const b = src[2u];
-                    dst[0u] = r;
-                    dst[1u] = g;
-                    dst[2u] = b;
-                    dst[3u] = std::max(r, std::max(g, b));
-                    src += 3u;
-                    dst += 4u;
-                }
-            }
+        [[nodiscard]] auto codepoint_glyph(FontImpl* impl, uint32_t codepoint) -> uint16_t {
+            ASSERT(impl != nullptr);
+            ASSERT(impl->font_face != nullptr);
+
+            UINT32 const dwrite_codepoint = codepoint;
+            UINT16 glyph_index = 0u;
+            HRESULT const hr =
+                impl->font_face->GetGlyphIndices(&dwrite_codepoint, 1u, &glyph_index);
+            ASSERT(SUCCEEDED(hr));
+            BASE_UNUSED(hr);
+            return glyph_index;
+        }
+
+        [[nodiscard]] auto glyph_advance(FontImpl* impl, float size, uint16_t glyph_index)
+            -> float {
+            ASSERT(impl != nullptr);
+            ASSERT(impl->font_face != nullptr);
+
+            DWRITE_FONT_METRICS font_metrics = {};
+            impl->font_face->GetMetrics(&font_metrics);
+
+            DWRITE_GLYPH_METRICS glyph_metrics = {};
+            HRESULT const hr = impl->font_face->GetGdiCompatibleGlyphMetrics(
+                size, 1.0f, nullptr, TRUE, &glyph_index, 1u, &glyph_metrics, FALSE
+            );
+            ASSERT(SUCCEEDED(hr));
+            BASE_UNUSED(hr);
+            return static_cast<float>(glyph_metrics.advanceWidth) *
+                   metrics_scale(font_metrics, size);
         }
 
         auto shape_text(FontImpl* impl, float size, StrRef text, Arena& arena, ShapedText& out_text)
             -> void {
             ASSERT(impl != nullptr);
             ASSERT(impl->font_face != nullptr);
-            ASSERT(impl->context != nullptr);
-            ASSERT(impl->context->analyzer != nullptr);
 
-            ArenaTemp temp = begin_thread_temp_arena(1u);
-            wchar_t* wide_text = nullptr;
-            int wide_len = 0;
-            ASSERT(utf8_to_wide(text, *temp.arena(), wide_text, wide_len));
-            ASSERT(wide_len >= 0);
-
-            uint32_t const text_length = static_cast<uint32_t>(wide_len);
-            if (text_length == 0u) {
-                out_text = {};
+            out_text = {};
+            if (text.empty()) {
                 return;
             }
 
-            ScriptRun* const script_runs = arena_alloc<ScriptRun>(*temp.arena(), text_length);
-            BidiRun* const bidi_runs = arena_alloc<BidiRun>(*temp.arena(), text_length);
-            TextAnalysisSource source = {};
-            source.text = wide_text;
-            source.text_length = text_length;
-
-            TextAnalysisSink sink = {};
-            sink.script_runs = script_runs;
-            sink.script_run_capacity = text_length;
-            sink.bidi_runs = bidi_runs;
-            sink.bidi_run_capacity = text_length;
-
-            HRESULT hr = impl->context->analyzer->AnalyzeScript(&source, 0u, text_length, &sink);
-            ASSERT(SUCCEEDED(hr));
-            fallback_script_run(script_runs, text_length, sink.script_run_count);
-            if (text.is_ascii()) {
-                fallback_bidi_run(bidi_runs, text_length, sink.bidi_run_count);
-            } else {
-                hr = impl->context->analyzer->AnalyzeBidi(&source, 0u, text_length, &sink);
-                ASSERT(SUCCEEDED(hr));
-                fallback_bidi_run(bidi_runs, text_length, sink.bidi_run_count);
-            }
-
-            FontRun* const font_runs = arena_alloc<FontRun>(*temp.arena(), text_length);
-            uint32_t font_run_count = 0u;
-            uint32_t const max_glyphs = glyph_buffer_capacity(text_length);
-            build_font_runs(
-                impl, &source, text, wide_text, text_length, size, font_runs, font_run_count
-            );
-
-            ShapeRun* const shape_runs = arena_alloc<ShapeRun>(*temp.arena(), max_glyphs);
-            uint32_t shape_run_count = 0u;
-            build_shape_runs(
-                script_runs,
-                sink.script_run_count,
-                font_runs,
-                font_run_count,
-                bidi_runs,
-                sink.bidi_run_count,
-                shape_runs,
-                shape_run_count
-            );
-            reorder_shape_runs(shape_runs, shape_run_count);
-
-            ShapedGlyph* const shaped_glyphs = arena_alloc<ShapedGlyph>(arena, max_glyphs);
+            ShapedGlyph* const glyphs = arena_alloc<ShapedGlyph>(arena, text.size());
             float pen_x = 0.0f;
-            uint32_t total_glyph_count = 0u;
-            float max_ascent = 0.0f;
-            float max_descent = 0.0f;
+            size_t glyph_count = 0u;
 
-            for (uint32_t run_index = 0u; run_index < shape_run_count; ++run_index) {
-                ShapeRun const& shape_run = shape_runs[run_index];
-                uint32_t const run_start = shape_run.start;
-                uint32_t const run_length = shape_run.length;
-                uint32_t glyph_capacity = glyph_buffer_capacity(run_length);
-                uint16_t* cluster_map = nullptr;
-                DWRITE_SHAPING_TEXT_PROPERTIES* text_props = nullptr;
-                uint16_t* glyph_indices = nullptr;
-                DWRITE_SHAPING_GLYPH_PROPERTIES* glyph_props = nullptr;
-                uint32_t glyph_count = 0u;
-
-                for (;;) {
-                    cluster_map = arena_alloc<uint16_t>(*temp.arena(), run_length);
-                    text_props =
-                        arena_alloc<DWRITE_SHAPING_TEXT_PROPERTIES>(*temp.arena(), run_length);
-                    glyph_indices = arena_alloc<uint16_t>(*temp.arena(), glyph_capacity);
-                    glyph_props =
-                        arena_alloc<DWRITE_SHAPING_GLYPH_PROPERTIES>(*temp.arena(), glyph_capacity);
-
-                    hr = impl->context->analyzer->GetGlyphs(
-                        wide_text + run_start,
-                        run_length,
-                        shape_run.font->font_face,
-                        FALSE,
-                        is_rtl(shape_run.bidi_level),
-                        &shape_run.script,
-                        L"en-us",
-                        nullptr,
-                        nullptr,
-                        nullptr,
-                        0u,
-                        glyph_capacity,
-                        cluster_map,
-                        text_props,
-                        glyph_indices,
-                        glyph_props,
-                        &glyph_count
-                    );
-                    if (hr != HRESULT_FROM_WIN32(ERROR_INSUFFICIENT_BUFFER)) {
-                        break;
-                    }
-
-                    ASSERT(glyph_capacity <= std::numeric_limits<uint32_t>::max() / 2u);
-                    glyph_capacity *= 2u;
-                }
-                ASSERT(SUCCEEDED(hr));
-                ASSERT(total_glyph_count <= max_glyphs);
-                ASSERT(glyph_count <= max_glyphs - total_glyph_count);
-
-                FLOAT* const advances = arena_alloc<FLOAT>(*temp.arena(), glyph_count);
-                DWRITE_GLYPH_OFFSET* const offsets =
-                    arena_alloc<DWRITE_GLYPH_OFFSET>(*temp.arena(), glyph_count);
-                hr = impl->context->analyzer->GetGlyphPlacements(
-                    wide_text + run_start,
-                    cluster_map,
-                    text_props,
-                    run_length,
-                    glyph_indices,
-                    glyph_props,
-                    glyph_count,
-                    shape_run.font->font_face,
-                    shape_run.size,
-                    FALSE,
-                    is_rtl(shape_run.bidi_level),
-                    &shape_run.script,
-                    L"en-us",
-                    nullptr,
-                    nullptr,
-                    0u,
-                    advances,
-                    offsets
-                );
-                ASSERT(SUCCEEDED(hr));
-
-                uint32_t* const logical_clusters =
-                    arena_alloc<uint32_t>(*temp.arena(), glyph_count);
-                uint32_t* const glyph_clusters = arena_alloc<uint32_t>(*temp.arena(), glyph_count);
-                build_glyph_clusters(
-                    cluster_map,
-                    run_length,
-                    glyph_count,
-                    is_rtl(shape_run.bidi_level) != FALSE,
-                    logical_clusters,
-                    glyph_clusters
-                );
-                for (uint32_t glyph_index = 0u; glyph_index < glyph_count; ++glyph_index) {
-                    ShapedGlyph& glyph = shaped_glyphs[total_glyph_count + glyph_index];
-                    glyph.font = font_handle(shape_run.font);
-                    glyph.glyph_index = glyph_indices[glyph_index];
-                    glyph.cluster = run_start + glyph_clusters[glyph_index];
-                    glyph.size = shape_run.size;
-                    glyph.x = pen_x;
-                    glyph.advance = advances[glyph_index];
-                    glyph.offset_x = offsets[glyph_index].advanceOffset;
-                    glyph.offset_y = offsets[glyph_index].ascenderOffset;
-                    pen_x += advances[glyph_index];
+            size_t offset = 0u;
+            while (offset < text.size()) {
+                base::Utf8DecodeResult decoded = base::utf8_decode(text, offset);
+                if (!decoded.ok) {
+                    decoded = {'?', 1u, true};
                 }
 
-                total_glyph_count += glyph_count;
-
-                DWRITE_FONT_METRICS font_metrics = {};
-                shape_run.font->font_face->GetMetrics(&font_metrics);
-                float const metric_scale = metrics_scale(font_metrics, shape_run.size);
-                max_ascent =
-                    std::max(max_ascent, static_cast<float>(font_metrics.ascent) * metric_scale);
-                max_descent =
-                    std::max(max_descent, static_cast<float>(font_metrics.descent) * metric_scale);
+                uint16_t const glyph_index = codepoint_glyph(impl, decoded.codepoint);
+                float const advance = glyph_advance(impl, size, glyph_index);
+                ShapedGlyph& glyph = glyphs[glyph_count];
+                glyph = {};
+                glyph.font = font_handle(impl);
+                glyph.glyph_index = glyph_index;
+                glyph.size = size;
+                glyph.x = pen_x;
+                glyph.advance = advance;
+                pen_x += advance;
+                glyph_count += 1u;
+                offset += decoded.size;
             }
+
+            DWRITE_FONT_METRICS font_metrics = {};
+            impl->font_face->GetMetrics(&font_metrics);
+            float const scale = metrics_scale(font_metrics, size);
+            float const ascent = static_cast<float>(font_metrics.ascent) * scale;
+            float const descent = static_cast<float>(font_metrics.descent) * scale;
 
             uint32_t bitmap_width = 0u;
             uint32_t bitmap_height = 0u;
             ASSERT(ceil_u32(std::max(1.0f, pen_x + (TEXT_PADDING * 2.0f)), bitmap_width));
-            ASSERT(ceil_u32(
-                std::max(1.0f, max_ascent + max_descent + (TEXT_PADDING * 2.0f)), bitmap_height
-            ));
+            ASSERT(
+                ceil_u32(std::max(1.0f, ascent + descent + (TEXT_PADDING * 2.0f)), bitmap_height)
+            );
 
-            out_text = {};
-            out_text.glyphs = shaped_glyphs;
-            out_text.glyph_count = total_glyph_count;
+            out_text.glyphs = glyphs;
+            out_text.glyph_count = glyph_count;
             out_text.advance = pen_x;
             out_text.origin_x = TEXT_PADDING;
             out_text.origin_y = TEXT_PADDING;
-            out_text.baseline_y = TEXT_PADDING + max_ascent;
+            out_text.baseline_y = TEXT_PADDING + ascent;
             out_text.height = static_cast<float>(bitmap_height);
             out_text.size = {bitmap_width, bitmap_height};
         }
@@ -1542,7 +518,7 @@ namespace gui::font_provider::platform::dwrite {
             ASSERT(analysis != nullptr);
 
             RECT bounds = {};
-            hr = analysis->GetAlphaTextureBounds(TEXT_BOUNDS_TYPE, &bounds);
+            hr = analysis->GetAlphaTextureBounds(TEXT_ALPHA_BOUNDS_TYPE, &bounds);
             ASSERT(SUCCEEDED(hr));
 
             uint32_t const width =
@@ -1589,94 +565,6 @@ namespace gui::font_provider::platform::dwrite {
             out_raster.offset_x = static_cast<float>(bounds.left);
             out_raster.offset_y = static_cast<float>(bounds.top);
             release_com(analysis);
-        }
-
-        [[nodiscard]] auto raster_glyph_lcd(
-            FontImpl* impl,
-            float size,
-            uint16_t glyph_index,
-            uint8_t phase_x,
-            uint8_t phase_y,
-            Arena& arena,
-            GlyphRaster& out_raster
-        ) -> bool {
-            ASSERT(impl != nullptr);
-            ASSERT(impl->font_face != nullptr);
-            ASSERT(impl->context != nullptr);
-            ASSERT(impl->context->factory2 != nullptr);
-
-            FLOAT const advance = 0.0f;
-            DWRITE_GLYPH_RUN glyph_run = {};
-            glyph_run.fontFace = impl->font_face;
-            glyph_run.fontEmSize = size;
-            glyph_run.glyphCount = 1u;
-            glyph_run.glyphIndices = &glyph_index;
-            glyph_run.glyphAdvances = &advance;
-
-            IDWriteGlyphRunAnalysis* analysis = nullptr;
-            HRESULT hr = impl->context->factory2->CreateGlyphRunAnalysis(
-                &glyph_run,
-                nullptr,
-                TEXT_RENDERING_MODE,
-                TEXT_MEASURING_MODE,
-                TEXT_GRID_FIT_MODE,
-                TEXT_LCD_ANTIALIAS_MODE,
-                glyph_phase(phase_x),
-                glyph_phase(phase_y),
-                &analysis
-            );
-            if (FAILED(hr) || analysis == nullptr) {
-                return false;
-            }
-
-            RECT bounds = {};
-            hr = analysis->GetAlphaTextureBounds(TEXT_LCD_TEXTURE_TYPE, &bounds);
-            if (FAILED(hr)) {
-                release_com(analysis);
-                return false;
-            }
-
-            uint32_t const width =
-                static_cast<uint32_t>(std::max<LONG>(0, bounds.right - bounds.left));
-            uint32_t const height =
-                static_cast<uint32_t>(std::max<LONG>(0, bounds.bottom - bounds.top));
-            if (width == 0u || height == 0u) {
-                out_raster = {};
-                release_com(analysis);
-                return true;
-            }
-
-            inflate_bounds(bounds);
-            uint32_t const padded_width =
-                static_cast<uint32_t>(std::max<LONG>(0, bounds.right - bounds.left));
-            uint32_t const padded_height =
-                static_cast<uint32_t>(std::max<LONG>(0, bounds.bottom - bounds.top));
-            size_t lcd_size = 0u;
-            size_t rgba_size = 0u;
-            ASSERT(checked_pixel_size(padded_width, padded_height, 3u, lcd_size));
-            ASSERT(checked_pixel_size(padded_width, padded_height, 4u, rgba_size));
-
-            uint8_t* const lcd_pixels = arena_alloc<uint8_t>(arena, lcd_size);
-            uint8_t* const rgba_pixels = arena_alloc<uint8_t>(arena, rgba_size);
-            hr = analysis->CreateAlphaTexture(
-                TEXT_LCD_TEXTURE_TYPE, &bounds, lcd_pixels, static_cast<UINT32>(lcd_size)
-            );
-            if (FAILED(hr)) {
-                release_com(analysis);
-                return false;
-            }
-
-            lcd_texture_to_rgba(lcd_pixels, padded_width, padded_height, rgba_pixels);
-
-            out_raster = {};
-            out_raster.size = {padded_width, padded_height};
-            out_raster.stride = padded_width * 4u;
-            out_raster.pixels = rgba_pixels;
-            out_raster.format = RasterFormat::LCD_RGB;
-            out_raster.offset_x = static_cast<float>(bounds.left);
-            out_raster.offset_y = static_cast<float>(bounds.top);
-            release_com(analysis);
-            return true;
         }
 
         auto composite_glyph(
@@ -1738,20 +626,12 @@ namespace gui::font_provider::platform::dwrite {
             hr = context->factory->GetGdiInterop(&context->gdi_interop);
         }
         if (SUCCEEDED(hr)) {
-            hr = context->factory2->GetSystemFontFallback(&context->font_fallback);
-        }
-        if (SUCCEEDED(hr)) {
-            hr = context->factory->CreateTextAnalyzer(&context->analyzer);
-        }
-        if (SUCCEEDED(hr)) {
             hr = create_text_rendering_params(context);
         }
         if (FAILED(hr)) {
             release_com(context->bitmap_target1);
             release_com(context->bitmap_target);
             release_com(context->rendering_params);
-            release_com(context->analyzer);
-            release_com(context->font_fallback);
             release_com(context->gdi_interop);
             release_com(context->factory2);
             release_com(context->factory);
@@ -1766,17 +646,9 @@ namespace gui::font_provider::platform::dwrite {
     auto destroy_context(Context& context) -> void {
         ContextImpl* const impl = context_from_handle(context);
         ASSERT(impl != nullptr);
-        for (FontImpl* font = impl->first_fallback_font; font != nullptr;) {
-            FontImpl* const next_font = font->next_fallback;
-            destroy_font_impl(font);
-            font = next_font;
-        }
-        impl->first_fallback_font = nullptr;
         release_com(impl->bitmap_target1);
         release_com(impl->bitmap_target);
         release_com(impl->rendering_params);
-        release_com(impl->analyzer);
-        release_com(impl->font_fallback);
         release_com(impl->gdi_interop);
         release_com(impl->factory2);
         release_com(impl->factory);
@@ -1842,23 +714,22 @@ namespace gui::font_provider::platform::dwrite {
         shape_text(impl, size, text, arena, out_text);
     }
 
-    auto
-    raster_glyph(Font font, float size, uint16_t glyph_index, Arena& arena, GlyphRaster& out_raster)
-        -> void {
-        FontImpl* const impl = font_from_handle(font);
-        ASSERT(impl != nullptr);
-        ASSERT(impl->font_face != nullptr);
-
-        if (size > TEXT_LCD_MAX_SIZE ||
-            !raster_glyph_lcd(impl, size, glyph_index, 0u, 0u, arena, out_raster)) {
-            raster_glyph(impl, size, glyph_index, 0u, 0u, arena, out_raster);
-        }
+    auto raster_glyph(
+        Font font,
+        float size,
+        uint16_t glyph_index,
+        RasterPolicy raster_policy,
+        Arena& arena,
+        GlyphRaster& out_raster
+    ) -> void {
+        raster_glyph(font, size, glyph_index, raster_policy, 0u, 0u, arena, out_raster);
     }
 
     auto raster_glyph(
         Font font,
         float size,
         uint16_t glyph_index,
+        RasterPolicy raster_policy,
         uint8_t phase_x,
         uint8_t phase_y,
         Arena& arena,
@@ -1868,10 +739,8 @@ namespace gui::font_provider::platform::dwrite {
         ASSERT(impl != nullptr);
         ASSERT(impl->font_face != nullptr);
 
-        if (size > TEXT_LCD_MAX_SIZE ||
-            !raster_glyph_lcd(impl, size, glyph_index, phase_x, phase_y, arena, out_raster)) {
-            raster_glyph(impl, size, glyph_index, phase_x, phase_y, arena, out_raster);
-        }
+        BASE_UNUSED(raster_policy);
+        raster_glyph(impl, size, glyph_index, phase_x, phase_y, arena, out_raster);
     }
 
     auto raster_text(Font font, float size, StrRef text, Arena& arena, RasterResult& out_raster)

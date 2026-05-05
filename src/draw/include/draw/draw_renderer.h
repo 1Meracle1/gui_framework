@@ -8,7 +8,7 @@
 namespace gui::draw {
 
     struct RendererDesc {
-        size_t text_texture_cache_capacity = 256u;
+        size_t text_atlas_slot_count = 256u;
     };
 
     struct Renderer {

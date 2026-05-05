@@ -61,6 +61,11 @@ namespace gui::font_provider {
         LCD_RGB,
     };
 
+    enum class RasterPolicy : uint8_t {
+        SHARP_HINTED,
+        SHARP_HINTED_ALPHA,
+    };
+
     struct RasterResult {
         SizeU32 size = {};
         uint32_t stride = 0u;
@@ -83,7 +88,6 @@ namespace gui::font_provider {
     struct ShapedGlyph {
         Font font = {};
         uint16_t glyph_index = 0u;
-        uint32_t cluster = 0u;
         float size = 0.0f;
         float x = 0.0f;
         float advance = 0.0f;
@@ -126,6 +130,24 @@ namespace gui::font_provider {
         Font font,
         float size,
         uint16_t glyph_index,
+        RasterPolicy raster_policy,
+        Arena& arena,
+        GlyphRaster& out_raster
+    ) -> void;
+    auto raster_glyph(
+        Font font,
+        float size,
+        uint16_t glyph_index,
+        uint8_t phase_x,
+        uint8_t phase_y,
+        Arena& arena,
+        GlyphRaster& out_raster
+    ) -> void;
+    auto raster_glyph(
+        Font font,
+        float size,
+        uint16_t glyph_index,
+        RasterPolicy raster_policy,
         uint8_t phase_x,
         uint8_t phase_y,
         Arena& arena,
