@@ -55,6 +55,14 @@ namespace code_editor {
         client.bridge.status_generation += 1u;
     }
 
+    auto set_server_name(LspClient& client, StrRef name) -> void {
+        if (name.empty()) {
+            return;
+        }
+        client.bridge.server_name = arena_copy_cstr(client.result_arena, name);
+        client.bridge.status_generation += 1u;
+    }
+
     auto set_progress(
         LspClient& client,
         StrRef title,
@@ -63,21 +71,23 @@ namespace code_editor {
         bool has_percentage,
         size_t percentage
     ) -> void {
-        if (title.empty()) {
-            title = "clangd";
-        }
-        if (!active && message.empty()) {
-            message = "done";
+        if (title == client.bridge.server_name) {
+            title = {};
         }
 
         ArenaTemp temp = begin_thread_temp_arena();
         StringBuffer buffer = {};
         BASE_UNUSED(buffer.init(title.size() + message.size() + 64u, temp.arena()->resource()));
-        BASE_UNUSED(buffer.write_string("LSP: "));
-        BASE_UNUSED(buffer.write_string(title));
+        if (!title.empty()) {
+            BASE_UNUSED(buffer.write_string(title));
+        }
+        if (!title.empty() && !message.empty()) {
+            BASE_UNUSED(buffer.write_string(": "));
+        }
         if (!message.empty()) {
-            BASE_UNUSED(buffer.write_string(" - "));
             BASE_UNUSED(buffer.write_string(message));
+        } else if (title.empty()) {
+            BASE_UNUSED(buffer.write_string(active ? "working" : "idle"));
         }
         if (has_percentage) {
             BASE_UNUSED(buffer.write_string(" "));
@@ -457,10 +467,11 @@ namespace code_editor {
         ));
         lsp_json_write_escaped_string(json, root_uri);
         BASE_UNUSED(json.write_string(
-            ",\"capabilities\":{\"textDocument\":{\"synchronization\":{\"didSave\":false},"
-            "\"completion\":{\"completionItem\":{\"snippetSupport\":false}},\"hover\":{},"
-            "\"definition\":{},\"declaration\":{},\"references\":{},\"rename\":{},"
-            "\"formatting\":{},\"codeAction\":{},\"documentSymbol\":{}}},"
+            ",\"capabilities\":{\"window\":{\"workDoneProgress\":true},\"textDocument\":{"
+            "\"synchronization\":{\"didSave\":false},\"completion\":{\"completionItem\":{"
+            "\"snippetSupport\":false}},\"hover\":{},\"definition\":{},\"declaration\":{},"
+            "\"references\":{},\"rename\":{},\"formatting\":{},\"codeAction\":{},"
+            "\"documentSymbol\":{}}},"
             "\"trace\":\"off\"}}"
         ));
         write_json(client, json.str());
@@ -483,7 +494,8 @@ namespace code_editor {
             !client.text_edits.init(64u, client.result_arena.resource())) {
             return false;
         }
-        set_status(client, LspStatusKind::OFF, "LSP off");
+        set_server_name(client, "clangd");
+        set_status(client, LspStatusKind::OFF, "off");
         bridge_refresh(client);
         return true;
     }
@@ -561,7 +573,7 @@ namespace code_editor {
             return true;
         }
         if (root_path.empty()) {
-            set_status(client, LspStatusKind::WARNING, "LSP: no workspace");
+            set_status(client, LspStatusKind::WARNING, "no workspace");
             return false;
         }
 
@@ -572,7 +584,7 @@ namespace code_editor {
 
         if (!ensure_event(client.stdin_io.event) || !ensure_event(client.stdout_io.event) ||
             !ensure_event(client.stderr_io.event)) {
-            set_status(client, LspStatusKind::FAILED, "LSP: IO event creation failed");
+            set_status(client, LspStatusKind::FAILED, "IO event creation failed");
             return false;
         }
 
@@ -588,7 +600,7 @@ namespace code_editor {
             close_handle(client.stdin_write);
             close_handle(client.stdout_read);
             close_handle(client.stderr_read);
-            set_status(client, LspStatusKind::FAILED, "LSP: pipe creation failed");
+            set_status(client, LspStatusKind::FAILED, "pipe creation failed");
             return false;
         }
 
@@ -611,7 +623,7 @@ namespace code_editor {
             close_handle(client.stdin_write);
             close_handle(client.stdout_read);
             close_handle(client.stderr_read);
-            set_status(client, LspStatusKind::FAILED, "LSP: bad workspace path");
+            set_status(client, LspStatusKind::FAILED, "bad workspace path");
             return false;
         }
 
@@ -641,7 +653,7 @@ namespace code_editor {
             close_handle(client.stdin_write);
             close_handle(client.stdout_read);
             close_handle(client.stderr_read);
-            set_status(client, LspStatusKind::FAILED, "LSP: clangd not found on PATH");
+            set_status(client, LspStatusKind::FAILED, "not found on PATH");
             return false;
         }
 
@@ -651,7 +663,7 @@ namespace code_editor {
         set_status(
             client,
             client.compile_commands_dir.empty() ? LspStatusKind::WARNING : LspStatusKind::STARTING,
-            client.compile_commands_dir.empty() ? "LSP: no compile_commands.json" : "LSP starting"
+            client.compile_commands_dir.empty() ? "no compile_commands.json" : "starting"
         );
         send_initialize(client);
         return true;
@@ -702,6 +714,13 @@ namespace code_editor {
         BASE_UNUSED(json_member_bool(params, "done", done));
         bool const has_percentage = json_member_size(params, "percentage", percentage);
         set_progress(client, title, message, !done, has_percentage, percentage);
+    }
+
+    auto parse_initialize_response(LspClient& client, LspJsonValue const* result) -> void {
+        StrRef name = {};
+        if (json_member_string(lsp_json_object_get(result, "serverInfo"), "name", name)) {
+            set_server_name(client, name);
+        }
     }
 
     [[nodiscard]] auto parse_position(LspJsonValue const* value, LspPosition& out) -> bool {
@@ -1087,7 +1106,7 @@ namespace code_editor {
         set_status(
             client,
             client.compile_commands_dir.empty() ? LspStatusKind::WARNING : LspStatusKind::READY,
-            client.compile_commands_dir.empty() ? "LSP ready, no compile DB" : "LSP ready"
+            client.compile_commands_dir.empty() ? "no compile DB" : "idle"
         );
         client.initialized = true;
     }
@@ -1100,6 +1119,7 @@ namespace code_editor {
         LspClientPendingRequest const pending = take_pending(client, id);
         LspJsonValue const* const result = lsp_json_object_get(root, "result");
         if (pending.kind == LspRequestKind::NONE) {
+            parse_initialize_response(client, result);
             send_initialized(client);
             return;
         }
@@ -1251,7 +1271,7 @@ namespace code_editor {
         }
         DWORD const wait = WaitForSingleObject(client.process.hProcess, 0u);
         if (wait != WAIT_TIMEOUT) {
-            set_status(client, LspStatusKind::FAILED, "LSP: clangd exited");
+            set_status(client, LspStatusKind::FAILED, "exited");
             client.started = false;
             return;
         }

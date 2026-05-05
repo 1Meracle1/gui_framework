@@ -104,6 +104,7 @@ namespace code_editor {
 
     struct LspBridge {
         LspStatusKind status = LspStatusKind::OFF;
+        StrRef server_name = {};
         StrRef status_text = {};
         Slice<LspDiagnostic> diagnostics = {};
         Slice<LspCompletionItem> completions = {};

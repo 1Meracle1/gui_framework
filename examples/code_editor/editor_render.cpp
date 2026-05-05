@@ -769,6 +769,25 @@ namespace code_editor {
         return count;
     }
 
+    [[nodiscard]] auto lsp_status_bar_text(EditorState const& editor) -> StrRef {
+        LspBridge const* const bridge = editor.lsp_bridge;
+        if (bridge == nullptr) {
+            return {};
+        }
+
+        StrRef const name = bridge->server_name.empty() ? StrRef("LSP") : bridge->server_name;
+        StrRef status = bridge->status_text.empty() ? StrRef("unknown") : bridge->status_text;
+        if (bridge->progress_active && !bridge->progress_text.empty()) {
+            status = bridge->progress_text;
+        }
+
+        size_t const diagnostics = lsp_diagnostic_count(editor);
+        if (diagnostics == 0u) {
+            return fmt::tprintf("%s: %s", name, status);
+        }
+        return fmt::tprintf("%s: %s (%zu)", name, status, diagnostics);
+    }
+
     [[nodiscard]] auto lsp_position_equal(LspPosition lhs, LspPosition rhs) -> bool {
         return lhs.line == rhs.line && lhs.column == rhs.column;
     }
@@ -3653,26 +3672,6 @@ namespace code_editor {
                             },
                         }
                     );
-                    if (editor.lsp_bridge != nullptr) {
-                        ui.label(
-                            fmt::tprintf(
-                                "%s %zu",
-                                editor.lsp_bridge->status_text.empty()
-                                    ? "LSP"
-                                    : editor.lsp_bridge->status_text,
-                                lsp_diagnostic_count(editor)
-                            ),
-                            {
-                                .layout = {.width = gui::text(), .height = gui::fill()},
-                                .style = {
-                                    .foreground = editor.lsp_bridge->status == LspStatusKind::FAILED
-                                                      ? palette.preprocessor
-                                                      : palette.muted,
-                                    .font_size = editor.font_size,
-                                },
-                            }
-                        );
-                    }
                 }
 
                 gui::BoxDesc const command_panel = {
@@ -3681,6 +3680,7 @@ namespace code_editor {
                             .width = gui::fill(1.0f - status_ratio),
                             .height = gui::fill(),
                             .padding = gui::insets(0.0f, 12.0f),
+                            .align_x = gui::Align::END,
                             .align_y = gui::Align::CENTER,
                             .clip = true,
                         },
@@ -3703,14 +3703,15 @@ namespace code_editor {
                                 },
                             }
                         );
-                    } else if (editor.lsp_bridge != nullptr &&
-                               !editor.lsp_bridge->progress_text.empty()) {
+                    } else if (editor.lsp_bridge != nullptr) {
                         ui.label(
-                            editor.lsp_bridge->progress_text,
+                            lsp_status_bar_text(editor),
                             {
-                                .layout = {.width = gui::fill(), .height = gui::fill()},
+                                .layout = {.width = gui::text(), .height = gui::fill()},
                                 .style = {
-                                    .foreground = editor.lsp_bridge->progress_active
+                                    .foreground = editor.lsp_bridge->status == LspStatusKind::FAILED
+                                                      ? palette.preprocessor
+                                                  : editor.lsp_bridge->progress_active
                                                       ? palette.cursor
                                                       : palette.muted,
                                     .font_size = editor.font_size,
