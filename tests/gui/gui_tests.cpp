@@ -2983,6 +2983,158 @@ namespace {
         gui::destroy_context(gui_context);
     }
 
+    TEST_CASE(input_text_can_select_all_on_focus) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::Id const field_id = gui::id("field");
+        char buffer[16] = "alpha";
+        gui::KeyEvent const events[] = {{.kind = gui::KeyEventKind::TEXT, .codepoint = 'X'}};
+        gui::InputState const input = {.key_events = events, .key_event_count = 1u};
+
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {160.0f, 40.0f}, .input = input});
+        ui.request_focus(field_id);
+        gui::Signal const signal = ui.input_text(
+            field_id,
+            "Field",
+            buffer,
+            sizeof(buffer),
+            gui::InputTextDesc{
+                .box = {.layout = {.width = gui::px(120.0f), .height = gui::px(20.0f)}},
+                .select_all_on_focus = true,
+            }
+        );
+        gui::end_frame(ui);
+
+        TEST_EXPECT(context, signal.focused);
+        TEST_EXPECT(context, signal.changed);
+        TEST_EXPECT(context, StrRef(buffer) == StrRef("X"));
+
+        gui::destroy_context(gui_context);
+    }
+
+    TEST_CASE(input_text_can_ignore_input_on_focus) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::Id const field_id = gui::id("field");
+        char buffer[16] = "alpha";
+        gui::InputTextDesc const desc = {
+            .box = {.layout = {.width = gui::px(120.0f), .height = gui::px(20.0f)}},
+            .select_all_on_focus = true,
+            .ignore_input_on_focus = true,
+        };
+        gui::KeyEvent const focus_events[] = {{.kind = gui::KeyEventKind::TEXT, .codepoint = 'N'}};
+        gui::InputState input = {.key_events = focus_events, .key_event_count = 1u};
+
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {160.0f, 40.0f}, .input = input});
+        ui.request_focus(field_id);
+        gui::Signal signal = ui.input_text(field_id, "Field", buffer, sizeof(buffer), desc);
+        gui::end_frame(ui);
+
+        TEST_EXPECT(context, signal.focus_gained);
+        TEST_EXPECT(context, !signal.changed);
+        TEST_EXPECT(context, StrRef(buffer) == StrRef("alpha"));
+
+        gui::KeyEvent const edit_events[] = {{.kind = gui::KeyEventKind::TEXT, .codepoint = 'X'}};
+        input = {.key_events = edit_events, .key_event_count = 1u};
+        ui = gui::begin_frame(gui_context, {.size = {160.0f, 40.0f}, .input = input});
+        ui.request_focus(field_id);
+        signal = ui.input_text(field_id, "Field", buffer, sizeof(buffer), desc);
+        gui::end_frame(ui);
+
+        TEST_EXPECT(context, signal.focused);
+        TEST_EXPECT(context, !signal.focus_gained);
+        TEST_EXPECT(context, signal.changed);
+        TEST_EXPECT(context, StrRef(buffer) == StrRef("X"));
+
+        gui::destroy_context(gui_context);
+    }
+
+    TEST_CASE(input_text_regains_focus_after_not_being_built) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::Id const field_id = gui::id("field");
+        char buffer[16] = "alpha";
+        gui::InputTextDesc const desc = {
+            .box = {.layout = {.width = gui::px(120.0f), .height = gui::px(20.0f)}},
+            .select_all_on_focus = true,
+            .ignore_input_on_focus = true,
+        };
+
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {160.0f, 40.0f}});
+        ui.request_focus(field_id);
+        gui::Signal signal = ui.input_text(field_id, "Field", buffer, sizeof(buffer), desc);
+        gui::end_frame(ui);
+
+        TEST_EXPECT(context, signal.focus_gained);
+
+        ui = gui::begin_frame(gui_context, {.size = {160.0f, 40.0f}});
+        gui::end_frame(ui);
+
+        gui::KeyEvent const events[] = {{.kind = gui::KeyEventKind::TEXT, .codepoint = 'N'}};
+        gui::InputState const input = {.key_events = events, .key_event_count = 1u};
+
+        ui = gui::begin_frame(gui_context, {.size = {160.0f, 40.0f}, .input = input});
+        ui.request_focus(field_id);
+        signal = ui.input_text(field_id, "Field", buffer, sizeof(buffer), desc);
+        gui::end_frame(ui);
+
+        TEST_EXPECT(context, signal.focus_gained);
+        TEST_EXPECT(context, !signal.changed);
+        TEST_EXPECT(context, StrRef(buffer) == StrRef("alpha"));
+
+        gui::destroy_context(gui_context);
+    }
+
+    TEST_CASE(input_text_can_ignore_input_after_explicit_focus_clear) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::Id const field_id = gui::id("field");
+        char buffer[16] = "alpha";
+        gui::InputTextDesc const desc = {
+            .box = {.layout = {.width = gui::px(120.0f), .height = gui::px(20.0f)}},
+            .select_all_on_focus = true,
+            .ignore_input_on_focus = true,
+        };
+
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {160.0f, 40.0f}});
+        ui.request_focus(field_id);
+        gui::Signal signal = ui.input_text(field_id, "Field", buffer, sizeof(buffer), desc);
+        gui::end_frame(ui);
+
+        TEST_EXPECT(context, signal.focus_gained);
+
+        gui::KeyEvent const events[] = {{.kind = gui::KeyEventKind::TEXT, .codepoint = 'N'}};
+        gui::InputState const input = {.key_events = events, .key_event_count = 1u};
+
+        ui = gui::begin_frame(gui_context, {.size = {160.0f, 40.0f}, .input = input});
+        ui.clear_focus();
+        ui.request_focus(field_id);
+        signal = ui.input_text(field_id, "Field", buffer, sizeof(buffer), desc);
+        gui::end_frame(ui);
+
+        TEST_EXPECT(context, signal.focus_gained);
+        TEST_EXPECT(context, !signal.changed);
+        TEST_EXPECT(context, StrRef(buffer) == StrRef("alpha"));
+
+        gui::destroy_context(gui_context);
+    }
+
     TEST_CASE(input_text_clears_selection_on_outside_click) {
         Arena arena = {};
         arena.init();

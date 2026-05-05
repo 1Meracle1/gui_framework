@@ -23,7 +23,6 @@
 #include <draw/draw_renderer.h>
 #include <font_cache/font_cache.h>
 #include <font_provider/font_provider.h>
-#include <new>
 #include <render/render.h>
 #endif
 
@@ -49,6 +48,9 @@ namespace code_editor {
         StrRef const* shared_tree_root_name = nullptr;
         Slice<FileTreeEntry>* shared_tree_files = nullptr;
         uint64_t const* shared_file_change_generation = nullptr;
+        LspBridge const* lsp_bridge = nullptr;
+        LspSendEditorRequestFn lsp_send_request = nullptr;
+        void* lsp_user_data = nullptr;
         uint64_t file_change_generation = 0u;
         float char_width = 8.0f;
     };
@@ -220,13 +222,27 @@ namespace code_editor {
         gui::ThemeDesc const theme =
             code_editor_theme(runtime->ui_font, palette, runtime->editor.font_size);
         gui::create_context(
-            arena, {.initial_box_capacity = 1024u, .theme = &theme}, runtime->ui_context
+            arena,
+            {
+                .initial_box_capacity = 1024u,
+                .theme = &theme,
+                .set_clipboard_text = set_windows_clipboard_text,
+                .get_clipboard_text = get_windows_clipboard_text,
+                .clipboard_user_data = context.native_window,
+            },
+            runtime->ui_context
         );
         runtime->native_window = context.native_window;
         runtime->shared_tree_root_name = context.shared_tree_root_name;
         runtime->shared_tree_files = context.shared_tree_files;
         runtime->shared_file_change_generation = context.shared_file_change_generation;
+        runtime->lsp_bridge = context.lsp_bridge;
+        runtime->lsp_send_request = context.lsp_send_request;
+        runtime->lsp_user_data = context.lsp_user_data;
         init_editor(arena, runtime->editor, context.initial_text);
+        runtime->editor.lsp_bridge = runtime->lsp_bridge;
+        runtime->editor.lsp_send_request = runtime->lsp_send_request;
+        runtime->editor.lsp_user_data = runtime->lsp_user_data;
         if (!context.initial_file_name.empty()) {
             runtime->editor.current_file_name = context.initial_file_name;
         }
@@ -252,6 +268,7 @@ namespace code_editor {
                                 (runtime->editor.flag(EditorFlag::EXTERNAL_CHANGE_PENDING) ||
                                  runtime->editor.flag(EditorFlag::FILE_DELETED_ON_DISK));
         if (!popup_open) {
+            update_editor_lsp_document(runtime->editor);
             process_editor_input(
                 runtime->editor,
                 input,
@@ -261,6 +278,7 @@ namespace code_editor {
                     .user_data = runtime->native_window,
                 }
             );
+            update_editor_lsp_document(runtime->editor);
         }
         runtime->char_width = std::max(
             1.0f, font_cache::text_advance(runtime->editor_font, runtime->editor.font_size, "M")
@@ -285,17 +303,18 @@ namespace code_editor {
         draw_editor_ui(
             ui,
             runtime->editor,
-            runtime->ui_font,
+            runtime->editor_font,
             runtime->icon_font,
             palette,
             static_cast<float>(window_size.width),
             static_cast<float>(window_size.height),
+            runtime->char_width,
             input
         );
         gui::end_frame(ui);
 
         draw::begin_frame(runtime->draw_context);
-        gui::render_frame(ui, runtime->draw_context);
+        gui::render_frame_base(ui, runtime->draw_context);
         if (!runtime->editor.flag(EditorFlag::FILE_SEARCH_OPEN) &&
             !runtime->editor.flag(EditorFlag::BUFFER_SEARCH_OPEN) &&
             !runtime->editor.flag(EditorFlag::SAVE_PATH_OPEN)) {
@@ -305,10 +324,11 @@ namespace code_editor {
                 runtime->editor,
                 runtime->char_width,
                 ui,
-                input,
+                runtime->editor.lsp_popup == EditorLspPopupKind::RENAME ? gui::InputState{} : input,
                 palette
             );
         }
+        gui::render_frame_floating(ui, runtime->draw_context);
         draw::end_frame(runtime->draw_context);
         return ui;
     }

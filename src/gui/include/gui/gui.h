@@ -256,6 +256,12 @@ namespace gui {
         float step = 0.0f;
     };
 
+    struct InputTextDesc {
+        BoxDesc box = {};
+        bool select_all_on_focus = false;
+        bool ignore_input_on_focus = false;
+    };
+
     struct InputTextMultilineDesc {
         BoxDesc box = {};
         StrRef tab_text = "    ";
@@ -823,8 +829,13 @@ namespace gui {
             -> Signal;
         auto input_text(StrRef label, char* buffer, size_t buffer_size, BoxDesc const& desc = {})
             -> Signal;
+        auto input_text(StrRef label, char* buffer, size_t buffer_size, InputTextDesc const& desc)
+            -> Signal;
         auto
         input_text(Id id, StrRef label, char* buffer, size_t buffer_size, BoxDesc const& desc = {})
+            -> Signal;
+        auto
+        input_text(Id id, StrRef label, char* buffer, size_t buffer_size, InputTextDesc const& desc)
             -> Signal;
         auto input_text_multiline(
             StrRef label, StringBuffer* buffer, InputTextMultilineDesc const& desc = {}
@@ -868,6 +879,8 @@ namespace gui {
 
     [[nodiscard]] auto begin_frame(Context context, FrameDesc const& desc) -> Frame;
     auto end_frame(Frame& frame) -> void;
+    auto render_frame_base(Frame const& frame, draw::Context draw_context) -> void;
+    auto render_frame_floating(Frame const& frame, draw::Context draw_context) -> void;
     auto render_frame(Frame const& frame, draw::Context draw_context) -> void;
 
 } // namespace gui

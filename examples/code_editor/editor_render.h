@@ -27,6 +27,7 @@ namespace code_editor {
         Palette const& palette,
         float client_width,
         float client_height,
+        float char_width,
         gui::InputState const& input
     ) -> void;
 

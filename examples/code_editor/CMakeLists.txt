@@ -8,6 +8,8 @@ set(CODE_EDITOR_RELOAD_SOURCES
     editor_render.h
     editor_theme.cpp
     editor_theme.h
+    lsp.cpp
+    lsp.h
     shared.h
     syntax.cpp
     syntax.h
@@ -66,6 +68,9 @@ if(WIN32)
     )
     target_sources(code_editor PRIVATE
         "${CMAKE_CURRENT_BINARY_DIR}/generated/code_editor_hot_reload_manifest.h"
+        "$<$<CONFIG:Debug>:${CMAKE_CURRENT_SOURCE_DIR}/lsp.cpp>"
+        lsp_client_win32.cpp
+        lsp_client_win32.h
         resources/code_editor.rc
     )
     add_dependencies(code_editor code_editor_module)

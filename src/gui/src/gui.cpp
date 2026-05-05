@@ -192,6 +192,7 @@ namespace gui {
             uint64_t frame_index = 0u;
             bool building = false;
             bool active_scroll_horizontal = false;
+            bool focus_cleared_this_frame = false;
             bool redraw_requested = false;
         };
 
@@ -1464,7 +1465,8 @@ namespace gui {
             }
             result.focused = box.focusable && impl->focused_id.value == box.id.value;
             result.focus_gained =
-                result.focused && impl->frame_start_focus_id.value != box.id.value;
+                result.focused && (impl->focus_cleared_this_frame ||
+                                   impl->frame_start_focus_id.value != box.id.value);
             result.focus_lost = box.focusable && !result.focused &&
                                 impl->frame_start_focus_id.value == box.id.value;
             return result;
@@ -4333,7 +4335,12 @@ namespace gui {
         }
 
         auto apply_input_text_widget(
-            ContextImpl* impl, BoxNode& box, TextEditBuffer& buffer, StrRef tab_text = {}
+            ContextImpl* impl,
+            BoxNode& box,
+            TextEditBuffer& buffer,
+            StrRef tab_text = {},
+            bool select_all_on_focus = false,
+            bool ignore_input_on_focus = false
         ) -> Signal {
             ASSERT(buffer.data != nullptr || buffer.size == 0u);
 
@@ -4351,7 +4358,8 @@ namespace gui {
                 }
                 if (signal.focus_gained) {
                     state.text_cursor = text_size;
-                    selection = {text_size, text_size};
+                    selection = select_all_on_focus ? TextSelection{0u, text_size}
+                                                    : TextSelection{text_size, text_size};
                     state.text_selection_word_active = false;
                 }
                 if (text_selection_outside_click(impl, box)) {
@@ -4373,7 +4381,8 @@ namespace gui {
                 size_t skip_text_newlines = 0u;
                 size_t skip_text_tabs = 0u;
                 InputState const& input = impl->frame_desc.input;
-                if (signal.focused && input.key_events != nullptr) {
+                bool const ignore_input = signal.focus_gained && ignore_input_on_focus;
+                if (signal.focused && input.key_events != nullptr && !ignore_input) {
                     bool const writable = !box_read_only(box) && !box_disabled(box);
                     for (size_t index = 0u; index < input.key_event_count; ++index) {
                         KeyEvent const& event = input.key_events[index];
@@ -4568,7 +4577,9 @@ namespace gui {
                     state.text_cursor_reveal_requested = true;
                 }
             }
-            signal.activated = !multiline && signal.focused && key_pressed(impl, Key::ENTER, false);
+            signal.activated = !multiline && signal.focused &&
+                               !(signal.focus_gained && ignore_input_on_focus) &&
+                               key_pressed(impl, Key::ENTER, false);
             box.text = copy_frame_str(impl, text_edit_text(buffer));
             apply_text_selection_owner(impl, box, box.text_selection);
             box.signal = signal;
@@ -6861,12 +6872,18 @@ namespace gui {
 
     auto Frame::input_text(StrRef label, char* buffer, size_t buffer_size, BoxDesc const& desc)
         -> Signal {
+        return input_text(label, buffer, buffer_size, InputTextDesc{.box = desc});
+    }
+
+    auto
+    Frame::input_text(StrRef label, char* buffer, size_t buffer_size, InputTextDesc const& desc)
+        -> Signal {
         ASSERT(buffer != nullptr);
         ASSERT(buffer_size > 0u);
 
         ContextImpl* const impl = impl_from_frame(*this);
         size_t const parent = top_parent_index(impl);
-        BoxDesc box_desc = desc;
+        BoxDesc box_desc = desc.box;
         box_desc.layout.clip = true;
         size_t const index = append_box(
             impl,
@@ -6882,18 +6899,26 @@ namespace gui {
         box.id_source = label.empty() ? BoxIdSource::STRUCTURAL : BoxIdSource::TEXT;
         box.stable_id = false;
         TextEditBuffer edit = fixed_text_edit_buffer(buffer, buffer_size);
-        return apply_input_text_widget(impl, box, edit);
+        return apply_input_text_widget(
+            impl, box, edit, {}, desc.select_all_on_focus, desc.ignore_input_on_focus
+        );
     }
 
     auto Frame::input_text(
         Id id_value, StrRef label, char* buffer, size_t buffer_size, BoxDesc const& desc
+    ) -> Signal {
+        return input_text(id_value, label, buffer, buffer_size, InputTextDesc{.box = desc});
+    }
+
+    auto Frame::input_text(
+        Id id_value, StrRef label, char* buffer, size_t buffer_size, InputTextDesc const& desc
     ) -> Signal {
         ASSERT(buffer != nullptr);
         ASSERT(buffer_size > 0u);
 
         ContextImpl* const impl = impl_from_frame(*this);
         size_t const parent = top_parent_index(impl);
-        BoxDesc box_desc = desc;
+        BoxDesc box_desc = desc.box;
         box_desc.layout.clip = true;
         Id const authored_id = scoped_id(impl, id_value);
         size_t const index = append_box(
@@ -6908,7 +6933,9 @@ namespace gui {
         );
         BASE_UNUSED(label);
         TextEditBuffer edit = fixed_text_edit_buffer(buffer, buffer_size);
-        return apply_input_text_widget(impl, impl->boxes[index], edit);
+        return apply_input_text_widget(
+            impl, impl->boxes[index], edit, {}, desc.select_all_on_focus, desc.ignore_input_on_focus
+        );
     }
 
     auto Frame::input_text_multiline(
@@ -7158,6 +7185,7 @@ namespace gui {
         if (impl != nullptr) {
             impl->focused_id = {};
             impl->focus_request_id = {};
+            impl->focus_cleared_this_frame = true;
         }
     }
 
@@ -7252,6 +7280,7 @@ namespace gui {
         impl->id_scope = {};
         impl->frame_index += 1u;
         impl->building = true;
+        impl->focus_cleared_this_frame = false;
         impl->redraw_requested = false;
 
         BoxNode* const root = impl->boxes;
@@ -7286,6 +7315,18 @@ namespace gui {
         BASE_UNUSED(measure_node(impl, 0u));
         layout_node(impl, 0u, {{0.0f, 0.0f}, {impl->frame_desc.size.x, impl->frame_desc.size.y}});
         publish_infos(impl);
+        if (impl->focused_id.value != 0u) {
+            bool focus_found = false;
+            for (size_t index = 0u; index < impl->focus_order_count; ++index) {
+                if (impl->focus_order[index].value == impl->focused_id.value) {
+                    focus_found = true;
+                    break;
+                }
+            }
+            if (!focus_found) {
+                impl->focused_id = {};
+            }
+        }
         if (!impl->frame_desc.input.mouse_down[0u]) {
             impl->active_id = {};
             impl->active_scroll_id = {};
@@ -7296,15 +7337,27 @@ namespace gui {
         impl->building = false;
     }
 
-    auto render_frame(Frame const& frame, draw::Context draw_context) -> void {
+    auto render_frame_base(Frame const& frame, draw::Context draw_context) -> void {
         ContextImpl const* const impl = impl_from_frame(frame);
         if (impl == nullptr || !draw::context_valid(draw_context) || impl->box_count == 0u) {
             return;
         }
         render_box(impl, draw_context, 0u);
         render_scrollbars(impl, draw_context, 0u);
+    }
+
+    auto render_frame_floating(Frame const& frame, draw::Context draw_context) -> void {
+        ContextImpl const* const impl = impl_from_frame(frame);
+        if (impl == nullptr || !draw::context_valid(draw_context) || impl->box_count == 0u) {
+            return;
+        }
         render_floating_boxes(impl, draw_context, 0u);
         render_floating_scrollbars(impl, draw_context, 0u);
+    }
+
+    auto render_frame(Frame const& frame, draw::Context draw_context) -> void {
+        render_frame_base(frame, draw_context);
+        render_frame_floating(frame, draw_context);
     }
 
 } // namespace gui

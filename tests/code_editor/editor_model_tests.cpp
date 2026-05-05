@@ -356,6 +356,30 @@ namespace {
         );
     }
 
+    TEST_CASE(editor_normal_undo_restores_scroll) {
+        Arena arena = {};
+        arena.init();
+
+        StringBuffer text = {};
+        TEST_EXPECT(context, text.init(512u, arena.resource()));
+        append_lines(text, 40u);
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, text.str());
+        editor.cursor_line = 20u;
+        editor.scroll_y = code_editor::editor_line_height(editor) * 15.0f;
+        editor.set_flag(EditorFlag::INSERT_MODE, true);
+
+        send_text(editor, "x");
+        editor.set_flag(EditorFlag::INSERT_MODE, false);
+        send_text(editor, "u");
+
+        TEST_EXPECT(context, editor.scroll_y == code_editor::editor_line_height(editor) * 15.0f);
+        TEST_EXPECT(
+            context, code_editor::editor_line_text(code_editor::editor_line(editor, 20u)) == "line"
+        );
+    }
+
     TEST_CASE(editor_loads_and_edits_line_past_old_column_cap) {
         Arena arena = {};
         arena.init();
@@ -498,7 +522,9 @@ namespace {
 
         send_text(editor, " f");
         TEST_EXPECT(context, editor.flag(EditorFlag::FILE_SEARCH_OPEN));
-        send_text(editor, "fc");
+        editor.file_search_text_size =
+            StrRef("fc").copy_to(editor.file_search_text, code_editor::FILE_SEARCH_TEXT_CAPACITY);
+        editor.file_search_text[editor.file_search_text_size] = '\0';
 
         code_editor::FileSearchMatch matches[code_editor::FILE_SEARCH_RESULT_LIMIT] = {};
         size_t const count = code_editor::collect_file_search_matches(editor, matches);
@@ -1200,7 +1226,9 @@ namespace {
         TEST_EXPECT(context, !editor.flag(EditorFlag::PENDING_LEADER));
         TEST_EXPECT(context, editor.file_search_selected == 0u);
 
-        send_text(editor, "appc");
+        editor.file_search_text_size =
+            StrRef("appc").copy_to(editor.file_search_text, code_editor::FILE_SEARCH_TEXT_CAPACITY);
+        editor.file_search_text[editor.file_search_text_size] = '\0';
 
         code_editor::BufferSearchMatch matches[code_editor::FILE_SEARCH_RESULT_LIMIT] = {};
         size_t const count = code_editor::collect_buffer_search_matches(editor, matches);
@@ -1211,6 +1239,24 @@ namespace {
         press_key(editor, gui::Key::ENTER);
         TEST_EXPECT(context, !editor.flag(EditorFlag::BUFFER_SEARCH_OPEN));
         TEST_EXPECT(context, editor.buffer_search_open_file == 1u);
+    }
+
+    TEST_CASE(editor_lsp_rename_prefills_and_selects_current_word) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "int original_name = 0;");
+        editor.cursor_column = 6u;
+        editor.preferred_column = editor.cursor_column;
+
+        send_text(editor, " rn");
+
+        TEST_EXPECT(context, editor.lsp_popup == code_editor::EditorLspPopupKind::RENAME);
+        TEST_EXPECT(
+            context, StrRef(editor.lsp_rename_text, editor.lsp_rename_text_size) == "original_name"
+        );
+        TEST_EXPECT(context, editor.lsp_rename_text_selected);
     }
 
     TEST_CASE(editor_space_w_v_and_s_create_splits) {

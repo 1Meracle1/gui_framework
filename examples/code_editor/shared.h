@@ -1,5 +1,7 @@
 #pragma once
 
+#include "lsp.h"
+
 #include <algorithm>
 #include <base/config.h>
 #include <base/memory.h>
@@ -111,6 +113,9 @@ namespace code_editor {
         StrRef const* shared_tree_root_name = nullptr;
         Slice<FileTreeEntry>* shared_tree_files = nullptr;
         uint64_t const* shared_file_change_generation = nullptr;
+        LspBridge const* lsp_bridge = nullptr;
+        LspSendEditorRequestFn lsp_send_request = nullptr;
+        void* lsp_user_data = nullptr;
         bool initial_sidebar_visible = false;
     };
 

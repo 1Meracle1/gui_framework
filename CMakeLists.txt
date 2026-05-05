@@ -178,6 +178,7 @@ if(BUILD_TESTS)
     add_executable(code_editor_model_tests
         tests/code_editor/editor_model_tests.cpp
         examples/code_editor/editor_model.cpp
+        examples/code_editor/lsp.cpp
         examples/code_editor/text_buffer.cpp
     )
     target_include_directories(code_editor_model_tests PRIVATE
@@ -197,6 +198,16 @@ if(BUILD_TESTS)
     target_link_libraries(code_editor_syntax_tests PRIVATE gui::gui gui_test)
     cpp_configure_target(code_editor_syntax_tests)
 
+    add_executable(code_editor_lsp_tests
+        tests/code_editor/lsp_tests.cpp
+        examples/code_editor/lsp.cpp
+    )
+    target_include_directories(code_editor_lsp_tests PRIVATE
+        "${PROJECT_SOURCE_DIR}/examples/code_editor"
+    )
+    target_link_libraries(code_editor_lsp_tests PRIVATE base::base gui_test)
+    cpp_configure_target(code_editor_lsp_tests)
+
     add_test(NAME base_tests COMMAND base_tests)
     add_test(NAME gui_tests COMMAND gui_tests)
     add_test(NAME render_tests COMMAND render_tests)
@@ -205,6 +216,7 @@ if(BUILD_TESTS)
     add_test(NAME draw_tests COMMAND draw_tests)
     add_test(NAME code_editor_model_tests COMMAND code_editor_model_tests)
     add_test(NAME code_editor_syntax_tests COMMAND code_editor_syntax_tests)
+    add_test(NAME code_editor_lsp_tests COMMAND code_editor_lsp_tests)
     if(WIN32)
         add_test(NAME render_dx12_clear_smoke COMMAND render_dx12_clear_smoke)
     endif()

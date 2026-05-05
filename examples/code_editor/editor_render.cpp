@@ -737,6 +737,109 @@ namespace code_editor {
         }
     }
 
+    [[nodiscard]] auto lsp_same_path(StrRef lhs, StrRef rhs) -> bool {
+        return lhs.equals_ignore_ascii_case(rhs);
+    }
+
+    [[nodiscard]] auto lsp_diagnostic_color(Palette const& palette, LspDiagnosticSeverity severity)
+        -> gui::Color {
+        switch (severity) {
+        case LspDiagnosticSeverity::ERROR_DIAGNOSTIC:
+            return palette.preprocessor;
+        case LspDiagnosticSeverity::WARNING:
+            return palette.string;
+        case LspDiagnosticSeverity::INFORMATION:
+            return palette.cursor;
+        case LspDiagnosticSeverity::HINT:
+            return palette.muted;
+        }
+        return palette.muted;
+    }
+
+    [[nodiscard]] auto lsp_diagnostic_count(EditorState const& editor) -> size_t {
+        if (editor.lsp_bridge == nullptr) {
+            return 0u;
+        }
+        size_t count = 0u;
+        for (LspDiagnostic const& diagnostic : editor.lsp_bridge->diagnostics) {
+            if (lsp_same_path(diagnostic.path, editor.current_file_path)) {
+                count += 1u;
+            }
+        }
+        return count;
+    }
+
+    [[nodiscard]] auto lsp_position_equal(LspPosition lhs, LspPosition rhs) -> bool {
+        return lhs.line == rhs.line && lhs.column == rhs.column;
+    }
+
+    [[nodiscard]] auto lsp_position_in_range(LspPosition position, LspRange range) -> bool {
+        if (lsp_position_equal(range.start, range.end)) {
+            return lsp_position_equal(position, range.start);
+        }
+        return !lsp_position_less(position, range.start) && lsp_position_less(position, range.end);
+    }
+
+    [[nodiscard]] auto lsp_diagnostic_at_cursor(EditorState const& editor) -> LspDiagnostic const* {
+        if (editor.lsp_bridge == nullptr) {
+            return nullptr;
+        }
+        LspPosition const cursor = {editor.cursor_line, editor.cursor_column};
+        for (LspDiagnostic const& diagnostic : editor.lsp_bridge->diagnostics) {
+            if (lsp_same_path(diagnostic.path, editor.current_file_path) &&
+                !diagnostic.message.empty() && lsp_position_in_range(cursor, diagnostic.range)) {
+                return &diagnostic;
+            }
+        }
+        return nullptr;
+    }
+
+    auto draw_lsp_diagnostics_for_line(
+        draw::Context context,
+        EditorState const& editor,
+        Palette const& palette,
+        size_t line,
+        float text_x,
+        float number_x,
+        float y,
+        float line_height,
+        float char_width
+    ) -> void {
+        if (editor.lsp_bridge == nullptr) {
+            return;
+        }
+        for (LspDiagnostic const& diagnostic : editor.lsp_bridge->diagnostics) {
+            if (!lsp_same_path(diagnostic.path, editor.current_file_path) ||
+                line < diagnostic.range.start.line || line > diagnostic.range.end.line) {
+                continue;
+            }
+            size_t const line_size_value = editor_line(editor, line).size;
+            size_t const start =
+                line == diagnostic.range.start.line ? diagnostic.range.start.column : 0u;
+            size_t const end =
+                line == diagnostic.range.end.line ? diagnostic.range.end.column : line_size_value;
+            gui::Color const color = lsp_diagnostic_color(palette, diagnostic.severity);
+            draw::draw_rect_filled(
+                context,
+                {{number_x, y + 6.0f}, {number_x + 3.0f, y + line_height - 6.0f}},
+                to_draw_color(color),
+                1.0f
+            );
+            if (end > start) {
+                float const x0 = text_x + char_width * static_cast<float>(start);
+                float const x1 = text_x + char_width * static_cast<float>(end);
+                float const underline_y = y + line_height - 3.0f;
+                draw::draw_line(
+                    context,
+                    {std::round(x0), std::round(underline_y)},
+                    {std::round(std::max(x0 + 2.0f, x1)), std::round(underline_y)},
+                    to_draw_color(color),
+                    1.5f
+                );
+            }
+        }
+    }
+
     auto draw_editor_selection(
         draw::Context context,
         EditorSelectionRange selection,
@@ -926,6 +1029,17 @@ namespace code_editor {
                 editor.font_size,
                 char_width
             );
+            draw_lsp_diagnostics_for_line(
+                draw_context,
+                editor,
+                palette,
+                line,
+                text_x,
+                line_number_x,
+                y,
+                line_height,
+                char_width
+            );
             y += line_height;
             line += 1u;
         }
@@ -1109,6 +1223,30 @@ namespace code_editor {
         Palette const& palette
     ) -> void;
 
+    auto draw_lsp_overlay(
+        draw::Context context,
+        font_cache::Font font,
+        EditorState const& editor,
+        float char_width,
+        gui::Frame const& ui,
+        Palette const& palette
+    ) -> void;
+
+    [[nodiscard]] auto lsp_hover_popup_hit(
+        gui::Frame const& ui, EditorState const& editor, gui::InputState const& input
+    ) -> bool {
+        if (editor.lsp_popup != EditorLspPopupKind::HOVER) {
+            return false;
+        }
+        if (input.mouse_down[0u] &&
+            editor.lsp_hover_selection.start != editor.lsp_hover_selection.end) {
+            return true;
+        }
+        gui::BoxInfo const* const popup =
+            ui.find_box(gui::id("lsp_hover_popup"), gui::BoxKind::POPUP);
+        return popup != nullptr && point_in_rect(popup->rect, input.mouse_pos);
+    }
+
     auto draw_editor_surface(
         draw::Context draw_context,
         font_cache::Font editor_font,
@@ -1127,7 +1265,7 @@ namespace code_editor {
             editor,
             char_width,
             ui,
-            input,
+            lsp_hover_popup_hit(ui, editor, input) ? gui::InputState{} : input,
             palette,
             editor.root_split,
             initial_focus,
@@ -1135,6 +1273,7 @@ namespace code_editor {
         );
         focus_editor_split(editor, target_focus);
         draw_command_overlay(draw_context, editor_font, editor, ui, palette);
+        draw_lsp_overlay(draw_context, editor_font, editor, char_width, ui, palette);
     }
 
     auto draw_tree_guide(gui::Frame& ui, Palette const& palette) -> void {
@@ -1537,6 +1676,166 @@ namespace code_editor {
         BASE_UNUSED(open_file(editor, file.name, file.path));
     }
 
+    [[nodiscard]] auto lsp_location_name(Arena& arena, LspLocation const& location) -> StrRef {
+        return fmt::aprintf(
+                   arena.resource(),
+                   "%s:%zu:%zu",
+                   location.path,
+                   location.range.start.line + 1u,
+                   location.range.start.column + 1u
+        )
+            .str();
+    }
+
+    auto open_lsp_location(EditorState& editor, LspLocation const& location) -> void {
+        if (location.path.empty()) {
+            return;
+        }
+        focus_code_split_for_open(editor);
+        StrRef const name = render_path_leaf(location.path);
+        if (open_file(editor, name.empty() ? location.path : name, location.path)) {
+            set_editor_cursor(editor, location.range.start.line, location.range.start.column);
+            if (editor.focused_split < editor.split_nodes.size()) {
+                center_cursor(editor, editor.split_nodes[editor.focused_split].rect);
+            }
+        }
+    }
+
+    [[nodiscard]] auto find_or_add_open_file(EditorState& editor, StrRef path) -> OpenFile* {
+        StrRef const name = render_path_leaf(path);
+        remember_open_file(editor, name.empty() ? path : name, path);
+        return find_open_file(editor, name.empty() ? path : name, path);
+    }
+
+    auto apply_lsp_edits_to_file(EditorState& editor, StrRef path, Slice<LspTextEdit const> edits)
+        -> void {
+        if (path.empty()) {
+            return;
+        }
+        if (lsp_same_path(path, editor.current_file_path)) {
+            BASE_UNUSED(apply_editor_lsp_text_edits(editor, edits));
+            return;
+        }
+        if (editor.arena == nullptr) {
+            return;
+        }
+
+        OpenFile* const file = find_or_add_open_file(editor, path);
+        if (file == nullptr) {
+            return;
+        }
+
+        StrRef text = file->text;
+        if (!file->text_valid && !read_tree_file_display_text(*editor.arena, path, text)) {
+            return;
+        }
+        StrRef const updated = lsp_apply_text_edits(*editor.arena, text, edits, path);
+        file->text = updated;
+        if (file->saved_text.empty()) {
+            file->saved_text = text;
+        }
+        file->text_valid = true;
+        file->dirty = updated != file->saved_text;
+    }
+
+    auto apply_lsp_workspace_edits(EditorState& editor, Slice<LspTextEdit const> edits) -> void {
+        for (LspTextEdit const& edit : edits) {
+            bool seen = false;
+            for (LspTextEdit const& previous : edits.prefix(&edit - edits.data())) {
+                if (lsp_same_path(previous.path, edit.path)) {
+                    seen = true;
+                    break;
+                }
+            }
+            if (!seen) {
+                apply_lsp_edits_to_file(editor, edit.path, edits);
+            }
+        }
+    }
+
+    auto handle_lsp_pending_actions(EditorState& editor) -> void {
+        if (editor.lsp_bridge == nullptr) {
+            return;
+        }
+        if (editor.lsp_seen_text_edits_generation != editor.lsp_bridge->text_edits_generation) {
+            editor.lsp_seen_text_edits_generation = editor.lsp_bridge->text_edits_generation;
+            apply_lsp_workspace_edits(editor, editor.lsp_bridge->text_edits);
+        }
+        if (editor.lsp_open_location_index != LSP_NO_SELECTION) {
+            size_t const index = editor.lsp_open_location_index;
+            editor.lsp_open_location_index = LSP_NO_SELECTION;
+            if (index < editor.lsp_bridge->locations.size()) {
+                open_lsp_location(editor, editor.lsp_bridge->locations[index]);
+            }
+        }
+        if (editor.lsp_open_symbol_index != LSP_NO_SELECTION) {
+            size_t const index = editor.lsp_open_symbol_index;
+            editor.lsp_open_symbol_index = LSP_NO_SELECTION;
+            if (index < editor.lsp_bridge->symbols.size()) {
+                LspDocumentSymbol const& symbol = editor.lsp_bridge->symbols[index];
+                set_editor_cursor(
+                    editor, symbol.selection_range.start.line, symbol.selection_range.start.column
+                );
+            }
+        }
+        if (editor.lsp_apply_code_action_index != LSP_NO_SELECTION) {
+            size_t const index = editor.lsp_apply_code_action_index;
+            editor.lsp_apply_code_action_index = LSP_NO_SELECTION;
+            if (index < editor.lsp_bridge->code_actions.size()) {
+                apply_lsp_workspace_edits(editor, editor.lsp_bridge->code_actions[index].edits);
+            }
+        }
+    }
+
+    auto sync_lsp_result_popups(EditorState& editor) -> void {
+        if (editor.lsp_bridge == nullptr) {
+            return;
+        }
+        if (editor.lsp_seen_completions_generation != editor.lsp_bridge->completions_generation) {
+            editor.lsp_seen_completions_generation = editor.lsp_bridge->completions_generation;
+            if (!editor.lsp_bridge->completions.empty()) {
+                editor.lsp_popup = EditorLspPopupKind::COMPLETION;
+                editor.lsp_selected = 0u;
+            }
+        }
+        if (editor.lsp_seen_hover_generation != editor.lsp_bridge->hover_generation) {
+            editor.lsp_seen_hover_generation = editor.lsp_bridge->hover_generation;
+            if (!editor.lsp_bridge->hover.text.empty()) {
+                editor.lsp_popup = EditorLspPopupKind::HOVER;
+                editor.lsp_selected = 0u;
+                editor.lsp_hover_selection = {};
+            }
+        }
+        if (editor.lsp_seen_locations_generation != editor.lsp_bridge->locations_generation) {
+            editor.lsp_seen_locations_generation = editor.lsp_bridge->locations_generation;
+            if (!editor.lsp_bridge->locations.empty()) {
+                if (editor.lsp_bridge->locations.size() == 1u &&
+                    (editor.lsp_bridge->locations_kind == LspRequestKind::DEFINITION ||
+                     editor.lsp_bridge->locations_kind == LspRequestKind::DECLARATION)) {
+                    editor.lsp_open_location_index = 0u;
+                    close_editor_lsp_popup(editor);
+                } else {
+                    editor.lsp_popup = EditorLspPopupKind::LOCATIONS;
+                    editor.lsp_selected = 0u;
+                }
+            }
+        }
+        if (editor.lsp_seen_code_actions_generation != editor.lsp_bridge->code_actions_generation) {
+            editor.lsp_seen_code_actions_generation = editor.lsp_bridge->code_actions_generation;
+            if (!editor.lsp_bridge->code_actions.empty()) {
+                editor.lsp_popup = EditorLspPopupKind::CODE_ACTIONS;
+                editor.lsp_selected = 0u;
+            }
+        }
+        if (editor.lsp_seen_symbols_generation != editor.lsp_bridge->symbols_generation) {
+            editor.lsp_seen_symbols_generation = editor.lsp_bridge->symbols_generation;
+            if (!editor.lsp_bridge->symbols.empty()) {
+                editor.lsp_popup = EditorLspPopupKind::SYMBOLS;
+                editor.lsp_selected = 0u;
+            }
+        }
+    }
+
     auto draw_file_search_picker(
         gui::Frame& ui,
         EditorState& editor,
@@ -1556,12 +1855,10 @@ namespace code_editor {
             )
         );
 
+        editor.file_search_text_size = cstr_len(editor.file_search_text);
         FileSearchMatch matches[FILE_SEARCH_RESULT_LIMIT] = {};
         BufferSearchMatch buffer_matches[FILE_SEARCH_RESULT_LIMIT] = {};
-        size_t const match_count = buffers ? collect_buffer_search_matches(editor, buffer_matches)
-                                           : collect_file_search_matches(editor, matches);
-        editor.file_search_selected =
-            match_count == 0u ? 0u : std::min(editor.file_search_selected, match_count - 1u);
+        size_t match_count = 0u;
 
         if (auto modal = ui.modal(
                 gui::id(buffers ? "buffer_search_modal" : "file_search_modal"),
@@ -1621,13 +1918,45 @@ namespace code_editor {
                             .style = {.foreground = palette.cursor},
                         }
                     );
-                    ui.label(
-                        editor_file_search_text(editor),
-                        {
-                            .layout = {.width = gui::fill(), .height = gui::fill()},
-                            .style = {.foreground = palette.text},
+                    gui::Id const input_id =
+                        gui::id(buffers ? "buffer_search_input" : "file_search_input");
+                    ui.request_focus(input_id);
+                    gui::Signal const input = ui.input_text(
+                        input_id,
+                        "",
+                        editor.file_search_text,
+                        FILE_SEARCH_TEXT_CAPACITY,
+                        gui::InputTextDesc{
+                            .box =
+                                {
+                                    .layout =
+                                        {
+                                            .width = gui::fill(),
+                                            .height = gui::fill(),
+                                            .padding = gui::insets(0.0f),
+                                        },
+                                    .style =
+                                        {
+                                            .background = gui::rgba(0, 0, 0, 0),
+                                            .foreground = palette.text,
+                                            .border = gui::rgba(0, 0, 0, 0),
+                                            .border_thickness = 1.0f,
+                                            .radius = 0.0f,
+                                            .font_size = editor.font_size,
+                                        },
+                                },
+                            .ignore_input_on_focus = true,
                         }
                     );
+                    if (input.changed) {
+                        editor.file_search_text_size = cstr_len(editor.file_search_text);
+                        editor.file_search_selected = 0u;
+                    }
+                    match_count = buffers ? collect_buffer_search_matches(editor, buffer_matches)
+                                          : collect_file_search_matches(editor, matches);
+                    editor.file_search_selected =
+                        match_count == 0u ? 0u
+                                          : std::min(editor.file_search_selected, match_count - 1u);
                     ui.label(
                         fmt::tprintf(
                             "%zu/%zu",
@@ -1743,6 +2072,541 @@ namespace code_editor {
         }
     }
 
+    struct LspTextMetrics {
+        float width = 0.0f;
+        size_t lines = 0u;
+    };
+
+    [[nodiscard]] auto next_lsp_text_line(StrRef text, size_t& offset) -> StrRef {
+        size_t const start = offset;
+        while (offset < text.size() && text[offset] != '\n') {
+            offset += 1u;
+        }
+        size_t end = offset;
+        if (offset < text.size()) {
+            offset += 1u;
+        }
+        if (end > start && text[end - 1u] == '\r') {
+            end -= 1u;
+        }
+        return text.substr(start, end - start);
+    }
+
+    [[nodiscard]] auto
+    measure_lsp_text(font_cache::Font font, float font_size, StrRef text, size_t max_lines)
+        -> LspTextMetrics {
+        LspTextMetrics metrics = {};
+        size_t offset = 0u;
+        while (offset < text.size() && metrics.lines < max_lines) {
+            StrRef const line = next_lsp_text_line(text, offset);
+            metrics.width =
+                std::max(metrics.width, font_cache::text_advance(font, font_size, line));
+            metrics.lines += 1u;
+        }
+        if (metrics.lines == 0u) {
+            metrics.lines = 1u;
+        }
+        return metrics;
+    }
+
+    auto draw_lsp_text_lines(
+        draw::Context context,
+        font_cache::Font font,
+        EditorState const& editor,
+        Palette const& palette,
+        draw::Rect panel,
+        StrRef text,
+        size_t max_lines
+    ) -> void {
+        draw::Rect const clip = {
+            {panel.min.x + 10.0f, panel.min.y + 8.0f},
+            {panel.max.x - 10.0f, panel.max.y - 8.0f},
+        };
+        draw::push_clip_rect(context, clip);
+        draw::TextStyle style = {
+            .font = font,
+            .size = editor.font_size,
+            .color = to_draw_color(palette.text),
+        };
+        float y = clip.min.y;
+        float const line_height = editor_line_height(editor);
+        size_t offset = 0u;
+        size_t line_count = 0u;
+        while (offset < text.size() && line_count < max_lines) {
+            StrRef const line = next_lsp_text_line(text, offset);
+            draw::draw_text(context, {clip.min.x, y - 2.0f}, style, line, nullptr);
+            y += line_height;
+            line_count += 1u;
+        }
+        if (offset < text.size() && y < clip.max.y) {
+            style.color = to_draw_color(palette.muted);
+            draw::draw_text(context, {clip.min.x, y - 2.0f}, style, "...", nullptr);
+        }
+        draw::pop_clip_rect(context);
+    }
+
+    [[nodiscard]] auto focused_code_rect(EditorState const& editor, gui::Rect& out_rect) -> bool {
+        if (editor.focused_split >= editor.split_nodes.size() ||
+            editor_focused_pane_kind(editor) != EditorPaneKind::CODE) {
+            return false;
+        }
+        out_rect = editor.split_nodes[editor.focused_split].rect;
+        return out_rect.max.x > out_rect.min.x && out_rect.max.y > out_rect.min.y;
+    }
+
+    [[nodiscard]] auto
+    cursor_visible_in_rect(EditorState const& editor, gui::Rect rect, float char_width) -> bool {
+        gui::Rect const content = editor_content_rect(rect);
+        float const line_height = editor_line_height(editor);
+        float const x =
+            editor_text_x(editor, rect) + char_width * static_cast<float>(editor.cursor_column);
+        float const y =
+            content.min.y + static_cast<float>(editor.cursor_line) * line_height - editor.scroll_y;
+        float const width = editor.flag(EditorFlag::INSERT_MODE) ? 2.0f : char_width;
+        return x >= content.min.x && x + width <= content.max.x && y >= content.min.y &&
+               y + line_height <= content.max.y;
+    }
+
+    [[nodiscard]] auto lsp_anchor_panel(
+        EditorState const& editor,
+        gui::Rect rect,
+        float char_width,
+        size_t line,
+        size_t column,
+        float width,
+        float height
+    ) -> draw::Rect {
+        gui::Rect const content = editor_content_rect(rect);
+        float const line_height = editor_line_height(editor);
+        float const text_x = editor_text_x(editor, rect);
+        float x = text_x + char_width * static_cast<float>(column);
+        float const line_top =
+            content.min.y + static_cast<float>(line) * line_height - editor.scroll_y;
+        float y = line_top + line_height + 3.0f;
+        width = std::min(width, std::max(120.0f, content.max.x - content.min.x - 8.0f));
+        height = std::min(height, std::max(48.0f, content.max.y - content.min.y - 8.0f));
+        x = std::clamp(
+            x, content.min.x + 4.0f, std::max(content.min.x + 4.0f, content.max.x - width - 4.0f)
+        );
+        if (y + height > content.max.y - 4.0f && line_top - height - 3.0f >= content.min.y) {
+            y = line_top - height - 3.0f;
+        }
+        y = std::clamp(
+            y, content.min.y + 4.0f, std::max(content.min.y + 4.0f, content.max.y - height - 4.0f)
+        );
+        return {{x, y}, {x + width, y + height}};
+    }
+
+    auto draw_lsp_panel(draw::Context context, Palette const& palette, draw::Rect panel) -> void {
+        draw::draw_rect_filled(context, panel, to_draw_color(palette.panel_raised), 5.0f);
+        draw::draw_rect(context, panel, to_draw_color(palette.border), 1.0f, 5.0f);
+    }
+
+    [[nodiscard]] auto
+    lsp_wrapped_line_count(font_cache::Font font, float font_size, StrRef text, float wrap_width)
+        -> size_t {
+        size_t count = 0u;
+        size_t offset = 0u;
+        while (offset < text.size()) {
+            StrRef const line = next_lsp_text_line(text, offset);
+            float const width = font_cache::text_advance(font, font_size, line);
+            count += std::max<size_t>(
+                1u, static_cast<size_t>(std::ceil(width / std::max(1.0f, wrap_width)))
+            );
+        }
+        return std::max<size_t>(1u, count);
+    }
+
+    [[nodiscard]] auto
+    lsp_hover_panel_rect(font_cache::Font font, EditorState const& editor, float char_width)
+        -> draw::Rect {
+        if (editor.lsp_bridge == nullptr || editor.lsp_bridge->hover.text.empty()) {
+            return {};
+        }
+        gui::Rect rect = {};
+        if (!focused_code_rect(editor, rect)) {
+            return {};
+        }
+
+        size_t line = editor.lsp_bridge->hover.range.start.line;
+        size_t column = editor.lsp_bridge->hover.range.start.column;
+        if (line >= editor_line_count(editor)) {
+            line = editor.cursor_line;
+            column = editor.cursor_column;
+        }
+        size_t constexpr MAX_LINES = static_cast<size_t>(-1);
+        LspTextMetrics const metrics =
+            measure_lsp_text(font, editor.font_size, editor.lsp_bridge->hover.text, MAX_LINES);
+        gui::Rect const content = editor_content_rect(rect);
+        float const max_width =
+            std::max(120.0f, std::min(1040.0f, content.max.x - content.min.x - 8.0f));
+        float const min_width = std::min(360.0f, max_width);
+        float const width = std::clamp(metrics.width + 22.0f, min_width, max_width);
+        float const wrap_width = std::max(1.0f, width - 20.0f);
+        float const line_height = editor_line_height(editor);
+        size_t constexpr BASE_LINES = 18u;
+        size_t const lines = lsp_wrapped_line_count(
+            font, editor.font_size, editor.lsp_bridge->hover.text, wrap_width
+        );
+        float const content_height = static_cast<float>(lines) * line_height + 18.0f;
+        float const base_height =
+            std::min(content_height, static_cast<float>(BASE_LINES) * line_height + 18.0f);
+        float const line_top =
+            content.min.y + static_cast<float>(line) * line_height - editor.scroll_y;
+        float const below = std::max(0.0f, content.max.y - (line_top + line_height + 7.0f));
+        float const above = std::max(0.0f, line_top - content.min.y - 7.0f);
+        float const expand_height = std::max(base_height, std::max(above, below) * 0.45f);
+        float const height =
+            content_height > base_height ? std::min(content_height, expand_height) : base_height;
+        draw::Rect const panel =
+            lsp_anchor_panel(editor, rect, char_width, line, column, width, height);
+        return panel;
+    }
+
+    [[nodiscard]] auto lsp_hover_key_action(gui::InputState const& input) -> bool {
+        if (input.key_events == nullptr) {
+            return false;
+        }
+        for (size_t index = 0u; index < input.key_event_count; ++index) {
+            gui::KeyEventKind const kind = input.key_events[index].kind;
+            if (kind == gui::KeyEventKind::PRESS || kind == gui::KeyEventKind::REPEAT ||
+                kind == gui::KeyEventKind::TEXT) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    auto draw_lsp_hover_popup(
+        gui::Frame& ui,
+        font_cache::Font font,
+        EditorState& editor,
+        float char_width,
+        Palette const& palette,
+        gui::InputState const& input
+    ) -> void {
+        if (editor.lsp_popup != EditorLspPopupKind::HOVER || editor.lsp_bridge == nullptr ||
+            editor.lsp_bridge->hover.text.empty()) {
+            return;
+        }
+
+        draw::Rect const panel = lsp_hover_panel_rect(font, editor, char_width);
+        float const width = panel.max.x - panel.min.x;
+        float const height = panel.max.y - panel.min.y;
+        if (width <= 0.0f || height <= 0.0f) {
+            return;
+        }
+        gui::Rect const popup_rect = {{panel.min.x, panel.min.y}, {panel.max.x, panel.max.y}};
+
+        if (auto popup = ui.popup(
+                gui::id("lsp_hover_popup"),
+                {
+                    .layout =
+                        {
+                            .width = gui::px(width),
+                            .height = gui::px(height),
+                            .margin = gui::insets(panel.min.y, 0.0f, 0.0f, panel.min.x),
+                            .padding = gui::insets(8.0f, 10.0f),
+                        },
+                    .style =
+                        {
+                            .background = palette.panel_raised,
+                            .border = palette.border,
+                            .border_thickness = 1.0f,
+                            .radius = 5.0f,
+                        },
+                    .debug_name = "lsp_hover_popup",
+                }
+            )) {
+            gui::Signal const label = ui.selectable_label(
+                gui::id("lsp_hover_text"),
+                editor.lsp_bridge->hover.text,
+                &editor.lsp_hover_selection,
+                {
+                    .layout = {.width = gui::fill(), .height = gui::fill(), .word_wrap = true},
+                    .style = {
+                        .background = gui::rgba(0, 0, 0, 0),
+                        .foreground = palette.text,
+                        .font = font,
+                        .font_size = editor.font_size,
+                    },
+                }
+            );
+            bool const mouse_down =
+                input.mouse_down[0u] || input.mouse_down[1u] || input.mouse_down[2u];
+            if (lsp_hover_key_action(input) ||
+                (mouse_down && !label.active && !point_in_rect(popup_rect, input.mouse_pos))) {
+                close_editor_lsp_popup(editor);
+            }
+        }
+    }
+
+    auto draw_lsp_diagnostic_overlay(
+        draw::Context context,
+        font_cache::Font font,
+        EditorState const& editor,
+        float char_width,
+        Palette const& palette
+    ) -> void {
+        LspDiagnostic const* const diagnostic = lsp_diagnostic_at_cursor(editor);
+        if (diagnostic == nullptr) {
+            return;
+        }
+        gui::Rect rect = {};
+        if (!focused_code_rect(editor, rect)) {
+            return;
+        }
+        if (!cursor_visible_in_rect(editor, rect, char_width)) {
+            return;
+        }
+
+        size_t constexpr MAX_LINES = static_cast<size_t>(-1);
+        LspTextMetrics const metrics =
+            measure_lsp_text(font, editor.font_size, diagnostic->message, MAX_LINES);
+        float const line_height = editor_line_height(editor);
+        draw::Rect const panel = lsp_anchor_panel(
+            editor,
+            rect,
+            char_width,
+            editor.cursor_line,
+            editor.cursor_column,
+            std::clamp(metrics.width + 22.0f, 240.0f, 720.0f),
+            static_cast<float>(metrics.lines) * line_height + 18.0f
+        );
+        draw_lsp_panel(context, palette, panel);
+        draw_lsp_text_lines(context, font, editor, palette, panel, diagnostic->message, MAX_LINES);
+    }
+
+    [[nodiscard]] auto lsp_overlay_count(EditorState const& editor) -> size_t {
+        if (editor.lsp_bridge == nullptr) {
+            return 0u;
+        }
+        switch (editor.lsp_popup) {
+        case EditorLspPopupKind::COMPLETION:
+            return editor.lsp_bridge->completions.size();
+        case EditorLspPopupKind::LOCATIONS:
+            return editor.lsp_bridge->locations.size();
+        case EditorLspPopupKind::CODE_ACTIONS:
+            return editor.lsp_bridge->code_actions.size();
+        case EditorLspPopupKind::SYMBOLS:
+            return editor.lsp_bridge->symbols.size();
+        default:
+            return 0u;
+        }
+    }
+
+    [[nodiscard]] auto lsp_overlay_title(EditorLspPopupKind popup) -> StrRef {
+        switch (popup) {
+        case EditorLspPopupKind::LOCATIONS:
+            return "Locations";
+        case EditorLspPopupKind::CODE_ACTIONS:
+            return "Code actions";
+        case EditorLspPopupKind::SYMBOLS:
+            return "Symbols";
+        default:
+            return "LSP";
+        }
+    }
+
+    auto draw_lsp_row(
+        draw::Context context,
+        font_cache::Font font,
+        EditorState const& editor,
+        Palette const& palette,
+        draw::Rect row,
+        StrRef text,
+        StrRef detail,
+        bool selected
+    ) -> void {
+        if (selected) {
+            draw::draw_rect_filled(
+                context, row, to_draw_color(gui::color_alpha(palette.cursor_line, 0.92f)), 3.0f
+            );
+        }
+        draw::TextStyle style = {
+            .font = font,
+            .size = editor.font_size,
+            .color = to_draw_color(selected ? palette.text : palette.muted),
+        };
+        draw::Rect const clip = {{row.min.x + 9.0f, row.min.y}, {row.max.x - 9.0f, row.max.y}};
+        draw::push_clip_rect(context, clip);
+        draw::draw_text(
+            context, {clip.min.x, row.min.y + 4.0f}, style, selected ? ">" : "", nullptr
+        );
+        style.color = to_draw_color(palette.text);
+        draw::draw_text(context, {clip.min.x + 18.0f, row.min.y + 4.0f}, style, text, nullptr);
+        if (!detail.empty()) {
+            style.color = to_draw_color(palette.muted);
+            draw::draw_text(
+                context,
+                {row.min.x + std::max(260.0f, (row.max.x - row.min.x) * 0.58f), row.min.y + 4.0f},
+                style,
+                detail,
+                nullptr
+            );
+        }
+        draw::pop_clip_rect(context);
+    }
+
+    auto draw_lsp_completion_overlay(
+        draw::Context context,
+        font_cache::Font font,
+        EditorState const& editor,
+        float char_width,
+        Palette const& palette
+    ) -> void {
+        if (editor.lsp_bridge == nullptr || editor.lsp_bridge->completions.empty()) {
+            return;
+        }
+        gui::Rect rect = {};
+        if (!focused_code_rect(editor, rect)) {
+            return;
+        }
+
+        float constexpr ROW_HEIGHT = 28.0f;
+        size_t const count = editor.lsp_bridge->completions.size();
+        size_t const rows = std::min<size_t>(count, 9u);
+        size_t const first = editor.lsp_selected >= rows ? editor.lsp_selected + 1u - rows : 0u;
+        draw::Rect const panel = lsp_anchor_panel(
+            editor,
+            rect,
+            char_width,
+            editor.cursor_line,
+            editor.cursor_column,
+            560.0f,
+            ROW_HEIGHT * static_cast<float>(std::max<size_t>(1u, rows)) + 8.0f
+        );
+        draw_lsp_panel(context, palette, panel);
+        draw::push_clip_rect(
+            context,
+            {{panel.min.x + 4.0f, panel.min.y + 4.0f}, {panel.max.x - 4.0f, panel.max.y - 4.0f}}
+        );
+        for (size_t row_index = 0u; row_index < rows; ++row_index) {
+            size_t const index = first + row_index;
+            LspCompletionItem const& item = editor.lsp_bridge->completions[index];
+            draw::Rect const row = {
+                {panel.min.x + 4.0f,
+                 panel.min.y + 4.0f + ROW_HEIGHT * static_cast<float>(row_index)},
+                {panel.max.x - 4.0f,
+                 panel.min.y + 4.0f + ROW_HEIGHT * static_cast<float>(row_index + 1u)},
+            };
+            draw_lsp_row(
+                context,
+                font,
+                editor,
+                palette,
+                row,
+                item.label,
+                item.detail,
+                index == editor.lsp_selected
+            );
+        }
+        draw::pop_clip_rect(context);
+    }
+
+    auto draw_lsp_center_overlay(
+        draw::Context context,
+        font_cache::Font font,
+        EditorState const& editor,
+        gui::Frame const& ui,
+        Palette const& palette
+    ) -> void {
+        if (editor.lsp_bridge == nullptr) {
+            return;
+        }
+        size_t const count = lsp_overlay_count(editor);
+        if (count == 0u) {
+            return;
+        }
+
+        gui::BoxInfo const* const body = ui.find_box(gui::id("body"), gui::BoxKind::ROW);
+        if (body == nullptr) {
+            return;
+        }
+
+        float constexpr ROW_HEIGHT = 28.0f;
+        float const body_width = body->rect.max.x - body->rect.min.x;
+        float const body_height = body->rect.max.y - body->rect.min.y;
+        size_t const rows = std::min<size_t>(count, 12u);
+        size_t const first = editor.lsp_selected >= rows ? editor.lsp_selected + 1u - rows : 0u;
+        float const width = std::min(860.0f, std::max(280.0f, body_width - 48.0f));
+        float const height = 44.0f + ROW_HEIGHT * static_cast<float>(rows) + 12.0f;
+        float const x = body->rect.min.x + std::max(0.0f, (body_width - width) * 0.5f);
+        float const y = body->rect.min.y + std::max(0.0f, (body_height - height) * 0.5f);
+        draw::Rect const panel = {{x, y}, {x + width, y + height}};
+        draw_lsp_panel(context, palette, panel);
+
+        draw::TextStyle style = {
+            .font = font,
+            .size = editor.font_size,
+            .color = to_draw_color(palette.text),
+        };
+        draw::draw_text(
+            context,
+            {panel.min.x + 12.0f, panel.min.y + 10.0f},
+            style,
+            lsp_overlay_title(editor.lsp_popup),
+            nullptr
+        );
+
+        draw::Rect const list_clip = {
+            {panel.min.x + 8.0f, panel.min.y + 40.0f},
+            {panel.max.x - 8.0f, panel.max.y - 8.0f},
+        };
+        draw::push_clip_rect(context, list_clip);
+        ArenaTemp temp = begin_thread_temp_arena();
+        for (size_t row_index = 0u; row_index < rows; ++row_index) {
+            size_t const index = first + row_index;
+            StrRef text = {};
+            StrRef detail = {};
+            if (editor.lsp_popup == EditorLspPopupKind::LOCATIONS) {
+                text = lsp_location_name(*temp.arena(), editor.lsp_bridge->locations[index]);
+            } else if (editor.lsp_popup == EditorLspPopupKind::CODE_ACTIONS) {
+                LspCodeAction const& action = editor.lsp_bridge->code_actions[index];
+                text = action.title;
+                detail = action.kind;
+            } else if (editor.lsp_popup == EditorLspPopupKind::SYMBOLS) {
+                LspDocumentSymbol const& symbol = editor.lsp_bridge->symbols[index];
+                text = fmt::tprintf("%s:%zu", symbol.name, symbol.selection_range.start.line + 1u);
+                detail = symbol.detail;
+            }
+            draw::Rect const row = {
+                {list_clip.min.x, list_clip.min.y + ROW_HEIGHT * static_cast<float>(row_index)},
+                {list_clip.max.x,
+                 list_clip.min.y + ROW_HEIGHT * static_cast<float>(row_index + 1u)},
+            };
+            draw_lsp_row(
+                context, font, editor, palette, row, text, detail, index == editor.lsp_selected
+            );
+        }
+        draw::pop_clip_rect(context);
+    }
+
+    auto draw_lsp_overlay(
+        draw::Context context,
+        font_cache::Font font,
+        EditorState const& editor,
+        float char_width,
+        gui::Frame const& ui,
+        Palette const& palette
+    ) -> void {
+        if (editor.lsp_bridge == nullptr) {
+            return;
+        }
+        if (editor.lsp_popup == EditorLspPopupKind::NONE) {
+            draw_lsp_diagnostic_overlay(context, font, editor, char_width, palette);
+            return;
+        }
+        if (editor.lsp_popup == EditorLspPopupKind::HOVER) {
+            return;
+        }
+        if (editor.lsp_popup == EditorLspPopupKind::COMPLETION) {
+            draw_lsp_completion_overlay(context, font, editor, char_width, palette);
+        } else {
+            draw_lsp_center_overlay(context, font, editor, ui, palette);
+        }
+    }
+
     [[nodiscard]] auto key_pressed(gui::InputState const& input, gui::Key key, bool repeat = false)
         -> bool {
         if (input.key_events == nullptr) {
@@ -1784,6 +2648,143 @@ namespace code_editor {
         case EditorSavePathError::NONE:
         default:
             return {};
+        }
+    }
+
+    [[nodiscard]] auto lsp_rename_popup_rect(
+        EditorState const& editor, float char_width, float client_width, float client_height
+    ) -> gui::Rect {
+        gui::Rect code_rect = {};
+        if (!focused_code_rect(editor, code_rect)) {
+            return {{24.0f, 72.0f}, {std::min(client_width - 24.0f, 544.0f), 108.0f}};
+        }
+
+        gui::Rect const content = editor_content_rect(code_rect);
+        float const line_height = editor_line_height(editor);
+        float const height = 36.0f;
+        float width = std::min(520.0f, std::max(240.0f, content.max.x - content.min.x - 8.0f));
+        width = std::min(width, std::max(120.0f, client_width - 48.0f));
+
+        float x = editor_text_x(editor, code_rect) +
+                  char_width * static_cast<float>(editor.cursor_column);
+        x = std::clamp(
+            x, content.min.x + 4.0f, std::max(content.min.x + 4.0f, content.max.x - width - 4.0f)
+        );
+
+        float const line_top =
+            content.min.y + static_cast<float>(editor.cursor_line) * line_height - editor.scroll_y;
+        float y = line_top - height - 4.0f;
+        if (y < content.min.y + 4.0f) {
+            y = line_top + line_height + 4.0f;
+        }
+        y = std::clamp(
+            y, content.min.y + 4.0f, std::max(content.min.y + 4.0f, content.max.y - height - 4.0f)
+        );
+        y = std::min(y, std::max(4.0f, client_height - height - 4.0f));
+        return {{x, y}, {x + width, y + height}};
+    }
+
+    auto draw_lsp_rename_popup(
+        gui::Frame& ui,
+        EditorState& editor,
+        Palette const& palette,
+        float char_width,
+        float client_width,
+        float client_height
+    ) -> void {
+        if (editor.lsp_popup != EditorLspPopupKind::RENAME) {
+            return;
+        }
+
+        gui::Rect const popup_rect =
+            lsp_rename_popup_rect(editor, char_width, client_width, client_height);
+        bool submit = false;
+        if (auto popup = ui.popup(
+                gui::id("lsp_rename_popup"),
+                {
+                    .layout =
+                        {
+                            .width = gui::px(popup_rect.max.x - popup_rect.min.x),
+                            .height = gui::px(popup_rect.max.y - popup_rect.min.y),
+                            .margin = gui::insets(popup_rect.min.y, 0.0f, 0.0f, popup_rect.min.x),
+                            .padding = gui::insets(0.0f, 10.0f),
+                            .align_x = gui::Align::STRETCH,
+                            .align_y = gui::Align::CENTER,
+                        },
+                    .style =
+                        {
+                            .background = palette.panel_raised,
+                            .border = palette.cursor,
+                            .border_thickness = 1.0f,
+                            .radius = 4.0f,
+                        },
+                    .debug_name = "lsp_rename_popup",
+                }
+            )) {
+            if (auto row = ui.row(
+                    gui::id("lsp_rename_row"),
+                    {
+                        .layout = {
+                            .width = gui::fill(),
+                            .height = gui::fill(),
+                            .gap = 6.0f,
+                            .align_y = gui::Align::CENTER,
+                        },
+                    }
+                )) {
+                ui.label(
+                    ">",
+                    {
+                        .layout = {.width = gui::text(), .height = gui::fill()},
+                        .style = {.foreground = palette.cursor},
+                    }
+                );
+                gui::Id const input_id = gui::id("lsp_rename_input");
+                if (editor.lsp_rename_text_selected) {
+                    ui.clear_focus();
+                }
+                ui.request_focus(input_id);
+                gui::Signal const input = ui.input_text(
+                    input_id,
+                    "",
+                    editor.lsp_rename_text,
+                    LSP_RENAME_TEXT_CAPACITY,
+                    gui::InputTextDesc{
+                        .box =
+                            {
+                                .layout =
+                                    {
+                                        .width = gui::fill(),
+                                        .height = gui::fill(),
+                                        .padding = gui::insets(0.0f),
+                                    },
+                                .style =
+                                    {
+                                        .background = gui::rgba(0, 0, 0, 0),
+                                        .foreground = palette.text,
+                                        .border = gui::rgba(0, 0, 0, 0),
+                                        .border_thickness = 1.0f,
+                                        .radius = 0.0f,
+                                        .font_size = editor.font_size,
+                                    },
+                            },
+                        .select_all_on_focus = editor.lsp_rename_text_selected,
+                        .ignore_input_on_focus = true,
+                    }
+                );
+                if (input.focused || input.changed) {
+                    editor.lsp_rename_text_selected = false;
+                }
+                if (input.changed) {
+                    editor.lsp_rename_text_size = cstr_len(editor.lsp_rename_text);
+                }
+                submit = input.activated;
+            }
+        }
+
+        if (submit) {
+            editor.lsp_rename_text_size = cstr_len(editor.lsp_rename_text);
+            accept_lsp_popup(editor);
         }
     }
 
@@ -2445,13 +3446,16 @@ namespace code_editor {
     auto draw_editor_ui(
         gui::Frame& ui,
         EditorState& editor,
-        font_cache::Font,
+        font_cache::Font editor_font,
         font_cache::Font icon_font,
         Palette const& palette,
         float client_width,
         float client_height,
+        float char_width,
         gui::InputState const& input
     ) -> void {
+        sync_lsp_result_popups(editor);
+        handle_lsp_pending_actions(editor);
         if (editor.flag(EditorFlag::SIDEBAR_VISIBLE)) {
             ensure_filesystem_panel(editor);
         }
@@ -2649,6 +3653,26 @@ namespace code_editor {
                             },
                         }
                     );
+                    if (editor.lsp_bridge != nullptr) {
+                        ui.label(
+                            fmt::tprintf(
+                                "%s %zu",
+                                editor.lsp_bridge->status_text.empty()
+                                    ? "LSP"
+                                    : editor.lsp_bridge->status_text,
+                                lsp_diagnostic_count(editor)
+                            ),
+                            {
+                                .layout = {.width = gui::text(), .height = gui::fill()},
+                                .style = {
+                                    .foreground = editor.lsp_bridge->status == LspStatusKind::FAILED
+                                                      ? palette.preprocessor
+                                                      : palette.muted,
+                                    .font_size = editor.font_size,
+                                },
+                            }
+                        );
+                    }
                 }
 
                 gui::BoxDesc const command_panel = {
@@ -2679,6 +3703,20 @@ namespace code_editor {
                                 },
                             }
                         );
+                    } else if (editor.lsp_bridge != nullptr &&
+                               !editor.lsp_bridge->progress_text.empty()) {
+                        ui.label(
+                            editor.lsp_bridge->progress_text,
+                            {
+                                .layout = {.width = gui::fill(), .height = gui::fill()},
+                                .style = {
+                                    .foreground = editor.lsp_bridge->progress_active
+                                                      ? palette.cursor
+                                                      : palette.muted,
+                                    .font_size = editor.font_size,
+                                },
+                            }
+                        );
                     }
                 }
             }
@@ -2694,6 +3732,12 @@ namespace code_editor {
             }
             handle_editor_save_request(editor);
         }
+        if (!editor.flag(EditorFlag::FILE_SEARCH_OPEN) &&
+            !editor.flag(EditorFlag::BUFFER_SEARCH_OPEN) &&
+            !editor.flag(EditorFlag::SAVE_PATH_OPEN)) {
+            draw_lsp_hover_popup(ui, editor_font, editor, char_width, palette, input);
+        }
+        draw_lsp_rename_popup(ui, editor, palette, char_width, client_width, client_height);
     }
 
 } // namespace code_editor

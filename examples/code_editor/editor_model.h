@@ -31,6 +31,8 @@ namespace code_editor {
     inline constexpr size_t FILE_SEARCH_TEXT_CAPACITY = 128u;
     inline constexpr size_t FILE_SEARCH_RESULT_LIMIT = 16u;
     inline constexpr size_t FILE_SEARCH_NO_FILE = static_cast<size_t>(-1);
+    inline constexpr size_t LSP_NO_SELECTION = static_cast<size_t>(-1);
+    inline constexpr size_t LSP_RENAME_TEXT_CAPACITY = 128u;
     inline constexpr size_t SAVE_PATH_TEXT_CAPACITY = 1024u;
     inline constexpr size_t COMMAND_TEXT_CAPACITY = 256u;
 
@@ -114,6 +116,16 @@ namespace code_editor {
         FILESYSTEM,
     };
 
+    enum class EditorLspPopupKind : uint8_t {
+        NONE,
+        COMPLETION,
+        HOVER,
+        LOCATIONS,
+        CODE_ACTIONS,
+        SYMBOLS,
+        RENAME,
+    };
+
     struct EditorPane {
         EditorPaneKind kind = EditorPaneKind::CODE;
         EditorText text = {};
@@ -173,6 +185,7 @@ namespace code_editor {
         PENDING_G,
         PENDING_D,
         PENDING_R,
+        PENDING_LSP,
         PENDING_Z,
         CLOSE_CURRENT_REQUESTED,
         CLOSE_APP_REQUESTED,
@@ -236,9 +249,29 @@ namespace code_editor {
         size_t command_text_size = 0u;
         size_t command_selected = 0u;
         size_t file_search_selected = 0u;
+        size_t lsp_selected = 0u;
+        size_t lsp_open_location_index = LSP_NO_SELECTION;
+        size_t lsp_open_symbol_index = LSP_NO_SELECTION;
+        size_t lsp_apply_code_action_index = LSP_NO_SELECTION;
         size_t file_search_open_file = FILE_SEARCH_NO_FILE;
         size_t buffer_search_open_file = FILE_SEARCH_NO_FILE;
         size_t pending_line_number = 0u;
+        uint64_t lsp_synced_revision = 0u;
+        uint64_t lsp_seen_completions_generation = 0u;
+        uint64_t lsp_seen_hover_generation = 0u;
+        uint64_t lsp_seen_locations_generation = 0u;
+        uint64_t lsp_seen_code_actions_generation = 0u;
+        uint64_t lsp_seen_symbols_generation = 0u;
+        uint64_t lsp_seen_text_edits_generation = 0u;
+        StrRef lsp_synced_path = {};
+        LspBridge const* lsp_bridge = nullptr;
+        LspSendEditorRequestFn lsp_send_request = nullptr;
+        void* lsp_user_data = nullptr;
+        char lsp_rename_text[LSP_RENAME_TEXT_CAPACITY] = {};
+        size_t lsp_rename_text_size = 0u;
+        gui::TextSelection lsp_hover_selection = {};
+        EditorLspPopupKind lsp_popup = EditorLspPopupKind::NONE;
+        bool lsp_rename_text_selected = false;
         EditorSavePathError save_path_error = EditorSavePathError::NONE;
         EditorFlags flags = {EditorFlag::TREE_OPEN};
     };
@@ -265,6 +298,7 @@ namespace code_editor {
     auto ensure_filesystem_panel(EditorState& editor) -> void;
     auto focus_first_code_split(EditorState& editor) -> void;
     auto focus_editor_split(EditorState& editor, size_t split) -> void;
+    auto set_editor_cursor(EditorState& editor, size_t line, size_t column) -> void;
     auto set_editor_split_rect(EditorState& editor, size_t split, gui::Rect rect) -> void;
     [[nodiscard]] auto editor_split_leaf_count(EditorState const& editor) -> size_t;
     [[nodiscard]] auto editor_focused_pane(EditorState const& editor) -> size_t;
@@ -274,6 +308,12 @@ namespace code_editor {
     auto process_editor_input(
         EditorState& editor, gui::InputState const& input, EditorClipboard clipboard = {}
     ) -> void;
+    auto update_editor_lsp_document(EditorState& editor) -> void;
+    [[nodiscard]] auto
+    apply_editor_lsp_text_edits(EditorState& editor, Slice<LspTextEdit const> edits) -> bool;
+    auto close_editor_lsp_popup(EditorState& editor) -> void;
+    auto accept_lsp_popup(EditorState& editor) -> void;
+    auto open_editor_lsp_locations(EditorState& editor) -> void;
     [[nodiscard]] auto editor_line_count(EditorState const& editor) -> size_t;
     [[nodiscard]] auto editor_line(EditorState const& editor, size_t index) -> EditorLine;
     [[nodiscard]] auto editor_line_text(EditorLine line) -> StrRef;
@@ -296,6 +336,7 @@ namespace code_editor {
     [[nodiscard]] auto editor_content_rect(gui::Rect rect) -> gui::Rect;
     [[nodiscard]] auto editor_text_x(EditorState const& editor, gui::Rect rect) -> float;
     auto clamp_scroll(EditorState& editor, gui::Rect rect) -> void;
+    auto center_cursor(EditorState& editor, gui::Rect rect) -> void;
     auto reveal_cursor(EditorState& editor, gui::Rect rect) -> void;
     auto update_cursor_from_mouse(
         EditorState& editor, gui::Rect rect, gui::Vec2 mouse, float char_width, bool select

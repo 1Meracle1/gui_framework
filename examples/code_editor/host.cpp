@@ -29,6 +29,10 @@
 #include <windows.h>
 #endif
 
+#if defined(_WIN32)
+#include "lsp_client_win32.h"
+#endif
+
 #ifndef CODE_EDITOR_SOURCE_DIR
 #define CODE_EDITOR_SOURCE_DIR "."
 #endif
@@ -89,6 +93,7 @@ namespace code_editor {
         DirectoryWatcher tree_watcher = {};
         uint32_t tree_arena_index = 0u;
         uint64_t file_change_generation = 0u;
+        uint64_t file_change_ticks = 0u;
         bool initial_sidebar_visible = false;
     };
 
@@ -98,6 +103,17 @@ namespace code_editor {
         if (state != nullptr) {
             state->redraw_pending = true;
         }
+    }
+
+    [[nodiscard]] auto lsp_generation_sum(LspBridge const* bridge) -> uint64_t {
+        if (bridge == nullptr) {
+            return 0u;
+        }
+        return bridge->status_generation + bridge->progress_generation +
+               bridge->diagnostics_generation + bridge->completions_generation +
+               bridge->hover_generation + bridge->locations_generation +
+               bridge->code_actions_generation + bridge->symbols_generation +
+               bridge->text_edits_generation;
     }
 
     [[nodiscard]] auto frame_ready(gui::Frame const& frame) -> bool {
@@ -865,9 +881,15 @@ namespace code_editor {
     }
 
     [[nodiscard]] auto process_launch_file_changes(LaunchDesc& launch) -> bool {
-        if (!consume_directory_change(launch.tree_watcher)) {
+        uint64_t const ticks = GetTickCount64();
+        if (consume_directory_change(launch.tree_watcher)) {
+            launch.file_change_ticks = ticks;
+        }
+        if (launch.file_change_ticks == 0u ||
+            ticks - launch.file_change_ticks < HOT_RELOAD_POLL_MS) {
             return false;
         }
+        launch.file_change_ticks = 0u;
         launch.file_change_generation += 1u;
         refresh_launch_tree(launch);
         return true;
@@ -921,6 +943,13 @@ namespace code_editor {
 
         bool const watching_files =
             open_directory_watcher(launch.save_root_path, launch.tree_watcher);
+        LspClient lsp_client = {};
+        bool const lsp_initialized = lsp_client_init(lsp_client);
+        if (lsp_initialized) {
+            BASE_UNUSED(
+                lsp_client_start(lsp_client, launch.save_root_path, CODE_EDITOR_SOURCE_DIR)
+            );
+        }
         ModuleRuntimeContext module_context = {
             .render_context = render_context,
             .native_window = app_state.hwnd,
@@ -930,6 +959,9 @@ namespace code_editor {
             .tree_root_name = launch.tree_root_name,
             .save_root_path = launch.save_root_path,
             .tree_files = launch.tree_files.slice(),
+            .lsp_bridge = lsp_initialized ? lsp_client_bridge(lsp_client) : nullptr,
+            .lsp_send_request = lsp_initialized ? lsp_client_send_editor_request : nullptr,
+            .lsp_user_data = lsp_initialized ? &lsp_client : nullptr,
             .initial_sidebar_visible = launch.initial_sidebar_visible,
         };
         module_context.shared_tree_root_name = &module_context.tree_root_name;
@@ -947,6 +979,9 @@ namespace code_editor {
 #endif
         if (!module_loaded) {
             gui::destroy_hot_reload_app_module(&module, module_desc);
+            if (lsp_initialized) {
+                lsp_client_shutdown(lsp_client);
+            }
             close_directory_watcher(launch.tree_watcher);
             render::destroy_window(render_window);
             render::destroy_context(render_context);
@@ -991,13 +1026,36 @@ namespace code_editor {
                 module_context.tree_files = launch.tree_files.slice();
                 app_state.redraw_pending = true;
             }
+            uint64_t const lsp_generation_before =
+                lsp_initialized ? lsp_generation_sum(lsp_client_bridge(lsp_client)) : 0u;
+            if (lsp_initialized) {
+                lsp_client_poll(lsp_client);
+            }
+            if (lsp_initialized &&
+                lsp_generation_sum(lsp_client_bridge(lsp_client)) != lsp_generation_before) {
+                app_state.redraw_pending = true;
+            }
 
             if (!app_state.redraw_pending) {
-                HANDLE wait_handles[1] = {};
+                HANDLE wait_handles[4] = {};
                 DWORD wait_handle_count = 0u;
                 if (watcher_valid(launch.tree_watcher)) {
                     wait_handles[wait_handle_count] = launch.tree_watcher.event;
                     wait_handle_count += 1u;
+                }
+                if (lsp_initialized) {
+                    if (lsp_client.stdin_io.pending) {
+                        wait_handles[wait_handle_count] = lsp_client.stdin_io.event;
+                        wait_handle_count += 1u;
+                    }
+                    if (lsp_client.stdout_io.pending) {
+                        wait_handles[wait_handle_count] = lsp_client.stdout_io.event;
+                        wait_handle_count += 1u;
+                    }
+                    if (lsp_client.stderr_io.pending) {
+                        wait_handles[wait_handle_count] = lsp_client.stderr_io.event;
+                        wait_handle_count += 1u;
+                    }
                 }
                 DWORD const wait_ms = HOT_RELOAD_POLL_MS;
                 DWORD const wait_result = MsgWaitForMultipleObjectsEx(
@@ -1007,7 +1065,8 @@ namespace code_editor {
                     QS_ALLINPUT,
                     MWMO_INPUTAVAILABLE
                 );
-                if (wait_handle_count != 0u && wait_result == WAIT_OBJECT_0) {
+                if (wait_result >= WAIT_OBJECT_0 &&
+                    wait_result < WAIT_OBJECT_0 + wait_handle_count) {
                     continue;
                 }
                 if (wait_result == WAIT_TIMEOUT) {
@@ -1054,6 +1113,9 @@ namespace code_editor {
 
         close_directory_watcher(launch.tree_watcher);
         gui::destroy_hot_reload_app_module(&module, module_desc);
+        if (lsp_initialized) {
+            lsp_client_shutdown(lsp_client);
+        }
         render::destroy_window(render_window);
         render::destroy_context(render_context);
         destroy_testbed_window(&app_state);

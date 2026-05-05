@@ -14,7 +14,11 @@ namespace code_editor {
         {"buffer-close", "bc", "Close the current buffer."},
         {"open", "o", "Open a file from the indexed tree."},
         {"toggle-sidebar", "tree", "Toggle the file tree sidebar."},
+        {"format", "fmt", "Format the current C/C++ file."},
+        {"symbols", "sym", "Open document symbols."},
     };
+
+    struct EditorPosition;
 
     struct EditorUndoEntry {
         EditorUndoEntry* previous = nullptr;
@@ -25,6 +29,7 @@ namespace code_editor {
         size_t selection_anchor_line = 0u;
         size_t selection_anchor_column = 0u;
         EditorSelectionMode selection_mode = EditorSelectionMode::NONE;
+        float scroll_y = 0.0f;
         bool selection_active = false;
     };
 
@@ -32,6 +37,14 @@ namespace code_editor {
     auto sync_shared_panes(EditorState& editor) -> void;
     auto close_focused_split(EditorState& editor) -> void;
     auto refresh_editor_dirty(EditorState& editor) -> void;
+    auto request_lsp(EditorState& editor, LspRequestKind kind, StrRef new_name = {}) -> void;
+    auto open_lsp_rename(EditorState& editor) -> void;
+    [[nodiscard]] auto word_range_at_position(
+        EditorState const& editor,
+        EditorPosition position,
+        EditorPosition& start,
+        EditorPosition& end
+    ) -> bool;
     [[nodiscard]] auto split_in_direction(EditorState const& editor, char direction) -> size_t;
 
     [[nodiscard]] auto split_valid(EditorState const& editor, size_t split) -> bool {
@@ -104,10 +117,13 @@ namespace code_editor {
         editor.set_flag(EditorFlag::PENDING_G, false);
         editor.set_flag(EditorFlag::PENDING_D, false);
         editor.set_flag(EditorFlag::PENDING_R, false);
+        editor.set_flag(EditorFlag::PENDING_LSP, false);
         editor.set_flag(EditorFlag::PENDING_Z, false);
         editor.pending_line_number = 0u;
         editor.set_flag(EditorFlag::PENDING_LINE_NUMBER_ACTIVE, false);
         editor.set_flag(EditorFlag::FILE_SEARCH_OPEN, false);
+        editor.file_search_text_size = 0u;
+        editor.file_search_text[0u] = '\0';
         editor.file_search_open_file = FILE_SEARCH_NO_FILE;
         editor.set_flag(EditorFlag::BUFFER_SEARCH_OPEN, false);
         editor.buffer_search_open_file = FILE_SEARCH_NO_FILE;
@@ -118,6 +134,7 @@ namespace code_editor {
         editor.set_flag(EditorFlag::SAVE_REQUESTED, false);
         editor.set_flag(EditorFlag::SAVE_PATH_OPEN, false);
         editor.save_path_error = EditorSavePathError::NONE;
+        close_editor_lsp_popup(editor);
         if (clear_dirty) {
             mark_editor_saved(editor);
         }
@@ -929,6 +946,7 @@ namespace code_editor {
         entry->selection_anchor_line = editor.selection_anchor_line;
         entry->selection_anchor_column = editor.selection_anchor_column;
         entry->selection_mode = editor.selection_mode;
+        entry->scroll_y = editor.scroll_y;
         entry->selection_active = editor.flag(EditorFlag::SELECTION_ACTIVE);
         entry->previous = stack;
         stack = entry;
@@ -948,6 +966,7 @@ namespace code_editor {
         editor.selection_anchor_line = entry.selection_anchor_line;
         editor.selection_anchor_column = entry.selection_anchor_column;
         editor.selection_mode = entry.selection_mode;
+        editor.scroll_y = entry.scroll_y;
         editor.set_flag(EditorFlag::SELECTION_ACTIVE, entry.selection_active);
         clamp_cursor(editor);
     }
@@ -1218,6 +1237,10 @@ namespace code_editor {
 
     auto set_cursor(EditorState& editor, size_t line, size_t column) -> void {
         move_cursor_to(editor, {line, column}, false);
+    }
+
+    auto set_editor_cursor(EditorState& editor, size_t line, size_t column) -> void {
+        set_cursor(editor, line, column);
     }
 
     auto move_vertical(EditorState& editor, int32_t delta, bool select) -> void {
@@ -1651,6 +1674,7 @@ namespace code_editor {
         editor.set_flag(EditorFlag::PENDING_D, false);
         editor.set_flag(EditorFlag::PENDING_G, false);
         editor.set_flag(EditorFlag::PENDING_R, false);
+        editor.set_flag(EditorFlag::PENDING_LSP, false);
         editor.set_flag(EditorFlag::PENDING_Z, false);
         editor.pending_line_number = 0u;
         editor.set_flag(EditorFlag::PENDING_LINE_NUMBER_ACTIVE, false);
@@ -1862,6 +1886,7 @@ namespace code_editor {
         editor.set_flag(EditorFlag::PENDING_D, false);
         editor.set_flag(EditorFlag::PENDING_G, false);
         editor.set_flag(EditorFlag::PENDING_R, false);
+        editor.set_flag(EditorFlag::PENDING_LSP, false);
         editor.set_flag(EditorFlag::PENDING_Z, false);
     }
 
@@ -1895,6 +1920,7 @@ namespace code_editor {
         editor.set_flag(EditorFlag::PENDING_D, false);
         editor.set_flag(EditorFlag::PENDING_G, false);
         editor.set_flag(EditorFlag::PENDING_R, false);
+        editor.set_flag(EditorFlag::PENDING_LSP, false);
         editor.set_flag(EditorFlag::PENDING_Z, false);
     }
 
@@ -1967,6 +1993,12 @@ namespace code_editor {
             break;
         case 4u:
             toggle_filesystem_panel(editor);
+            break;
+        case 5u:
+            request_lsp(editor, LspRequestKind::FORMATTING);
+            break;
+        case 6u:
+            request_lsp(editor, LspRequestKind::DOCUMENT_SYMBOL);
             break;
         default:
             break;
@@ -2047,18 +2079,6 @@ namespace code_editor {
 
     auto handle_search_event(EditorState& editor, gui::KeyEvent const& event, bool buffers)
         -> void {
-        if (event.kind == gui::KeyEventKind::TEXT) {
-            if (event.codepoint >= 32u && event.codepoint <= 126u &&
-                editor.file_search_text_size + 1u < FILE_SEARCH_TEXT_CAPACITY) {
-                char const ch = static_cast<char>(event.codepoint);
-                editor.file_search_text[editor.file_search_text_size] = ch;
-                editor.file_search_text_size += 1u;
-                editor.file_search_text[editor.file_search_text_size] = '\0';
-                editor.file_search_selected = 0u;
-                clamp_search_selected(editor, buffers);
-            }
-            return;
-        }
         if (event.kind != gui::KeyEventKind::PRESS && event.kind != gui::KeyEventKind::REPEAT) {
             return;
         }
@@ -2075,14 +2095,6 @@ namespace code_editor {
                 select_buffer_search_match(editor);
             } else {
                 select_file_search_match(editor);
-            }
-            break;
-        case gui::Key::BACKSPACE:
-            if (editor.file_search_text_size != 0u) {
-                editor.file_search_text_size -= 1u;
-                editor.file_search_text[editor.file_search_text_size] = '\0';
-                editor.file_search_selected = 0u;
-                clamp_search_selected(editor, buffers);
             }
             break;
         case gui::Key::UP:
@@ -2125,6 +2137,7 @@ namespace code_editor {
         editor.set_flag(EditorFlag::PENDING_D, false);
         editor.set_flag(EditorFlag::PENDING_G, false);
         editor.set_flag(EditorFlag::PENDING_R, false);
+        editor.set_flag(EditorFlag::PENDING_LSP, false);
         editor.set_flag(EditorFlag::PENDING_Z, false);
         clear_pending_line_number(editor);
         set_cursor(editor, position.line, position.column);
@@ -2324,6 +2337,17 @@ namespace code_editor {
     auto
     handle_normal_char(EditorState& editor, char ch, gui::KeyMods mods, EditorClipboard clipboard)
         -> void {
+        if (editor.flag(EditorFlag::PENDING_LSP)) {
+            editor.set_flag(EditorFlag::PENDING_LSP, false);
+            if (ch == 'n') {
+                open_lsp_rename(editor);
+            } else if (ch == 'a') {
+                request_lsp(editor, LspRequestKind::CODE_ACTION);
+            } else if (ch == 's') {
+                request_lsp(editor, LspRequestKind::DOCUMENT_SYMBOL);
+            }
+            return;
+        }
         if (editor.flag(EditorFlag::PENDING_R)) {
             editor.set_flag(EditorFlag::PENDING_R, false);
             replace_selection_with_char(editor, ch);
@@ -2344,6 +2368,12 @@ namespace code_editor {
             editor.set_flag(EditorFlag::PENDING_G, false);
             if (ch == 'g') {
                 move_cursor_to(editor, {0u, 0u}, visual_selecting(editor));
+            } else if (ch == 'd') {
+                request_lsp(editor, LspRequestKind::DEFINITION);
+            } else if (ch == 'D') {
+                request_lsp(editor, LspRequestKind::DECLARATION);
+            } else if (ch == 'r') {
+                request_lsp(editor, LspRequestKind::REFERENCES);
             }
             return;
         }
@@ -2402,6 +2432,8 @@ namespace code_editor {
                 open_buffer_search(editor);
             } else if (ch == 'w') {
                 editor.set_flag(EditorFlag::PENDING_WINDOW, true);
+            } else if (ch == 'r' || ch == 'c' || ch == 's') {
+                editor.set_flag(EditorFlag::PENDING_LSP, true);
             }
             return;
         }
@@ -2452,6 +2484,9 @@ namespace code_editor {
         switch (ch) {
         case ':':
             open_command_line(editor);
+            break;
+        case 'K':
+            request_lsp(editor, LspRequestKind::HOVER);
             break;
         case ' ':
             editor.set_flag(EditorFlag::PENDING_LEADER, true);
@@ -2663,6 +2698,311 @@ namespace code_editor {
         insert_text(editor, text);
     }
 
+    [[nodiscard]] auto editor_lsp_ready(EditorState const& editor) -> bool {
+        if (editor.lsp_bridge == nullptr || editor.lsp_send_request == nullptr) {
+            return false;
+        }
+        return editor.lsp_bridge->status == LspStatusKind::READY ||
+               editor.lsp_bridge->status == LspStatusKind::WARNING;
+    }
+
+    [[nodiscard]] auto editor_lsp_file(EditorState const& editor) -> bool {
+        return !editor.current_file_path.empty() && (lsp_cpp_file_name(editor.current_file_name) ||
+                                                     lsp_cpp_file_name(editor.current_file_path));
+    }
+
+    auto send_lsp_request(EditorState& editor, LspEditorRequest const& request) -> void {
+        if (editor.lsp_send_request != nullptr) {
+            editor.lsp_send_request(editor.lsp_user_data, request);
+        }
+    }
+
+    auto close_editor_lsp_popup(EditorState& editor) -> void {
+        editor.lsp_popup = EditorLspPopupKind::NONE;
+        editor.lsp_selected = 0u;
+        editor.lsp_hover_selection = {};
+        editor.lsp_rename_text_size = 0u;
+        editor.lsp_rename_text[0u] = '\0';
+        editor.lsp_rename_text_selected = false;
+    }
+
+    auto update_editor_lsp_document(EditorState& editor) -> void {
+        if (editor.lsp_send_request == nullptr) {
+            return;
+        }
+
+        bool const enabled = editor_lsp_ready(editor) && editor_lsp_file(editor) &&
+                             editor_focused_pane_kind(editor) == EditorPaneKind::CODE;
+        if (!enabled) {
+            if (!editor.lsp_synced_path.empty()) {
+                send_lsp_request(
+                    editor, {.kind = LspRequestKind::DID_CLOSE, .path = editor.lsp_synced_path}
+                );
+                editor.lsp_synced_path = {};
+                editor.lsp_synced_revision = 0u;
+            }
+            return;
+        }
+
+        bool const path_changed = editor.lsp_synced_path != editor.current_file_path;
+        if (path_changed && !editor.lsp_synced_path.empty()) {
+            send_lsp_request(
+                editor, {.kind = LspRequestKind::DID_CLOSE, .path = editor.lsp_synced_path}
+            );
+        }
+
+        if (!path_changed && editor.lsp_synced_revision == editor.text.revision) {
+            return;
+        }
+
+        DEBUG_ASSERT(editor.text.arena != nullptr);
+        StrRef const text = text_buffer_copy(editor.text, *editor.text.arena);
+        send_lsp_request(
+            editor,
+            {
+                .kind = path_changed ? LspRequestKind::DID_OPEN : LspRequestKind::DID_CHANGE,
+                .path = editor.current_file_path,
+                .text = text,
+                .revision = editor.text.revision,
+            }
+        );
+        editor.lsp_synced_path = arena_copy_cstr(*editor.arena, editor.current_file_path);
+        editor.lsp_synced_revision = editor.text.revision;
+    }
+
+    [[nodiscard]] auto lsp_clamped_position(EditorState const& editor, LspPosition position)
+        -> EditorPosition {
+        if (position.line >= editor_line_count(editor)) {
+            size_t const line = editor_line_count(editor) - 1u;
+            return {line, line_size(editor, line)};
+        }
+        return {position.line, std::min(position.column, line_size(editor, position.line))};
+    }
+
+    [[nodiscard]] auto lsp_position_offset(EditorState const& editor, LspPosition position)
+        -> size_t {
+        return position_offset(editor, lsp_clamped_position(editor, position));
+    }
+
+    [[nodiscard]] auto
+    apply_editor_lsp_text_edits(EditorState& editor, Slice<LspTextEdit const> edits) -> bool {
+        if (edits.empty() || editor.text.arena == nullptr) {
+            return false;
+        }
+
+        ArenaTemp temp = begin_thread_temp_arena();
+        Vec<LspTextEdit> sorted = {};
+        BASE_UNUSED(sorted.init(edits.size(), temp.arena()->resource()));
+        for (LspTextEdit const& edit : edits) {
+            if ((edit.path.empty() || edit.path == editor.current_file_path) &&
+                lsp_range_valid(edit.range)) {
+                BASE_UNUSED(sorted.push_back(edit));
+            }
+        }
+        if (sorted.empty()) {
+            return false;
+        }
+
+        std::sort(sorted.begin(), sorted.end(), [](LspTextEdit const& a, LspTextEdit const& b) {
+            if (a.range.start.line != b.range.start.line) {
+                return a.range.start.line > b.range.start.line;
+            }
+            return a.range.start.column > b.range.start.column;
+        });
+
+        save_editor_undo(editor);
+        for (LspTextEdit const& edit : sorted) {
+            size_t const start = lsp_position_offset(editor, edit.range.start);
+            size_t const end = lsp_position_offset(editor, edit.range.end);
+            if (end < start) {
+                continue;
+            }
+            text_buffer_erase(editor.text, start, end);
+            if (!edit.new_text.empty()) {
+                text_buffer_insert(editor.text, start, edit.new_text);
+            }
+        }
+        set_cursor(
+            editor,
+            sorted[sorted.size() - 1u].range.start.line,
+            sorted[sorted.size() - 1u].range.start.column
+        );
+        refresh_editor_dirty(editor);
+        sync_shared_panes(editor);
+        return true;
+    }
+
+    [[nodiscard]] auto current_lsp_range(EditorState const& editor) -> LspRange {
+        EditorSelectionRange const selection = editor_selection_range(editor);
+        if (selection.active) {
+            return {
+                .start = {selection.start_line, selection.start_column},
+                .end = {selection.end_line, selection.end_column},
+            };
+        }
+        return {
+            .start = {editor.cursor_line, 0u},
+            .end = {editor.cursor_line, line_size(editor, editor.cursor_line)},
+        };
+    }
+
+    auto request_lsp(EditorState& editor, LspRequestKind kind, StrRef new_name) -> void {
+        if (!editor_lsp_ready(editor) || !editor_lsp_file(editor)) {
+            return;
+        }
+        update_editor_lsp_document(editor);
+        if (editor.lsp_synced_path != editor.current_file_path) {
+            return;
+        }
+        send_lsp_request(
+            editor,
+            {
+                .kind = kind,
+                .path = editor.current_file_path,
+                .new_name = new_name,
+                .position = {editor.cursor_line, editor.cursor_column},
+                .range = current_lsp_range(editor),
+                .revision = editor.text.revision,
+            }
+        );
+    }
+
+    auto open_lsp_rename(EditorState& editor) -> void {
+        EditorPosition start = {};
+        EditorPosition end = {};
+        bool const has_word = word_range_at_position(editor, cursor_position(editor), start, end);
+        close_editor_lsp_popup(editor);
+        editor.lsp_popup = EditorLspPopupKind::RENAME;
+        if (has_word) {
+            StrRef const line = editor_line_text(editor_line(editor, start.line));
+            StrRef const word = line.substr(start.column, end.column - start.column);
+            editor.lsp_rename_text_size =
+                word.copy_to(editor.lsp_rename_text, LSP_RENAME_TEXT_CAPACITY - 1u);
+            editor.lsp_rename_text[editor.lsp_rename_text_size] = '\0';
+            editor.lsp_rename_text_selected = editor.lsp_rename_text_size != 0u;
+        }
+    }
+
+    [[nodiscard]] auto lsp_popup_count(EditorState const& editor) -> size_t {
+        if (editor.lsp_bridge == nullptr) {
+            return 0u;
+        }
+        switch (editor.lsp_popup) {
+        case EditorLspPopupKind::COMPLETION:
+            return editor.lsp_bridge->completions.size();
+        case EditorLspPopupKind::LOCATIONS:
+            return editor.lsp_bridge->locations.size();
+        case EditorLspPopupKind::CODE_ACTIONS:
+            return editor.lsp_bridge->code_actions.size();
+        case EditorLspPopupKind::SYMBOLS:
+            return editor.lsp_bridge->symbols.size();
+        default:
+            return 0u;
+        }
+    }
+
+    auto apply_lsp_completion(EditorState& editor) -> void {
+        if (editor.lsp_bridge == nullptr || editor.lsp_bridge->completions.empty()) {
+            close_editor_lsp_popup(editor);
+            return;
+        }
+        size_t const index =
+            std::min(editor.lsp_selected, editor.lsp_bridge->completions.size() - 1u);
+        LspCompletionItem const& item = editor.lsp_bridge->completions[index];
+        if (item.has_edit) {
+            LspTextEdit const edit = {
+                .path = editor.current_file_path,
+                .range = item.edit_range,
+                .new_text = !item.insert_text.empty() ? item.insert_text : item.label,
+            };
+            BASE_UNUSED(apply_editor_lsp_text_edits(editor, Slice<LspTextEdit const>(&edit, 1u)));
+        } else {
+            save_editor_undo(editor);
+            insert_text(editor, !item.insert_text.empty() ? item.insert_text : item.label);
+            refresh_editor_dirty(editor);
+            sync_shared_panes(editor);
+        }
+        close_editor_lsp_popup(editor);
+    }
+
+    auto accept_lsp_popup(EditorState& editor) -> void {
+        switch (editor.lsp_popup) {
+        case EditorLspPopupKind::COMPLETION:
+            apply_lsp_completion(editor);
+            break;
+        case EditorLspPopupKind::LOCATIONS:
+            editor.lsp_open_location_index = editor.lsp_selected;
+            close_editor_lsp_popup(editor);
+            break;
+        case EditorLspPopupKind::CODE_ACTIONS:
+            editor.lsp_apply_code_action_index = editor.lsp_selected;
+            close_editor_lsp_popup(editor);
+            break;
+        case EditorLspPopupKind::SYMBOLS:
+            editor.lsp_open_symbol_index = editor.lsp_selected;
+            close_editor_lsp_popup(editor);
+            break;
+        case EditorLspPopupKind::RENAME:
+            request_lsp(
+                editor,
+                LspRequestKind::RENAME,
+                StrRef(editor.lsp_rename_text, editor.lsp_rename_text_size)
+            );
+            close_editor_lsp_popup(editor);
+            break;
+        default:
+            close_editor_lsp_popup(editor);
+            break;
+        }
+    }
+
+    [[nodiscard]] auto handle_lsp_popup_event(EditorState& editor, gui::KeyEvent const& event)
+        -> bool {
+        if (editor.lsp_popup == EditorLspPopupKind::NONE) {
+            return false;
+        }
+        if (editor.lsp_popup == EditorLspPopupKind::RENAME) {
+            if (event.kind == gui::KeyEventKind::PRESS || event.kind == gui::KeyEventKind::REPEAT) {
+                if (event.key == gui::Key::ESCAPE) {
+                    close_editor_lsp_popup(editor);
+                    return true;
+                }
+                if (event.key == gui::Key::TAB) {
+                    accept_lsp_popup(editor);
+                    return true;
+                }
+            }
+            return true;
+        }
+        if (event.kind == gui::KeyEventKind::TEXT) {
+            return true;
+        }
+        if (event.kind != gui::KeyEventKind::PRESS && event.kind != gui::KeyEventKind::REPEAT) {
+            return true;
+        }
+        if (event.key == gui::Key::ESCAPE) {
+            close_editor_lsp_popup(editor);
+        } else if (event.key == gui::Key::ENTER || event.key == gui::Key::TAB) {
+            accept_lsp_popup(editor);
+        } else if (event.key == gui::Key::UP && editor.lsp_selected != 0u) {
+            editor.lsp_selected -= 1u;
+        } else if (event.key == gui::Key::DOWN) {
+            size_t const count = lsp_popup_count(editor);
+            if (editor.lsp_selected + 1u < count) {
+                editor.lsp_selected += 1u;
+            }
+        }
+        return true;
+    }
+
+    auto open_editor_lsp_locations(EditorState& editor) -> void {
+        if (editor.lsp_bridge == nullptr || editor.lsp_bridge->locations.empty()) {
+            return;
+        }
+        close_editor_lsp_popup(editor);
+        editor.lsp_popup = EditorLspPopupKind::LOCATIONS;
+    }
+
     auto collapse_selection(EditorState& editor, bool end) -> bool {
         EditorSelectionRange const selection = editor_selection_range(editor);
         if (!selection.active) {
@@ -2745,6 +3085,7 @@ namespace code_editor {
             editor.set_flag(EditorFlag::PENDING_D, false);
             editor.set_flag(EditorFlag::PENDING_G, false);
             editor.set_flag(EditorFlag::PENDING_R, false);
+            editor.set_flag(EditorFlag::PENDING_LSP, false);
             editor.set_flag(EditorFlag::PENDING_Z, false);
             clear_pending_line_number(editor);
             clamp_cursor(editor);
@@ -2764,6 +3105,10 @@ namespace code_editor {
             if (event.key == gui::Key::SPACE) {
                 editor.set_flag(EditorFlag::PENDING_LEADER, true);
             }
+            return;
+        }
+        if (shortcut_key(event, gui::Key::SPACE)) {
+            request_lsp(editor, LspRequestKind::COMPLETION);
             return;
         }
         if (shortcut_key(event, gui::Key::S)) {
@@ -2880,6 +3225,9 @@ namespace code_editor {
 
         for (size_t index = 0u; index < input.key_event_count; ++index) {
             gui::KeyEvent const& event = input.key_events[index];
+            if (handle_lsp_popup_event(editor, event)) {
+                continue;
+            }
             if (editor.flag(EditorFlag::COMMAND_LINE_ACTIVE)) {
                 handle_command_line_event(editor, event);
                 continue;
@@ -2901,6 +3249,9 @@ namespace code_editor {
                     if (editor.flag(EditorFlag::INSERT_MODE)) {
                         save_editor_undo(editor);
                         insert_char(editor, ch);
+                        if (ch == '.' || ch == '>' || ch == ':') {
+                            request_lsp(editor, LspRequestKind::COMPLETION);
+                        }
                     } else {
                         handle_normal_char(editor, ch, event.mods, clipboard);
                     }
@@ -3128,6 +3479,40 @@ namespace code_editor {
         hash = hash_bytes(hash, &editor.command_text_size, sizeof(editor.command_text_size));
         hash = hash_bytes(hash, &editor.command_selected, sizeof(editor.command_selected));
         hash = hash_bytes(hash, editor.command_text, editor.command_text_size);
+        hash = hash_bytes(hash, &editor.lsp_popup, sizeof(editor.lsp_popup));
+        hash = hash_bytes(hash, &editor.lsp_selected, sizeof(editor.lsp_selected));
+        hash = hash_bytes(hash, &editor.lsp_hover_selection, sizeof(editor.lsp_hover_selection));
+        hash = hash_bytes(hash, &editor.lsp_rename_text_size, sizeof(editor.lsp_rename_text_size));
+        hash = hash_bytes(hash, editor.lsp_rename_text, editor.lsp_rename_text_size);
+        hash = hash_bytes(
+            hash, &editor.lsp_rename_text_selected, sizeof(editor.lsp_rename_text_selected)
+        );
+        hash = hash_bytes(
+            hash,
+            &editor.lsp_seen_completions_generation,
+            sizeof(editor.lsp_seen_completions_generation)
+        );
+        hash = hash_bytes(
+            hash, &editor.lsp_seen_hover_generation, sizeof(editor.lsp_seen_hover_generation)
+        );
+        hash = hash_bytes(
+            hash,
+            &editor.lsp_seen_locations_generation,
+            sizeof(editor.lsp_seen_locations_generation)
+        );
+        hash = hash_bytes(
+            hash,
+            &editor.lsp_seen_code_actions_generation,
+            sizeof(editor.lsp_seen_code_actions_generation)
+        );
+        hash = hash_bytes(
+            hash, &editor.lsp_seen_symbols_generation, sizeof(editor.lsp_seen_symbols_generation)
+        );
+        hash = hash_bytes(
+            hash,
+            &editor.lsp_seen_text_edits_generation,
+            sizeof(editor.lsp_seen_text_edits_generation)
+        );
         hash = hash_bytes(hash, &editor.save_path_error, sizeof(editor.save_path_error));
         size_t const save_path_text_size = cstr_len(editor.save_path_text);
         hash = hash_bytes(hash, &save_path_text_size, sizeof(save_path_text_size));
