@@ -38,6 +38,7 @@ namespace code_editor {
         size_t selection_anchor_line = 0u;
         size_t selection_anchor_column = 0u;
         EditorSelectionMode selection_mode = EditorSelectionMode::NONE;
+        float scroll_x = 0.0f;
         float scroll_y = 0.0f;
         bool selection_active = false;
     };
@@ -123,6 +124,7 @@ namespace code_editor {
         editor.selection_mode = EditorSelectionMode::NONE;
         editor.set_flag(EditorFlag::SELECTION_ACTIVE, false);
         editor.set_flag(EditorFlag::MOUSE_SELECTING, false);
+        editor.scroll_x = 0.0f;
         editor.scroll_y = 0.0f;
         editor.set_flag(EditorFlag::PENDING_LEADER, false);
         editor.set_flag(EditorFlag::PENDING_WINDOW, false);
@@ -188,6 +190,7 @@ namespace code_editor {
         pane.selection_anchor_line = editor.selection_anchor_line;
         pane.selection_anchor_column = editor.selection_anchor_column;
         pane.selection_mode = editor.selection_mode;
+        pane.scroll_x = editor.scroll_x;
         pane.scroll_y = editor.scroll_y;
         pane.insert_mode = editor.flag(EditorFlag::INSERT_MODE);
         pane.selection_active = editor.flag(EditorFlag::SELECTION_ACTIVE);
@@ -213,6 +216,7 @@ namespace code_editor {
         editor.selection_anchor_line = pane.selection_anchor_line;
         editor.selection_anchor_column = pane.selection_anchor_column;
         editor.selection_mode = pane.selection_mode;
+        editor.scroll_x = pane.scroll_x;
         editor.scroll_y = pane.scroll_y;
         editor.set_flag(EditorFlag::INSERT_MODE, pane.insert_mode);
         editor.set_flag(EditorFlag::SELECTION_ACTIVE, pane.selection_active);
@@ -289,6 +293,7 @@ namespace code_editor {
         pane.selection_anchor_line = editor.selection_anchor_line;
         pane.selection_anchor_column = editor.selection_anchor_column;
         pane.selection_mode = editor.selection_mode;
+        pane.scroll_x = editor.scroll_x;
         pane.scroll_y = editor.scroll_y;
         pane.insert_mode = editor.flag(EditorFlag::INSERT_MODE);
         pane.selection_active = editor.flag(EditorFlag::SELECTION_ACTIVE);
@@ -420,6 +425,7 @@ namespace code_editor {
         editor.selection_anchor_line = 0u;
         editor.selection_anchor_column = 0u;
         editor.selection_mode = EditorSelectionMode::NONE;
+        editor.scroll_x = 0.0f;
         editor.scroll_y = 0.0f;
         editor.set_flag(EditorFlag::INSERT_MODE, false);
         editor.set_flag(EditorFlag::SELECTION_ACTIVE, false);
@@ -454,6 +460,7 @@ namespace code_editor {
         view->selection_anchor_line = editor.selection_anchor_line;
         view->selection_anchor_column = editor.selection_anchor_column;
         view->selection_mode = editor.selection_mode;
+        view->scroll_x = editor.scroll_x;
         view->scroll_y = editor.scroll_y;
         view->insert_mode = editor.flag(EditorFlag::INSERT_MODE);
         view->selection_active = editor.flag(EditorFlag::SELECTION_ACTIVE);
@@ -479,6 +486,7 @@ namespace code_editor {
         editor.selection_anchor_line = view->selection_anchor_line;
         editor.selection_anchor_column = view->selection_anchor_column;
         editor.selection_mode = view->selection_mode;
+        editor.scroll_x = view->scroll_x;
         editor.scroll_y = view->scroll_y;
         editor.set_flag(EditorFlag::INSERT_MODE, view->insert_mode);
         editor.set_flag(EditorFlag::SELECTION_ACTIVE, view->selection_active);
@@ -1003,6 +1011,7 @@ namespace code_editor {
         entry->selection_anchor_line = editor.selection_anchor_line;
         entry->selection_anchor_column = editor.selection_anchor_column;
         entry->selection_mode = editor.selection_mode;
+        entry->scroll_x = editor.scroll_x;
         entry->scroll_y = editor.scroll_y;
         entry->selection_active = editor.flag(EditorFlag::SELECTION_ACTIVE);
         entry->previous = stack;
@@ -1023,6 +1032,7 @@ namespace code_editor {
         editor.selection_anchor_line = entry.selection_anchor_line;
         editor.selection_anchor_column = entry.selection_anchor_column;
         editor.selection_mode = entry.selection_mode;
+        editor.scroll_x = entry.scroll_x;
         editor.scroll_y = entry.scroll_y;
         editor.set_flag(EditorFlag::SELECTION_ACTIVE, entry.selection_active);
         clamp_cursor(editor);
@@ -4011,7 +4021,8 @@ namespace code_editor {
     }
 
     [[nodiscard]] auto editor_text_x(EditorState const& editor, gui::Rect rect) -> float {
-        return editor_content_rect(rect).min.x + editor_scaled_font_size(editor, LINE_NUMBER_WIDTH);
+        return editor_content_rect(rect).min.x +
+               editor_scaled_font_size(editor, LINE_NUMBER_WIDTH) - editor.scroll_x;
     }
 
     [[nodiscard]] auto editor_max_scroll(EditorState const& editor, gui::Rect rect) -> float {
@@ -4023,10 +4034,11 @@ namespace code_editor {
     }
 
     auto clamp_scroll(EditorState& editor, gui::Rect rect) -> void {
+        editor.scroll_x = std::max(0.0f, editor.scroll_x);
         editor.scroll_y = std::clamp(editor.scroll_y, 0.0f, editor_max_scroll(editor, rect));
     }
 
-    auto reveal_cursor(EditorState& editor, gui::Rect rect) -> void {
+    auto reveal_cursor(EditorState& editor, gui::Rect rect, float char_width) -> void {
         gui::Rect const content = editor_content_rect(rect);
         float const visible_height = std::max(1.0f, content.max.y - content.min.y);
         float const line_height = editor_line_height(editor);
@@ -4036,6 +4048,21 @@ namespace code_editor {
             editor.scroll_y = line_top;
         } else if (line_bottom > editor.scroll_y + visible_height) {
             editor.scroll_y = line_bottom - visible_height;
+        }
+
+        float const text_min_x = content.min.x + editor_scaled_font_size(editor, LINE_NUMBER_WIDTH);
+        float const visible_width = std::max(1.0f, content.max.x - text_min_x);
+        size_t const line_size_value = line_size(editor, editor.cursor_line);
+        size_t const column = editor.flag(EditorFlag::INSERT_MODE) || line_size_value == 0u
+                                  ? editor.cursor_column
+                                  : std::min(editor.cursor_column, line_size_value - 1u);
+        float const cursor_left = static_cast<float>(column) * char_width;
+        float const cursor_right =
+            cursor_left + (editor.flag(EditorFlag::INSERT_MODE) ? 2.0f : char_width);
+        if (cursor_left < editor.scroll_x) {
+            editor.scroll_x = cursor_left;
+        } else if (cursor_right > editor.scroll_x + visible_width) {
+            editor.scroll_x = cursor_right - visible_width;
         }
         clamp_scroll(editor, rect);
     }
@@ -4049,7 +4076,7 @@ namespace code_editor {
         size_t const line =
             std::min(editor_line_count(editor) - 1u, static_cast<size_t>(y / line_height));
         float const text_x = editor_text_x(editor, rect);
-        float const column_x = std::max(0.0f, mouse.x - text_x);
+        float const column_x = std::max(editor.scroll_x, mouse.x - text_x);
         size_t const column = static_cast<size_t>(column_x / char_width + 0.5f);
         return clamp_position(editor, {line, column});
     }
@@ -4152,6 +4179,7 @@ namespace code_editor {
             hash_bytes(hash, &pane.selection_anchor_column, sizeof(pane.selection_anchor_column));
         hash = hash_bytes(hash, &pane.selection_mode, sizeof(pane.selection_mode));
         hash = hash_bytes(hash, &pane.selection_active, sizeof(pane.selection_active));
+        hash = hash_bytes(hash, &pane.scroll_x, sizeof(pane.scroll_x));
         hash = hash_bytes(hash, &pane.scroll_y, sizeof(pane.scroll_y));
         hash = hash_bytes(hash, &pane.insert_mode, sizeof(pane.insert_mode));
         size_t const name_size = pane.current_file_name.size();
@@ -4187,6 +4215,7 @@ namespace code_editor {
             hash_bytes(hash, flag_words.data(), flag_words.size() * sizeof(EditorFlags::WordType));
         hash = hash_bytes(hash, &editor.font_size, sizeof(editor.font_size));
         hash = hash_bytes(hash, &editor.raster_policy, sizeof(editor.raster_policy));
+        hash = hash_bytes(hash, &editor.scroll_x, sizeof(editor.scroll_x));
         hash = hash_bytes(hash, &editor.scroll_y, sizeof(editor.scroll_y));
         hash =
             hash_bytes(hash, &editor.sidebar_width_percent, sizeof(editor.sidebar_width_percent));
@@ -4288,6 +4317,7 @@ namespace code_editor {
                 hash, &file.selection_anchor_column, sizeof(file.selection_anchor_column)
             );
             hash = hash_bytes(hash, &file.selection_mode, sizeof(file.selection_mode));
+            hash = hash_bytes(hash, &file.scroll_x, sizeof(file.scroll_x));
             hash = hash_bytes(hash, &file.scroll_y, sizeof(file.scroll_y));
             hash = hash_bytes(hash, &file.text_valid, sizeof(file.text_valid));
             hash = hash_bytes(hash, &file.insert_mode, sizeof(file.insert_mode));

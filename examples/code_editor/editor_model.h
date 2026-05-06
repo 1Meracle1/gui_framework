@@ -89,6 +89,7 @@ namespace code_editor {
         size_t selection_anchor_line = 0u;
         size_t selection_anchor_column = 0u;
         EditorSelectionMode selection_mode = EditorSelectionMode::NONE;
+        float scroll_x = 0.0f;
         float scroll_y = 0.0f;
         bool text_valid = false;
         bool insert_mode = false;
@@ -107,6 +108,7 @@ namespace code_editor {
         size_t selection_anchor_line = 0u;
         size_t selection_anchor_column = 0u;
         EditorSelectionMode selection_mode = EditorSelectionMode::NONE;
+        float scroll_x = 0.0f;
         float scroll_y = 0.0f;
         bool insert_mode = false;
         bool selection_active = false;
@@ -167,6 +169,7 @@ namespace code_editor {
         size_t selection_anchor_line = 0u;
         size_t selection_anchor_column = 0u;
         EditorSelectionMode selection_mode = EditorSelectionMode::NONE;
+        float scroll_x = 0.0f;
         float scroll_y = 0.0f;
         bool insert_mode = false;
         bool selection_active = false;
@@ -274,6 +277,7 @@ namespace code_editor {
         gui::font_provider::RasterPolicy raster_policy =
             gui::font_provider::RasterPolicy::SHARP_HINTED;
         float font_size = EDITOR_FONT_SIZE;
+        float scroll_x = 0.0f;
         float scroll_y = 0.0f;
         float sidebar_width_percent = SIDEBAR_DEFAULT_WIDTH_PERCENT;
         float sidebar_resize_grab_x = 0.0f;
@@ -401,7 +405,7 @@ namespace code_editor {
     [[nodiscard]] auto editor_text_x(EditorState const& editor, gui::Rect rect) -> float;
     auto clamp_scroll(EditorState& editor, gui::Rect rect) -> void;
     auto center_cursor(EditorState& editor, gui::Rect rect) -> void;
-    auto reveal_cursor(EditorState& editor, gui::Rect rect) -> void;
+    auto reveal_cursor(EditorState& editor, gui::Rect rect, float char_width) -> void;
     auto update_cursor_from_mouse(
         EditorState& editor, gui::Rect rect, gui::Vec2 mouse, float char_width, bool select
     ) -> void;

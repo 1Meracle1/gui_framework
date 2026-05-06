@@ -367,6 +367,7 @@ namespace {
         code_editor::EditorState editor = {};
         code_editor::init_editor(arena, editor, text.str());
         editor.cursor_line = 20u;
+        editor.scroll_x = 12.0f;
         editor.scroll_y = code_editor::editor_line_height(editor) * 15.0f;
         editor.set_flag(EditorFlag::INSERT_MODE, true);
 
@@ -374,6 +375,7 @@ namespace {
         editor.set_flag(EditorFlag::INSERT_MODE, false);
         send_text(editor, "u");
 
+        TEST_EXPECT(context, editor.scroll_x == 12.0f);
         TEST_EXPECT(context, editor.scroll_y == code_editor::editor_line_height(editor) * 15.0f);
         TEST_EXPECT(
             context, code_editor::editor_line_text(code_editor::editor_line(editor, 20u)) == "line"
@@ -1538,6 +1540,30 @@ namespace {
         press_key(editor, gui::Key::U, gui::KEY_MOD_CTRL);
         TEST_EXPECT(context, editor.cursor_line == 0u);
         TEST_EXPECT(context, editor.scroll_y == 0.0f);
+    }
+
+    TEST_CASE(editor_reveal_cursor_scrolls_horizontally) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "abcdefghijklmnop");
+
+        float constexpr CHAR_WIDTH = 10.0f;
+        gui::Rect const rect = {{0.0f, 0.0f}, {140.0f, 80.0f}};
+        gui::Rect const content = code_editor::editor_content_rect(rect);
+        float const text_min_x =
+            content.min.x +
+            code_editor::editor_scaled_font_size(editor, code_editor::LINE_NUMBER_WIDTH);
+        float const visible_width = content.max.x - text_min_x;
+
+        editor.cursor_column = 10u;
+        code_editor::reveal_cursor(editor, rect, CHAR_WIDTH);
+        TEST_EXPECT(context, editor.scroll_x == CHAR_WIDTH * 11.0f - visible_width);
+
+        editor.cursor_column = 2u;
+        code_editor::reveal_cursor(editor, rect, CHAR_WIDTH);
+        TEST_EXPECT(context, editor.scroll_x == CHAR_WIDTH * 2.0f);
     }
 
     TEST_CASE(editor_ctrl_backspace_deletes_previous_word) {

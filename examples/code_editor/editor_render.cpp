@@ -270,6 +270,7 @@ namespace code_editor {
         file->selection_anchor_line = editor.selection_anchor_line;
         file->selection_anchor_column = editor.selection_anchor_column;
         file->selection_mode = editor.selection_mode;
+        file->scroll_x = editor.scroll_x;
         file->scroll_y = editor.scroll_y;
         file->text_valid = true;
         file->insert_mode = editor.flag(EditorFlag::INSERT_MODE);
@@ -293,6 +294,7 @@ namespace code_editor {
         editor.selection_anchor_line = file.selection_anchor_line;
         editor.selection_anchor_column = file.selection_anchor_column;
         editor.selection_mode = file.selection_mode;
+        editor.scroll_x = file.scroll_x;
         editor.scroll_y = file.scroll_y;
         editor.set_flag(EditorFlag::INSERT_MODE, file.insert_mode);
         editor.set_flag(EditorFlag::SELECTION_ACTIVE, file.selection_active);
@@ -400,6 +402,7 @@ namespace code_editor {
         pane.selection_anchor_line = 0u;
         pane.selection_anchor_column = 0u;
         pane.selection_mode = EditorSelectionMode::NONE;
+        pane.scroll_x = 0.0f;
         pane.scroll_y = 0.0f;
         pane.insert_mode = false;
         pane.selection_active = false;
@@ -724,6 +727,7 @@ namespace code_editor {
             file.selection_anchor_line = 0u;
             file.selection_anchor_column = 0u;
             file.selection_mode = EditorSelectionMode::NONE;
+            file.scroll_x = 0.0f;
             file.scroll_y = 0.0f;
             file.text_valid = true;
             file.insert_mode = false;
@@ -968,6 +972,7 @@ namespace code_editor {
         Palette const& palette,
         size_t line,
         float text_x,
+        float text_min_x,
         float number_x,
         float y,
         float line_height,
@@ -996,10 +1001,13 @@ namespace code_editor {
             if (end > start) {
                 float const x0 = text_x + char_width * static_cast<float>(start);
                 float const x1 = text_x + char_width * static_cast<float>(end);
+                if (x1 <= text_min_x) {
+                    continue;
+                }
                 float const underline_y = y + line_height - 3.0f;
                 draw::draw_line(
                     context,
-                    {std::round(x0), std::round(underline_y)},
+                    {std::round(std::max(x0, text_min_x)), std::round(underline_y)},
                     {std::round(std::max(x0 + 2.0f, x1)), std::round(underline_y)},
                     to_draw_color(color),
                     1.5f
@@ -1116,7 +1124,7 @@ namespace code_editor {
         }
         editor.set_flag(EditorFlag::MOUSE_WAS_DOWN, input.mouse_down[0u]);
         if (clicked || dragged || double_clicked || triple_clicked || apply_key_reveal) {
-            reveal_cursor(editor, rect);
+            reveal_cursor(editor, rect, char_width);
         } else {
             clamp_scroll(editor, rect);
         }
@@ -1134,6 +1142,8 @@ namespace code_editor {
             std::min(line_count - 1u, static_cast<size_t>(editor.scroll_y / line_height));
         float y = content.min.y - (editor.scroll_y - static_cast<float>(first_line) * line_height);
         float const text_x = editor_text_x(editor, rect);
+        float const text_min_x = std::min(text_x + editor.scroll_x, content.max.x);
+        draw::Rect const text_clip = {{text_min_x, content.min.y}, {content.max.x, content.max.y}};
         float const line_number_x = content.min.x;
         EditorSelectionRange const selection = editor_selection_range(editor);
         SyntaxTokenizer const tokenizer = syntax_tokenizer_for_file_name(editor.current_file_name);
@@ -1149,6 +1159,23 @@ namespace code_editor {
             }
 
             EditorLine const& text_line = editor_line(editor, line);
+            draw::TextStyle number_style = {
+                .font = editor_font,
+                .size = editor.font_size,
+                .raster_policy = editor.raster_policy,
+                .color = to_draw_color(
+                    selection_visible && line == editor.cursor_line ? palette.text : palette.faint
+                ),
+            };
+            draw::draw_text(
+                draw_context,
+                {std::round(line_number_x), std::round(y - 2.0f)},
+                number_style,
+                fmt::tprintf("%4zu", line + 1u),
+                nullptr
+            );
+
+            draw::push_clip_rect(draw_context, text_clip);
             if (selection_visible) {
                 draw_editor_selection(
                     draw_context,
@@ -1178,21 +1205,6 @@ namespace code_editor {
                     2.0f
                 );
             }
-            draw::TextStyle number_style = {
-                .font = editor_font,
-                .size = editor.font_size,
-                .raster_policy = editor.raster_policy,
-                .color = to_draw_color(
-                    selection_visible && line == editor.cursor_line ? palette.text : palette.faint
-                ),
-            };
-            draw::draw_text(
-                draw_context,
-                {std::round(line_number_x), std::round(y - 2.0f)},
-                number_style,
-                fmt::tprintf("%4zu", line + 1u),
-                nullptr
-            );
             draw_syntax_line(
                 draw_context,
                 editor_font,
@@ -1205,12 +1217,14 @@ namespace code_editor {
                 editor.raster_policy,
                 char_width
             );
+            draw::pop_clip_rect(draw_context);
             draw_lsp_diagnostics_for_line(
                 draw_context,
                 editor,
                 palette,
                 line,
                 text_x,
+                text_min_x,
                 line_number_x,
                 y,
                 line_height,
@@ -1226,6 +1240,7 @@ namespace code_editor {
             content.min.y + static_cast<float>(editor.cursor_line) * line_height - editor.scroll_y;
         if (selection_visible && editor.flag(EditorFlag::INSERT_MODE) &&
             cursor_y + line_height >= content.min.y && cursor_y < content.max.y) {
+            draw::push_clip_rect(draw_context, text_clip);
             draw::draw_rect_filled(
                 draw_context,
                 {{cursor_x, std::round(cursor_y + 2.0f)},
@@ -1233,6 +1248,7 @@ namespace code_editor {
                 to_draw_color(palette.mode_insert),
                 0.0f
             );
+            draw::pop_clip_rect(draw_context);
         }
 
         draw::pop_clip_rect(draw_context);
@@ -3054,10 +3070,11 @@ namespace code_editor {
         float const line_height = editor_line_height(editor);
         float const x =
             editor_text_x(editor, rect) + char_width * static_cast<float>(editor.cursor_column);
+        float const text_min_x = editor_text_x(editor, rect) + editor.scroll_x;
         float const y =
             content.min.y + static_cast<float>(editor.cursor_line) * line_height - editor.scroll_y;
         float const width = editor.flag(EditorFlag::INSERT_MODE) ? 2.0f : char_width;
-        return x >= content.min.x && x + width <= content.max.x && y >= content.min.y &&
+        return x >= text_min_x && x + width <= content.max.x && y >= content.min.y &&
                y + line_height <= content.max.y;
     }
 
