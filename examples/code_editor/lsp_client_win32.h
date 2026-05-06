@@ -26,6 +26,7 @@ namespace code_editor {
         LspRequestKind kind = LspRequestKind::NONE;
         StrRef path = {};
         LspPosition position = {};
+        uint64_t revision = 0u;
     };
 
     struct LspPipeRead {
@@ -65,6 +66,8 @@ namespace code_editor {
         Vec<LspCodeAction> code_actions = {};
         Vec<LspDocumentSymbol> symbols = {};
         Vec<LspTextEdit> text_edits = {};
+        Vec<LspSemanticToken> semantic_tokens = {};
+        Vec<StrRef> semantic_token_types = {};
         StrRef root_path = {};
         StrRef compile_commands_dir = {};
         StrRef current_path = {};
@@ -74,6 +77,7 @@ namespace code_editor {
         int32_t next_id = 1;
         bool started = false;
         bool initialized = false;
+        bool semantic_tokens_supported = false;
     };
 
     [[nodiscard]] auto lsp_client_init(LspClient& client) -> bool;

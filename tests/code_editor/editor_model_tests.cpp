@@ -68,6 +68,20 @@ namespace {
         code_editor::process_editor_input(editor, input, clipboard);
     }
 
+    struct LspRequestCapture {
+        code_editor::LspEditorRequest requests[8] = {};
+        size_t count = 0u;
+    };
+
+    auto capture_lsp_request(void* user_data, code_editor::LspEditorRequest const& request)
+        -> void {
+        auto* const capture = static_cast<LspRequestCapture*>(user_data);
+        if (capture->count < sizeof(capture->requests) / sizeof(capture->requests[0u])) {
+            capture->requests[capture->count] = request;
+        }
+        capture->count += 1u;
+    }
+
     auto select_editor_range(
         code_editor::EditorState& editor,
         size_t start_line,
@@ -1736,6 +1750,42 @@ namespace {
             context, StrRef(editor.lsp_rename_text, editor.lsp_rename_text_size) == "original_name"
         );
         TEST_EXPECT(context, editor.lsp_rename_text_selected);
+    }
+
+    TEST_CASE(editor_lsp_document_sync_requests_semantic_tokens) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "int main() {}");
+        editor.current_file_name = "main.cpp";
+        editor.current_file_path = "C:\\repo\\main.cpp";
+
+        code_editor::LspBridge bridge = {.status = code_editor::LspStatusKind::READY};
+        LspRequestCapture capture = {};
+        editor.lsp_bridge = &bridge;
+        editor.lsp_send_request = capture_lsp_request;
+        editor.lsp_user_data = &capture;
+
+        code_editor::update_editor_lsp_document(editor);
+
+        TEST_EXPECT(context, capture.count == 2u);
+        TEST_EXPECT(context, capture.requests[0u].kind == code_editor::LspRequestKind::DID_OPEN);
+        TEST_EXPECT(
+            context, capture.requests[1u].kind == code_editor::LspRequestKind::SEMANTIC_TOKENS
+        );
+        TEST_EXPECT(context, capture.requests[1u].revision == editor.text.revision);
+
+        code_editor::text_buffer_insert(
+            editor.text, code_editor::text_buffer_size(editor.text), "\n"
+        );
+        code_editor::update_editor_lsp_document(editor);
+
+        TEST_EXPECT(context, capture.count == 4u);
+        TEST_EXPECT(context, capture.requests[2u].kind == code_editor::LspRequestKind::DID_CHANGE);
+        TEST_EXPECT(
+            context, capture.requests[3u].kind == code_editor::LspRequestKind::SEMANTIC_TOKENS
+        );
     }
 
     TEST_CASE(editor_space_w_v_and_s_create_splits) {

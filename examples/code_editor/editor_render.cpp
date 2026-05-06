@@ -796,6 +796,8 @@ namespace code_editor {
             return palette.preprocessor;
         case SyntaxTokenKind::PUNCTUATION:
             return palette.punctuation;
+        case SyntaxTokenKind::FUNCTION:
+            return palette.function;
         }
         return palette.text;
     }
@@ -820,6 +822,47 @@ namespace code_editor {
             style.color = to_draw_color(syntax_token_color(palette, token.kind));
             draw_token(context, style, line, token.start, token.end, x, y, char_width);
             index = token.end;
+        }
+    }
+
+    [[nodiscard]] auto semantic_tokens_for_editor(EditorState const& editor)
+        -> Slice<LspSemanticToken const> {
+        if (editor.lsp_bridge == nullptr ||
+            editor.lsp_bridge->semantic_tokens_path != editor.current_file_path ||
+            editor.lsp_bridge->semantic_tokens_revision != editor.text.revision) {
+            return {};
+        }
+        return editor.lsp_bridge->semantic_tokens;
+    }
+
+    auto draw_semantic_line(
+        draw::Context context,
+        font_cache::Font font,
+        Slice<LspSemanticToken const> tokens,
+        Palette const& palette,
+        EditorLine const& line,
+        size_t line_index,
+        float x,
+        float y,
+        float font_size,
+        font_provider::RasterPolicy raster_policy,
+        float char_width
+    ) -> void {
+        draw::TextStyle style = {.font = font, .size = font_size, .raster_policy = raster_policy};
+        for (LspSemanticToken const& token : tokens) {
+            if (token.range.start.line > line_index) {
+                break;
+            }
+            if (token.range.start.line != line_index || token.range.end.line != line_index) {
+                continue;
+            }
+            size_t const start = std::min(token.range.start.column, line.size);
+            size_t const end = std::min(token.range.end.column, line.size);
+            if (end <= start || token.kind == SyntaxTokenKind::TEXT) {
+                continue;
+            }
+            style.color = to_draw_color(syntax_token_color(palette, token.kind));
+            draw_token(context, style, line, start, end, x, y, char_width);
         }
     }
 
@@ -1147,6 +1190,7 @@ namespace code_editor {
         float const line_number_x = content.min.x;
         EditorSelectionRange const selection = editor_selection_range(editor);
         SyntaxTokenizer const tokenizer = syntax_tokenizer_for_file_name(editor.current_file_name);
+        Slice<LspSemanticToken const> const semantic_tokens = semantic_tokens_for_editor(editor);
         size_t line = first_line;
         while (line < line_count && y < content.max.y) {
             if (selection_visible && line == editor.cursor_line) {
@@ -1211,6 +1255,19 @@ namespace code_editor {
                 tokenizer,
                 palette,
                 text_line,
+                text_x,
+                y - 2.0f,
+                editor.font_size,
+                editor.raster_policy,
+                char_width
+            );
+            draw_semantic_line(
+                draw_context,
+                editor_font,
+                semantic_tokens,
+                palette,
+                text_line,
+                line,
                 text_x,
                 y - 2.0f,
                 editor.font_size,

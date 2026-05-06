@@ -3447,6 +3447,14 @@ namespace code_editor {
                 .revision = editor.text.revision,
             }
         );
+        send_lsp_request(
+            editor,
+            {
+                .kind = LspRequestKind::SEMANTIC_TOKENS,
+                .path = editor.current_file_path,
+                .revision = editor.text.revision,
+            }
+        );
         editor.lsp_synced_path = arena_copy_cstr(*editor.arena, editor.current_file_path);
         editor.lsp_synced_revision = editor.text.revision;
     }

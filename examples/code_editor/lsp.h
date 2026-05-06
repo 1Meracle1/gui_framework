@@ -1,5 +1,6 @@
 #pragma once
 
+#include "syntax.h"
 #include "text_buffer.h"
 
 #include <base/memory.h>
@@ -35,6 +36,7 @@ namespace code_editor {
         FORMATTING,
         CODE_ACTION,
         DOCUMENT_SYMBOL,
+        SEMANTIC_TOKENS,
     };
 
     enum class LspDiagnosticSeverity : uint8_t {
@@ -102,6 +104,11 @@ namespace code_editor {
         uint32_t kind = 0u;
     };
 
+    struct LspSemanticToken {
+        LspRange range = {};
+        SyntaxTokenKind kind = SyntaxTokenKind::TEXT;
+    };
+
     struct LspBridge {
         LspStatusKind status = LspStatusKind::OFF;
         StrRef server_name = {};
@@ -112,9 +119,12 @@ namespace code_editor {
         Slice<LspCodeAction> code_actions = {};
         Slice<LspDocumentSymbol> symbols = {};
         Slice<LspTextEdit> text_edits = {};
+        Slice<LspSemanticToken> semantic_tokens = {};
         LspHover hover = {};
         StrRef progress_text = {};
+        StrRef semantic_tokens_path = {};
         LspRequestKind locations_kind = LspRequestKind::NONE;
+        uint64_t semantic_tokens_revision = 0u;
         bool progress_active = false;
         uint64_t status_generation = 0u;
         uint64_t progress_generation = 0u;
@@ -125,6 +135,7 @@ namespace code_editor {
         uint64_t code_actions_generation = 0u;
         uint64_t symbols_generation = 0u;
         uint64_t text_edits_generation = 0u;
+        uint64_t semantic_tokens_generation = 0u;
     };
 
     struct LspEditorRequest {

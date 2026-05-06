@@ -47,6 +47,7 @@ namespace code_editor {
         client.bridge.code_actions = client.code_actions.slice();
         client.bridge.symbols = client.symbols.slice();
         client.bridge.text_edits = client.text_edits.slice();
+        client.bridge.semantic_tokens = client.semantic_tokens.slice();
     }
 
     auto set_status(LspClient& client, LspStatusKind kind, StrRef text) -> void {
@@ -344,15 +345,20 @@ namespace code_editor {
         pump_write(client);
     }
 
-    [[nodiscard]] auto
-    next_id(LspClient& client, LspRequestKind kind, StrRef path, LspPosition position = {})
-        -> int32_t {
+    [[nodiscard]] auto next_id(
+        LspClient& client,
+        LspRequestKind kind,
+        StrRef path,
+        LspPosition position = {},
+        uint64_t revision = 0u
+    ) -> int32_t {
         int32_t const id = client.next_id++;
         BASE_UNUSED(client.pending.push_back({
             .id = id,
             .kind = kind,
             .path = arena_copy_cstr(client.arena, path),
             .position = position,
+            .revision = revision,
         }));
         return id;
     }
@@ -426,9 +432,10 @@ namespace code_editor {
         StrRef path,
         StrRef method,
         StrRef params,
-        LspPosition position = {}
+        LspPosition position = {},
+        uint64_t revision = 0u
     ) -> void {
-        int32_t const id = next_id(client, kind, path, position);
+        int32_t const id = next_id(client, kind, path, position, revision);
         ArenaTemp temp = begin_thread_temp_arena();
         StringBuffer json = {};
         BASE_UNUSED(json.init(params.size() + 256u, temp.arena()->resource()));
@@ -459,7 +466,7 @@ namespace code_editor {
         ArenaTemp temp = begin_thread_temp_arena();
         StrRef const root_uri = lsp_path_to_file_uri(*temp.arena(), client.root_path);
         StringBuffer json = {};
-        BASE_UNUSED(json.init(2048u, temp.arena()->resource()));
+        BASE_UNUSED(json.init(4096u, temp.arena()->resource()));
         BASE_UNUSED(json.write_string("{\"jsonrpc\":\"2.0\",\"id\":"));
         BASE_UNUSED(json.write_string(fmt::tprintf("%d", id)));
         BASE_UNUSED(json.write_string(
@@ -471,7 +478,15 @@ namespace code_editor {
             "\"synchronization\":{\"didSave\":false},\"completion\":{\"completionItem\":{"
             "\"snippetSupport\":false}},\"hover\":{},\"definition\":{},\"declaration\":{},"
             "\"references\":{},\"rename\":{},\"formatting\":{},\"codeAction\":{},"
-            "\"documentSymbol\":{}}},"
+            "\"documentSymbol\":{},\"semanticTokens\":{\"dynamicRegistration\":false,"
+            "\"requests\":{\"range\":false,\"full\":true},\"tokenTypes\":[\"namespace\","
+            "\"type\",\"class\",\"enum\",\"interface\",\"struct\",\"typeParameter\","
+            "\"parameter\",\"variable\",\"property\",\"enumMember\",\"event\",\"function\","
+            "\"method\",\"macro\",\"keyword\",\"modifier\",\"comment\",\"string\",\"number\","
+            "\"regexp\",\"operator\",\"decorator\"],\"tokenModifiers\":[\"declaration\","
+            "\"definition\",\"readonly\",\"static\",\"deprecated\",\"abstract\",\"async\","
+            "\"modification\",\"documentation\",\"defaultLibrary\"],\"formats\":[\"relative\"],"
+            "\"overlappingTokenSupport\":false,\"multilineTokenSupport\":false}}},"
             "\"trace\":\"off\"}}"
         ));
         write_json(client, json.str());
@@ -491,7 +506,9 @@ namespace code_editor {
             !client.locations.init(32u, client.result_arena.resource()) ||
             !client.code_actions.init(16u, client.result_arena.resource()) ||
             !client.symbols.init(64u, client.result_arena.resource()) ||
-            !client.text_edits.init(64u, client.result_arena.resource())) {
+            !client.text_edits.init(64u, client.result_arena.resource()) ||
+            !client.semantic_tokens.init(512u, client.result_arena.resource()) ||
+            !client.semantic_token_types.init(32u, client.result_arena.resource())) {
             return false;
         }
         set_server_name(client, "clangd");
@@ -557,6 +574,8 @@ namespace code_editor {
         client.code_actions.destroy();
         client.symbols.destroy();
         client.text_edits.destroy();
+        client.semantic_tokens.destroy();
+        client.semantic_token_types.destroy();
         client.framer.bytes.destroy();
         client.result_arena.destroy();
         client.message_arena.destroy();
@@ -721,6 +740,25 @@ namespace code_editor {
         if (json_member_string(lsp_json_object_get(result, "serverInfo"), "name", name)) {
             set_server_name(client, name);
         }
+        client.semantic_tokens_supported = false;
+        LspJsonValue const* const provider = lsp_json_object_get(
+            lsp_json_object_get(result, "capabilities"), "semanticTokensProvider"
+        );
+        LspJsonValue const* const token_types =
+            lsp_json_object_get(lsp_json_object_get(provider, "legend"), "tokenTypes");
+        if (token_types == nullptr || token_types->kind != LspJsonKind::ARRAY) {
+            return;
+        }
+        client.semantic_token_types.clear();
+        for (LspJsonValue const* item : token_types->array) {
+            StrRef token_type = {};
+            if (lsp_json_string(item, token_type)) {
+                BASE_UNUSED(client.semantic_token_types.push_back(
+                    arena_copy_cstr(client.result_arena, token_type)
+                ));
+            }
+        }
+        client.semantic_tokens_supported = !client.semantic_token_types.empty();
     }
 
     [[nodiscard]] auto parse_position(LspJsonValue const* value, LspPosition& out) -> bool {
@@ -1101,6 +1139,85 @@ namespace code_editor {
         bridge_refresh(client);
     }
 
+    [[nodiscard]] auto semantic_token_kind(LspClient const& client, size_t type_index)
+        -> SyntaxTokenKind {
+        StrRef const type = type_index < client.semantic_token_types.size()
+                                ? client.semantic_token_types[type_index]
+                                : StrRef();
+        if (type == "type" || type == "class" || type == "enum" || type == "interface" ||
+            type == "struct" || type == "typeParameter" || type == "namespace" ||
+            type == "concept") {
+            return SyntaxTokenKind::TYPE;
+        }
+        if (type == "function" || type == "method") {
+            return SyntaxTokenKind::FUNCTION;
+        }
+        if (type == "macro") {
+            return SyntaxTokenKind::PREPROCESSOR;
+        }
+        if (type == "keyword" || type == "modifier") {
+            return SyntaxTokenKind::KEYWORD;
+        }
+        if (type == "comment") {
+            return SyntaxTokenKind::COMMENT;
+        }
+        if (type == "string") {
+            return SyntaxTokenKind::STRING;
+        }
+        if (type == "number") {
+            return SyntaxTokenKind::NUMBER;
+        }
+        if (type == "operator") {
+            return SyntaxTokenKind::PUNCTUATION;
+        }
+        return SyntaxTokenKind::TEXT;
+    }
+
+    auto parse_semantic_tokens_response(
+        LspClient& client, LspJsonValue const* result, LspClientPendingRequest const& pending
+    ) -> void {
+        if (pending.path != client.current_path || pending.revision != client.current_revision) {
+            return;
+        }
+
+        client.semantic_tokens.clear();
+        client.bridge.semantic_tokens_path = copy_result(client, pending.path);
+        client.bridge.semantic_tokens_revision = pending.revision;
+
+        LspJsonValue const* const data = lsp_json_object_get(result, "data");
+        if (data != nullptr && data->kind == LspJsonKind::ARRAY) {
+            StrRef const doc_text = current_doc_text(client, pending.path);
+            size_t line = 0u;
+            size_t column = 0u;
+            for (size_t index = 0u; index + 4u < data->array.size(); index += 5u) {
+                size_t delta_line = 0u;
+                size_t delta_column = 0u;
+                size_t length = 0u;
+                size_t type_index = 0u;
+                if (!lsp_json_size(data->array[index], delta_line) ||
+                    !lsp_json_size(data->array[index + 1u], delta_column) ||
+                    !lsp_json_size(data->array[index + 2u], length) ||
+                    !lsp_json_size(data->array[index + 3u], type_index)) {
+                    continue;
+                }
+
+                line += delta_line;
+                column = delta_line == 0u ? column + delta_column : delta_column;
+                LspRange range = {{line, column}, {line, column + length}};
+                range = !doc_text.empty() ? lsp_range_utf16_to_byte(doc_text, range) : range;
+                if (range.end.column > range.start.column) {
+                    BASE_UNUSED(client.semantic_tokens.push_back({
+                        .range = range,
+                        .kind = semantic_token_kind(client, type_index),
+                    }));
+                }
+            }
+        }
+
+        client.bridge.semantic_tokens_generation += 1u;
+        bridge_refresh(client);
+    }
+
     auto send_initialized(LspClient& client) -> void {
         send_notification_json(client, "initialized", "{}");
         set_status(
@@ -1145,6 +1262,9 @@ namespace code_editor {
             break;
         case LspRequestKind::DOCUMENT_SYMBOL:
             parse_document_symbols_response(client, result);
+            break;
+        case LspRequestKind::SEMANTIC_TOKENS:
+            parse_semantic_tokens_response(client, result, pending);
             break;
         default:
             break;
@@ -1436,6 +1556,27 @@ namespace code_editor {
         );
     }
 
+    auto send_semantic_tokens_request(LspClient& client, LspEditorRequest const& request) -> void {
+        if (!client.semantic_tokens_supported) {
+            return;
+        }
+        ArenaTemp temp = begin_thread_temp_arena();
+        StringBuffer params = {};
+        BASE_UNUSED(params.init(256u, temp.arena()->resource()));
+        BASE_UNUSED(params.write_string("{\"textDocument\":{\"uri\":"));
+        lsp_json_write_escaped_string(params, client.current_uri);
+        BASE_UNUSED(params.write_string("}}"));
+        send_request_json(
+            client,
+            LspRequestKind::SEMANTIC_TOKENS,
+            request.path,
+            "textDocument/semanticTokens/full",
+            params.str(),
+            {},
+            request.revision
+        );
+    }
+
     auto lsp_client_send_editor_request(void* user_data, LspEditorRequest const& request) -> void {
         auto* const client = static_cast<LspClient*>(user_data);
         if (client == nullptr || !client->started) {
@@ -1480,6 +1621,9 @@ namespace code_editor {
             break;
         case LspRequestKind::DOCUMENT_SYMBOL:
             send_document_symbol_request(*client, request);
+            break;
+        case LspRequestKind::SEMANTIC_TOKENS:
+            send_semantic_tokens_request(*client, request);
             break;
         default:
             break;

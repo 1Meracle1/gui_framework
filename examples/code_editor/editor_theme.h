@@ -23,6 +23,7 @@ namespace code_editor {
         gui::Color comment = gui::rgb(103, 132, 112);
         gui::Color preprocessor = gui::rgb(255, 116, 132);
         gui::Color punctuation = gui::rgb(153, 166, 181);
+        gui::Color function = gui::rgb(220, 220, 170);
         gui::Color mode_insert = gui::rgb(80, 200, 146);
         gui::Color mode_normal = gui::rgb(82, 172, 255);
     };

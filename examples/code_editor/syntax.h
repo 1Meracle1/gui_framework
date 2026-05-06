@@ -15,6 +15,7 @@ namespace code_editor {
         COMMENT,
         PREPROCESSOR,
         PUNCTUATION,
+        FUNCTION,
     };
 
     struct SyntaxToken {
