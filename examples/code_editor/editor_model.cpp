@@ -2253,6 +2253,7 @@ namespace code_editor {
             return;
         }
         set_text_search_text(editor, {});
+        clear_selection(editor);
         editor.text_search_origin_line = editor.cursor_line;
         editor.set_flag(EditorFlag::TEXT_SEARCH_ACTIVE, true);
         editor.set_flag(EditorFlag::COMMAND_LINE_ACTIVE, false);
@@ -2276,6 +2277,12 @@ namespace code_editor {
     auto finish_text_search(EditorState& editor) -> void {
         BASE_UNUSED(update_text_search_selection(editor));
         editor.set_flag(EditorFlag::TEXT_SEARCH_ACTIVE, false);
+    }
+
+    auto submit_text_search(EditorState& editor, StrRef text) -> void {
+        open_text_search(editor);
+        set_text_search_text(editor, text);
+        finish_text_search(editor);
     }
 
     auto repeat_text_search(EditorState& editor, bool reverse) -> void {
@@ -2872,6 +2879,18 @@ namespace code_editor {
             break;
         case '/':
             open_text_search(editor);
+            break;
+        case '*':
+            if (selection.active) {
+                ArenaTemp temp = begin_thread_temp_arena();
+                StrRef const text = text_buffer_copy_range(
+                    editor.text,
+                    *temp.arena(),
+                    position_offset(editor, selection_start(selection)),
+                    position_offset(editor, selection_end(selection))
+                );
+                submit_text_search(editor, text);
+            }
             break;
         case 'K':
             request_lsp(editor, LspRequestKind::HOVER);
