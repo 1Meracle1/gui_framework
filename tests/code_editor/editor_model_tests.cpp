@@ -1590,6 +1590,61 @@ namespace {
         TEST_EXPECT(context, editor.buffer_search_open_file == 1u);
     }
 
+    TEST_CASE(editor_jump_list_records_filters_and_navigates) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "");
+
+        code_editor::record_editor_jump(editor, "main.cpp", "C:\\repo\\main.cpp", 2u, 4u);
+        code_editor::record_editor_jump(editor, "render.cpp", "C:\\repo\\render.cpp", 8u, 1u);
+        code_editor::record_editor_jump(editor, "app.cpp", "C:\\repo\\app.cpp", 12u, 6u);
+        code_editor::record_editor_jump(editor, "app.cpp", "C:\\repo\\app.cpp", 12u, 6u);
+
+        TEST_EXPECT(context, editor.jumps.size() == 3u);
+        TEST_EXPECT(context, editor.jump_cursor == 2u);
+
+        editor.file_search_text_size = StrRef("render").copy_to(
+            editor.file_search_text, code_editor::FILE_SEARCH_TEXT_CAPACITY
+        );
+        editor.file_search_text[editor.file_search_text_size] = '\0';
+        code_editor::JumpListMatch matches[code_editor::JUMP_LIST_LIMIT] = {};
+        size_t const count = code_editor::collect_jump_list_matches(editor, matches);
+        TEST_EXPECT(context, count == 1u);
+        TEST_EXPECT(context, matches[0u].jump_index == 1u);
+
+        editor.file_search_text_size =
+            StrRef("2").copy_to(editor.file_search_text, code_editor::FILE_SEARCH_TEXT_CAPACITY);
+        editor.file_search_text[editor.file_search_text_size] = '\0';
+        size_t const number_count = code_editor::collect_jump_list_matches(editor, matches);
+        TEST_EXPECT(context, number_count == 1u);
+        TEST_EXPECT(context, matches[0u].jump_index == 1u);
+        TEST_EXPECT(context, matches[0u].priority == 0u);
+
+        code_editor::open_editor_jump_list(editor);
+        TEST_EXPECT(context, editor.flag(EditorFlag::JUMP_LIST_OPEN));
+        TEST_EXPECT(context, editor.jump_selected == 2u);
+
+        editor.file_search_text_size =
+            StrRef("app").copy_to(editor.file_search_text, code_editor::FILE_SEARCH_TEXT_CAPACITY);
+        editor.file_search_text[editor.file_search_text_size] = '\0';
+        editor.jump_selected = 0u;
+        press_key(editor, gui::Key::ENTER);
+        TEST_EXPECT(context, !editor.flag(EditorFlag::JUMP_LIST_OPEN));
+        TEST_EXPECT(context, editor.jump_open_index == 2u);
+
+        editor.jump_open_index = code_editor::JUMP_LIST_NO_SELECTION;
+        send_text(editor, " o");
+        TEST_EXPECT(context, editor.jump_cursor == 1u);
+        TEST_EXPECT(context, editor.jump_open_index == 1u);
+
+        editor.jump_open_index = code_editor::JUMP_LIST_NO_SELECTION;
+        send_text(editor, " i");
+        TEST_EXPECT(context, editor.jump_cursor == 2u);
+        TEST_EXPECT(context, editor.jump_open_index == 2u);
+    }
+
     TEST_CASE(editor_lsp_rename_prefills_and_selects_current_word) {
         Arena arena = {};
         arena.init();

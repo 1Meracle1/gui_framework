@@ -363,7 +363,8 @@ namespace code_editor {
 
         draw::begin_frame(runtime->draw_context);
         bool const search_open = runtime->editor.flag(EditorFlag::FILE_SEARCH_OPEN) ||
-                                 runtime->editor.flag(EditorFlag::BUFFER_SEARCH_OPEN);
+                                 runtime->editor.flag(EditorFlag::BUFFER_SEARCH_OPEN) ||
+                                 runtime->editor.flag(EditorFlag::JUMP_LIST_OPEN);
         if (search_open) {
             draw::LayerDesc backdrop = {};
             backdrop.bounds = {

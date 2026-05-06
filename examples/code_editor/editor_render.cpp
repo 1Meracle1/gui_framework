@@ -1937,17 +1937,54 @@ namespace code_editor {
             .str();
     }
 
+    auto record_current_jump(EditorState& editor) -> void {
+        if (editor_focused_pane_kind(editor) == EditorPaneKind::CODE) {
+            record_editor_jump(
+                editor,
+                editor.current_file_name,
+                editor.current_file_path,
+                editor.cursor_line,
+                editor.cursor_column
+            );
+        }
+    }
+
+    auto center_current_cursor(EditorState& editor) -> void {
+        if (editor.focused_split < editor.split_nodes.size()) {
+            center_cursor(editor, editor.split_nodes[editor.focused_split].rect);
+        }
+    }
+
     auto open_lsp_location(EditorState& editor, LspLocation const& location) -> void {
         if (location.path.empty()) {
             return;
         }
+        record_current_jump(editor);
         focus_code_split_for_open(editor);
         StrRef const name = render_path_leaf(location.path);
         if (open_file(editor, name.empty() ? location.path : name, location.path)) {
             set_editor_cursor(editor, location.range.start.line, location.range.start.column);
-            if (editor.focused_split < editor.split_nodes.size()) {
-                center_cursor(editor, editor.split_nodes[editor.focused_split].rect);
-            }
+            center_current_cursor(editor);
+            record_editor_jump(
+                editor,
+                name.empty() ? location.path : name,
+                location.path,
+                location.range.start.line,
+                location.range.start.column
+            );
+        }
+    }
+
+    auto open_recorded_jump(EditorState& editor, size_t index) -> void {
+        if (index >= editor.jumps.size()) {
+            return;
+        }
+        EditorJump const jump = editor.jumps[index];
+        focus_code_split_for_open(editor);
+        if (open_file(editor, jump.name, jump.path)) {
+            set_editor_cursor(editor, jump.line, jump.column);
+            center_current_cursor(editor);
+            editor.jump_cursor = index;
         }
     }
 
@@ -2023,8 +2060,17 @@ namespace code_editor {
             editor.lsp_open_symbol_index = LSP_NO_SELECTION;
             if (index < editor.lsp_bridge->symbols.size()) {
                 LspDocumentSymbol const& symbol = editor.lsp_bridge->symbols[index];
+                record_current_jump(editor);
                 set_editor_cursor(
                     editor, symbol.selection_range.start.line, symbol.selection_range.start.column
+                );
+                center_current_cursor(editor);
+                record_editor_jump(
+                    editor,
+                    editor.current_file_name,
+                    editor.current_file_path,
+                    symbol.selection_range.start.line,
+                    symbol.selection_range.start.column
                 );
             }
         }
@@ -2494,6 +2540,423 @@ namespace code_editor {
                             }
                             line_count += 1u;
                         }
+                    }
+                }
+            }
+        }
+    }
+
+    [[nodiscard]] auto jump_list_row_text(Arena& arena, size_t index, EditorJump const& jump)
+        -> StrRef {
+        StrRef name = jump.name;
+        if (name.empty()) {
+            name = render_path_leaf(jump.path);
+        }
+        if (name.empty()) {
+            name = jump.path;
+        }
+        return fmt::aprintf(
+                   arena.resource(),
+                   "%zu %s:%zu:%zu",
+                   index + 1u,
+                   name,
+                   jump.line + 1u,
+                   jump.column + 1u
+        )
+            .str();
+    }
+
+    [[nodiscard]] auto jump_preview_text(
+        EditorState& editor,
+        Arena& arena,
+        EditorJump const& jump,
+        StrRef& out_name,
+        StrRef& out_text
+    ) -> bool {
+        if (same_file(jump.name, jump.path, editor.current_file_name, editor.current_file_path)) {
+            out_name = editor.current_file_name;
+            out_text = text_buffer_copy(editor.text, arena);
+            return true;
+        }
+        OpenFile* const open = find_open_file(editor, jump.name, jump.path);
+        if (open != nullptr && open->text_valid) {
+            out_name = open->name;
+            out_text = open->text;
+            return true;
+        }
+        if (jump.path.empty()) {
+            return false;
+        }
+        out_name = render_path_leaf(jump.path);
+        return read_tree_file_display_text(arena, jump.path, out_text);
+    }
+
+    auto draw_jump_source_preview(
+        gui::Frame& ui,
+        EditorState& editor,
+        font_cache::Font editor_font,
+        Palette const& palette,
+        EditorJump const& jump,
+        float preview_height
+    ) -> void {
+        ArenaTemp temp = begin_thread_temp_arena();
+        StrRef preview_name = {};
+        StrRef preview_text = {};
+        BASE_UNUSED(jump_preview_text(editor, *temp.arena(), jump, preview_name, preview_text));
+        if (preview_text.empty()) {
+            ui.label(
+                "No preview",
+                {
+                    .layout = {.width = gui::fill(), .height = gui::px(FILE_SEARCH_ROW_HEIGHT)},
+                    .style = {
+                        .foreground = palette.muted,
+                        .font = editor_font,
+                        .font_size = editor.font_size,
+                    },
+                }
+            );
+            return;
+        }
+
+        float const line_height = editor_line_height(editor);
+        size_t const preview_line_limit =
+            std::max<size_t>(1u, static_cast<size_t>(preview_height / line_height));
+        size_t const start_line = jump.line > 2u ? jump.line - 2u : 0u;
+        size_t offset = 0u;
+        size_t line_index = 0u;
+        while (line_index < start_line && offset < preview_text.size()) {
+            BASE_UNUSED(next_text_line(preview_text, offset));
+            line_index += 1u;
+        }
+
+        SyntaxTokenizer const tokenizer = syntax_tokenizer_for_file_name(preview_name);
+        size_t token_budget = std::min(
+            preview_line_limit * FILE_SEARCH_PREVIEW_TOKENS_PER_LINE,
+            FILE_SEARCH_PREVIEW_TOKEN_LIMIT
+        );
+        size_t drawn = 0u;
+        while (drawn < preview_line_limit && offset < preview_text.size() && token_budget != 0u) {
+            StrRef const line = next_text_line(preview_text, offset);
+            if (auto line_row = ui.row(
+                    gui::id("jump_list_preview_line", line_index),
+                    {
+                        .layout = {
+                            .width = gui::children(),
+                            .height = gui::px(line_height),
+                            .align_y = gui::Align::CENTER,
+                        },
+                    }
+                )) {
+                draw_syntax_label_line(
+                    ui, editor_font, tokenizer, palette, line, editor.font_size, token_budget
+                );
+            }
+            line_index += 1u;
+            drawn += 1u;
+        }
+    }
+
+    auto draw_jump_list_picker(
+        gui::Frame& ui,
+        EditorState& editor,
+        font_cache::Font editor_font,
+        Palette const& palette,
+        float client_width,
+        float client_height,
+        gui::InputState const& input
+    ) -> void {
+        float constexpr MAIN_PANEL_MARGIN = 10.0f;
+        float constexpr DIALOG_GAP = 8.0f;
+        float constexpr PANEL_PADDING = 10.0f;
+        float constexpr QUERY_HEIGHT = 36.0f;
+        float constexpr SHELL_PADDING = 12.0f;
+        float constexpr SHELL_GAP = 10.0f;
+        float constexpr HEADER_HEIGHT = 40.0f;
+        float constexpr BOTTOM_BAR_HEIGHT = 30.0f;
+        float const modal_margin_top =
+            SHELL_PADDING + HEADER_HEIGHT + SHELL_GAP + MAIN_PANEL_MARGIN;
+        float const modal_margin_bottom =
+            SHELL_PADDING + SHELL_GAP + BOTTOM_BAR_HEIGHT + MAIN_PANEL_MARGIN;
+        float const desired_margin_x = client_width * 0.1f;
+        float const max_margin_x = std::max(20.0f, (client_width - 900.0f) * 0.5f);
+        float const modal_margin_x = std::clamp(desired_margin_x, 20.0f, max_margin_x);
+        float const dialog_height =
+            std::max(180.0f, client_height - modal_margin_top - modal_margin_bottom);
+
+        editor.file_search_text_size = cstr_len(editor.file_search_text);
+        ArenaTemp search_temp = begin_thread_temp_arena();
+        JumpListMatch* matches = nullptr;
+        size_t match_count = 0u;
+        size_t filtered_count = 0u;
+        size_t total_count = 0u;
+
+        if (!editor.jump_list_mouse_known) {
+            editor.file_search_mouse_pos = input.mouse_pos;
+            editor.jump_list_mouse_known = true;
+        } else {
+            bool const mouse_moved = input.mouse_pos.x != editor.file_search_mouse_pos.x ||
+                                     input.mouse_pos.y != editor.file_search_mouse_pos.y;
+            if (mouse_moved || input.scroll_delta_y != 0.0f || input.mouse_down[0u]) {
+                editor.jump_list_mouse_select = true;
+            }
+            editor.file_search_mouse_pos = input.mouse_pos;
+        }
+
+        if (auto modal = ui.modal(
+                gui::id("jump_list_modal"),
+                {
+                    .layout =
+                        {
+                            .padding =
+                                {
+                                    modal_margin_top,
+                                    modal_margin_x,
+                                    modal_margin_bottom,
+                                    modal_margin_x,
+                                },
+                            .align_x = gui::Align::CENTER,
+                            .align_y = gui::Align::START,
+                        },
+                    .style = {.background = gui::rgba(0, 0, 0, 0)},
+                    .debug_name = "jump_list_modal",
+                }
+            )) {
+            if (auto dialog = ui.row(
+                    gui::id("jump_list_dialog"),
+                    {
+                        .layout =
+                            {
+                                .width = gui::fill(),
+                                .height = gui::px(dialog_height),
+                                .padding = gui::insets(PANEL_PADDING),
+                                .gap = DIALOG_GAP,
+                                .align_y = gui::Align::STRETCH,
+                            },
+                        .style = {
+                            .background = gui::color_alpha(palette.panel, 0.94f),
+                            .border = gui::color_alpha(palette.cursor, 0.72f),
+                            .border_thickness = 2.0f,
+                            .radius = 8.0f,
+                            .shadow = {
+                                .offset = {0.0f, 0.0f},
+                                .blur_radius = 26.0f,
+                                .spread = 1.0f,
+                                .color = gui::color_alpha(palette.cursor, 0.20f),
+                            },
+                        },
+                    }
+                )) {
+                if (auto left = ui.column(
+                        gui::id("jump_list_left"),
+                        {
+                            .layout = {
+                                .width = gui::fill(0.48f),
+                                .height = gui::fill(),
+                                .align_x = gui::Align::STRETCH,
+                                .clip = true,
+                            },
+                        }
+                    )) {
+                    if (auto query = ui.row(
+                            gui::id("jump_list_query"),
+                            {
+                                .layout =
+                                    {
+                                        .width = gui::fill(),
+                                        .height = gui::px(QUERY_HEIGHT),
+                                        .padding = gui::insets(0.0f, PANEL_PADDING),
+                                        .gap = 8.0f,
+                                        .align_y = gui::Align::CENTER,
+                                    },
+                                .style = {
+                                    .background = palette.panel_raised,
+                                    .border = palette.border,
+                                    .border_thickness = 1.0f,
+                                    .radius = 6.0f,
+                                },
+                            }
+                        )) {
+                        ui.label(
+                            ">",
+                            {
+                                .layout = {.width = gui::text(), .height = gui::fill()},
+                                .style = {.foreground = palette.cursor, .font = editor_font},
+                            }
+                        );
+                        gui::Id const input_id = gui::id("jump_list_input");
+                        ui.request_focus(input_id);
+                        gui::Signal const text_input = ui.input_text(
+                            input_id,
+                            "",
+                            editor.file_search_text,
+                            FILE_SEARCH_TEXT_CAPACITY,
+                            gui::InputTextDesc{
+                                .box =
+                                    {
+                                        .layout =
+                                            {
+                                                .width = gui::fill(),
+                                                .height = gui::fill(),
+                                                .padding = gui::insets(0.0f),
+                                            },
+                                        .style =
+                                            {
+                                                .background = gui::rgba(0, 0, 0, 0),
+                                                .foreground = palette.text,
+                                                .border = gui::rgba(0, 0, 0, 0),
+                                                .border_thickness = 1.0f,
+                                                .radius = 0.0f,
+                                                .font = editor_font,
+                                                .font_size = editor.font_size,
+                                            },
+                                    },
+                                .ignore_input_on_focus = true,
+                            }
+                        );
+                        if (text_input.changed) {
+                            editor.file_search_text_size = cstr_len(editor.file_search_text);
+                            editor.jump_selected = 0u;
+                            editor.jump_list_mouse_select = false;
+                            editor.jump_list_reveal_selected = true;
+                        }
+                        filtered_count = jump_list_filtered_count(editor);
+                        total_count = jump_list_total_count(editor);
+                        if (filtered_count != 0u) {
+                            matches =
+                                arena_alloc<JumpListMatch>(*search_temp.arena(), filtered_count);
+                            match_count =
+                                collect_jump_list_matches(editor, slice(matches, filtered_count));
+                        }
+                        editor.jump_selected =
+                            match_count == 0u ? 0u
+                                              : std::min(editor.jump_selected, match_count - 1u);
+                        ui.label(
+                            fmt::tprintf("%zu/%zu", filtered_count, total_count),
+                            {
+                                .layout = {.width = gui::text(), .height = gui::fill()},
+                                .style = {
+                                    .foreground = palette.text,
+                                    .font = editor_font,
+                                    .font_size = editor.font_size,
+                                },
+                            }
+                        );
+                    }
+
+                    gui::Id const results_id = gui::id("jump_list_results");
+                    if (editor.jump_list_reveal_selected && match_count != 0u) {
+                        ui.scroll_to_index(results_id, editor.jump_selected);
+                        editor.jump_list_reveal_selected = false;
+                    }
+                    if (match_count == 0u) {
+                        ui.label(
+                            editor.jumps.empty() ? "No jumps recorded" : "No matching jumps",
+                            {
+                                .layout =
+                                    {
+                                        .width = gui::fill(),
+                                        .height = gui::px(FILE_SEARCH_ROW_HEIGHT),
+                                        .padding = gui::insets(0.0f, PANEL_PADDING),
+                                    },
+                                .style = {
+                                    .foreground = palette.muted,
+                                    .font = editor_font,
+                                    .font_size = editor.font_size,
+                                },
+                            }
+                        );
+                    } else {
+                        auto results = ui.list_fixed(
+                            results_id,
+                            {
+                                .item_count = match_count,
+                                .item_height = FILE_SEARCH_ROW_HEIGHT,
+                                .box = {
+                                    .layout = {
+                                        .width = gui::fill(),
+                                        .height = gui::fill(),
+                                        .align_x = gui::Align::STRETCH,
+                                    },
+                                },
+                            }
+                        );
+                        ArenaTemp row_temp = begin_thread_temp_arena();
+                        for (size_t index = results.first; index < results.end; ++index) {
+                            bool selected = index == editor.jump_selected;
+                            if (auto row = results.row(
+                                    gui::id("jump_list_result", index),
+                                    {
+                                        .layout =
+                                            {
+                                                .padding = gui::insets(0.0f, PANEL_PADDING),
+                                                .gap = 8.0f,
+                                                .align_y = gui::Align::CENTER,
+                                            },
+                                        .style = {
+                                            .background =
+                                                selected ? palette.cursor_line : gui::Color{},
+                                            .radius = selected ? 5.0f : -1.0f,
+                                        },
+                                    }
+                                )) {
+                                gui::Signal const signal = row.signal();
+                                if (signal.hovered && editor.jump_list_mouse_select) {
+                                    editor.jump_selected = index;
+                                }
+                                if (signal.clicked_left) {
+                                    editor.jump_selected = index;
+                                    editor.jump_open_index = matches[index].jump_index;
+                                    close_jump_list(editor);
+                                }
+                                selected = index == editor.jump_selected;
+                                ui.label(
+                                    selected ? ">" : "",
+                                    {
+                                        .layout = {.width = gui::px(14.0f), .height = gui::fill()},
+                                        .style = {
+                                            .foreground = palette.cursor, .font = editor_font
+                                        },
+                                    }
+                                );
+                                EditorJump const& jump = editor.jumps[matches[index].jump_index];
+                                ui.label(
+                                    jump_list_row_text(
+                                        *row_temp.arena(), matches[index].jump_index, jump
+                                    ),
+                                    {
+                                        .layout = {.width = gui::fill(), .height = gui::fill()},
+                                        .style = {
+                                            .foreground = selected ? palette.text : palette.muted,
+                                            .font = editor_font,
+                                            .font_size = editor.font_size,
+                                        },
+                                    }
+                                );
+                            }
+                        }
+                    }
+                }
+
+                if (auto preview = ui.column(
+                        gui::id("jump_list_preview"),
+                        {
+                            .layout = {
+                                .width = gui::fill(0.52f),
+                                .height = gui::fill(),
+                                .padding = gui::insets(PANEL_PADDING),
+                                .clip = true,
+                            },
+                        }
+                    )) {
+                    if (match_count != 0u) {
+                        draw_jump_source_preview(
+                            ui,
+                            editor,
+                            editor_font,
+                            palette,
+                            editor.jumps[matches[editor.jump_selected].jump_index],
+                            dialog_height - 2.0f * PANEL_PADDING
+                        );
                     }
                 }
             }
@@ -4018,7 +4481,8 @@ namespace code_editor {
         sync_lsp_result_popups(editor);
         handle_lsp_pending_actions(editor);
         bool const picker_open = editor.flag(EditorFlag::FILE_SEARCH_OPEN) ||
-                                 editor.flag(EditorFlag::BUFFER_SEARCH_OPEN);
+                                 editor.flag(EditorFlag::BUFFER_SEARCH_OPEN) ||
+                                 editor.flag(EditorFlag::JUMP_LIST_OPEN);
         if (editor.flag(EditorFlag::SIDEBAR_VISIBLE)) {
             ensure_filesystem_panel(editor);
         }
@@ -4046,6 +4510,11 @@ namespace code_editor {
             size_t const open_file_index = editor.buffer_search_open_file;
             editor.buffer_search_open_file = FILE_SEARCH_NO_FILE;
             open_buffer_search_match(editor, open_file_index);
+        }
+        if (editor.jump_open_index != JUMP_LIST_NO_SELECTION) {
+            size_t const index = editor.jump_open_index;
+            editor.jump_open_index = JUMP_LIST_NO_SELECTION;
+            open_recorded_jump(editor, index);
         }
         remember_open_file(editor, editor.current_file_name, editor.current_file_path);
         char const* mode = editor.flag(EditorFlag::INSERT_MODE) ? "INSERT" : "NORMAL";
@@ -4323,6 +4792,11 @@ namespace code_editor {
                     ui, editor, editor_font, palette, client_width, client_height, input, true
                 );
             }
+            if (editor.flag(EditorFlag::JUMP_LIST_OPEN)) {
+                draw_jump_list_picker(
+                    ui, editor, editor_font, palette, client_width, client_height, input
+                );
+            }
             if (editor.flag(EditorFlag::SAVE_PATH_OPEN)) {
                 draw_save_path_picker(ui, editor, palette, input);
             }
@@ -4331,7 +4805,7 @@ namespace code_editor {
         }
         if (!editor.flag(EditorFlag::FILE_SEARCH_OPEN) &&
             !editor.flag(EditorFlag::BUFFER_SEARCH_OPEN) &&
-            !editor.flag(EditorFlag::SAVE_PATH_OPEN) &&
+            !editor.flag(EditorFlag::JUMP_LIST_OPEN) && !editor.flag(EditorFlag::SAVE_PATH_OPEN) &&
             editor.close_intent == EditorCloseIntent::NONE) {
             draw_lsp_hover_popup(ui, editor_font, editor, char_width, palette, input);
         }

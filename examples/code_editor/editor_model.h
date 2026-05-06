@@ -32,6 +32,8 @@ namespace code_editor {
     inline constexpr size_t FILE_SEARCH_TEXT_CAPACITY = 128u;
     inline constexpr size_t FILE_SEARCH_RESULT_LIMIT = 16u;
     inline constexpr size_t FILE_SEARCH_NO_FILE = static_cast<size_t>(-1);
+    inline constexpr size_t JUMP_LIST_LIMIT = 128u;
+    inline constexpr size_t JUMP_LIST_NO_SELECTION = static_cast<size_t>(-1);
     inline constexpr size_t LSP_NO_SELECTION = static_cast<size_t>(-1);
     inline constexpr size_t LSP_RENAME_TEXT_CAPACITY = 128u;
     inline constexpr size_t SAVE_PATH_TEXT_CAPACITY = 1024u;
@@ -120,6 +122,19 @@ namespace code_editor {
         int32_t score = 0;
     };
 
+    struct EditorJump {
+        StrRef name = {};
+        StrRef path = {};
+        size_t line = 0u;
+        size_t column = 0u;
+    };
+
+    struct JumpListMatch {
+        size_t jump_index = 0u;
+        int32_t score = 0;
+        uint8_t priority = 0u;
+    };
+
     enum class EditorPaneKind : uint8_t {
         CODE,
         FILESYSTEM,
@@ -185,6 +200,7 @@ namespace code_editor {
         TREE_OPEN,
         FILE_SEARCH_OPEN,
         BUFFER_SEARCH_OPEN,
+        JUMP_LIST_OPEN,
         TEXT_SEARCH_ACTIVE,
         COMMAND_LINE_ACTIVE,
         SAVE_REQUESTED,
@@ -240,6 +256,7 @@ namespace code_editor {
         Vec<EditorPane*> panes = {};
         Vec<EditorSplitNode> split_nodes = {};
         Vec<OpenFile> open_files = {};
+        Vec<EditorJump> jumps = {};
         Slice<FileTreeEntry> tree_files = {};
         EditorUndoEntry* undo_stack = nullptr;
         EditorUndoEntry* redo_stack = nullptr;
@@ -273,6 +290,9 @@ namespace code_editor {
         size_t lsp_open_location_index = LSP_NO_SELECTION;
         size_t lsp_open_symbol_index = LSP_NO_SELECTION;
         size_t lsp_apply_code_action_index = LSP_NO_SELECTION;
+        size_t jump_selected = 0u;
+        size_t jump_cursor = JUMP_LIST_NO_SELECTION;
+        size_t jump_open_index = JUMP_LIST_NO_SELECTION;
         size_t file_search_open_file = FILE_SEARCH_NO_FILE;
         size_t buffer_search_open_file = FILE_SEARCH_NO_FILE;
         size_t pending_line_number = 0u;
@@ -296,6 +316,9 @@ namespace code_editor {
         bool file_search_mouse_known = false;
         bool file_search_mouse_select = false;
         bool file_search_reveal_selected = false;
+        bool jump_list_mouse_known = false;
+        bool jump_list_mouse_select = false;
+        bool jump_list_reveal_selected = false;
         EditorSavePathError save_path_error = EditorSavePathError::NONE;
         EditorFlags flags = {EditorFlag::TREE_OPEN};
     };
@@ -339,6 +362,11 @@ namespace code_editor {
     auto close_editor_lsp_popup(EditorState& editor) -> void;
     auto accept_lsp_popup(EditorState& editor) -> void;
     auto open_editor_lsp_locations(EditorState& editor) -> void;
+    auto
+    record_editor_jump(EditorState& editor, StrRef name, StrRef path, size_t line, size_t column)
+        -> void;
+    auto open_editor_jump_list(EditorState& editor) -> void;
+    auto close_jump_list(EditorState& editor) -> void;
     [[nodiscard]] auto editor_line_count(EditorState const& editor) -> size_t;
     [[nodiscard]] auto editor_line(EditorState const& editor, size_t index) -> EditorLine;
     [[nodiscard]] auto editor_line_text(EditorLine line) -> StrRef;
@@ -356,9 +384,13 @@ namespace code_editor {
     [[nodiscard]] auto
     collect_buffer_search_matches(EditorState const& editor, Slice<BufferSearchMatch> matches)
         -> size_t;
+    [[nodiscard]] auto
+    collect_jump_list_matches(EditorState const& editor, Slice<JumpListMatch> matches) -> size_t;
     [[nodiscard]] auto file_search_total_count(EditorState const& editor, bool buffers) -> size_t;
     [[nodiscard]] auto file_search_filtered_count(EditorState const& editor, bool buffers)
         -> size_t;
+    [[nodiscard]] auto jump_list_total_count(EditorState const& editor) -> size_t;
+    [[nodiscard]] auto jump_list_filtered_count(EditorState const& editor) -> size_t;
     [[nodiscard]] auto point_in_rect(gui::Rect rect, gui::Vec2 point) -> bool;
     [[nodiscard]] auto editor_scaled_font_size(EditorState const& editor, float base_size) -> float;
     [[nodiscard]] auto editor_line_height(EditorState const& editor) -> float;
