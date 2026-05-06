@@ -310,15 +310,18 @@ namespace code_editor {
             store_current_open_file(editor);
         }
         if (same_file(name, path, editor.current_file_name, editor.current_file_path)) {
+            touch_open_file(editor, name, path);
             return true;
         }
         if (load_shared_editor_buffer(editor, name, path)) {
             store_current_open_file(editor);
+            touch_open_file(editor, name, path);
             return true;
         }
         OpenFile const* const file = find_open_file(editor, name, path);
         if (file != nullptr && file->text_valid) {
             load_open_file_buffer(editor, *file);
+            touch_open_file(editor, name, path);
             return true;
         }
         if (path.empty()) {
@@ -344,6 +347,7 @@ namespace code_editor {
         BASE_UNUSED(restore_focused_open_file_view(editor, name, path));
         remember_open_file(editor, name, path);
         store_current_open_file(editor);
+        touch_open_file(editor, name, path);
         return true;
     }
 
@@ -380,7 +384,7 @@ namespace code_editor {
         editor.current_file_path = {};
         editor.file_write_stamp = 0u;
         set_editor_text(editor, {});
-        remember_open_file(editor, editor.current_file_name, {});
+        touch_open_file(editor, editor.current_file_name, {});
         store_current_open_file(editor);
     }
 
@@ -1796,6 +1800,19 @@ namespace code_editor {
         }
     }
 
+    [[nodiscard]] auto most_recent_open_file_index(EditorState const& editor, size_t fallback)
+        -> size_t {
+        size_t result = fallback;
+        uint64_t last_used = 0u;
+        for (size_t index = 0u; index < editor.open_files.size(); ++index) {
+            if (editor.open_files[index].last_used > last_used) {
+                result = index;
+                last_used = editor.open_files[index].last_used;
+            }
+        }
+        return result;
+    }
+
     auto close_open_file(EditorState& editor, size_t index, bool force) -> void {
         if (index >= editor.open_files.size()) {
             return;
@@ -1820,7 +1837,8 @@ namespace code_editor {
             return;
         }
 
-        size_t const next_index = std::min(index, editor.open_files.size() - 1u);
+        size_t const fallback_index = std::min(index, editor.open_files.size() - 1u);
+        size_t const next_index = most_recent_open_file_index(editor, fallback_index);
         OpenFile const next = editor.open_files[next_index];
         if (!open_file(editor, next.name, next.path, false)) {
             open_scratch_file(editor);

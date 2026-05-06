@@ -294,6 +294,9 @@ namespace code_editor {
         runtime->editor.save_root_path = context.save_root_path;
         runtime->editor.tree_files = context.tree_files;
         runtime->editor.set_flag(EditorFlag::SIDEBAR_VISIBLE, context.initial_sidebar_visible);
+        touch_open_file(
+            runtime->editor, runtime->editor.current_file_name, runtime->editor.current_file_path
+        );
         return true;
     }
 

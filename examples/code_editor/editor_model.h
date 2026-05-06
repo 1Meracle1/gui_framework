@@ -82,6 +82,7 @@ namespace code_editor {
         EditorUndoEntry* undo_stack = nullptr;
         EditorUndoEntry* redo_stack = nullptr;
         uint64_t file_write_stamp = 0u;
+        uint64_t last_used = 0u;
         size_t cursor_line = 0u;
         size_t cursor_column = 0u;
         size_t preferred_column = 0u;
@@ -261,6 +262,7 @@ namespace code_editor {
         EditorUndoEntry* undo_stack = nullptr;
         EditorUndoEntry* redo_stack = nullptr;
         uint64_t file_write_stamp = 0u;
+        uint64_t buffer_use_stamp = 0u;
         size_t root_split = 0u;
         size_t focused_split = 0u;
         size_t cursor_line = 0u;
@@ -332,6 +334,7 @@ namespace code_editor {
     auto init_editor(Arena& arena, EditorState& editor, StrRef text) -> void;
     auto set_editor_text(EditorState& editor, StrRef text) -> void;
     auto remember_open_file(EditorState& editor, StrRef name, StrRef path) -> void;
+    auto touch_open_file(EditorState& editor, StrRef name, StrRef path) -> void;
     auto store_focused_open_file_view(EditorState& editor) -> void;
     [[nodiscard]] auto restore_focused_open_file_view(EditorState& editor, StrRef name, StrRef path)
         -> bool;

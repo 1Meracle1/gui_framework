@@ -371,6 +371,19 @@ namespace code_editor {
         (void)ok;
     }
 
+    auto touch_open_file(EditorState& editor, StrRef name, StrRef path) -> void {
+        if (name.empty()) {
+            return;
+        }
+        remember_open_file(editor, name, path);
+        for (OpenFile& file : editor.open_files) {
+            if (same_open_file(file, name, path)) {
+                file.last_used = ++editor.buffer_use_stamp;
+                return;
+            }
+        }
+    }
+
     auto expand_filesystem_tree_to_file(EditorState& editor, size_t tree_file_index) -> void {
         if (tree_file_index >= editor.tree_files.size() ||
             editor.tree_files[tree_file_index].is_directory) {
@@ -1053,7 +1066,7 @@ namespace code_editor {
         editor.current_file_name = SCRATCH_FILE_NAME;
         editor.current_file_path = {};
         editor.file_write_stamp = 0u;
-        remember_open_file(editor, SCRATCH_FILE_NAME, {});
+        touch_open_file(editor, SCRATCH_FILE_NAME, {});
         BASE_UNUSED(restore_focused_open_file_view(editor, SCRATCH_FILE_NAME, {}));
     }
 
