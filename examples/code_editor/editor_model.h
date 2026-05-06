@@ -259,6 +259,7 @@ namespace code_editor {
         char file_search_text[FILE_SEARCH_TEXT_CAPACITY] = {};
         char save_path_text[SAVE_PATH_TEXT_CAPACITY] = {};
         char command_text[COMMAND_TEXT_CAPACITY] = {};
+        gui::Vec2 file_search_mouse_pos = {};
         size_t file_search_text_size = 0u;
         size_t command_text_size = 0u;
         size_t command_selected = 0u;
@@ -287,6 +288,9 @@ namespace code_editor {
         EditorLspPopupKind lsp_popup = EditorLspPopupKind::NONE;
         EditorCloseIntent close_intent = EditorCloseIntent::NONE;
         bool lsp_rename_text_selected = false;
+        bool file_search_mouse_known = false;
+        bool file_search_mouse_select = false;
+        bool file_search_reveal_selected = false;
         EditorSavePathError save_path_error = EditorSavePathError::NONE;
         EditorFlags flags = {EditorFlag::TREE_OPEN};
     };
@@ -345,6 +349,9 @@ namespace code_editor {
         -> size_t;
     [[nodiscard]] auto
     collect_buffer_search_matches(EditorState const& editor, Slice<BufferSearchMatch> matches)
+        -> size_t;
+    [[nodiscard]] auto file_search_total_count(EditorState const& editor, bool buffers) -> size_t;
+    [[nodiscard]] auto file_search_filtered_count(EditorState const& editor, bool buffers)
         -> size_t;
     [[nodiscard]] auto point_in_rect(gui::Rect rect, gui::Vec2 point) -> bool;
     [[nodiscard]] auto editor_scaled_font_size(EditorState const& editor, float base_size) -> float;

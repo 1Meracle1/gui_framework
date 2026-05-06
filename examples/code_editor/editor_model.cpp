@@ -1943,13 +1943,47 @@ namespace code_editor {
         return count;
     }
 
-    [[nodiscard]] auto search_match_count(EditorState const& editor, bool buffers) -> size_t {
+    [[nodiscard]] auto file_search_total_count(EditorState const& editor, bool buffers) -> size_t {
         if (buffers) {
-            BufferSearchMatch matches[FILE_SEARCH_RESULT_LIMIT] = {};
-            return collect_buffer_search_matches(editor, matches);
+            return editor.open_files.size();
         }
-        FileSearchMatch matches[FILE_SEARCH_RESULT_LIMIT] = {};
-        return collect_file_search_matches(editor, matches);
+        size_t count = 0u;
+        for (FileTreeEntry const& entry : editor.tree_files) {
+            if (!entry.is_directory && entry.file_search_visible) {
+                count += 1u;
+            }
+        }
+        return count;
+    }
+
+    [[nodiscard]] auto file_search_filtered_count(EditorState const& editor, bool buffers)
+        -> size_t {
+        StrRef const query = editor_file_search_text(editor);
+        size_t count = 0u;
+        if (buffers) {
+            for (OpenFile const& file : editor.open_files) {
+                int32_t score = 0;
+                if (file_search_fuzzy_score(buffer_search_entry_text(file), query, score)) {
+                    count += 1u;
+                }
+            }
+            return count;
+        }
+
+        for (FileTreeEntry const& entry : editor.tree_files) {
+            if (entry.is_directory || !entry.file_search_visible) {
+                continue;
+            }
+            FileSearchMatch match = {};
+            if (file_search_match(entry, query, match)) {
+                count += 1u;
+            }
+        }
+        return count;
+    }
+
+    [[nodiscard]] auto search_match_count(EditorState const& editor, bool buffers) -> size_t {
+        return file_search_filtered_count(editor, buffers);
     }
 
     auto clamp_search_selected(EditorState& editor, bool buffers) -> void {
@@ -1964,6 +1998,9 @@ namespace code_editor {
         editor.file_search_text_size = 0u;
         editor.file_search_text[0u] = '\0';
         editor.file_search_selected = 0u;
+        editor.file_search_mouse_known = false;
+        editor.file_search_mouse_select = false;
+        editor.file_search_reveal_selected = true;
         editor.file_search_open_file = FILE_SEARCH_NO_FILE;
         editor.buffer_search_open_file = FILE_SEARCH_NO_FILE;
         editor.set_flag(EditorFlag::SAVE_PATH_OPEN, false);
@@ -1980,6 +2017,7 @@ namespace code_editor {
     auto close_file_search(EditorState& editor) -> void {
         editor.set_flag(EditorFlag::FILE_SEARCH_OPEN, false);
         editor.file_search_selected = 0u;
+        editor.file_search_mouse_select = false;
     }
 
     auto open_buffer_search(EditorState& editor) -> void {
@@ -1989,6 +2027,9 @@ namespace code_editor {
         editor.file_search_text_size = 0u;
         editor.file_search_text[0u] = '\0';
         editor.file_search_selected = 0u;
+        editor.file_search_mouse_known = false;
+        editor.file_search_mouse_select = false;
+        editor.file_search_reveal_selected = true;
         for (size_t index = 0u; index < editor.open_files.size(); ++index) {
             OpenFile const& file = editor.open_files[index];
             if (same_editor_file(
@@ -2014,6 +2055,7 @@ namespace code_editor {
     auto close_buffer_search(EditorState& editor) -> void {
         editor.set_flag(EditorFlag::BUFFER_SEARCH_OPEN, false);
         editor.file_search_selected = 0u;
+        editor.file_search_mouse_select = false;
     }
 
     auto clear_command_line(EditorState& editor) -> void {
@@ -2156,24 +2198,34 @@ namespace code_editor {
     }
 
     auto select_file_search_match(EditorState& editor) -> void {
-        FileSearchMatch matches[FILE_SEARCH_RESULT_LIMIT] = {};
-        size_t const count = collect_file_search_matches(editor, matches);
+        size_t const count = file_search_filtered_count(editor, false);
         if (count == 0u) {
             return;
         }
-        editor.file_search_selected = std::min(editor.file_search_selected, count - 1u);
+        ArenaTemp temp = begin_thread_temp_arena();
+        FileSearchMatch* const matches = arena_alloc<FileSearchMatch>(*temp.arena(), count);
+        size_t const match_count = collect_file_search_matches(editor, slice(matches, count));
+        if (match_count == 0u) {
+            return;
+        }
+        editor.file_search_selected = std::min(editor.file_search_selected, match_count - 1u);
         editor.file_search_open_file = matches[editor.file_search_selected].tree_file_index;
         expand_filesystem_tree_to_file(editor, editor.file_search_open_file);
         close_file_search(editor);
     }
 
     auto select_buffer_search_match(EditorState& editor) -> void {
-        BufferSearchMatch matches[FILE_SEARCH_RESULT_LIMIT] = {};
-        size_t const count = collect_buffer_search_matches(editor, matches);
+        size_t const count = file_search_filtered_count(editor, true);
         if (count == 0u) {
             return;
         }
-        editor.file_search_selected = std::min(editor.file_search_selected, count - 1u);
+        ArenaTemp temp = begin_thread_temp_arena();
+        BufferSearchMatch* const matches = arena_alloc<BufferSearchMatch>(*temp.arena(), count);
+        size_t const match_count = collect_buffer_search_matches(editor, slice(matches, count));
+        if (match_count == 0u) {
+            return;
+        }
+        editor.file_search_selected = std::min(editor.file_search_selected, match_count - 1u);
         editor.buffer_search_open_file = matches[editor.file_search_selected].open_file_index;
         close_buffer_search(editor);
     }
@@ -2201,12 +2253,16 @@ namespace code_editor {
         case gui::Key::UP:
             if (editor.file_search_selected != 0u) {
                 editor.file_search_selected -= 1u;
+                editor.file_search_mouse_select = false;
+                editor.file_search_reveal_selected = true;
             }
             break;
         case gui::Key::DOWN: {
             size_t const count = search_match_count(editor, buffers);
             if (editor.file_search_selected + 1u < count) {
                 editor.file_search_selected += 1u;
+                editor.file_search_mouse_select = false;
+                editor.file_search_reveal_selected = true;
             }
             break;
         }

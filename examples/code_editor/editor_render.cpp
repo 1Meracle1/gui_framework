@@ -39,6 +39,9 @@ namespace code_editor {
     inline constexpr float OPEN_TAB_PADDING = 12.0f;
     inline constexpr float OPEN_TAB_CLOSE_SIZE = 18.0f;
     inline constexpr float FILE_SEARCH_ROW_HEIGHT = 27.0f;
+    inline constexpr size_t FILE_SEARCH_PREVIEW_TEXT_CAPACITY = 32u * 1024u;
+    inline constexpr size_t FILE_SEARCH_PREVIEW_COLUMN_LIMIT = 128u;
+    inline constexpr size_t FILE_SEARCH_PREVIEW_TOKENS_PER_LINE = 64u;
     inline constexpr float COMMAND_OVERLAY_HEIGHT = 88.0f;
     inline constexpr float COMMAND_LIST_HEIGHT = 30.0f;
     inline constexpr char OVERWRITE_FILE_KEY = 'o';
@@ -188,6 +191,23 @@ namespace code_editor {
             return false;
         }
         out_text = editor_display_text(arena, text);
+        return true;
+    }
+
+    [[nodiscard]] auto read_tree_file_preview_text(Arena& arena, StrRef path, StrRef& out_text)
+        -> bool {
+        std::FILE* const file = open_tree_read_file(path);
+        if (file == nullptr) {
+            return false;
+        }
+        char* const text = arena_alloc<char>(arena, FILE_SEARCH_PREVIEW_TEXT_CAPACITY);
+        size_t const size = std::fread(text, 1u, FILE_SEARCH_PREVIEW_TEXT_CAPACITY, file);
+        bool const ok = std::ferror(file) == 0;
+        std::fclose(file);
+        if (!ok) {
+            return false;
+        }
+        out_text = editor_display_text(arena, StrRef(text, size));
         return true;
     }
 
@@ -791,6 +811,73 @@ namespace code_editor {
             style.color = to_draw_color(syntax_token_color(palette, token.kind));
             draw_token(context, style, line, token.start, token.end, x, y, char_width);
             index = token.end;
+        }
+    }
+
+    [[nodiscard]] auto next_text_line(StrRef text, size_t& offset) -> StrRef {
+        size_t const start = offset;
+        while (offset < text.size() && text[offset] != '\n') {
+            offset += 1u;
+        }
+        size_t end = offset;
+        if (offset < text.size()) {
+            offset += 1u;
+        }
+        if (end > start && text[end - 1u] == '\r') {
+            end -= 1u;
+        }
+        return text.substr(start, end - start);
+    }
+
+    auto draw_syntax_label_line(
+        gui::Frame& ui,
+        font_cache::Font font,
+        SyntaxTokenizer tokenizer,
+        Palette const& palette,
+        StrRef line,
+        float font_size,
+        size_t& token_budget
+    ) -> void {
+        if (line.empty()) {
+            ui.spacer({.layout = {.width = gui::px(1.0f), .height = gui::fill()}});
+            return;
+        }
+        bool const truncated = line.size() > FILE_SEARCH_PREVIEW_COLUMN_LIMIT;
+        line = line.prefix(std::min(line.size(), FILE_SEARCH_PREVIEW_COLUMN_LIMIT));
+        size_t index = 0u;
+        size_t token_index = 0u;
+        while (index < line.size() && token_budget != 0u) {
+            SyntaxToken const token = syntax_next_token(tokenizer, line, index);
+            ui.label(
+                gui::id("file_search_preview_token", token_index),
+                line.substr(token.start, token.end - token.start),
+                {
+                    .layout = {.width = gui::text(), .height = gui::fill()},
+                    .style = {
+                        .foreground = syntax_token_color(palette, token.kind),
+                        .font = font,
+                        .font_size = font_size,
+                    },
+                }
+            );
+            token_budget -= 1u;
+            index = token.end;
+            token_index += 1u;
+        }
+        if (truncated && token_budget != 0u) {
+            ui.label(
+                gui::id("file_search_preview_token", token_index),
+                "...",
+                {
+                    .layout = {.width = gui::text(), .height = gui::fill()},
+                    .style = {
+                        .foreground = palette.muted,
+                        .font = font,
+                        .font_size = font_size,
+                    },
+                }
+            );
+            token_budget -= 1u;
         }
     }
 
@@ -1988,232 +2075,404 @@ namespace code_editor {
     auto draw_file_search_picker(
         gui::Frame& ui,
         EditorState& editor,
+        font_cache::Font editor_font,
         Palette const& palette,
+        float client_width,
         float client_height,
+        gui::InputState const& input,
         bool buffers
     ) -> void {
-        float constexpr MODAL_MARGIN = 24.0f;
-        float constexpr DIALOG_PADDING = 8.0f;
+        float constexpr MAIN_PANEL_MARGIN = 10.0f;
         float constexpr DIALOG_GAP = 8.0f;
+        float constexpr PANEL_PADDING = 10.0f;
         float constexpr QUERY_HEIGHT = 36.0f;
-        float const results_height = std::min(
-            FILE_SEARCH_ROW_HEIGHT * static_cast<float>(FILE_SEARCH_RESULT_LIMIT),
-            std::max(
-                FILE_SEARCH_ROW_HEIGHT,
-                client_height - 2.0f * (MODAL_MARGIN + DIALOG_PADDING) - QUERY_HEIGHT - DIALOG_GAP
-            )
-        );
+        float constexpr SHELL_PADDING = 12.0f;
+        float constexpr SHELL_GAP = 10.0f;
+        float constexpr HEADER_HEIGHT = 40.0f;
+        float constexpr BOTTOM_BAR_HEIGHT = 30.0f;
+        float const modal_margin_top =
+            SHELL_PADDING + HEADER_HEIGHT + SHELL_GAP + MAIN_PANEL_MARGIN;
+        float const modal_margin_bottom =
+            SHELL_PADDING + SHELL_GAP + BOTTOM_BAR_HEIGHT + MAIN_PANEL_MARGIN;
+        float const desired_margin_x = client_width * 0.1f;
+        float const min_dialog_width = buffers ? 620.0f : 900.0f;
+        float const max_margin_x = std::max(20.0f, (client_width - min_dialog_width) * 0.5f);
+        float const modal_margin_x = std::clamp(desired_margin_x, 20.0f, max_margin_x);
+        float const dialog_height =
+            std::max(180.0f, client_height - modal_margin_top - modal_margin_bottom);
 
         editor.file_search_text_size = cstr_len(editor.file_search_text);
-        FileSearchMatch matches[FILE_SEARCH_RESULT_LIMIT] = {};
-        BufferSearchMatch buffer_matches[FILE_SEARCH_RESULT_LIMIT] = {};
+        ArenaTemp search_temp = begin_thread_temp_arena();
+        FileSearchMatch* matches = nullptr;
+        BufferSearchMatch* buffer_matches = nullptr;
         size_t match_count = 0u;
+        size_t filtered_count = 0u;
+        size_t total_count = 0u;
+
+        if (!editor.file_search_mouse_known) {
+            editor.file_search_mouse_pos = input.mouse_pos;
+            editor.file_search_mouse_known = true;
+        } else {
+            bool const mouse_moved = input.mouse_pos.x != editor.file_search_mouse_pos.x ||
+                                     input.mouse_pos.y != editor.file_search_mouse_pos.y;
+            if (mouse_moved || input.scroll_delta_y != 0.0f || input.mouse_down[0u]) {
+                editor.file_search_mouse_select = true;
+            }
+            editor.file_search_mouse_pos = input.mouse_pos;
+        }
 
         if (auto modal = ui.modal(
                 gui::id(buffers ? "buffer_search_modal" : "file_search_modal"),
                 {
                     .layout =
                         {
-                            .padding = gui::insets(MODAL_MARGIN),
+                            .padding =
+                                {
+                                    modal_margin_top,
+                                    modal_margin_x,
+                                    modal_margin_bottom,
+                                    modal_margin_x,
+                                },
                             .align_x = gui::Align::CENTER,
-                            .align_y = gui::Align::CENTER,
+                            .align_y = gui::Align::START,
                         },
+                    .style = {.background = gui::rgba(0, 0, 0, 0)},
                     .debug_name = buffers ? "buffer_search_modal" : "file_search_modal",
                 }
             )) {
-            if (auto dialog = ui.column(
+            if (auto dialog = ui.row(
                     gui::id(buffers ? "buffer_search_dialog" : "file_search_dialog"),
                     {
-                        .layout =
-                            {
-                                .width = gui::fill(),
-                                .height = gui::children(),
-                                .max_width = gui::px(860.0f),
-                                .padding = gui::insets(DIALOG_PADDING),
-                                .gap = DIALOG_GAP,
-                                .align_x = gui::Align::STRETCH,
-                            },
-                        .style = {
-                            .background = palette.panel,
-                            .border = palette.border,
-                            .border_thickness = 1.0f,
-                            .radius = 6.0f,
+                        .layout = {
+                            .width = gui::fill(),
+                            .height = gui::px(dialog_height),
+                            .gap = DIALOG_GAP,
+                            .align_y = gui::Align::STRETCH,
                         },
                     }
                 )) {
-                if (auto query = ui.row(
-                        gui::id(buffers ? "buffer_search_query" : "file_search_query"),
+                if (auto left = ui.column(
+                        gui::id(buffers ? "buffer_search_left" : "file_search_left"),
                         {
                             .layout =
                                 {
-                                    .width = gui::fill(),
-                                    .height = gui::px(QUERY_HEIGHT),
-                                    .padding = gui::insets(0.0f, 10.0f),
-                                    .gap = 6.0f,
-                                    .align_y = gui::Align::CENTER,
+                                    .width = gui::fill(buffers ? 1.0f : 0.48f),
+                                    .height = gui::fill(),
+                                    .align_x = gui::Align::STRETCH,
+                                    .clip = true,
                                 },
                             .style = {
-                                .background = palette.panel_raised,
-                                .border = palette.cursor,
+                                .background = palette.panel,
+                                .border = palette.border,
                                 .border_thickness = 1.0f,
-                                .radius = 4.0f,
                             },
                         }
                     )) {
-                    ui.label(
-                        ">",
-                        {
-                            .layout = {.width = gui::text(), .height = gui::fill()},
-                            .style = {.foreground = palette.cursor},
-                        }
-                    );
-                    gui::Id const input_id =
-                        gui::id(buffers ? "buffer_search_input" : "file_search_input");
-                    ui.request_focus(input_id);
-                    gui::Signal const input = ui.input_text(
-                        input_id,
-                        "",
-                        editor.file_search_text,
-                        FILE_SEARCH_TEXT_CAPACITY,
-                        gui::InputTextDesc{
-                            .box =
-                                {
-                                    .layout =
-                                        {
-                                            .width = gui::fill(),
-                                            .height = gui::fill(),
-                                            .padding = gui::insets(0.0f),
-                                        },
-                                    .style =
-                                        {
-                                            .background = gui::rgba(0, 0, 0, 0),
-                                            .foreground = palette.text,
-                                            .border = gui::rgba(0, 0, 0, 0),
-                                            .border_thickness = 1.0f,
-                                            .radius = 0.0f,
-                                            .font_size = editor.font_size,
-                                        },
+                    if (auto query = ui.row(
+                            gui::id(buffers ? "buffer_search_query" : "file_search_query"),
+                            {
+                                .layout =
+                                    {
+                                        .width = gui::fill(),
+                                        .height = gui::px(QUERY_HEIGHT),
+                                        .padding = gui::insets(0.0f, PANEL_PADDING),
+                                        .gap = 8.0f,
+                                        .align_y = gui::Align::CENTER,
+                                    },
+                                .style = {
+                                    .background = palette.panel_raised,
+                                    .border = palette.border,
+                                    .border_thickness = 1.0f,
                                 },
-                            .ignore_input_on_focus = true,
+                            }
+                        )) {
+                        ui.label(
+                            ">",
+                            {
+                                .layout = {.width = gui::text(), .height = gui::fill()},
+                                .style = {.foreground = palette.cursor, .font = editor_font},
+                            }
+                        );
+                        gui::Id const input_id =
+                            gui::id(buffers ? "buffer_search_input" : "file_search_input");
+                        ui.request_focus(input_id);
+                        gui::Signal const text_input = ui.input_text(
+                            input_id,
+                            "",
+                            editor.file_search_text,
+                            FILE_SEARCH_TEXT_CAPACITY,
+                            gui::InputTextDesc{
+                                .box =
+                                    {
+                                        .layout =
+                                            {
+                                                .width = gui::fill(),
+                                                .height = gui::fill(),
+                                                .padding = gui::insets(0.0f),
+                                            },
+                                        .style =
+                                            {
+                                                .background = gui::rgba(0, 0, 0, 0),
+                                                .foreground = palette.text,
+                                                .border = gui::rgba(0, 0, 0, 0),
+                                                .border_thickness = 1.0f,
+                                                .radius = 0.0f,
+                                                .font = editor_font,
+                                                .font_size = editor.font_size,
+                                            },
+                                    },
+                                .ignore_input_on_focus = true,
+                            }
+                        );
+                        if (text_input.changed) {
+                            editor.file_search_text_size = cstr_len(editor.file_search_text);
+                            editor.file_search_selected = 0u;
+                            editor.file_search_mouse_select = false;
+                            editor.file_search_reveal_selected = true;
                         }
-                    );
-                    if (input.changed) {
-                        editor.file_search_text_size = cstr_len(editor.file_search_text);
-                        editor.file_search_selected = 0u;
+                        filtered_count = file_search_filtered_count(editor, buffers);
+                        total_count = file_search_total_count(editor, buffers);
+                        if (filtered_count != 0u) {
+                            if (buffers) {
+                                buffer_matches = arena_alloc<BufferSearchMatch>(
+                                    *search_temp.arena(), filtered_count
+                                );
+                                match_count = collect_buffer_search_matches(
+                                    editor, slice(buffer_matches, filtered_count)
+                                );
+                            } else {
+                                matches = arena_alloc<FileSearchMatch>(
+                                    *search_temp.arena(), filtered_count
+                                );
+                                match_count = collect_file_search_matches(
+                                    editor, slice(matches, filtered_count)
+                                );
+                            }
+                        }
+                        editor.file_search_selected =
+                            match_count == 0u
+                                ? 0u
+                                : std::min(editor.file_search_selected, match_count - 1u);
+                        ui.label(
+                            fmt::tprintf("%zu/%zu", filtered_count, total_count),
+                            {
+                                .layout = {.width = gui::text(), .height = gui::fill()},
+                                .style = {
+                                    .foreground = palette.text,
+                                    .font = editor_font,
+                                    .font_size = editor.font_size,
+                                },
+                            }
+                        );
                     }
-                    match_count = buffers ? collect_buffer_search_matches(editor, buffer_matches)
-                                          : collect_file_search_matches(editor, matches);
-                    editor.file_search_selected =
-                        match_count == 0u ? 0u
-                                          : std::min(editor.file_search_selected, match_count - 1u);
-                    ui.label(
-                        fmt::tprintf(
-                            "%zu/%zu",
-                            match_count == 0u ? 0u : editor.file_search_selected + 1u,
-                            match_count
-                        ),
-                        {
-                            .layout = {.width = gui::text(), .height = gui::fill()},
-                            .style = {.foreground = palette.muted},
-                        }
-                    );
-                }
 
-                if (auto results = ui.scroll_panel(
-                        gui::id(buffers ? "buffer_search_results" : "file_search_results"),
-                        {
-                            .layout = {
-                                .width = gui::fill(),
-                                .height = gui::px(results_height),
-                                .align_x = gui::Align::STRETCH,
-                            },
-                        }
-                    )) {
+                    gui::Id const results_id =
+                        gui::id(buffers ? "buffer_search_results" : "file_search_results");
+                    if (editor.file_search_reveal_selected && match_count != 0u) {
+                        ui.scroll_to_index(results_id, editor.file_search_selected);
+                        editor.file_search_reveal_selected = false;
+                    }
                     if (match_count == 0u) {
                         ui.label(
-                            buffers ? (editor.open_files.empty() ? "No open buffers"
-                                                                 : "No matching buffers")
-                                    : (editor.tree_files.empty() ? "No indexed files"
-                                                                 : "No matching files"),
+                            buffers
+                                ? (editor.open_files.empty() ? "No open buffers"
+                                                             : "No matching buffers")
+                                : (total_count == 0u ? "No indexed files" : "No matching files"),
                             {
                                 .layout =
                                     {
                                         .width = gui::fill(),
                                         .height = gui::px(FILE_SEARCH_ROW_HEIGHT),
-                                        .padding = gui::insets(0.0f, 10.0f),
+                                        .padding = gui::insets(0.0f, PANEL_PADDING),
                                     },
-                                .style = {.foreground = palette.muted},
+                                .style = {
+                                    .foreground = palette.muted,
+                                    .font = editor_font,
+                                    .font_size = editor.font_size,
+                                },
                             }
                         );
+                    } else {
+                        auto results = ui.list_fixed(
+                            results_id,
+                            {
+                                .item_count = match_count,
+                                .item_height = FILE_SEARCH_ROW_HEIGHT,
+                                .box = {
+                                    .layout = {
+                                        .width = gui::fill(),
+                                        .height = gui::fill(),
+                                        .align_x = gui::Align::STRETCH,
+                                    },
+                                },
+                            }
+                        );
+                        for (size_t index = results.first; index < results.end; ++index) {
+                            bool selected = index == editor.file_search_selected;
+                            if (auto row = results.row(
+                                    gui::id(
+                                        buffers ? "buffer_search_result" : "file_search_result",
+                                        index
+                                    ),
+                                    {
+                                        .layout =
+                                            {
+                                                .padding = gui::insets(0.0f, PANEL_PADDING),
+                                                .gap = 8.0f,
+                                                .align_y = gui::Align::CENTER,
+                                            },
+                                        .style = {
+                                            .background =
+                                                selected ? palette.cursor_line : gui::Color{},
+                                        },
+                                    }
+                                )) {
+                                gui::Signal const signal = row.signal();
+                                if (signal.hovered && editor.file_search_mouse_select) {
+                                    editor.file_search_selected = index;
+                                }
+                                if (signal.clicked_left) {
+                                    editor.file_search_selected = index;
+                                    if (buffers) {
+                                        open_buffer_search_match(
+                                            editor, buffer_matches[index].open_file_index
+                                        );
+                                        editor.set_flag(EditorFlag::BUFFER_SEARCH_OPEN, false);
+                                    } else {
+                                        open_file_search_match(
+                                            editor, matches[index].tree_file_index
+                                        );
+                                        editor.set_flag(EditorFlag::FILE_SEARCH_OPEN, false);
+                                    }
+                                }
+                                selected = index == editor.file_search_selected;
+                                ui.label(
+                                    selected ? ">" : "",
+                                    {
+                                        .layout = {.width = gui::px(14.0f), .height = gui::fill()},
+                                        .style = {
+                                            .foreground = palette.cursor, .font = editor_font
+                                        },
+                                    }
+                                );
+                                StrRef text = {};
+                                if (buffers) {
+                                    OpenFile const& file =
+                                        editor.open_files[buffer_matches[index].open_file_index];
+                                    bool const current =
+                                        editor_focused_pane_kind(editor) == EditorPaneKind::CODE &&
+                                        open_file_selected(editor, file);
+                                    text = fmt::tprintf(
+                                        "%zu %c %s",
+                                        buffer_matches[index].open_file_index + 1u,
+                                        current ? '*' : ' ',
+                                        !file.name.empty() ? file.name : file.path
+                                    );
+                                } else {
+                                    FileTreeEntry const& file =
+                                        editor.tree_files[matches[index].tree_file_index];
+                                    text = file_search_entry_text(file);
+                                }
+                                ui.label(
+                                    text,
+                                    {
+                                        .layout = {.width = gui::fill(), .height = gui::fill()},
+                                        .style = {
+                                            .foreground = selected ? palette.text : palette.muted,
+                                            .font = editor_font,
+                                            .font_size = editor.font_size,
+                                        },
+                                    }
+                                );
+                            }
+                        }
                     }
-                    for (size_t index = 0u; index < match_count; ++index) {
-                        bool const selected = index == editor.file_search_selected;
-                        if (auto row = ui.row(
-                                gui::id(
-                                    buffers ? "buffer_search_result" : "file_search_result", index
-                                ),
+                }
+
+                if (!buffers) {
+                    if (auto preview = ui.column(
+                            gui::id("file_search_preview"),
+                            {
+                                .layout =
+                                    {
+                                        .width = gui::fill(0.52f),
+                                        .height = gui::fill(),
+                                        .padding = gui::insets(PANEL_PADDING),
+                                        .clip = true,
+                                    },
+                                .style = {
+                                    .background = palette.panel,
+                                    .border = palette.border,
+                                    .border_thickness = 1.0f,
+                                },
+                            }
+                        )) {
+                        StrRef preview_text = {};
+                        StrRef preview_name = {};
+                        ArenaTemp temp = begin_thread_temp_arena();
+                        if (match_count != 0u) {
+                            FileTreeEntry const& file =
+                                editor.tree_files[matches[editor.file_search_selected]
+                                                      .tree_file_index];
+                            preview_name = file.name;
+                            BASE_UNUSED(
+                                read_tree_file_preview_text(*temp.arena(), file.path, preview_text)
+                            );
+                        }
+                        if (preview_text.empty()) {
+                            ui.label(
+                                match_count == 0u ? "No preview" : "",
                                 {
                                     .layout =
                                         {
                                             .width = gui::fill(),
                                             .height = gui::px(FILE_SEARCH_ROW_HEIGHT),
-                                            .padding = gui::insets(0.0f, 10.0f),
-                                            .gap = 8.0f,
-                                            .align_y = gui::Align::CENTER,
                                         },
                                     .style = {
-                                        .background = selected ? palette.cursor_line : gui::Color{},
-                                        .radius = selected ? 4.0f : -1.0f,
-                                    },
-                                }
-                            )) {
-                            if (row.signal().clicked_left) {
-                                editor.file_search_selected = index;
-                                if (buffers) {
-                                    open_buffer_search_match(
-                                        editor, buffer_matches[index].open_file_index
-                                    );
-                                    editor.set_flag(EditorFlag::BUFFER_SEARCH_OPEN, false);
-                                } else {
-                                    open_file_search_match(editor, matches[index].tree_file_index);
-                                    editor.set_flag(EditorFlag::FILE_SEARCH_OPEN, false);
-                                }
-                            }
-                            ui.label(
-                                selected ? ">" : "",
-                                {
-                                    .layout = {.width = gui::px(14.0f), .height = gui::fill()},
-                                    .style = {.foreground = palette.cursor},
-                                }
-                            );
-                            StrRef text = {};
-                            if (buffers) {
-                                OpenFile const& file =
-                                    editor.open_files[buffer_matches[index].open_file_index];
-                                bool const current =
-                                    editor_focused_pane_kind(editor) == EditorPaneKind::CODE &&
-                                    open_file_selected(editor, file);
-                                text = fmt::tprintf(
-                                    "%zu %c %s",
-                                    buffer_matches[index].open_file_index + 1u,
-                                    current ? '*' : ' ',
-                                    !file.name.empty() ? file.name : file.path
-                                );
-                            } else {
-                                FileTreeEntry const& file =
-                                    editor.tree_files[matches[index].tree_file_index];
-                                text = file_search_entry_text(file);
-                            }
-                            ui.label(
-                                text,
-                                {
-                                    .layout = {.width = gui::fill(), .height = gui::fill()},
-                                    .style = {
-                                        .foreground = selected ? palette.text : palette.muted,
+                                        .foreground = palette.muted,
+                                        .font = editor_font,
                                         .font_size = editor.font_size,
                                     },
                                 }
                             );
+                        }
+                        SyntaxTokenizer const tokenizer =
+                            syntax_tokenizer_for_file_name(preview_name);
+                        size_t offset = 0u;
+                        size_t line_count = 0u;
+                        float const line_height = editor_line_height(editor);
+                        size_t const preview_line_limit = std::max<size_t>(
+                            1u,
+                            static_cast<size_t>(
+                                (dialog_height - 2.0f * PANEL_PADDING) / line_height
+                            )
+                        );
+                        size_t token_budget =
+                            preview_line_limit * FILE_SEARCH_PREVIEW_TOKENS_PER_LINE;
+                        while (line_count < preview_line_limit && offset < preview_text.size() &&
+                               token_budget != 0u) {
+                            StrRef const line = next_text_line(preview_text, offset);
+                            if (auto line_row = ui.row(
+                                    gui::id("file_search_preview_line", line_count),
+                                    {
+                                        .layout = {
+                                            .width = gui::children(),
+                                            .height = gui::px(line_height),
+                                            .align_y = gui::Align::CENTER,
+                                        },
+                                    }
+                                )) {
+                                draw_syntax_label_line(
+                                    ui,
+                                    editor_font,
+                                    tokenizer,
+                                    palette,
+                                    line,
+                                    editor.font_size,
+                                    token_budget
+                                );
+                            }
+                            line_count += 1u;
                         }
                     }
                 }
@@ -2226,28 +2485,13 @@ namespace code_editor {
         size_t lines = 0u;
     };
 
-    [[nodiscard]] auto next_lsp_text_line(StrRef text, size_t& offset) -> StrRef {
-        size_t const start = offset;
-        while (offset < text.size() && text[offset] != '\n') {
-            offset += 1u;
-        }
-        size_t end = offset;
-        if (offset < text.size()) {
-            offset += 1u;
-        }
-        if (end > start && text[end - 1u] == '\r') {
-            end -= 1u;
-        }
-        return text.substr(start, end - start);
-    }
-
     [[nodiscard]] auto
     measure_lsp_text(font_cache::Font font, float font_size, StrRef text, size_t max_lines)
         -> LspTextMetrics {
         LspTextMetrics metrics = {};
         size_t offset = 0u;
         while (offset < text.size() && metrics.lines < max_lines) {
-            StrRef const line = next_lsp_text_line(text, offset);
+            StrRef const line = next_text_line(text, offset);
             metrics.width =
                 std::max(metrics.width, font_cache::text_advance(font, font_size, line));
             metrics.lines += 1u;
@@ -2282,7 +2526,7 @@ namespace code_editor {
         size_t offset = 0u;
         size_t line_count = 0u;
         while (offset < text.size() && line_count < max_lines) {
-            StrRef const line = next_lsp_text_line(text, offset);
+            StrRef const line = next_text_line(text, offset);
             draw::draw_text(context, {clip.min.x, y - 2.0f}, style, line, nullptr);
             y += line_height;
             line_count += 1u;
@@ -2357,7 +2601,7 @@ namespace code_editor {
         size_t count = 0u;
         size_t offset = 0u;
         while (offset < text.size()) {
-            StrRef const line = next_lsp_text_line(text, offset);
+            StrRef const line = next_text_line(text, offset);
             float const width = font_cache::text_advance(font, font_size, line);
             count += std::max<size_t>(
                 1u, static_cast<size_t>(std::ceil(width / std::max(1.0f, wrap_width)))
@@ -4015,10 +4259,14 @@ namespace code_editor {
             }
 
             if (editor.flag(EditorFlag::FILE_SEARCH_OPEN)) {
-                draw_file_search_picker(ui, editor, palette, client_height, false);
+                draw_file_search_picker(
+                    ui, editor, editor_font, palette, client_width, client_height, input, false
+                );
             }
             if (editor.flag(EditorFlag::BUFFER_SEARCH_OPEN)) {
-                draw_file_search_picker(ui, editor, palette, client_height, true);
+                draw_file_search_picker(
+                    ui, editor, editor_font, palette, client_width, client_height, input, true
+                );
             }
             if (editor.flag(EditorFlag::SAVE_PATH_OPEN)) {
                 draw_save_path_picker(ui, editor, palette, input);
