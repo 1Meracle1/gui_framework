@@ -48,20 +48,26 @@ namespace gui::font_provider::platform {
         out_text = {};
     }
 
+    auto
+    raster_glyph(Font font, float size, uint16_t glyph_index, Arena& arena, GlyphRaster& out_raster)
+        -> void {
+        gui::font_provider::platform::raster_glyph(
+            font, size, glyph_index, RasterPolicy::SHARP_HINTED, 0u, 0u, arena, out_raster
+        );
+    }
+
     auto raster_glyph(
         Font font,
         float size,
         uint16_t glyph_index,
-        RasterPolicy raster_policy,
+        uint8_t phase_x,
+        uint8_t phase_y,
         Arena& arena,
         GlyphRaster& out_raster
     ) -> void {
-        BASE_UNUSED(font);
-        BASE_UNUSED(size);
-        BASE_UNUSED(glyph_index);
-        BASE_UNUSED(raster_policy);
-        BASE_UNUSED(arena);
-        out_raster = {};
+        gui::font_provider::platform::raster_glyph(
+            font, size, glyph_index, RasterPolicy::SHARP_HINTED, phase_x, phase_y, arena, out_raster
+        );
     }
 
     auto raster_glyph(

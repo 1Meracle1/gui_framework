@@ -14,11 +14,16 @@ namespace gui::font_provider::platform::dwrite {
     auto metrics_from_font(Font font, float size, Metrics& out_metrics) -> void;
     [[nodiscard]] auto text_advance(Font font, float size, StrRef text) -> float;
     auto shape_text(Font font, float size, StrRef text, Arena& arena, ShapedText& out_text) -> void;
+    auto
+    raster_glyph(Font font, float size, uint16_t glyph_index, Arena& arena, GlyphRaster& out_raster)
+        -> void;
     auto raster_glyph(
         Font font,
         float size,
         uint16_t glyph_index,
         RasterPolicy raster_policy,
+        uint8_t phase_x,
+        uint8_t phase_y,
         Arena& arena,
         GlyphRaster& out_raster
     ) -> void;
@@ -26,7 +31,6 @@ namespace gui::font_provider::platform::dwrite {
         Font font,
         float size,
         uint16_t glyph_index,
-        RasterPolicy raster_policy,
         uint8_t phase_x,
         uint8_t phase_y,
         Arena& arena,
@@ -52,11 +56,16 @@ namespace gui::font_provider::platform::freetype {
     auto metrics_from_font(Font font, float size, Metrics& out_metrics) -> void;
     [[nodiscard]] auto text_advance(Font font, float size, StrRef text) -> float;
     auto shape_text(Font font, float size, StrRef text, Arena& arena, ShapedText& out_text) -> void;
+    auto
+    raster_glyph(Font font, float size, uint16_t glyph_index, Arena& arena, GlyphRaster& out_raster)
+        -> void;
     auto raster_glyph(
         Font font,
         float size,
         uint16_t glyph_index,
         RasterPolicy raster_policy,
+        uint8_t phase_x,
+        uint8_t phase_y,
         Arena& arena,
         GlyphRaster& out_raster
     ) -> void;
@@ -64,7 +73,6 @@ namespace gui::font_provider::platform::freetype {
         Font font,
         float size,
         uint16_t glyph_index,
-        RasterPolicy raster_policy,
         uint8_t phase_x,
         uint8_t phase_y,
         Arena& arena,

@@ -45,7 +45,6 @@ namespace gui::draw {
         Context draw_context,
         size_t first_command,
         size_t end_command,
-        bool target_allows_lcd_text,
         PreparedText& out_text
     ) -> bool;
 

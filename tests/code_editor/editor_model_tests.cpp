@@ -630,6 +630,20 @@ namespace {
         press_key(editor, gui::Key::ENTER);
         TEST_EXPECT(context, editor.flag(EditorFlag::CLOSE_CURRENT_REQUESTED));
 
+        TEST_EXPECT(
+            context, editor.raster_policy == gui::font_provider::RasterPolicy::SHARP_HINTED
+        );
+        send_text(editor, ":rp");
+        press_key(editor, gui::Key::ENTER);
+        TEST_EXPECT(
+            context, editor.raster_policy == gui::font_provider::RasterPolicy::SMOOTH_HINTED
+        );
+        send_text(editor, ":toggle-raster-policy");
+        press_key(editor, gui::Key::ENTER);
+        TEST_EXPECT(
+            context, editor.raster_policy == gui::font_provider::RasterPolicy::SHARP_HINTED
+        );
+
         send_text(editor, ":open");
         press_key(editor, gui::Key::ENTER);
         TEST_EXPECT(context, editor.flag(EditorFlag::FILE_SEARCH_OPEN));

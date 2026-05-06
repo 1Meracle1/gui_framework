@@ -1250,9 +1250,7 @@ namespace gui::draw {
         ASSERT(impl != nullptr);
         ASSERT(font_cache::cache_valid(impl->font_cache));
 
-        font_cache::text_run(
-            impl->font_cache, style.font, style.size, text, style.raster_policy, out_run
-        );
+        font_cache::text_run(impl->font_cache, style.font, style.size, text, out_run);
     }
 
     auto draw_text(

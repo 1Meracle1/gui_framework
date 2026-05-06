@@ -22,6 +22,7 @@ namespace gui::font_provider::platform::freetype {
 
         constexpr StrRef DEFAULT_FONT_FAMILY = "Segoe UI";
         constexpr float TEXT_PADDING = 2.0f;
+        constexpr float POINTS_TO_PIXELS = 96.0f / 72.0f;
 
         struct ContextImpl {
             FT_Library library = nullptr;
@@ -101,7 +102,7 @@ namespace gui::font_provider::platform::freetype {
         }
 
         [[nodiscard]] auto ft_size(float size) -> FT_UInt {
-            double value = std::round(static_cast<double>(size));
+            double value = std::round(static_cast<double>(size * POINTS_TO_PIXELS));
             value =
                 std::clamp(value, 1.0, static_cast<double>(std::numeric_limits<FT_UInt>::max()));
             return static_cast<FT_UInt>(value);
@@ -124,6 +125,17 @@ namespace gui::font_provider::platform::freetype {
             delta.y = (static_cast<FT_Pos>(phase_y % GLYPH_RASTER_PHASE_COUNT) * 64l) /
                       static_cast<FT_Pos>(GLYPH_RASTER_PHASE_COUNT);
             FT_Set_Transform(face, &matrix, &delta);
+        }
+
+        [[nodiscard]] auto ft_load_flags(RasterPolicy raster_policy) -> FT_Int32 {
+            return raster_policy == RasterPolicy::SMOOTH_HINTED
+                       ? FT_LOAD_DEFAULT | FT_LOAD_TARGET_LIGHT
+                       : FT_LOAD_DEFAULT | FT_LOAD_TARGET_NORMAL;
+        }
+
+        [[nodiscard]] auto ft_render_mode(RasterPolicy raster_policy) -> FT_Render_Mode {
+            return raster_policy == RasterPolicy::SMOOTH_HINTED ? FT_RENDER_MODE_LIGHT
+                                                                : FT_RENDER_MODE_NORMAL;
         }
 
         [[nodiscard]] auto ceil_u32(float value, uint32_t& out_value) -> bool {
@@ -302,6 +314,7 @@ namespace gui::font_provider::platform::freetype {
             FontImpl* font,
             float size,
             uint16_t glyph_index,
+            RasterPolicy raster_policy,
             uint8_t phase_x,
             uint8_t phase_y,
             Arena& arena,
@@ -316,9 +329,10 @@ namespace gui::font_provider::platform::freetype {
             }
 
             ft_set_phase(font->face, phase_x, phase_y);
-            if (FT_Load_Glyph(font->face, static_cast<FT_UInt>(glyph_index), FT_LOAD_DEFAULT) !=
-                    0 ||
-                FT_Render_Glyph(font->face->glyph, FT_RENDER_MODE_NORMAL) != 0) {
+            if (FT_Load_Glyph(
+                    font->face, static_cast<FT_UInt>(glyph_index), ft_load_flags(raster_policy)
+                ) != 0 ||
+                FT_Render_Glyph(font->face->glyph, ft_render_mode(raster_policy)) != 0) {
                 return;
             }
 
@@ -394,6 +408,7 @@ namespace gui::font_provider::platform::freetype {
                     font,
                     shaped.glyphs[index].size,
                     shaped.glyphs[index].glyph_index,
+                    RasterPolicy::SHARP_HINTED,
                     0u,
                     0u,
                     *temp.arena(),
@@ -514,18 +529,14 @@ namespace gui::font_provider::platform::freetype {
         shape_text(impl, size, text, arena, out_text);
     }
 
-    auto raster_glyph(
-        Font font,
-        float size,
-        uint16_t glyph_index,
-        RasterPolicy raster_policy,
-        Arena& arena,
-        GlyphRaster& out_raster
-    ) -> void {
+    auto
+    raster_glyph(Font font, float size, uint16_t glyph_index, Arena& arena, GlyphRaster& out_raster)
+        -> void {
         FontImpl* const impl = font_from_handle(font);
         ASSERT(impl != nullptr);
-        BASE_UNUSED(raster_policy);
-        raster_glyph(impl, size, glyph_index, 0u, 0u, arena, out_raster);
+        raster_glyph(
+            impl, size, glyph_index, RasterPolicy::SHARP_HINTED, 0u, 0u, arena, out_raster
+        );
     }
 
     auto raster_glyph(
@@ -540,8 +551,21 @@ namespace gui::font_provider::platform::freetype {
     ) -> void {
         FontImpl* const impl = font_from_handle(font);
         ASSERT(impl != nullptr);
-        BASE_UNUSED(raster_policy);
-        raster_glyph(impl, size, glyph_index, phase_x, phase_y, arena, out_raster);
+        raster_glyph(impl, size, glyph_index, raster_policy, phase_x, phase_y, arena, out_raster);
+    }
+
+    auto raster_glyph(
+        Font font,
+        float size,
+        uint16_t glyph_index,
+        uint8_t phase_x,
+        uint8_t phase_y,
+        Arena& arena,
+        GlyphRaster& out_raster
+    ) -> void {
+        gui::font_provider::platform::freetype::raster_glyph(
+            font, size, glyph_index, RasterPolicy::SHARP_HINTED, phase_x, phase_y, arena, out_raster
+        );
     }
 
     auto raster_text(Font font, float size, StrRef text, Arena& arena, RasterResult& out_raster)

@@ -26,22 +26,62 @@ namespace gui::font_provider::platform::dwrite {
         constexpr StrRef DEFAULT_FONT_FAMILY = "Segoe UI";
         constexpr DWRITE_MEASURING_MODE TEXT_MEASURING_MODE = DWRITE_MEASURING_MODE_GDI_NATURAL;
         constexpr DWRITE_MEASURING_MODE TEXT_BITMAP_MEASURING_MODE = DWRITE_MEASURING_MODE_NATURAL;
-        constexpr DWRITE_RENDERING_MODE TEXT_RENDERING_MODE = DWRITE_RENDERING_MODE_GDI_NATURAL;
+        constexpr DWRITE_RENDERING_MODE SHARP_RENDERING_MODE = DWRITE_RENDERING_MODE_GDI_NATURAL;
+        constexpr DWRITE_RENDERING_MODE SMOOTH_RENDERING_MODE =
+            DWRITE_RENDERING_MODE_NATURAL_SYMMETRIC;
         constexpr DWRITE_GRID_FIT_MODE TEXT_GRID_FIT_MODE = DWRITE_GRID_FIT_MODE_ENABLED;
         constexpr DWRITE_TEXT_ANTIALIAS_MODE TEXT_ANTIALIAS_MODE =
             DWRITE_TEXT_ANTIALIAS_MODE_GRAYSCALE;
         constexpr DWRITE_TEXTURE_TYPE TEXT_ALPHA_BOUNDS_TYPE = DWRITE_TEXTURE_ALIASED_1x1;
         constexpr LONG GLYPH_RASTER_PADDING = 1;
         constexpr float TEXT_PADDING = 2.0f;
+        constexpr float POINTS_TO_DIPS = 96.0f / 72.0f;
 
-        struct FontImpl;
+        struct StaticFontData;
+        struct StaticFontFileLoader;
+
+        struct StaticFontFileStream final : IDWriteFontFileStream {
+            StaticFontData* font_data = nullptr;
+
+            auto STDMETHODCALLTYPE QueryInterface(REFIID riid, void** object) -> HRESULT override;
+            auto STDMETHODCALLTYPE AddRef() -> ULONG override;
+            auto STDMETHODCALLTYPE Release() -> ULONG override;
+            auto STDMETHODCALLTYPE ReadFileFragment(
+                void const** fragment_start,
+                UINT64 file_offset,
+                UINT64 fragment_size,
+                void** fragment_context
+            ) -> HRESULT override;
+            auto STDMETHODCALLTYPE ReleaseFileFragment(void* fragment_context) -> void override;
+            auto STDMETHODCALLTYPE GetFileSize(UINT64* file_size) -> HRESULT override;
+            auto STDMETHODCALLTYPE GetLastWriteTime(UINT64* last_write_time) -> HRESULT override;
+        };
+
+        struct StaticFontData {
+            uint8_t const* data = nullptr;
+            UINT64 size = 0u;
+            StaticFontFileStream stream = {};
+        };
+
+        struct StaticFontFileLoader final : IDWriteFontFileLoader {
+            auto STDMETHODCALLTYPE QueryInterface(REFIID riid, void** object) -> HRESULT override;
+            auto STDMETHODCALLTYPE AddRef() -> ULONG override;
+            auto STDMETHODCALLTYPE Release() -> ULONG override;
+            auto STDMETHODCALLTYPE CreateStreamFromKey(
+                void const* font_file_ref_key,
+                UINT32 font_file_ref_key_size,
+                IDWriteFontFileStream** font_file_stream
+            ) -> HRESULT override;
+        };
 
         struct ContextImpl {
             Arena* arena = nullptr;
             IDWriteFactory* factory = nullptr;
             IDWriteFactory2* factory2 = nullptr;
+            StaticFontFileLoader* static_loader = nullptr;
             IDWriteGdiInterop* gdi_interop = nullptr;
-            IDWriteRenderingParams* rendering_params = nullptr;
+            IDWriteRenderingParams* sharp_rendering_params = nullptr;
+            IDWriteRenderingParams* smooth_rendering_params = nullptr;
             IDWriteBitmapRenderTarget* bitmap_target = nullptr;
             IDWriteBitmapRenderTarget1* bitmap_target1 = nullptr;
         };
@@ -50,12 +90,128 @@ namespace gui::font_provider::platform::dwrite {
             ContextImpl* context = nullptr;
             IDWriteFontFile* font_file = nullptr;
             IDWriteFontFace* font_face = nullptr;
+            StaticFontData* static_data = nullptr;
         };
 
         template <typename T> auto release_com(T*& value) -> void {
             if (value != nullptr) {
                 value->Release();
                 value = nullptr;
+            }
+        }
+
+        [[nodiscard]] auto
+        query_com_interface(REFIID riid, void** object, void* self, IID const& interface_id)
+            -> HRESULT {
+            ASSERT(object != nullptr);
+
+            if (IsEqualGUID(riid, __uuidof(IUnknown)) || IsEqualGUID(riid, interface_id)) {
+                *object = self;
+                return S_OK;
+            }
+
+            *object = nullptr;
+            return E_NOINTERFACE;
+        }
+
+        auto STDMETHODCALLTYPE StaticFontFileStream::QueryInterface(REFIID riid, void** object)
+            -> HRESULT {
+            return query_com_interface(
+                riid,
+                object,
+                static_cast<IDWriteFontFileStream*>(this),
+                __uuidof(IDWriteFontFileStream)
+            );
+        }
+
+        auto STDMETHODCALLTYPE StaticFontFileStream::AddRef() -> ULONG {
+            return 1u;
+        }
+
+        auto STDMETHODCALLTYPE StaticFontFileStream::Release() -> ULONG {
+            return 1u;
+        }
+
+        auto STDMETHODCALLTYPE StaticFontFileStream::ReadFileFragment(
+            void const** fragment_start,
+            UINT64 file_offset,
+            UINT64 fragment_size,
+            void** fragment_context
+        ) -> HRESULT {
+            ASSERT(font_data != nullptr);
+            ASSERT(fragment_start != nullptr);
+            ASSERT(fragment_context != nullptr);
+
+            if (file_offset > font_data->size || fragment_size > font_data->size - file_offset) {
+                return E_FAIL;
+            }
+
+            *fragment_start = font_data->data + static_cast<size_t>(file_offset);
+            *fragment_context = nullptr;
+            return S_OK;
+        }
+
+        auto STDMETHODCALLTYPE StaticFontFileStream::ReleaseFileFragment(void* fragment_context)
+            -> void {
+            BASE_UNUSED(fragment_context);
+        }
+
+        auto STDMETHODCALLTYPE StaticFontFileStream::GetFileSize(UINT64* file_size) -> HRESULT {
+            ASSERT(font_data != nullptr);
+            ASSERT(file_size != nullptr);
+
+            *file_size = font_data->size;
+            return S_OK;
+        }
+
+        auto STDMETHODCALLTYPE StaticFontFileStream::GetLastWriteTime(UINT64* last_write_time)
+            -> HRESULT {
+            ASSERT(last_write_time != nullptr);
+
+            *last_write_time = 0u;
+            return S_OK;
+        }
+
+        auto STDMETHODCALLTYPE StaticFontFileLoader::QueryInterface(REFIID riid, void** object)
+            -> HRESULT {
+            return query_com_interface(
+                riid,
+                object,
+                static_cast<IDWriteFontFileLoader*>(this),
+                __uuidof(IDWriteFontFileLoader)
+            );
+        }
+
+        auto STDMETHODCALLTYPE StaticFontFileLoader::AddRef() -> ULONG {
+            return 1u;
+        }
+
+        auto STDMETHODCALLTYPE StaticFontFileLoader::Release() -> ULONG {
+            return 1u;
+        }
+
+        auto STDMETHODCALLTYPE StaticFontFileLoader::CreateStreamFromKey(
+            void const* font_file_ref_key,
+            UINT32 font_file_ref_key_size,
+            IDWriteFontFileStream** font_file_stream
+        ) -> HRESULT {
+            ASSERT(font_file_ref_key != nullptr);
+            ASSERT(font_file_ref_key_size == sizeof(StaticFontData*));
+            ASSERT(font_file_stream != nullptr);
+
+            BASE_UNUSED(font_file_ref_key_size);
+
+            StaticFontData* const font_data =
+                *static_cast<StaticFontData* const*>(font_file_ref_key);
+            ASSERT(font_data != nullptr);
+
+            *font_file_stream = &font_data->stream;
+            return S_OK;
+        }
+
+        auto unregister_static_font_loader(ContextImpl* context) -> void {
+            if (context->factory != nullptr && context->static_loader != nullptr) {
+                context->factory->UnregisterFontFileLoader(context->static_loader);
             }
         }
 
@@ -73,18 +229,34 @@ namespace gui::font_provider::platform::dwrite {
             FLOAT const enhanced_contrast = base_params->GetEnhancedContrast();
             release_com(base_params);
 
-            IDWriteRenderingParams2* params = nullptr;
+            IDWriteRenderingParams2* sharp_params = nullptr;
             hr = context->factory2->CreateCustomRenderingParams(
                 1.0f,
                 enhanced_contrast,
                 enhanced_contrast,
                 0.0f,
                 DWRITE_PIXEL_GEOMETRY_FLAT,
-                TEXT_RENDERING_MODE,
+                SHARP_RENDERING_MODE,
                 TEXT_GRID_FIT_MODE,
-                &params
+                &sharp_params
             );
-            context->rendering_params = params;
+            context->sharp_rendering_params = sharp_params;
+            if (FAILED(hr)) {
+                return hr;
+            }
+
+            IDWriteRenderingParams2* smooth_params = nullptr;
+            hr = context->factory2->CreateCustomRenderingParams(
+                1.0f,
+                0.0f,
+                0.0f,
+                0.0f,
+                DWRITE_PIXEL_GEOMETRY_FLAT,
+                SMOOTH_RENDERING_MODE,
+                TEXT_GRID_FIT_MODE,
+                &smooth_params
+            );
+            context->smooth_rendering_params = smooth_params;
             return hr;
         }
 
@@ -142,6 +314,7 @@ namespace gui::font_provider::platform::dwrite {
             return true;
         }
 
+        [[nodiscard]] auto dwrite_font_size(float size) -> float;
         [[nodiscard]] auto metrics_scale(DWRITE_FONT_METRICS const& metrics, float size) -> float;
 
         [[nodiscard]] auto font_handle(FontImpl* font) -> Font {
@@ -159,6 +332,7 @@ namespace gui::font_provider::platform::dwrite {
         auto destroy_font_impl(FontImpl* font) -> void {
             release_com(font->font_face);
             release_com(font->font_file);
+            font->static_data = nullptr;
             font->context = nullptr;
         }
 
@@ -245,9 +419,56 @@ namespace gui::font_provider::platform::dwrite {
             out_font.handle = font;
         }
 
+        auto open_data_font(
+            Arena& arena, ContextImpl* context, Slice<uint8_t const> data, Font& out_font
+        ) -> void {
+            ASSERT(!data.empty());
+            ASSERT(context->static_loader != nullptr);
+
+            uint8_t* const font_bytes = arena_alloc<uint8_t>(arena, data.size());
+            std::memcpy(font_bytes, data.data(), data.size());
+
+            StaticFontData* const static_data = arena_new<StaticFontData>(arena);
+            static_data->data = font_bytes;
+            static_data->size = static_cast<UINT64>(data.size());
+            static_data->stream.font_data = static_data;
+
+            FontImpl* const font = create_font_impl(arena, context);
+            font->static_data = static_data;
+
+            StaticFontData* const key = static_data;
+            HRESULT hr = context->factory->CreateCustomFontFileReference(
+                &key, sizeof(key), context->static_loader, &font->font_file
+            );
+            BOOL supported = FALSE;
+            DWRITE_FONT_FILE_TYPE file_type = DWRITE_FONT_FILE_TYPE_UNKNOWN;
+            DWRITE_FONT_FACE_TYPE face_type = DWRITE_FONT_FACE_TYPE_UNKNOWN;
+            UINT32 face_count = 0u;
+            if (SUCCEEDED(hr)) {
+                hr = font->font_file->Analyze(&supported, &file_type, &face_type, &face_count);
+            }
+            if (SUCCEEDED(hr) && supported != FALSE && face_count != 0u) {
+                IDWriteFontFile* font_files[] = {font->font_file};
+                hr = context->factory->CreateFontFace(
+                    face_type, 1u, font_files, 0u, DWRITE_FONT_SIMULATIONS_NONE, &font->font_face
+                );
+            }
+            BASE_UNUSED(file_type);
+            ASSERT(SUCCEEDED(hr));
+            ASSERT(supported != FALSE);
+            ASSERT(face_count != 0u);
+            ASSERT(font->font_face != nullptr);
+
+            out_font.handle = font;
+        }
+
+        [[nodiscard]] auto dwrite_font_size(float size) -> float {
+            return size * POINTS_TO_DIPS;
+        }
+
         [[nodiscard]] auto metrics_scale(DWRITE_FONT_METRICS const& metrics, float size) -> float {
             ASSERT(metrics.designUnitsPerEm != 0u);
-            return size / static_cast<float>(metrics.designUnitsPerEm);
+            return dwrite_font_size(size) / static_cast<float>(metrics.designUnitsPerEm);
         }
 
         [[nodiscard]] auto ceil_u32(float value, uint32_t& out_value) -> bool {
@@ -281,6 +502,17 @@ namespace gui::font_provider::platform::dwrite {
         [[nodiscard]] auto glyph_phase(uint8_t phase) -> float {
             return static_cast<float>(phase % GLYPH_RASTER_PHASE_COUNT) /
                    static_cast<float>(GLYPH_RASTER_PHASE_COUNT);
+        }
+
+        [[nodiscard]] auto rendering_mode(RasterPolicy raster_policy) -> DWRITE_RENDERING_MODE {
+            return raster_policy == RasterPolicy::SMOOTH_HINTED ? SMOOTH_RENDERING_MODE
+                                                                : SHARP_RENDERING_MODE;
+        }
+
+        [[nodiscard]] auto rendering_params(ContextImpl* context, RasterPolicy raster_policy)
+            -> IDWriteRenderingParams* {
+            return raster_policy == RasterPolicy::SMOOTH_HINTED ? context->smooth_rendering_params
+                                                                : context->sharp_rendering_params;
         }
 
         auto inflate_bounds(RECT& bounds) -> void {
@@ -414,7 +646,7 @@ namespace gui::font_provider::platform::dwrite {
 
             DWRITE_GLYPH_METRICS glyph_metrics = {};
             HRESULT const hr = impl->font_face->GetGdiCompatibleGlyphMetrics(
-                size, 1.0f, nullptr, TRUE, &glyph_index, 1u, &glyph_metrics, FALSE
+                dwrite_font_size(size), 1.0f, nullptr, TRUE, &glyph_index, 1u, &glyph_metrics, FALSE
             );
             ASSERT(SUCCEEDED(hr));
             BASE_UNUSED(hr);
@@ -484,6 +716,7 @@ namespace gui::font_provider::platform::dwrite {
             FontImpl* impl,
             float size,
             uint16_t glyph_index,
+            RasterPolicy raster_policy,
             uint8_t phase_x,
             uint8_t phase_y,
             Arena& arena,
@@ -497,16 +730,18 @@ namespace gui::font_provider::platform::dwrite {
             FLOAT const advance = 0.0f;
             DWRITE_GLYPH_RUN glyph_run = {};
             glyph_run.fontFace = impl->font_face;
-            glyph_run.fontEmSize = size;
+            glyph_run.fontEmSize = dwrite_font_size(size);
             glyph_run.glyphCount = 1u;
             glyph_run.glyphIndices = &glyph_index;
             glyph_run.glyphAdvances = &advance;
 
+            IDWriteRenderingParams* const params = rendering_params(impl->context, raster_policy);
+            ASSERT(params != nullptr);
             IDWriteGlyphRunAnalysis* analysis = nullptr;
             HRESULT hr = impl->context->factory2->CreateGlyphRunAnalysis(
                 &glyph_run,
                 nullptr,
-                TEXT_RENDERING_MODE,
+                rendering_mode(raster_policy),
                 TEXT_MEASURING_MODE,
                 TEXT_GRID_FIT_MODE,
                 TEXT_ANTIALIAS_MODE,
@@ -548,7 +783,7 @@ namespace gui::font_provider::platform::dwrite {
                 glyph_phase(phase_y) - static_cast<float>(bounds.top),
                 TEXT_BITMAP_MEASURING_MODE,
                 &glyph_run,
-                impl->context->rendering_params,
+                params,
                 RGB(255, 255, 255),
                 nullptr
             );
@@ -611,12 +846,16 @@ namespace gui::font_provider::platform::dwrite {
         ArenaMarker const marker = arena.marker();
         ContextImpl* const context = arena_new<ContextImpl>(arena);
         context->arena = &arena;
+        context->static_loader = arena_new<StaticFontFileLoader>(arena);
 
         HRESULT hr = DWriteCreateFactory(
             DWRITE_FACTORY_TYPE_ISOLATED,
             __uuidof(IDWriteFactory),
             reinterpret_cast<IUnknown**>(&context->factory)
         );
+        if (SUCCEEDED(hr)) {
+            hr = context->factory->RegisterFontFileLoader(context->static_loader);
+        }
         if (SUCCEEDED(hr)) {
             hr = context->factory->QueryInterface(
                 __uuidof(IDWriteFactory2), reinterpret_cast<void**>(&context->factory2)
@@ -631,8 +870,10 @@ namespace gui::font_provider::platform::dwrite {
         if (FAILED(hr)) {
             release_com(context->bitmap_target1);
             release_com(context->bitmap_target);
-            release_com(context->rendering_params);
+            release_com(context->smooth_rendering_params);
+            release_com(context->sharp_rendering_params);
             release_com(context->gdi_interop);
+            unregister_static_font_loader(context);
             release_com(context->factory2);
             release_com(context->factory);
             arena.reset_to(marker);
@@ -648,10 +889,13 @@ namespace gui::font_provider::platform::dwrite {
         ASSERT(impl != nullptr);
         release_com(impl->bitmap_target1);
         release_com(impl->bitmap_target);
-        release_com(impl->rendering_params);
+        release_com(impl->smooth_rendering_params);
+        release_com(impl->sharp_rendering_params);
         release_com(impl->gdi_interop);
+        unregister_static_font_loader(impl);
         release_com(impl->factory2);
         release_com(impl->factory);
+        impl->static_loader = nullptr;
         impl->arena = nullptr;
         context.handle = nullptr;
     }
@@ -661,6 +905,7 @@ namespace gui::font_provider::platform::dwrite {
         ASSERT(impl != nullptr);
 
         if (!desc.data.empty()) {
+            open_data_font(arena, impl, desc.data, out_font);
             return;
         }
         if (!desc.file_path.empty()) {
@@ -714,15 +959,16 @@ namespace gui::font_provider::platform::dwrite {
         shape_text(impl, size, text, arena, out_text);
     }
 
-    auto raster_glyph(
-        Font font,
-        float size,
-        uint16_t glyph_index,
-        RasterPolicy raster_policy,
-        Arena& arena,
-        GlyphRaster& out_raster
-    ) -> void {
-        raster_glyph(font, size, glyph_index, raster_policy, 0u, 0u, arena, out_raster);
+    auto
+    raster_glyph(Font font, float size, uint16_t glyph_index, Arena& arena, GlyphRaster& out_raster)
+        -> void {
+        FontImpl* const impl = font_from_handle(font);
+        ASSERT(impl != nullptr);
+        ASSERT(impl->font_face != nullptr);
+
+        raster_glyph(
+            impl, size, glyph_index, RasterPolicy::SHARP_HINTED, 0u, 0u, arena, out_raster
+        );
     }
 
     auto raster_glyph(
@@ -739,8 +985,21 @@ namespace gui::font_provider::platform::dwrite {
         ASSERT(impl != nullptr);
         ASSERT(impl->font_face != nullptr);
 
-        BASE_UNUSED(raster_policy);
-        raster_glyph(impl, size, glyph_index, phase_x, phase_y, arena, out_raster);
+        raster_glyph(impl, size, glyph_index, raster_policy, phase_x, phase_y, arena, out_raster);
+    }
+
+    auto raster_glyph(
+        Font font,
+        float size,
+        uint16_t glyph_index,
+        uint8_t phase_x,
+        uint8_t phase_y,
+        Arena& arena,
+        GlyphRaster& out_raster
+    ) -> void {
+        gui::font_provider::platform::dwrite::raster_glyph(
+            font, size, glyph_index, RasterPolicy::SHARP_HINTED, phase_x, phase_y, arena, out_raster
+        );
     }
 
     auto raster_text(Font font, float size, StrRef text, Arena& arena, RasterResult& out_raster)
@@ -775,6 +1034,7 @@ namespace gui::font_provider::platform::dwrite {
                 glyph_font,
                 shaped.glyphs[index].size,
                 shaped.glyphs[index].glyph_index,
+                RasterPolicy::SHARP_HINTED,
                 0u,
                 0u,
                 *temp.arena(),

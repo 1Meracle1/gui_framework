@@ -171,24 +171,6 @@ namespace {
         TEST_EXPECT(context, glyph.format == gui::font_provider::RasterFormat::ALPHA);
         TEST_EXPECT(context, glyph_has_antialias_coverage(glyph));
 
-        gui::font_provider::GlyphRaster alpha_glyph = {};
-        gui::font_provider::raster_glyph(
-            font,
-            20.0f,
-            shaped.glyphs[0u].glyph_index,
-            gui::font_provider::RasterPolicy::SHARP_HINTED_ALPHA,
-            1u,
-            0u,
-            arena,
-            alpha_glyph
-        );
-        TEST_EXPECT(context, alpha_glyph.size.width > 0u);
-        TEST_EXPECT(context, alpha_glyph.size.height > 0u);
-        TEST_EXPECT(context, alpha_glyph.stride == alpha_glyph.size.width);
-        TEST_EXPECT(context, alpha_glyph.pixels != nullptr);
-        TEST_EXPECT(context, alpha_glyph.format == gui::font_provider::RasterFormat::ALPHA);
-        TEST_EXPECT(context, glyph_has_antialias_coverage(alpha_glyph));
-
         gui::font_provider::ShapedText t_shaped = {};
         gui::font_provider::shape_text(font, 32.0f, "T", arena, t_shaped);
         gui::font_provider::GlyphRaster t_glyph = {};
@@ -209,6 +191,22 @@ namespace {
         TEST_EXPECT(context, phased_glyph.size.width > 0u);
         TEST_EXPECT(context, phased_glyph.size.height > 0u);
         TEST_EXPECT(context, phased_glyph.format == gui::font_provider::RasterFormat::ALPHA);
+
+        gui::font_provider::GlyphRaster smooth_glyph = {};
+        gui::font_provider::raster_glyph(
+            font,
+            20.0f,
+            shaped.glyphs[0u].glyph_index,
+            gui::font_provider::RasterPolicy::SMOOTH_HINTED,
+            1u,
+            0u,
+            arena,
+            smooth_glyph
+        );
+        TEST_EXPECT(context, smooth_glyph.size.width > 0u);
+        TEST_EXPECT(context, smooth_glyph.size.height > 0u);
+        TEST_EXPECT(context, smooth_glyph.format == gui::font_provider::RasterFormat::ALPHA);
+        TEST_EXPECT(context, glyph_has_antialias_coverage(smooth_glyph));
 
         gui::font_provider::RasterResult raster = {};
         gui::font_provider::raster_text(font, 16.0f, "hello", arena, raster);
@@ -272,6 +270,20 @@ namespace {
         TEST_EXPECT(context, glyph.stride == glyph.size.width);
         TEST_EXPECT(context, glyph.format == gui::font_provider::RasterFormat::ALPHA);
         TEST_EXPECT(context, glyph_has_antialias_coverage(glyph));
+
+        gui::font_provider::GlyphRaster smooth_glyph = {};
+        gui::font_provider::raster_glyph(
+            font,
+            18.0f,
+            shaped.glyphs[0u].glyph_index,
+            gui::font_provider::RasterPolicy::SMOOTH_HINTED,
+            arena,
+            smooth_glyph
+        );
+        TEST_EXPECT(context, smooth_glyph.size.width > 0u);
+        TEST_EXPECT(context, smooth_glyph.size.height > 0u);
+        TEST_EXPECT(context, smooth_glyph.format == gui::font_provider::RasterFormat::ALPHA);
+        TEST_EXPECT(context, glyph_has_antialias_coverage(smooth_glyph));
 
         gui::font_provider::RasterResult raster = {};
         gui::font_provider::raster_text(font, 18.0f, "FreeType", arena, raster);

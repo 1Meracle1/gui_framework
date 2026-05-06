@@ -25,6 +25,7 @@ namespace code_editor {
 
     namespace draw = gui::draw;
     namespace font_cache = gui::font_cache;
+    namespace font_provider = gui::font_provider;
 
     inline constexpr float TREE_INDENT_WIDTH = 16.0f;
     inline constexpr float TREE_ARROW_SLOT_WIDTH = 16.0f;
@@ -724,9 +725,10 @@ namespace code_editor {
         float x,
         float y,
         float font_size,
+        font_provider::RasterPolicy raster_policy,
         float char_width
     ) -> void {
-        draw::TextStyle style = {.font = font, .size = font_size};
+        draw::TextStyle style = {.font = font, .size = font_size, .raster_policy = raster_policy};
         StrRef const text = editor_line_text(line);
         size_t index = 0u;
         while (index < text.size()) {
@@ -1028,6 +1030,7 @@ namespace code_editor {
             draw::TextStyle number_style = {
                 .font = editor_font,
                 .size = editor.font_size,
+                .raster_policy = editor.raster_policy,
                 .color = to_draw_color(line == editor.cursor_line ? palette.text : palette.faint),
             };
             draw::draw_text(
@@ -1046,6 +1049,7 @@ namespace code_editor {
                 text_x,
                 y - 2.0f,
                 editor.font_size,
+                editor.raster_policy,
                 char_width
             );
             draw_lsp_diagnostics_for_line(

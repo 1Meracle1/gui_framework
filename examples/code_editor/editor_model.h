@@ -10,13 +10,14 @@
 #include <base/vec.h>
 #include <cstddef>
 #include <cstdint>
+#include <font_provider/font_provider.h>
 #include <gui/gui.h>
 
 namespace code_editor {
 
     struct EditorUndoEntry;
 
-    inline constexpr float EDITOR_FONT_SIZE = 14.0f;
+    inline constexpr float EDITOR_FONT_SIZE = 12.0f;
     inline constexpr float EDITOR_MIN_FONT_SIZE = 8.0f;
     inline constexpr float EDITOR_MAX_FONT_SIZE = 24.0f;
     inline constexpr float EDITOR_FONT_SIZE_STEP = 1.0f;
@@ -239,6 +240,8 @@ namespace code_editor {
         size_t selection_anchor_line = 0u;
         size_t selection_anchor_column = 0u;
         EditorSelectionMode selection_mode = EditorSelectionMode::NONE;
+        gui::font_provider::RasterPolicy raster_policy =
+            gui::font_provider::RasterPolicy::SHARP_HINTED;
         float font_size = EDITOR_FONT_SIZE;
         float scroll_y = 0.0f;
         float sidebar_width_percent = SIDEBAR_DEFAULT_WIDTH_PERCENT;

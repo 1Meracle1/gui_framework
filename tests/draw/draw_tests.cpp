@@ -1251,6 +1251,7 @@ namespace {
         gui::draw::TextStyle style = {};
         style.font = font;
         style.size = 20.0f;
+        style.raster_policy = gui::font_provider::RasterPolicy::SMOOTH_HINTED;
         gui::draw::Rect const outer = {{1.0f, 2.0f}, {50.0f, 60.0f}};
         gui::draw::Rect const inner = {{10.0f, 0.0f}, {30.0f, 40.0f}};
         gui::draw::Rect const clipped = {{10.0f, 2.0f}, {30.0f, 40.0f}};
@@ -1268,26 +1269,13 @@ namespace {
         TEST_EXPECT(context, command != nullptr);
         TEST_EXPECT(context, command->position.x == 8.0f);
         TEST_EXPECT(context, command->position.y == 12.0f);
+        TEST_EXPECT(context, command->style.raster_policy == style.raster_policy);
         TEST_EXPECT(context, command->text == StrRef("draw text"));
         TEST_EXPECT(context, command->run.glyphs != nullptr);
         TEST_EXPECT(context, command->run.glyph_count > 0u);
-        TEST_EXPECT(
-            context, command->run.raster_policy == gui::font_provider::RasterPolicy::SHARP_HINTED
-        );
         expect_rect(context, command->clip_rect, clipped);
         expect_transform(context, command->transform, transform);
         TEST_EXPECT(context, command->opacity == 0.5f);
-
-        gui::draw::TextStyle alpha_style = style;
-        alpha_style.raster_policy = gui::font_provider::RasterPolicy::SHARP_HINTED_ALPHA;
-        gui::draw::draw_text(draw_context, {8.0f, 32.0f}, alpha_style, "draw text", nullptr);
-        TEST_EXPECT(context, gui::draw::text_command_count(draw_context) == 2u);
-        gui::draw::TextCommand const* alpha_command = gui::draw::text_command(draw_context, 1u);
-        TEST_EXPECT(context, alpha_command != nullptr);
-        TEST_EXPECT(
-            context,
-            alpha_command->run.raster_policy == gui::font_provider::RasterPolicy::SHARP_HINTED_ALPHA
-        );
 
         gui::draw::begin_frame(draw_context);
         TEST_EXPECT(context, gui::draw::text_command_count(draw_context) == 0u);

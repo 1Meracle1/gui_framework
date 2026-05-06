@@ -16,6 +16,7 @@ namespace code_editor {
         {"toggle-sidebar", "tree", "Toggle the file tree sidebar."},
         {"format", "fmt", "Format the current C/C++ file."},
         {"symbols", "sym", "Open document symbols."},
+        {"toggle-raster-policy", "rp", "Toggle text raster policy."},
     };
 
     struct EditorPosition;
@@ -1686,6 +1687,13 @@ namespace code_editor {
             std::clamp(editor.font_size + amount, EDITOR_MIN_FONT_SIZE, EDITOR_MAX_FONT_SIZE);
     }
 
+    auto toggle_raster_policy(EditorState& editor) -> void {
+        editor.raster_policy =
+            editor.raster_policy == gui::font_provider::RasterPolicy::SHARP_HINTED
+                ? gui::font_provider::RasterPolicy::SMOOTH_HINTED
+                : gui::font_provider::RasterPolicy::SHARP_HINTED;
+    }
+
     [[nodiscard]] auto font_zoom_key(gui::KeyEvent const& event) -> bool {
         if ((event.mods & gui::KEY_MOD_CTRL) == 0u) {
             return false;
@@ -2049,6 +2057,9 @@ namespace code_editor {
             break;
         case 6u:
             request_lsp(editor, LspRequestKind::DOCUMENT_SYMBOL);
+            break;
+        case 7u:
+            toggle_raster_policy(editor);
             break;
         default:
             break;
@@ -3514,6 +3525,7 @@ namespace code_editor {
         hash =
             hash_bytes(hash, flag_words.data(), flag_words.size() * sizeof(EditorFlags::WordType));
         hash = hash_bytes(hash, &editor.font_size, sizeof(editor.font_size));
+        hash = hash_bytes(hash, &editor.raster_policy, sizeof(editor.raster_policy));
         hash = hash_bytes(hash, &editor.scroll_y, sizeof(editor.scroll_y));
         hash =
             hash_bytes(hash, &editor.sidebar_width_percent, sizeof(editor.sidebar_width_percent));

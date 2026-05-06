@@ -23,7 +23,6 @@ namespace gui::font_cache {
             CacheEntry* next = nullptr;
             CacheFont* font = nullptr;
             uint32_t size_bits = 0u;
-            font_provider::RasterPolicy raster_policy = font_provider::RasterPolicy::SHARP_HINTED;
             uint64_t text_hash = 0u;
             StrRef text = {};
             TextRun run = {};
@@ -99,21 +98,6 @@ namespace gui::font_cache {
             return result;
         }
 
-        [[nodiscard]] auto text_run_hash(
-            CacheFont const* font,
-            uint32_t size_bits,
-            font_provider::RasterPolicy raster_policy,
-            StrRef text
-        ) -> uint64_t {
-            uint8_t const policy = static_cast<uint8_t>(raster_policy);
-            uint64_t result = FNV64_OFFSET;
-            result = hash_size(result, reinterpret_cast<size_t>(font));
-            result = hash_bytes(result, &size_bits, sizeof(size_bits));
-            result = hash_bytes(result, &policy, sizeof(policy));
-            result = hash_bytes(result, text.data(), text.size());
-            return result;
-        }
-
         [[nodiscard]] auto glyph_hash(
             font_provider::Font font,
             uint32_t size_bits,
@@ -122,12 +106,11 @@ namespace gui::font_cache {
             uint8_t phase_x,
             uint8_t phase_y
         ) -> uint64_t {
-            uint8_t const policy = static_cast<uint8_t>(raster_policy);
             uint64_t result = FNV64_OFFSET;
             result = hash_size(result, reinterpret_cast<size_t>(font.handle));
             result = hash_bytes(result, &size_bits, sizeof(size_bits));
             result = hash_bytes(result, &glyph_index, sizeof(glyph_index));
-            result = hash_bytes(result, &policy, sizeof(policy));
+            result = hash_bytes(result, &raster_policy, sizeof(raster_policy));
             result = hash_bytes(result, &phase_x, sizeof(phase_x));
             result = hash_bytes(result, &phase_y, sizeof(phase_y));
             return result;
@@ -375,17 +358,6 @@ namespace gui::font_cache {
     }
 
     auto text_run(Cache cache, Font font, float size, StrRef text, TextRun& out_run) -> void {
-        text_run(cache, font, size, text, font_provider::RasterPolicy::SHARP_HINTED, out_run);
-    }
-
-    auto text_run(
-        Cache cache,
-        Font font,
-        float size,
-        StrRef text,
-        font_provider::RasterPolicy raster_policy,
-        TextRun& out_run
-    ) -> void {
         CacheImpl* const impl = cache_from_handle(cache);
         CacheFont* const font_impl = font_from_handle(font);
         ASSERT(impl != nullptr);
@@ -394,18 +366,16 @@ namespace gui::font_cache {
 
         if (text.empty()) {
             out_run = {};
-            out_run.raster_policy = raster_policy;
             return;
         }
 
         uint32_t const size_bits = float_bits(size);
-        uint64_t const hash = text_run_hash(font_impl, size_bits, raster_policy, text);
+        uint64_t const hash = text_run_hash(font_impl, size_bits, text);
         size_t const slot_index = static_cast<size_t>(hash % impl->slot_count);
 
         for (CacheEntry* entry = impl->slots[slot_index]; entry != nullptr; entry = entry->next) {
             if (entry->font == font_impl && entry->size_bits == size_bits &&
-                entry->raster_policy == raster_policy && entry->text_hash == hash &&
-                entry->text == text) {
+                entry->text_hash == hash && entry->text == text) {
                 out_run = entry->run;
                 return;
             }
@@ -418,12 +388,10 @@ namespace gui::font_cache {
         CacheEntry* const entry = arena_new<CacheEntry>(impl->cache_arena);
         entry->font = font_impl;
         entry->size_bits = size_bits;
-        entry->raster_policy = raster_policy;
         entry->text_hash = hash;
         copy_text(impl->cache_arena, text, entry->text);
 
         entry->run.size = shaped.size;
-        entry->run.raster_policy = raster_policy;
         entry->run.advance = shaped.advance;
         entry->run.origin_x = shaped.origin_x;
         entry->run.origin_y = shaped.origin_y;
@@ -440,7 +408,6 @@ namespace gui::font_cache {
                 glyph.font = shaped_glyph.font;
                 glyph.glyph_index = shaped_glyph.glyph_index;
                 glyph.size = shaped_glyph.size;
-                glyph.raster_policy = raster_policy;
                 glyph.x = shaped_glyph.x;
                 glyph.advance = shaped_glyph.advance;
                 glyph.offset_x = shaped_glyph.offset_x;
@@ -453,11 +420,6 @@ namespace gui::font_cache {
         impl->slots[slot_index] = entry;
 
         out_run = entry->run;
-    }
-
-    auto glyph_raster(Font font, TextGlyph const& glyph, uint8_t phase_x, uint8_t phase_y)
-        -> font_provider::GlyphRaster {
-        return glyph_raster(font, glyph, glyph.raster_policy, phase_x, phase_y);
     }
 
     auto glyph_raster(
@@ -482,6 +444,13 @@ namespace gui::font_cache {
             raster_policy,
             phase_x,
             phase_y
+        );
+    }
+
+    auto glyph_raster(Font font, TextGlyph const& glyph, uint8_t phase_x, uint8_t phase_y)
+        -> font_provider::GlyphRaster {
+        return glyph_raster(
+            font, glyph, font_provider::RasterPolicy::SHARP_HINTED, phase_x, phase_y
         );
     }
 

@@ -67,6 +67,18 @@ namespace code_editor {
         fmt::eprintf("%s failed: %s\n", operation, font_provider::result_name(result));
     }
 
+    [[nodiscard]] auto selected_font_backend() -> font_provider::Backend {
+        char backend[32] = {};
+        DWORD const size = GetEnvironmentVariableA(
+            "CODE_EDITOR_FONT_BACKEND", backend, static_cast<DWORD>(sizeof(backend))
+        );
+        return size != 0u && size < sizeof(backend) &&
+                       StrRef(backend, static_cast<size_t>(size))
+                           .equals_ignore_ascii_case("freetype")
+                   ? font_provider::Backend::FREETYPE
+                   : font_provider::Backend::DWRITE;
+    }
+
     [[nodiscard]] auto embedded_source_code_pro_font() -> Slice<uint8_t const> {
         HMODULE const module = GetModuleHandleW(nullptr);
         HRSRC const resource = FindResourceW(
@@ -208,7 +220,7 @@ namespace code_editor {
         }
 
         font_provider::ContextDesc font_desc = {};
-        font_desc.backend = font_provider::Backend::DWRITE;
+        font_desc.backend = selected_font_backend();
         font_provider::Result font_result =
             font_provider::create_context(arena, font_desc, runtime->provider);
         if (font_provider::result_failed(font_result)) {
@@ -229,15 +241,7 @@ namespace code_editor {
         if (!source_code_pro.empty()) {
             font_cache::open_font_data(runtime->cache, source_code_pro, runtime->editor_font);
         }
-        if (!font_cache::font_valid(runtime->editor_font)) {
-            font_cache::open_system_font(runtime->cache, "Cascadia Mono", runtime->editor_font);
-        }
-        if (!font_cache::font_valid(runtime->editor_font)) {
-            font_cache::open_system_font(runtime->cache, "Consolas", runtime->editor_font);
-        }
-        if (!font_cache::font_valid(runtime->editor_font)) {
-            runtime->editor_font = runtime->ui_font;
-        }
+        ASSERT(font_cache::font_valid(runtime->editor_font));
         runtime->char_width = std::max(
             1.0f, font_cache::text_advance(runtime->editor_font, runtime->editor.font_size, "M")
         );

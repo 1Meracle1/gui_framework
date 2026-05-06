@@ -20,7 +20,7 @@ namespace gui::draw {
             size_t font = 0u;
             uint32_t size_bits = 0u;
             uint16_t glyph_index = 0u;
-            uint8_t raster_policy = 0u;
+            font_provider::RasterPolicy raster_policy = font_provider::RasterPolicy::SHARP_HINTED;
             uint8_t phase_x = 0u;
             uint8_t phase_y = 0u;
         };
@@ -101,25 +101,15 @@ namespace gui::draw {
         }
 
         [[nodiscard]] auto
-        text_raster_policy(TextCommand const& command, bool target_allows_lcd_text)
-            -> font_provider::RasterPolicy {
-            BASE_UNUSED(command);
-            BASE_UNUSED(target_allows_lcd_text);
-            return font_provider::RasterPolicy::SHARP_HINTED_ALPHA;
-        }
-
-        [[nodiscard]] auto text_atlas_key(
-            TextCommand const& command,
-            font_cache::TextGlyph const& glyph,
-            font_provider::RasterPolicy raster_policy
-        ) -> TextAtlasKey {
+        text_atlas_key(TextCommand const& command, font_cache::TextGlyph const& glyph)
+            -> TextAtlasKey {
             QuantizedGlyphOrigin const x = glyph_origin_x(command, glyph);
             QuantizedGlyphOrigin const y = glyph_origin_y(command, glyph);
             return {
                 reinterpret_cast<size_t>(glyph.font.handle),
                 float_bits(glyph.size),
                 glyph.glyph_index,
-                static_cast<uint8_t>(raster_policy),
+                command.style.raster_policy,
                 x.phase,
                 y.phase
             };
@@ -313,19 +303,16 @@ namespace gui::draw {
             TextAtlasImpl& atlas,
             gui::render::Context render_context,
             TextCommand const& command,
-            font_cache::TextGlyph const& glyph,
-            bool target_allows_lcd_text
+            font_cache::TextGlyph const& glyph
         ) -> TextAtlasEntry* {
-            font_provider::RasterPolicy const raster_policy =
-                text_raster_policy(command, target_allows_lcd_text);
-            TextAtlasKey const key = text_atlas_key(command, glyph, raster_policy);
+            TextAtlasKey const key = text_atlas_key(command, glyph);
             TextAtlasEntry* entry = find_text_atlas_entry(atlas, key);
             if (entry != nullptr) {
                 return entry;
             }
 
             font_provider::GlyphRaster const raster = font_cache::glyph_raster(
-                command.style.font, glyph, raster_policy, key.phase_x, key.phase_y
+                command.style.font, glyph, key.raster_policy, key.phase_x, key.phase_y
             );
             if (raster.pixels == nullptr || raster.size.width == 0u || raster.size.height == 0u) {
                 return nullptr;
@@ -491,7 +478,6 @@ namespace gui::draw {
         Context draw_context,
         size_t first_command,
         size_t end_command,
-        bool target_allows_lcd_text,
         PreparedText& out_text
     ) -> bool {
         out_text = {};
@@ -526,12 +512,7 @@ namespace gui::draw {
                 for (size_t glyph_index = 0u; glyph_index < text->run.glyph_count; ++glyph_index) {
                     font_cache::TextGlyph const& glyph = text->run.glyphs[glyph_index];
                     TextAtlasEntry const* const entry = ensure_text_atlas_entry(
-                        *upload_temp.arena(),
-                        *impl,
-                        render_context,
-                        *text,
-                        glyph,
-                        target_allows_lcd_text
+                        *upload_temp.arena(), *impl, render_context, *text, glyph
                     );
                     if (entry == nullptr || entry->page == nullptr) {
                         continue;

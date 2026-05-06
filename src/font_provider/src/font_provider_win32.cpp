@@ -79,19 +79,26 @@ namespace gui::font_provider::platform {
         }
     }
 
+    auto
+    raster_glyph(Font font, float size, uint16_t glyph_index, Arena& arena, GlyphRaster& out_raster)
+        -> void {
+        gui::font_provider::platform::raster_glyph(
+            font, size, glyph_index, RasterPolicy::SHARP_HINTED, 0u, 0u, arena, out_raster
+        );
+    }
+
     auto raster_glyph(
         Font font,
         float size,
         uint16_t glyph_index,
-        RasterPolicy raster_policy,
+        uint8_t phase_x,
+        uint8_t phase_y,
         Arena& arena,
         GlyphRaster& out_raster
     ) -> void {
-        if (font.backend == Backend::FREETYPE) {
-            freetype::raster_glyph(font, size, glyph_index, raster_policy, arena, out_raster);
-        } else {
-            dwrite::raster_glyph(font, size, glyph_index, raster_policy, arena, out_raster);
-        }
+        gui::font_provider::platform::raster_glyph(
+            font, size, glyph_index, RasterPolicy::SHARP_HINTED, phase_x, phase_y, arena, out_raster
+        );
     }
 
     auto raster_glyph(
