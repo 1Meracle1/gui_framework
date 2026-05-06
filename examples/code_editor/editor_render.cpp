@@ -43,6 +43,8 @@ namespace code_editor {
     inline constexpr float COMMAND_LIST_HEIGHT = 30.0f;
     inline constexpr char OVERWRITE_FILE_KEY = 'o';
     inline constexpr char RELOAD_FILE_KEY = 'r';
+    inline constexpr char CLOSE_WITHOUT_SAVE_KEY = 'c';
+    inline constexpr char SAVE_CHANGES_KEY = 's';
     inline constexpr char TREE_ARROW_OPEN[] = "\xEE\x9C\x8D";
     inline constexpr char TREE_ARROW_CLOSED[] = "\xEE\x9D\xAC";
 
@@ -334,6 +336,33 @@ namespace code_editor {
         }
     }
 
+    [[nodiscard]] auto next_scratch_file_name(EditorState& editor) -> StrRef {
+        char buffer[64] = {};
+        for (size_t index = 1u;; ++index) {
+            StrRef const name =
+                index == 1u
+                    ? SCRATCH_FILE_NAME
+                    : fmt::bprintf(buffer, sizeof(buffer), "%s %zu", SCRATCH_FILE_NAME, index);
+            if (find_open_file(editor, name, {}) == nullptr) {
+                return arena_copy_cstr(*editor.arena, name);
+            }
+        }
+    }
+
+    auto open_new_scratch_file(EditorState& editor) -> void {
+        if (editor.text.arena == nullptr || editor.arena == nullptr) {
+            return;
+        }
+        focus_code_split_for_open(editor);
+        store_current_open_file(editor);
+        editor.current_file_name = next_scratch_file_name(editor);
+        editor.current_file_path = {};
+        editor.file_write_stamp = 0u;
+        set_editor_text(editor, {});
+        remember_open_file(editor, editor.current_file_name, {});
+        store_current_open_file(editor);
+    }
+
     auto reset_pane_text(EditorPane& pane, StrRef text, uint64_t stamp) -> void {
         text_buffer_set(pane.text, text);
         pane.undo_stack = nullptr;
@@ -479,16 +508,16 @@ namespace code_editor {
         return true;
     }
 
-    auto save_path_from_popup(EditorState& editor) -> void {
+    [[nodiscard]] auto save_path_from_popup(EditorState& editor) -> bool {
         char path[SAVE_PATH_TEXT_CAPACITY * 2u] = {};
         StrRef const resolved = resolve_save_path(editor, path, sizeof(path));
         if (resolved.empty()) {
             editor.save_path_error = EditorSavePathError::EMPTY;
-            return;
+            return false;
         }
         if (path_exists(resolved)) {
             editor.save_path_error = EditorSavePathError::EXISTS;
-            return;
+            return false;
         }
         OpenFile const* const open_file = find_open_file(editor, {}, resolved);
         if (open_file != nullptr &&
@@ -496,13 +525,14 @@ namespace code_editor {
                 open_file->name, open_file->path, editor.current_file_name, editor.current_file_path
             )) {
             editor.save_path_error = EditorSavePathError::EXISTS;
-            return;
+            return false;
         }
         if (!save_current_file_as(editor, resolved)) {
             editor.save_path_error = EditorSavePathError::WRITE_FAILED;
-            return;
+            return false;
         }
         close_save_path_popup(editor);
+        return true;
     }
 
     auto handle_editor_save_request(EditorState& editor) -> void {
@@ -520,6 +550,31 @@ namespace code_editor {
         if (!overwrite_current_file_to_disk(editor)) {
             fmt::eprintf("code_editor: failed to write %s\n", editor.current_file_path);
         }
+    }
+
+    auto close_current_file(EditorState& editor, bool force = false) -> void;
+
+    auto handle_editor_write_quit_request(EditorState& editor) -> void {
+        if (!editor.flag(EditorFlag::WRITE_QUIT_REQUESTED)) {
+            return;
+        }
+        if (editor.flag(EditorFlag::SAVE_PATH_OPEN)) {
+            return;
+        }
+        if (editor_focused_pane_kind(editor) != EditorPaneKind::CODE) {
+            editor.set_flag(EditorFlag::WRITE_QUIT_REQUESTED, false);
+            return;
+        }
+        if (editor.current_file_path.empty()) {
+            open_save_path_popup(editor);
+            return;
+        }
+        editor.set_flag(EditorFlag::WRITE_QUIT_REQUESTED, false);
+        if (!overwrite_current_file_to_disk(editor)) {
+            fmt::eprintf("code_editor: failed to write %s\n", editor.current_file_path);
+            return;
+        }
+        close_current_file(editor);
     }
 
     auto update_current_file_change(EditorState& editor) -> void {
@@ -1640,14 +1695,14 @@ namespace code_editor {
         }
     }
 
-    auto close_open_file(EditorState& editor, size_t index) -> void {
+    auto close_open_file(EditorState& editor, size_t index, bool force) -> void {
         if (index >= editor.open_files.size()) {
             return;
         }
 
         OpenFile const closing = editor.open_files[index];
         bool const selected = open_file_selected(editor, editor.open_files[index]);
-        if (selected) {
+        if (selected && !force) {
             save_scratch_file(editor);
         }
         editor.open_files.ordered_remove(index);
@@ -1656,11 +1711,11 @@ namespace code_editor {
                 remove_open_file_view(*pane, closing.name, closing.path);
             }
         }
-        if (!selected) {
+        if (editor.open_files.empty()) {
+            editor.set_flag(EditorFlag::CLOSE_APP_REQUESTED, true);
             return;
         }
-        if (editor.open_files.empty()) {
-            open_scratch_file(editor);
+        if (!selected) {
             return;
         }
 
@@ -1671,10 +1726,80 @@ namespace code_editor {
         }
     }
 
-    auto close_current_file(EditorState& editor) -> void {
+    auto close_current_file(EditorState& editor, bool force) -> void {
         size_t index = 0u;
+        if (!selected_open_file_index(editor, index)) {
+            store_current_open_file(editor);
+        }
         if (selected_open_file_index(editor, index)) {
-            close_open_file(editor, index);
+            close_open_file(editor, index, force);
+        } else if (editor.open_files.empty()) {
+            editor.set_flag(EditorFlag::CLOSE_APP_REQUESTED, true);
+        }
+    }
+
+    auto focus_open_file_index(EditorState& editor, size_t index) -> void {
+        if (index >= editor.open_files.size()) {
+            return;
+        }
+        focus_code_split_for_open(editor);
+        OpenFile const file = editor.open_files[index];
+        BASE_UNUSED(open_file(editor, file.name, file.path));
+    }
+
+    [[nodiscard]] auto first_dirty_open_file_index(EditorState& editor, size_t& out_index) -> bool {
+        store_current_open_file(editor);
+        for (size_t index = 0u; index < editor.open_files.size(); ++index) {
+            if (open_file_dirty(editor, editor.open_files[index])) {
+                out_index = index;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    auto request_close_app(EditorState& editor) -> void {
+        editor.set_flag(EditorFlag::CLOSE_APP_REQUESTED, false);
+        if (editor.flag(EditorFlag::SAVE_PATH_OPEN) ||
+            editor.close_intent != EditorCloseIntent::NONE) {
+            return;
+        }
+        size_t index = 0u;
+        if (first_dirty_open_file_index(editor, index)) {
+            focus_open_file_index(editor, index);
+            editor.close_intent = EditorCloseIntent::APP;
+            return;
+        }
+        editor.set_flag(EditorFlag::CLOSE_APP_CONFIRMED, true);
+    }
+
+    auto request_close_current_file(EditorState& editor, bool force) -> void {
+        if (!force && editor_focused_pane_kind(editor) == EditorPaneKind::CODE &&
+            editor.flag(EditorFlag::DIRTY)) {
+            editor.close_intent = EditorCloseIntent::BUFFER;
+            return;
+        }
+        close_current_file(editor, force);
+    }
+
+    auto request_close_open_file(EditorState& editor, size_t index) -> void {
+        if (index >= editor.open_files.size()) {
+            return;
+        }
+        if (open_file_dirty(editor, editor.open_files[index])) {
+            focus_open_file_index(editor, index);
+            editor.close_intent = EditorCloseIntent::BUFFER;
+            return;
+        }
+        close_open_file(editor, index, false);
+    }
+
+    auto continue_after_saved_close(EditorState& editor, EditorCloseIntent intent) -> void {
+        editor.close_intent = EditorCloseIntent::NONE;
+        if (intent == EditorCloseIntent::BUFFER) {
+            close_current_file(editor);
+        } else if (intent == EditorCloseIntent::APP) {
+            request_close_app(editor);
         }
     }
 
@@ -1686,6 +1811,7 @@ namespace code_editor {
         if (file.is_directory) {
             return;
         }
+        expand_filesystem_tree_to_file(editor, tree_file_index);
         focus_code_split_for_open(editor);
         BASE_UNUSED(open_file(editor, file.name, file.path));
     }
@@ -2949,9 +3075,18 @@ namespace code_editor {
         }
 
         if (cancel) {
+            editor.set_flag(EditorFlag::WRITE_QUIT_REQUESTED, false);
+            editor.close_intent = EditorCloseIntent::NONE;
             close_save_path_popup(editor);
         } else if (save) {
-            save_path_from_popup(editor);
+            EditorCloseIntent const close_intent = editor.close_intent;
+            if (save_path_from_popup(editor) && close_intent != EditorCloseIntent::NONE) {
+                continue_after_saved_close(editor, close_intent);
+            } else if (!editor.flag(EditorFlag::SAVE_PATH_OPEN) &&
+                       editor.flag(EditorFlag::WRITE_QUIT_REQUESTED)) {
+                editor.set_flag(EditorFlag::WRITE_QUIT_REQUESTED, false);
+                close_current_file(editor);
+            }
         }
     }
 
@@ -3087,6 +3222,120 @@ namespace code_editor {
             }
         }
         return false;
+    }
+
+    auto draw_unsaved_close_popup(
+        gui::Frame& ui, EditorState& editor, Palette const& palette, gui::InputState const& input
+    ) -> void {
+        if (editor.close_intent == EditorCloseIntent::NONE ||
+            editor.flag(EditorFlag::SAVE_PATH_OPEN)) {
+            return;
+        }
+
+        bool discard = file_change_key_pressed(input, CLOSE_WITHOUT_SAVE_KEY);
+        bool save = file_change_key_pressed(input, SAVE_CHANGES_KEY);
+        if (auto popup = ui.popup(
+                gui::id("unsaved_close_popup"),
+                {
+                    .layout =
+                        {
+                            .width = gui::px(500.0f),
+                            .height = gui::children(),
+                            .padding = gui::insets(18.0f),
+                            .gap = 14.0f,
+                            .align_x = gui::Align::STRETCH,
+                        },
+                    .style =
+                        {
+                            .background = palette.panel_raised,
+                            .border = gui::color_alpha(palette.preprocessor, 0.72f),
+                            .border_thickness = 1.0f,
+                            .radius = 6.0f,
+                            .shadow =
+                                {
+                                    .offset = {0.0f, 14.0f},
+                                    .blur_radius = 34.0f,
+                                    .spread = 2.0f,
+                                    .color = gui::rgba(0, 0, 0, 120),
+                                },
+                        },
+                    .debug_name = "unsaved_close_popup",
+                }
+            )) {
+            ui.label(
+                "Unsaved changes",
+                {
+                    .layout = {.width = gui::fill(), .height = gui::px(26.0f)},
+                    .style = {.foreground = palette.text, .font_size = editor.font_size},
+                }
+            );
+            ui.label(
+                fmt::tprintf("%s has unsaved changes.", editor.current_file_name),
+                {
+                    .layout =
+                        {
+                            .width = gui::fill(),
+                            .height = gui::px(42.0f),
+                            .word_wrap = true,
+                        },
+                    .style = {.foreground = palette.muted, .font_size = editor.font_size},
+                }
+            );
+            if (auto buttons = ui.row(
+                    gui::id("unsaved_close_buttons"),
+                    {
+                        .layout = {
+                            .width = gui::fill(),
+                            .height = gui::px(38.0f),
+                            .gap = 10.0f,
+                            .align_y = gui::Align::CENTER,
+                        },
+                    }
+                )) {
+                gui::BoxDesc const button_desc = {
+                    .layout =
+                        {
+                            .width = gui::fill(),
+                            .height = gui::fill(),
+                            .padding = gui::insets(0.0f, 12.0f),
+                        },
+                    .style = {
+                        .background = palette.panel,
+                        .foreground = palette.text,
+                        .border = palette.border,
+                        .border_thickness = 1.0f,
+                        .radius = 5.0f,
+                        .font_size = editor.font_size,
+                    },
+                };
+                discard =
+                    ui.button(
+                          gui::id("unsaved_close_discard"), "[C] Close without changes", button_desc
+                    )
+                        .activated ||
+                    discard;
+                save = ui.button(gui::id("unsaved_close_save"), "[S] Save changes", button_desc)
+                           .activated ||
+                       save;
+            }
+        }
+
+        EditorCloseIntent const intent = editor.close_intent;
+        if (discard) {
+            editor.close_intent = EditorCloseIntent::NONE;
+            close_current_file(editor, true);
+            if (intent == EditorCloseIntent::APP) {
+                request_close_app(editor);
+            }
+        } else if (save && editor.current_file_path.empty()) {
+            open_save_path_popup(editor);
+        } else if (save) {
+            if (!overwrite_current_file_to_disk(editor)) {
+                fmt::eprintf("code_editor: failed to write %s\n", editor.current_file_path);
+                return;
+            }
+            continue_after_saved_close(editor, intent);
+        }
     }
 
     auto draw_file_deleted_popup(gui::Frame& ui, EditorState& editor, Palette const& palette)
@@ -3412,8 +3661,12 @@ namespace code_editor {
                     focus_editor_split(editor, split);
                 }
                 if (focused) {
-                    draw_file_deleted_popup(ui, editor, palette);
-                    draw_file_change_popup(ui, editor, palette, input);
+                    if (editor.close_intent != EditorCloseIntent::NONE) {
+                        draw_unsaved_close_popup(ui, editor, palette, input);
+                    } else {
+                        draw_file_deleted_popup(ui, editor, palette);
+                        draw_file_change_popup(ui, editor, palette, input);
+                    }
                 }
             }
             return;
@@ -3483,9 +3736,19 @@ namespace code_editor {
             ensure_filesystem_panel(editor);
         }
         update_sidebar_resize(editor, client_width, input);
+        if (editor.flag(EditorFlag::NEW_SCRATCH_REQUESTED)) {
+            open_new_scratch_file(editor);
+            editor.set_flag(EditorFlag::NEW_SCRATCH_REQUESTED, false);
+        }
         if (editor.flag(EditorFlag::CLOSE_CURRENT_REQUESTED)) {
-            close_current_file(editor);
+            request_close_current_file(
+                editor, editor.flag(EditorFlag::CLOSE_CURRENT_FORCE_REQUESTED)
+            );
             editor.set_flag(EditorFlag::CLOSE_CURRENT_REQUESTED, false);
+            editor.set_flag(EditorFlag::CLOSE_CURRENT_FORCE_REQUESTED, false);
+        }
+        if (editor.flag(EditorFlag::CLOSE_APP_REQUESTED)) {
+            request_close_app(editor);
         }
         if (editor.file_search_open_file != FILE_SEARCH_NO_FILE) {
             size_t const tree_file_index = editor.file_search_open_file;
@@ -3580,7 +3843,7 @@ namespace code_editor {
                             }
                         }
                         if (closed_index != static_cast<size_t>(-1)) {
-                            close_open_file(editor, closed_index);
+                            request_close_open_file(editor, closed_index);
                         } else if (selected_index != static_cast<size_t>(-1)) {
                             focus_code_split_for_open(editor);
                             OpenFile const file = editor.open_files[selected_index];
@@ -3632,9 +3895,9 @@ namespace code_editor {
                             .width = gui::fill(status_ratio),
                             .height = gui::fill(),
                             .padding = gui::insets(0.0f, 12.0f),
-                            .gap = 7.0f,
                             .align_y = gui::Align::CENTER,
-                            .clip = true,
+                            .scroll_x = true,
+                            .show_scrollbars = false,
                         },
                     .style = {
                         .background = palette.panel,
@@ -3643,39 +3906,53 @@ namespace code_editor {
                         .radius = 8.0f,
                     },
                 };
-                if (auto status = ui.row(gui::id("status"), status_panel)) {
-                    ui.label(
-                        mode,
-                        {
-                            .layout = {.width = gui::text(), .height = gui::fill()},
-                            .style = {
-                                .foreground = mode_color,
-                                .font_size = editor.font_size,
-                            },
-                        }
-                    );
-                    ui.label(
-                        fmt::tprintf(
-                            "Ln %zu, Col %zu", editor.cursor_line + 1u, editor.cursor_column + 1u
-                        ),
-                        {
-                            .layout = {.width = gui::text(), .height = gui::fill()},
-                            .style = {
-                                .foreground = palette.muted,
-                                .font_size = editor.font_size,
-                            },
-                        }
-                    );
-                    ui.label(
-                        "UTF-8",
-                        {
-                            .layout = {.width = gui::text(), .height = gui::fill()},
-                            .style = {
-                                .foreground = palette.muted,
-                                .font_size = editor.font_size,
-                            },
-                        }
-                    );
+                if (auto status = ui.scroll_panel(gui::id("status"), status_panel)) {
+                    if (auto row = ui.row(
+                            gui::id("status_row"),
+                            {
+                                .layout = {
+                                    .width = gui::children(),
+                                    .height = gui::fill(),
+                                    .gap = 7.0f,
+                                    .align_y = gui::Align::CENTER,
+                                },
+                            }
+                        )) {
+                        ui.label(
+                            mode,
+                            {
+                                .layout = {.width = gui::text(), .height = gui::fill()},
+                                .style = {
+                                    .foreground = mode_color,
+                                    .font_size = editor.font_size,
+                                },
+                            }
+                        );
+                        ui.label(
+                            fmt::tprintf(
+                                "Ln %zu, Col %zu",
+                                editor.cursor_line + 1u,
+                                editor.cursor_column + 1u
+                            ),
+                            {
+                                .layout = {.width = gui::text(), .height = gui::fill()},
+                                .style = {
+                                    .foreground = palette.muted,
+                                    .font_size = editor.font_size,
+                                },
+                            }
+                        );
+                        ui.label(
+                            fmt::tprintf("%.0f", editor.font_size),
+                            {
+                                .layout = {.width = gui::text(), .height = gui::fill()},
+                                .style = {
+                                    .foreground = palette.muted,
+                                    .font_size = editor.font_size,
+                                },
+                            }
+                        );
+                    }
                 }
 
                 gui::BoxDesc const command_panel = {
@@ -3684,9 +3961,9 @@ namespace code_editor {
                             .width = gui::fill(1.0f - status_ratio),
                             .height = gui::fill(),
                             .padding = gui::insets(0.0f, 12.0f),
-                            .align_x = gui::Align::END,
                             .align_y = gui::Align::CENTER,
-                            .clip = true,
+                            .scroll_x = true,
+                            .show_scrollbars = false,
                         },
                     .style = {
                         .background = palette.panel,
@@ -3695,33 +3972,44 @@ namespace code_editor {
                         .radius = 8.0f,
                     },
                 };
-                if (auto command = ui.row(gui::id("command_line"), command_panel)) {
-                    if (editor.flag(EditorFlag::COMMAND_LINE_ACTIVE)) {
-                        ui.label(
-                            fmt::tprintf(":%s", editor.command_text),
+                if (auto command = ui.scroll_panel(gui::id("command_line"), command_panel)) {
+                    if (auto row = ui.row(
+                            gui::id("command_line_row"),
                             {
-                                .layout = {.width = gui::fill(), .height = gui::fill()},
-                                .style = {
-                                    .foreground = palette.text,
-                                    .font_size = editor.font_size,
+                                .layout = {
+                                    .width = gui::children(),
+                                    .height = gui::fill(),
+                                    .align_y = gui::Align::CENTER,
                                 },
                             }
-                        );
-                    } else if (editor.lsp_bridge != nullptr) {
-                        ui.label(
-                            lsp_status_bar_text(editor),
-                            {
-                                .layout = {.width = gui::text(), .height = gui::fill()},
-                                .style = {
-                                    .foreground = editor.lsp_bridge->status == LspStatusKind::FAILED
-                                                      ? palette.preprocessor
-                                                  : editor.lsp_bridge->progress_active
-                                                      ? palette.cursor
-                                                      : palette.muted,
-                                    .font_size = editor.font_size,
-                                },
-                            }
-                        );
+                        )) {
+                        if (editor.flag(EditorFlag::COMMAND_LINE_ACTIVE)) {
+                            ui.label(
+                                fmt::tprintf(":%s", editor.command_text),
+                                {
+                                    .layout = {.width = gui::text(), .height = gui::fill()},
+                                    .style = {
+                                        .foreground = palette.text,
+                                        .font_size = editor.font_size,
+                                    },
+                                }
+                            );
+                        } else if (editor.lsp_bridge != nullptr) {
+                            ui.label(
+                                lsp_status_bar_text(editor),
+                                {
+                                    .layout = {.width = gui::text(), .height = gui::fill()},
+                                    .style = {
+                                        .foreground =
+                                            editor.lsp_bridge->status == LspStatusKind::FAILED
+                                                ? palette.preprocessor
+                                            : editor.lsp_bridge->progress_active ? palette.cursor
+                                                                                 : palette.muted,
+                                        .font_size = editor.font_size,
+                                    },
+                                }
+                            );
+                        }
                     }
                 }
             }
@@ -3736,10 +4024,12 @@ namespace code_editor {
                 draw_save_path_picker(ui, editor, palette, input);
             }
             handle_editor_save_request(editor);
+            handle_editor_write_quit_request(editor);
         }
         if (!editor.flag(EditorFlag::FILE_SEARCH_OPEN) &&
             !editor.flag(EditorFlag::BUFFER_SEARCH_OPEN) &&
-            !editor.flag(EditorFlag::SAVE_PATH_OPEN)) {
+            !editor.flag(EditorFlag::SAVE_PATH_OPEN) &&
+            editor.close_intent == EditorCloseIntent::NONE) {
             draw_lsp_hover_popup(ui, editor_font, editor, char_width, palette, input);
         }
         draw_lsp_rename_popup(ui, editor, palette, char_width, client_width, client_height);

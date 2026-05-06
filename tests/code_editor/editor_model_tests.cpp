@@ -540,6 +540,57 @@ namespace {
         TEST_EXPECT(context, editor.file_search_open_file == 1u);
     }
 
+    TEST_CASE(file_search_selection_expands_filesystem_tree_to_selected_file) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::FileTreeEntry tree[] = {
+            {
+                .name = "src",
+                .path = "C:\\repo\\src",
+                .relative_path = "src",
+                .depth = 0u,
+                .is_directory = true,
+            },
+            {
+                .name = "app",
+                .path = "C:\\repo\\src\\app",
+                .relative_path = "src\\app",
+                .depth = 1u,
+                .is_directory = true,
+            },
+            {
+                .name = "main.cpp",
+                .path = "C:\\repo\\src\\app\\main.cpp",
+                .relative_path = "src\\app\\main.cpp",
+                .depth = 2u,
+            },
+            {
+                .name = "include",
+                .path = "C:\\repo\\include",
+                .relative_path = "include",
+                .depth = 0u,
+                .is_directory = true,
+            },
+        };
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "");
+        editor.tree_files = Slice<code_editor::FileTreeEntry>(tree);
+
+        send_text(editor, " f");
+        editor.file_search_text_size =
+            StrRef("main").copy_to(editor.file_search_text, code_editor::FILE_SEARCH_TEXT_CAPACITY);
+        editor.file_search_text[editor.file_search_text_size] = '\0';
+
+        press_key(editor, gui::Key::ENTER);
+        TEST_EXPECT(context, editor.file_search_open_file == 2u);
+        TEST_EXPECT(context, editor.flag(EditorFlag::TREE_OPEN));
+        TEST_EXPECT(context, tree[0u].open);
+        TEST_EXPECT(context, tree[1u].open);
+        TEST_EXPECT(context, !tree[3u].open);
+    }
+
     TEST_CASE(file_search_prioritizes_file_names_before_folders) {
         Arena arena = {};
         arena.init();
@@ -629,6 +680,24 @@ namespace {
         send_text(editor, ":buffer-close");
         press_key(editor, gui::Key::ENTER);
         TEST_EXPECT(context, editor.flag(EditorFlag::CLOSE_CURRENT_REQUESTED));
+        editor.set_flag(EditorFlag::CLOSE_CURRENT_REQUESTED, false);
+
+        send_text(editor, ":new");
+        press_key(editor, gui::Key::ENTER);
+        TEST_EXPECT(context, editor.flag(EditorFlag::NEW_SCRATCH_REQUESTED));
+        editor.set_flag(EditorFlag::NEW_SCRATCH_REQUESTED, false);
+
+        send_text(editor, ":q!");
+        press_key(editor, gui::Key::ENTER);
+        TEST_EXPECT(context, editor.flag(EditorFlag::CLOSE_CURRENT_REQUESTED));
+        TEST_EXPECT(context, editor.flag(EditorFlag::CLOSE_CURRENT_FORCE_REQUESTED));
+        editor.set_flag(EditorFlag::CLOSE_CURRENT_REQUESTED, false);
+        editor.set_flag(EditorFlag::CLOSE_CURRENT_FORCE_REQUESTED, false);
+
+        send_text(editor, ":wq");
+        press_key(editor, gui::Key::ENTER);
+        TEST_EXPECT(context, editor.flag(EditorFlag::WRITE_QUIT_REQUESTED));
+        editor.set_flag(EditorFlag::WRITE_QUIT_REQUESTED, false);
 
         TEST_EXPECT(
             context, editor.raster_policy == gui::font_provider::RasterPolicy::SHARP_HINTED
@@ -647,6 +716,32 @@ namespace {
         send_text(editor, ":open");
         press_key(editor, gui::Key::ENTER);
         TEST_EXPECT(context, editor.flag(EditorFlag::FILE_SEARCH_OPEN));
+    }
+
+    TEST_CASE(editor_new_scratch_shortcuts_request_scratch_buffer) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "");
+
+        press_key(editor, gui::Key::N, gui::KEY_MOD_CTRL);
+        TEST_EXPECT(context, editor.flag(EditorFlag::NEW_SCRATCH_REQUESTED));
+        editor.set_flag(EditorFlag::NEW_SCRATCH_REQUESTED, false);
+
+        send_text(editor, " n");
+        TEST_EXPECT(context, editor.flag(EditorFlag::NEW_SCRATCH_REQUESTED));
+    }
+
+    TEST_CASE(editor_ctrl_w_requests_current_buffer_close) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "");
+
+        press_key(editor, gui::Key::W, gui::KEY_MOD_CTRL);
+        TEST_EXPECT(context, editor.flag(EditorFlag::CLOSE_CURRENT_REQUESTED));
     }
 
     TEST_CASE(editor_ctrl_plus_minus_changes_font_size) {

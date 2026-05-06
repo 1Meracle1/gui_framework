@@ -72,6 +72,8 @@ namespace code_editor {
         gui::Vec2 last_click_pos = {};
         uint64_t last_click_ticks = 0u;
         uint32_t click_count = 0u;
+        bool close_requested = false;
+        bool close_confirmed = false;
     };
 
     struct DirectoryWatcher {
@@ -348,12 +350,16 @@ namespace code_editor {
             return gui::Key::C;
         case 'D':
             return gui::Key::D;
+        case 'N':
+            return gui::Key::N;
         case 'S':
             return gui::Key::S;
         case 'U':
             return gui::Key::U;
         case 'V':
             return gui::Key::V;
+        case 'W':
+            return gui::Key::W;
         case 'X':
             return gui::Key::X;
         case 'Z':
@@ -482,6 +488,11 @@ namespace code_editor {
             return 0;
         case WM_CLOSE:
             if (global_app_state != nullptr) {
+                if (!global_app_state->close_confirmed) {
+                    global_app_state->close_requested = true;
+                    request_redraw(global_app_state);
+                    return 0;
+                }
                 global_app_state->running = false;
             }
             DestroyWindow(hwnd);
@@ -962,6 +973,8 @@ namespace code_editor {
             .lsp_bridge = lsp_initialized ? lsp_client_bridge(lsp_client) : nullptr,
             .lsp_send_request = lsp_initialized ? lsp_client_send_editor_request : nullptr,
             .lsp_user_data = lsp_initialized ? &lsp_client : nullptr,
+            .app_close_requested = &app_state.close_requested,
+            .app_close_confirmed = &app_state.close_confirmed,
             .initial_sidebar_visible = launch.initial_sidebar_visible,
         };
         module_context.shared_tree_root_name = &module_context.tree_root_name;

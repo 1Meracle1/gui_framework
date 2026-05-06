@@ -55,6 +55,8 @@ namespace code_editor {
         LspBridge const* lsp_bridge = nullptr;
         LspSendEditorRequestFn lsp_send_request = nullptr;
         void* lsp_user_data = nullptr;
+        bool* app_close_requested = nullptr;
+        bool* app_close_confirmed = nullptr;
         uint64_t file_change_generation = 0u;
         float char_width = 8.0f;
     };
@@ -72,11 +74,15 @@ namespace code_editor {
         DWORD const size = GetEnvironmentVariableA(
             "CODE_EDITOR_FONT_BACKEND", backend, static_cast<DWORD>(sizeof(backend))
         );
-        return size != 0u && size < sizeof(backend) &&
-                       StrRef(backend, static_cast<size_t>(size))
-                           .equals_ignore_ascii_case("freetype")
-                   ? font_provider::Backend::FREETYPE
-                   : font_provider::Backend::DWRITE;
+        if (size != 0u && size < sizeof(backend) &&
+            StrRef(backend, static_cast<size_t>(size)).equals_ignore_ascii_case("freetype")) {
+            return font_provider::Backend::FREETYPE;
+        }
+#if defined(_WIN32)
+        return font_provider::Backend::DWRITE;
+#else
+        return font_provider::Backend::FREETYPE;
+#endif
     }
 
     [[nodiscard]] auto embedded_source_code_pro_font() -> Slice<uint8_t const> {
@@ -272,6 +278,8 @@ namespace code_editor {
         runtime->lsp_bridge = context.lsp_bridge;
         runtime->lsp_send_request = context.lsp_send_request;
         runtime->lsp_user_data = context.lsp_user_data;
+        runtime->app_close_requested = context.app_close_requested;
+        runtime->app_close_confirmed = context.app_close_confirmed;
         init_editor(arena, runtime->editor, context.initial_text);
         runtime->editor.lsp_bridge = runtime->lsp_bridge;
         runtime->editor.lsp_send_request = runtime->lsp_send_request;
@@ -297,9 +305,14 @@ namespace code_editor {
         if (files_changed) {
             update_open_file_changes(runtime->editor);
         }
+        if (runtime->app_close_requested != nullptr && *runtime->app_close_requested) {
+            runtime->editor.set_flag(EditorFlag::CLOSE_APP_REQUESTED, true);
+            *runtime->app_close_requested = false;
+        }
         bool const popup_open = editor_focused_pane_kind(runtime->editor) == EditorPaneKind::CODE &&
                                 (runtime->editor.flag(EditorFlag::EXTERNAL_CHANGE_PENDING) ||
-                                 runtime->editor.flag(EditorFlag::FILE_DELETED_ON_DISK));
+                                 runtime->editor.flag(EditorFlag::FILE_DELETED_ON_DISK) ||
+                                 runtime->editor.close_intent != EditorCloseIntent::NONE);
         if (!popup_open) {
             update_editor_lsp_document(runtime->editor);
             process_editor_input(
@@ -372,10 +385,13 @@ namespace code_editor {
     };
 
     auto request_window_close(Runtime& runtime) -> void {
-        if (!runtime.editor.flag(EditorFlag::CLOSE_APP_REQUESTED)) {
+        if (!runtime.editor.flag(EditorFlag::CLOSE_APP_CONFIRMED)) {
             return;
         }
-        runtime.editor.set_flag(EditorFlag::CLOSE_APP_REQUESTED, false);
+        runtime.editor.set_flag(EditorFlag::CLOSE_APP_CONFIRMED, false);
+        if (runtime.app_close_confirmed != nullptr) {
+            *runtime.app_close_confirmed = true;
+        }
         if (runtime.native_window != nullptr) {
             PostMessageW(static_cast<HWND>(runtime.native_window), WM_CLOSE, 0u, 0l);
         }

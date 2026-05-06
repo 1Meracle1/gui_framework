@@ -116,6 +116,8 @@ namespace code_editor {
         LspBridge const* lsp_bridge = nullptr;
         LspSendEditorRequestFn lsp_send_request = nullptr;
         void* lsp_user_data = nullptr;
+        bool* app_close_requested = nullptr;
+        bool* app_close_confirmed = nullptr;
         bool initial_sidebar_visible = false;
     };
 

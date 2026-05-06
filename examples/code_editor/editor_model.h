@@ -65,6 +65,12 @@ namespace code_editor {
         WRITE_FAILED,
     };
 
+    enum class EditorCloseIntent : uint8_t {
+        NONE,
+        BUFFER,
+        APP,
+    };
+
     struct OpenFile {
         StrRef name = {};
         StrRef path = {};
@@ -181,6 +187,8 @@ namespace code_editor {
         COMMAND_LINE_ACTIVE,
         SAVE_REQUESTED,
         SAVE_PATH_OPEN,
+        NEW_SCRATCH_REQUESTED,
+        WRITE_QUIT_REQUESTED,
         PENDING_LINE_NUMBER_ACTIVE,
         PENDING_LEADER,
         PENDING_WINDOW,
@@ -190,7 +198,9 @@ namespace code_editor {
         PENDING_LSP,
         PENDING_Z,
         CLOSE_CURRENT_REQUESTED,
+        CLOSE_CURRENT_FORCE_REQUESTED,
         CLOSE_APP_REQUESTED,
+        CLOSE_APP_CONFIRMED,
         PANE_LOADED,
         SELECTION_ACTIVE,
         MOUSE_SELECTING,
@@ -275,6 +285,7 @@ namespace code_editor {
         size_t lsp_rename_text_size = 0u;
         gui::TextSelection lsp_hover_selection = {};
         EditorLspPopupKind lsp_popup = EditorLspPopupKind::NONE;
+        EditorCloseIntent close_intent = EditorCloseIntent::NONE;
         bool lsp_rename_text_selected = false;
         EditorSavePathError save_path_error = EditorSavePathError::NONE;
         EditorFlags flags = {EditorFlag::TREE_OPEN};
@@ -300,6 +311,7 @@ namespace code_editor {
     auto open_save_path_popup(EditorState& editor) -> void;
     auto close_save_path_popup(EditorState& editor) -> void;
     auto ensure_filesystem_panel(EditorState& editor) -> void;
+    auto expand_filesystem_tree_to_file(EditorState& editor, size_t tree_file_index) -> void;
     auto focus_first_code_split(EditorState& editor) -> void;
     auto focus_editor_split(EditorState& editor, size_t split) -> void;
     auto set_editor_cursor(EditorState& editor, size_t line, size_t column) -> void;

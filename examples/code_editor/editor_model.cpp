@@ -11,6 +11,9 @@ namespace code_editor {
     inline constexpr EditorCommand EDITOR_COMMANDS[] = {
         {"write", "w", "Save the current file."},
         {"quit", "q", "Close the focused split."},
+        {"new", "n", "Create a scratch buffer."},
+        {"write-quit", "wq", "Save and close the current buffer."},
+        {"quit-force", "q!", "Close the current buffer without saving."},
         {"buffer-close", "bc", "Close the current buffer."},
         {"open", "o", "Open a file from the indexed tree."},
         {"toggle-sidebar", "tree", "Toggle the file tree sidebar."},
@@ -134,6 +137,10 @@ namespace code_editor {
         editor.command_text[0u] = '\0';
         editor.set_flag(EditorFlag::SAVE_REQUESTED, false);
         editor.set_flag(EditorFlag::SAVE_PATH_OPEN, false);
+        editor.set_flag(EditorFlag::NEW_SCRATCH_REQUESTED, false);
+        editor.set_flag(EditorFlag::WRITE_QUIT_REQUESTED, false);
+        editor.set_flag(EditorFlag::CLOSE_CURRENT_FORCE_REQUESTED, false);
+        editor.close_intent = EditorCloseIntent::NONE;
         editor.save_path_error = EditorSavePathError::NONE;
         close_editor_lsp_popup(editor);
         if (clear_dirty) {
@@ -345,6 +352,25 @@ namespace code_editor {
         });
         DEBUG_ASSERT(ok);
         (void)ok;
+    }
+
+    auto expand_filesystem_tree_to_file(EditorState& editor, size_t tree_file_index) -> void {
+        if (tree_file_index >= editor.tree_files.size() ||
+            editor.tree_files[tree_file_index].is_directory) {
+            return;
+        }
+
+        editor.set_flag(EditorFlag::TREE_OPEN, true);
+        size_t depth = editor.tree_files[tree_file_index].depth;
+        for (size_t index = tree_file_index; index > 0u && depth > 0u;) {
+            --index;
+            FileTreeEntry& entry = editor.tree_files[index];
+            if (!entry.is_directory || entry.depth >= depth) {
+                continue;
+            }
+            entry.open = true;
+            depth = entry.depth;
+        }
     }
 
     [[nodiscard]] auto find_open_file_view(EditorPane& pane, StrRef name, StrRef path)
@@ -997,6 +1023,9 @@ namespace code_editor {
 
     auto save_scratch_file(EditorState& editor) -> void {
         if (editor.current_file_path.empty()) {
+            if (editor.current_file_name != SCRATCH_FILE_NAME) {
+                return;
+            }
             editor.scratch_text = copy_editor_text(editor);
             mark_editor_saved(editor);
         }
@@ -2044,21 +2073,31 @@ namespace code_editor {
             close_focused_split(editor);
             break;
         case 2u:
-            editor.set_flag(EditorFlag::CLOSE_CURRENT_REQUESTED, true);
+            editor.set_flag(EditorFlag::NEW_SCRATCH_REQUESTED, true);
             break;
         case 3u:
-            open_file_search(editor);
+            editor.set_flag(EditorFlag::WRITE_QUIT_REQUESTED, true);
             break;
         case 4u:
-            toggle_filesystem_panel(editor);
+            editor.set_flag(EditorFlag::CLOSE_CURRENT_FORCE_REQUESTED, true);
+            editor.set_flag(EditorFlag::CLOSE_CURRENT_REQUESTED, true);
             break;
         case 5u:
-            request_lsp(editor, LspRequestKind::FORMATTING);
+            editor.set_flag(EditorFlag::CLOSE_CURRENT_REQUESTED, true);
             break;
         case 6u:
-            request_lsp(editor, LspRequestKind::DOCUMENT_SYMBOL);
+            open_file_search(editor);
             break;
         case 7u:
+            toggle_filesystem_panel(editor);
+            break;
+        case 8u:
+            request_lsp(editor, LspRequestKind::FORMATTING);
+            break;
+        case 9u:
+            request_lsp(editor, LspRequestKind::DOCUMENT_SYMBOL);
+            break;
+        case 10u:
             toggle_raster_policy(editor);
             break;
         default:
@@ -2124,6 +2163,7 @@ namespace code_editor {
         }
         editor.file_search_selected = std::min(editor.file_search_selected, count - 1u);
         editor.file_search_open_file = matches[editor.file_search_selected].tree_file_index;
+        expand_filesystem_tree_to_file(editor, editor.file_search_open_file);
         close_file_search(editor);
     }
 
@@ -2491,6 +2531,8 @@ namespace code_editor {
                 open_file_search(editor);
             } else if (ch == 'b') {
                 open_buffer_search(editor);
+            } else if (ch == 'n') {
+                editor.set_flag(EditorFlag::NEW_SCRATCH_REQUESTED, true);
             } else if (ch == 'w') {
                 editor.set_flag(EditorFlag::PENDING_WINDOW, true);
             } else if (ch == 'r' || ch == 'c' || ch == 's') {
@@ -3176,6 +3218,14 @@ namespace code_editor {
             request_editor_save(editor);
             return;
         }
+        if (shortcut_key(event, gui::Key::N)) {
+            editor.set_flag(EditorFlag::NEW_SCRATCH_REQUESTED, true);
+            return;
+        }
+        if (shortcut_key(event, gui::Key::W)) {
+            editor.set_flag(EditorFlag::CLOSE_CURRENT_REQUESTED, true);
+            return;
+        }
         if (shortcut_key(event, gui::Key::A)) {
             select_all(editor);
             return;
@@ -3542,6 +3592,7 @@ namespace code_editor {
         hash = hash_bytes(hash, &editor.command_selected, sizeof(editor.command_selected));
         hash = hash_bytes(hash, editor.command_text, editor.command_text_size);
         hash = hash_bytes(hash, &editor.lsp_popup, sizeof(editor.lsp_popup));
+        hash = hash_bytes(hash, &editor.close_intent, sizeof(editor.close_intent));
         hash = hash_bytes(hash, &editor.lsp_selected, sizeof(editor.lsp_selected));
         hash = hash_bytes(hash, &editor.lsp_hover_selection, sizeof(editor.lsp_hover_selection));
         hash = hash_bytes(hash, &editor.lsp_rename_text_size, sizeof(editor.lsp_rename_text_size));
