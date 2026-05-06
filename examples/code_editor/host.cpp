@@ -25,6 +25,7 @@
 #include <dwmapi.h>
 #include <gui/gui.h>
 #include <gui/hot_reload_app.h>
+#include <gui/hot_reload_overlay.h>
 #include <render/render.h>
 #include <windows.h>
 #endif
@@ -1156,6 +1157,13 @@ namespace code_editor {
                 lsp_client_start(lsp_client, launch.save_root_path, CODE_EDITOR_SOURCE_DIR)
             );
         }
+#if BASE_DEBUG
+        gui::HotReloadOverlay hot_reload_overlay = {};
+        gui::HotReloadOverlayState hot_reload_overlay_state = {};
+        bool const hot_reload_overlay_ready = gui::create_hot_reload_overlay(
+            app_arena, render_context, app_state.hwnd, &hot_reload_overlay
+        );
+#endif
         ModuleRuntimeContext module_context = {
             .render_context = render_context,
             .native_window = app_state.hwnd,
@@ -1187,6 +1195,11 @@ namespace code_editor {
 #endif
         if (!module_loaded) {
             gui::destroy_hot_reload_app_module(&module, module_desc);
+#if BASE_DEBUG
+            if (hot_reload_overlay_ready) {
+                gui::destroy_hot_reload_overlay(render_context, &hot_reload_overlay);
+            }
+#endif
             if (lsp_initialized) {
                 lsp_client_shutdown(lsp_client);
             }
@@ -1229,6 +1242,25 @@ namespace code_editor {
                 app_state.mouse_hit_id = {};
                 app_state.redraw_pending = true;
             }
+#if BASE_DEBUG
+            gui::HotReloadStatus reload_overlay = {};
+            bool hot_reload_overlay_visible = false;
+            if (hot_reload_overlay_ready) {
+                reload_overlay = gui::hot_reload_app_module_status(module);
+                bool const module_overlay_visible =
+                    gui::hot_reload_app_module_status_visible(module);
+                if (gui::update_hot_reload_overlay_state(
+                        &hot_reload_overlay_state,
+                        reload_overlay,
+                        module_overlay_visible,
+                        render::window_size(render_window),
+                        &app_state.input
+                    )) {
+                    app_state.redraw_pending = true;
+                }
+                hot_reload_overlay_visible = hot_reload_overlay_state.visible;
+            }
+#endif
             if (process_launch_file_changes(launch)) {
                 module_context.tree_root_name = launch.tree_root_name;
                 module_context.tree_files = launch.tree_files.slice();
@@ -1288,13 +1320,33 @@ namespace code_editor {
             previous_ticks = ticks;
             app_state.redraw_pending = false;
             app_state.input.key_mods = current_key_mods();
+            gui::InputState module_input = app_state.input;
+#if BASE_DEBUG
+            if (hot_reload_overlay_ready) {
+                gui::build_hot_reload_overlay_commands(
+                    &hot_reload_overlay,
+                    render::window_size(render_window),
+                    reload_overlay,
+                    &hot_reload_overlay_state,
+                    app_state.input,
+                    delta_time
+                );
+                if (hot_reload_overlay_state.capture_input) {
+                    module_input.scroll_delta_y = 0.0f;
+                    module_input.mouse_down[0u] = false;
+                    module_input.mouse_double_clicked[0u] = false;
+                    module_input.mouse_triple_clicked[0u] = false;
+                    module_input.key_event_count = 0u;
+                }
+            }
+#endif
 
             FrameResult const frame_result = gui::hot_reload_app_module_api(module)->render_frame(
                 gui::hot_reload_app_module_storage(module),
                 render_context,
                 render_window,
                 render::window_size(render_window),
-                app_state.input,
+                module_input,
                 delta_time
             );
             app_state.last_frame = frame_result.frame;
@@ -1303,6 +1355,18 @@ namespace code_editor {
                 log_render_result("draw::render_commands_to_window", frame_result.render_result);
                 break;
             }
+
+#if BASE_DEBUG
+            if (hot_reload_overlay_ready && hot_reload_overlay_visible) {
+                result = gui::render_hot_reload_overlay(
+                    &hot_reload_overlay, render_context, render_window
+                );
+                if (render::result_failed(result)) {
+                    log_render_result("render_hot_reload_overlay", result);
+                    break;
+                }
+            }
+#endif
 
             result = render::present_window(render_context, render_window);
             app_state.redraw_pending = frame_result.redraw_pending;
@@ -1321,6 +1385,11 @@ namespace code_editor {
 
         close_directory_watcher(launch.tree_watcher);
         gui::destroy_hot_reload_app_module(&module, module_desc);
+#if BASE_DEBUG
+        if (hot_reload_overlay_ready) {
+            gui::destroy_hot_reload_overlay(render_context, &hot_reload_overlay);
+        }
+#endif
         if (lsp_initialized) {
             lsp_client_shutdown(lsp_client);
         }
