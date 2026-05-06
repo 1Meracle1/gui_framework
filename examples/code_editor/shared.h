@@ -99,6 +99,7 @@ namespace code_editor {
         size_t depth = 0u;
         bool is_directory = false;
         bool open = false;
+        bool file_search_visible = true;
     };
 
     struct ModuleRuntimeContext {

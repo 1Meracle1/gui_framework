@@ -540,6 +540,38 @@ namespace {
         TEST_EXPECT(context, editor.file_search_open_file == 1u);
     }
 
+    TEST_CASE(file_search_skips_entries_hidden_from_file_search) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::FileTreeEntry tree[] = {
+            {
+                .name = "tracked.cpp",
+                .path = "C:\\repo\\tracked.cpp",
+                .relative_path = "tracked.cpp",
+            },
+            {
+                .name = "untracked.cpp",
+                .path = "C:\\repo\\untracked.cpp",
+                .relative_path = "untracked.cpp",
+                .file_search_visible = false,
+            },
+        };
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "");
+        editor.tree_files = Slice<code_editor::FileTreeEntry>(tree);
+        editor.file_search_text_size =
+            StrRef("cpp").copy_to(editor.file_search_text, code_editor::FILE_SEARCH_TEXT_CAPACITY);
+        editor.file_search_text[editor.file_search_text_size] = '\0';
+
+        code_editor::FileSearchMatch matches[code_editor::FILE_SEARCH_RESULT_LIMIT] = {};
+        size_t const count = code_editor::collect_file_search_matches(editor, matches);
+
+        TEST_EXPECT(context, count == 1u);
+        TEST_EXPECT(context, matches[0u].tree_file_index == 0u);
+    }
+
     TEST_CASE(file_search_selection_expands_filesystem_tree_to_selected_file) {
         Arena arena = {};
         arena.init();

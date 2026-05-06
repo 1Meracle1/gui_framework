@@ -1869,7 +1869,7 @@ namespace code_editor {
         StrRef const query = editor_file_search_text(editor);
         for (size_t index = 0u; index < editor.tree_files.size(); ++index) {
             FileTreeEntry const& entry = editor.tree_files[index];
-            if (entry.is_directory) {
+            if (entry.is_directory || !entry.file_search_visible) {
                 continue;
             }
 

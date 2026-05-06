@@ -58,6 +58,7 @@ namespace code_editor {
     constexpr DWORD DWM_ATTR_TEXT_COLOR = 36u;
     constexpr COLORREF WINDOW_HEADER_BACKGROUND = RGB(12, 15, 18);
     constexpr COLORREF WINDOW_HEADER_TEXT = RGB(230, 235, 239);
+    constexpr size_t GIT_PATH_LINE_CAPACITY = MAX_PATH * 4u;
 
     struct AppState {
         HWND hwnd = nullptr;
@@ -883,6 +884,41 @@ namespace code_editor {
         return false;
     }
 
+    auto set_file_search_visible(Vec<FileTreeEntry>& files, bool visible) -> void {
+        for (FileTreeEntry& file : files) {
+            file.file_search_visible = visible;
+        }
+    }
+
+    auto mark_file_search_tracked_files(StrRef directory, Vec<FileTreeEntry>& files) -> void {
+        ArenaTemp temp = begin_thread_temp_arena();
+        StrRef const command = fmt::tprintf("git -C \"%s\" ls-files --cached 2>nul", directory);
+        std::FILE* const pipe = _popen(command.data(), "r");
+        if (pipe == nullptr) {
+            return;
+        }
+
+        set_file_search_visible(files, false);
+        char line[GIT_PATH_LINE_CAPACITY] = {};
+        while (std::fgets(line, static_cast<int>(sizeof(line)), pipe) != nullptr) {
+            StrRef const path = StrRef(line).trim_end_matches('\n').trim_end_matches('\r');
+            for (size_t index = 0u; index < path.size(); ++index) {
+                if (line[index] == '/') {
+                    line[index] = '\\';
+                }
+            }
+            for (FileTreeEntry& file : files) {
+                if (!file.is_directory && file.relative_path == path) {
+                    file.file_search_visible = true;
+                    break;
+                }
+            }
+        }
+        if (_pclose(pipe) != 0) {
+            set_file_search_visible(files, true);
+        }
+    }
+
     [[nodiscard]] auto append_tree_entry(
         Arena& arena,
         Vec<FileTreeEntry>& files,
@@ -975,6 +1011,9 @@ namespace code_editor {
                     arena, path, entry.relative_path, files, depth + 1u, old_files
                 ));
             }
+        }
+        if (depth == 0u) {
+            mark_file_search_tracked_files(directory_cstr, files);
         }
         return true;
     }
