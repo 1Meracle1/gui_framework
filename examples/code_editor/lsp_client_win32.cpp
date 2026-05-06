@@ -1187,8 +1187,12 @@ namespace code_editor {
         LspJsonValue const* const data = lsp_json_object_get(result, "data");
         if (data != nullptr && data->kind == LspJsonKind::ARRAY) {
             StrRef const doc_text = current_doc_text(client, pending.path);
+            StrRef doc_line_text = {};
             size_t line = 0u;
             size_t column = 0u;
+            size_t doc_line = 0u;
+            size_t doc_line_start = 0u;
+            bool doc_line_text_ready = false;
             for (size_t index = 0u; index + 4u < data->array.size(); index += 5u) {
                 size_t delta_line = 0u;
                 size_t delta_column = 0u;
@@ -1204,7 +1208,40 @@ namespace code_editor {
                 line += delta_line;
                 column = delta_line == 0u ? column + delta_column : delta_column;
                 LspRange range = {{line, column}, {line, column + length}};
-                range = !doc_text.empty() ? lsp_range_utf16_to_byte(doc_text, range) : range;
+                if (!doc_text.empty()) {
+                    while (doc_line < line && doc_line_start < doc_text.size()) {
+                        while (doc_line_start < doc_text.size() &&
+                               doc_text[doc_line_start] != '\n') {
+                            doc_line_start += 1u;
+                        }
+                        if (doc_line_start == doc_text.size()) {
+                            break;
+                        }
+                        doc_line_start += 1u;
+                        doc_line += 1u;
+                        doc_line_text_ready = false;
+                    }
+                    if (doc_line == line) {
+                        if (!doc_line_text_ready) {
+                            size_t doc_line_end = doc_line_start;
+                            while (doc_line_end < doc_text.size() &&
+                                   doc_text[doc_line_end] != '\n' &&
+                                   doc_text[doc_line_end] != '\r') {
+                                doc_line_end += 1u;
+                            }
+                            doc_line_text =
+                                doc_text.substr(doc_line_start, doc_line_end - doc_line_start);
+                            doc_line_text_ready = true;
+                        }
+                        range.start.column =
+                            lsp_utf16_column_to_byte(doc_line_text, range.start.column);
+                        range.end.column =
+                            lsp_utf16_column_to_byte(doc_line_text, range.end.column);
+                    } else {
+                        range.start.column = 0u;
+                        range.end.column = 0u;
+                    }
+                }
                 if (range.end.column > range.start.column) {
                     BASE_UNUSED(client.semantic_tokens.push_back({
                         .range = range,

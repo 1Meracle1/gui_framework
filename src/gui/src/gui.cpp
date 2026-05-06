@@ -2,6 +2,7 @@
 #include <base/assert.h>
 #include <base/config.h>
 #include <base/memory.h>
+#include <base/stable_hash_map.h>
 #include <cmath>
 #include <cstring>
 #include <gui/gui.h>
@@ -63,8 +64,15 @@ namespace gui {
             bool tree_open_initialized = false;
             bool text_cursor_reveal_requested = false;
             bool text_selection_word_active = false;
-            bool occupied = false;
         };
+
+        struct IdEqual {
+            [[nodiscard]] auto operator()(Id const& lhs, Id const& rhs) const -> bool {
+                return lhs.value == rhs.value;
+            }
+        };
+
+        using StateTable = StableHashMap<Id, StateEntry, HashMapDefaultHasher<Id>, IdEqual>;
 
         struct BoxNode {
             Id id = {};
@@ -166,9 +174,8 @@ namespace gui {
             BoxInfo* infos = nullptr;
             size_t* parent_stack = nullptr;
             Id* focus_order = nullptr;
-            StateEntry* state_table = nullptr;
+            StateTable state_table = {};
             size_t box_capacity = 0u;
-            size_t state_table_size = 0u;
             size_t box_count = 0u;
             size_t parent_stack_count = 0u;
             size_t focus_order_count = 0u;
@@ -1141,23 +1148,12 @@ namespace gui {
 
         [[nodiscard]] auto state_entry(ContextImpl* impl, Id id_value) -> StateEntry* {
             ASSERT(id_value.value != 0u);
-            size_t const mask = impl->state_table_size - 1u;
-            size_t slot = static_cast<size_t>(id_value.value) & mask;
-            for (size_t probe = 0u; probe < impl->state_table_size; ++probe) {
-                StateEntry* const entry = impl->state_table + slot;
-                if (!entry->occupied) {
-                    *entry = {};
-                    entry->occupied = true;
-                    entry->id = id_value;
-                    return entry;
-                }
-                if (entry->id.value == id_value.value) {
-                    return entry;
-                }
-                slot = (slot + 1u) & mask;
+            StateTable::InsertResult const result = impl->state_table.get_or_insert(id_value);
+            ASSERT(result.value != nullptr);
+            if (result.inserted) {
+                result.value->id = id_value;
             }
-            ASSERT_MSG(false, "UI state table is full");
-            return nullptr;
+            return result.value;
         }
 
         [[nodiscard]] auto find_state_entry(ContextImpl const* impl, Id id_value)
@@ -1166,19 +1162,7 @@ namespace gui {
                 return nullptr;
             }
 
-            size_t const mask = impl->state_table_size - 1u;
-            size_t slot = static_cast<size_t>(id_value.value) & mask;
-            for (size_t probe = 0u; probe < impl->state_table_size; ++probe) {
-                StateEntry const* const entry = impl->state_table + slot;
-                if (!entry->occupied) {
-                    return nullptr;
-                }
-                if (entry->id.value == id_value.value) {
-                    return entry;
-                }
-                slot = (slot + 1u) & mask;
-            }
-            return nullptr;
+            return impl->state_table.get(id_value);
         }
 
         [[nodiscard]] auto top_parent_index(ContextImpl const* impl) -> size_t {
@@ -5392,17 +5376,17 @@ namespace gui {
         size_t const capacity = std::max(desc.initial_box_capacity, size_t{16u});
         impl->context_arena = &arena;
         impl->box_capacity = capacity;
-        impl->state_table_size = next_power_of_two(capacity * 4u);
+        bool const state_table_initialized =
+            impl->state_table.init(next_power_of_two(capacity * 4u), arena.resource());
+        ASSERT(state_table_initialized);
         impl->boxes = arena_alloc<BoxNode>(arena, capacity);
         impl->infos = arena_alloc<BoxInfo>(arena, capacity);
         impl->parent_stack = arena_alloc<size_t>(arena, capacity);
         impl->focus_order = arena_alloc<Id>(arena, capacity);
-        impl->state_table = arena_alloc<StateEntry>(arena, impl->state_table_size);
         std::memset(impl->boxes, 0, sizeof(BoxNode) * capacity);
         std::memset(impl->infos, 0, sizeof(BoxInfo) * capacity);
         std::memset(impl->parent_stack, 0, sizeof(size_t) * capacity);
         std::memset(impl->focus_order, 0, sizeof(Id) * capacity);
-        std::memset(impl->state_table, 0, sizeof(StateEntry) * impl->state_table_size);
         impl->frame_arena.init({desc.frame_arena_reserve_size, desc.frame_arena_commit_size});
         impl->theme = desc.theme != nullptr ? *desc.theme : default_theme();
         impl->set_clipboard_text = desc.set_clipboard_text;
@@ -5414,6 +5398,7 @@ namespace gui {
     auto destroy_context(Context& context) -> void {
         ContextImpl* const impl = impl_from_context(context);
         if (impl != nullptr) {
+            impl->state_table.destroy();
             impl->frame_arena.destroy();
         }
         context.handle = nullptr;

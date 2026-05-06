@@ -4782,152 +4782,106 @@ namespace code_editor {
                 );
             }
 
-            float const status_ratio = std::clamp(
-                editor.sidebar_width_percent, SIDEBAR_MIN_WIDTH_PERCENT, SIDEBAR_MAX_WIDTH_PERCENT
-            );
-            if (auto bottom = ui.row(
+            if (auto bottom = ui.scroll_panel(
                     gui::id("bottom_bar"),
                     {
-                        .layout = {
-                            .width = gui::fill(),
-                            .height = gui::px(30.0f),
-                            .gap = EDITOR_SPLIT_GAP,
-                            .align_y = gui::Align::CENTER,
+                        .layout =
+                            {
+                                .width = gui::fill(),
+                                .height = gui::px(30.0f),
+                                .padding = gui::insets(0.0f, 12.0f),
+                                .align_y = gui::Align::CENTER,
+                                .scroll_x = true,
+                                .show_scrollbars = false,
+                            },
+                        .style = {
+                            .background = palette.panel,
+                            .border = palette.border,
+                            .border_thickness = 1.0f,
+                            .radius = 8.0f,
                         },
                     }
                 )) {
-                gui::BoxDesc const status_panel = {
-                    .layout =
+                if (auto row = ui.row(
+                        gui::id("bottom_bar_row"),
                         {
-                            .width = gui::fill(status_ratio),
-                            .height = gui::fill(),
-                            .padding = gui::insets(0.0f, 12.0f),
-                            .align_y = gui::Align::CENTER,
-                            .scroll_x = true,
-                            .show_scrollbars = false,
-                        },
-                    .style = {
-                        .background = palette.panel,
-                        .border = palette.border,
-                        .border_thickness = 1.0f,
-                        .radius = 8.0f,
-                    },
-                };
-                if (auto status = ui.scroll_panel(gui::id("status"), status_panel)) {
-                    if (auto row = ui.row(
-                            gui::id("status_row"),
-                            {
-                                .layout = {
-                                    .width = gui::children(),
-                                    .height = gui::fill(),
-                                    .gap = 7.0f,
-                                    .align_y = gui::Align::CENTER,
-                                },
-                            }
-                        )) {
-                        ui.label(
-                            mode,
-                            {
-                                .layout = {.width = gui::text(), .height = gui::fill()},
-                                .style = {
-                                    .foreground = mode_color,
-                                    .font_size = editor.font_size,
-                                },
-                            }
-                        );
-                        ui.label(
-                            fmt::tprintf(
-                                "Ln %zu, Col %zu",
-                                editor.cursor_line + 1u,
-                                editor.cursor_column + 1u
-                            ),
-                            {
-                                .layout = {.width = gui::text(), .height = gui::fill()},
-                                .style = {
-                                    .foreground = palette.muted,
-                                    .font_size = editor.font_size,
-                                },
-                            }
-                        );
-                        ui.label(
-                            fmt::tprintf("%.0f", editor.font_size),
-                            {
-                                .layout = {.width = gui::text(), .height = gui::fill()},
-                                .style = {
-                                    .foreground = palette.muted,
-                                    .font_size = editor.font_size,
-                                },
-                            }
-                        );
-                    }
-                }
-
-                gui::BoxDesc const command_panel = {
-                    .layout =
-                        {
-                            .width = gui::fill(1.0f - status_ratio),
-                            .height = gui::fill(),
-                            .padding = gui::insets(0.0f, 12.0f),
-                            .align_y = gui::Align::CENTER,
-                            .scroll_x = true,
-                            .show_scrollbars = false,
-                        },
-                    .style = {
-                        .background = palette.panel,
-                        .border = palette.border,
-                        .border_thickness = 1.0f,
-                        .radius = 8.0f,
-                    },
-                };
-                if (auto command = ui.scroll_panel(gui::id("command_line"), command_panel)) {
-                    if (auto row = ui.row(
-                            gui::id("command_line_row"),
-                            {
-                                .layout = {
-                                    .width = gui::children(),
-                                    .height = gui::fill(),
-                                    .align_y = gui::Align::CENTER,
-                                },
-                            }
-                        )) {
-                        if (editor.flag(EditorFlag::TEXT_SEARCH_ACTIVE)) {
-                            ui.label(
-                                fmt::tprintf(":search %s", editor.text_search_text),
-                                {
-                                    .layout = {.width = gui::text(), .height = gui::fill()},
-                                    .style = {
-                                        .foreground = palette.text,
-                                        .font_size = editor.font_size,
-                                    },
-                                }
-                            );
-                        } else if (editor.flag(EditorFlag::COMMAND_LINE_ACTIVE)) {
-                            ui.label(
-                                fmt::tprintf(":%s", editor.command_text),
-                                {
-                                    .layout = {.width = gui::text(), .height = gui::fill()},
-                                    .style = {
-                                        .foreground = palette.text,
-                                        .font_size = editor.font_size,
-                                    },
-                                }
-                            );
-                        } else if (editor.lsp_bridge != nullptr) {
-                            ui.label(
-                                lsp_status_bar_text(editor),
-                                {
-                                    .layout = {.width = gui::text(), .height = gui::fill()},
-                                    .style = {
-                                        .foreground =
-                                            editor.lsp_bridge->status == LspStatusKind::FAILED
-                                                ? palette.preprocessor
-                                            : editor.lsp_bridge->progress_active ? palette.cursor
-                                                                                 : palette.muted,
-                                        .font_size = editor.font_size,
-                                    },
-                                }
-                            );
+                            .layout = {
+                                .width = gui::children(),
+                                .height = gui::fill(),
+                                .gap = 7.0f,
+                                .align_y = gui::Align::CENTER,
+                            },
                         }
+                    )) {
+                    ui.label(
+                        mode,
+                        {
+                            .layout = {.width = gui::text(), .height = gui::fill()},
+                            .style = {
+                                .foreground = mode_color,
+                                .font_size = editor.font_size,
+                            },
+                        }
+                    );
+                    ui.label(
+                        fmt::tprintf(
+                            "Ln %zu, Col %zu", editor.cursor_line + 1u, editor.cursor_column + 1u
+                        ),
+                        {
+                            .layout = {.width = gui::text(), .height = gui::fill()},
+                            .style = {
+                                .foreground = palette.muted,
+                                .font_size = editor.font_size,
+                            },
+                        }
+                    );
+                    ui.label(
+                        fmt::tprintf("Font Size %.0f", editor.font_size),
+                        {
+                            .layout = {.width = gui::text(), .height = gui::fill()},
+                            .style = {
+                                .foreground = palette.muted,
+                                .font_size = editor.font_size,
+                            },
+                        }
+                    );
+                    if (editor.flag(EditorFlag::TEXT_SEARCH_ACTIVE)) {
+                        ui.label(
+                            fmt::tprintf(":search %s", editor.text_search_text),
+                            {
+                                .layout = {.width = gui::text(), .height = gui::fill()},
+                                .style = {
+                                    .foreground = palette.text,
+                                    .font_size = editor.font_size,
+                                },
+                            }
+                        );
+                    } else if (editor.flag(EditorFlag::COMMAND_LINE_ACTIVE)) {
+                        ui.label(
+                            fmt::tprintf(":%s", editor.command_text),
+                            {
+                                .layout = {.width = gui::text(), .height = gui::fill()},
+                                .style = {
+                                    .foreground = palette.text,
+                                    .font_size = editor.font_size,
+                                },
+                            }
+                        );
+                    } else if (editor.lsp_bridge != nullptr) {
+                        ui.label(
+                            lsp_status_bar_text(editor),
+                            {
+                                .layout = {.width = gui::text(), .height = gui::fill()},
+                                .style = {
+                                    .foreground = editor.lsp_bridge->status == LspStatusKind::FAILED
+                                                      ? palette.preprocessor
+                                                  : editor.lsp_bridge->progress_active
+                                                      ? palette.cursor
+                                                      : palette.muted,
+                                    .font_size = editor.font_size,
+                                },
+                            }
+                        );
                     }
                 }
             }
