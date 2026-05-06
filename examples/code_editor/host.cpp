@@ -61,6 +61,7 @@ namespace code_editor {
 
     struct AppState {
         HWND hwnd = nullptr;
+        StrRef window_cache_path = {};
         bool running = true;
         bool redraw_pending = true;
         bool resize_pending = false;
@@ -90,6 +91,7 @@ namespace code_editor {
         StrRef initial_file_path = {};
         StrRef tree_root_name = {};
         StrRef save_root_path = {};
+        StrRef window_cache_path = {};
         Arena tree_arenas[2] = {};
         Vec<FileTreeEntry> tree_files = {};
         DirectoryWatcher tree_watcher = {};
@@ -403,6 +405,180 @@ namespace code_editor {
         fmt::eprintf("%s failed: %s\n", operation, render::result_name(result));
     }
 
+    [[nodiscard]] auto open_read_file(StrRef path) -> std::FILE* {
+        std::FILE* file = nullptr;
+#if defined(_MSC_VER)
+        if (fopen_s(&file, path.data(), "rb") != 0) {
+            return nullptr;
+        }
+#else
+        file = std::fopen(path.data(), "rb");
+#endif
+        return file;
+    }
+
+    [[nodiscard]] auto open_write_file(StrRef path) -> std::FILE* {
+        std::FILE* file = nullptr;
+#if defined(_MSC_VER)
+        if (fopen_s(&file, path.data(), "wb") != 0) {
+            return nullptr;
+        }
+#else
+        file = std::fopen(path.data(), "wb");
+#endif
+        return file;
+    }
+
+    [[nodiscard]] auto append_buffer(char* buffer, size_t capacity, size_t& size, StrRef text)
+        -> bool {
+        if (text.size() >= capacity || size > capacity - text.size() - 1u) {
+            return false;
+        }
+        if (!text.empty()) {
+            std::memcpy(buffer + size, text.data(), text.size());
+            size += text.size();
+        }
+        buffer[size] = '\0';
+        return true;
+    }
+
+    [[nodiscard]] auto cache_key_hash(StrRef key) -> uint64_t {
+        uint64_t hash = 14695981039346656037ull;
+        for (char const ch : key) {
+            hash ^= static_cast<uint8_t>(ch);
+            hash *= 1099511628211ull;
+        }
+        return hash;
+    }
+
+    auto append_hex_u64(char*& out, uint64_t value) -> void {
+        for (int32_t shift = 60; shift >= 0; shift -= 4) {
+            *out++ = hex_digit(static_cast<uint8_t>((value >> shift) & 0x0fu));
+        }
+    }
+
+    [[nodiscard]] auto window_cache_path(Arena& arena, StrRef key) -> StrRef {
+        char root[MAX_PATH * 4] = {};
+        DWORD const root_size =
+            GetEnvironmentVariableA("LOCALAPPDATA", root, static_cast<DWORD>(sizeof(root)));
+        if (root_size == 0u || root_size >= sizeof(root)) {
+            return {};
+        }
+
+        char parent[MAX_PATH * 4] = {};
+        size_t parent_size = 0u;
+        if (!append_buffer(parent, sizeof(parent), parent_size, StrRef(root, root_size)) ||
+            !append_buffer(parent, sizeof(parent), parent_size, "\\gui_framework")) {
+            return {};
+        }
+        BASE_UNUSED(CreateDirectoryA(parent, nullptr));
+
+        char directory[MAX_PATH * 4] = {};
+        size_t directory_size = 0u;
+        if (!append_buffer(directory, sizeof(directory), directory_size, StrRef(parent)) ||
+            !append_buffer(directory, sizeof(directory), directory_size, "\\code_editor")) {
+            return {};
+        }
+        BASE_UNUSED(CreateDirectoryA(directory, nullptr));
+
+        char path[MAX_PATH * 4] = {};
+        size_t path_size = 0u;
+        if (!append_buffer(path, sizeof(path), path_size, StrRef(directory)) ||
+            !append_buffer(path, sizeof(path), path_size, "\\window_")) {
+            return {};
+        }
+        char* out = path + path_size;
+        append_hex_u64(out, cache_key_hash(key));
+        path_size += 16u;
+        if (!append_buffer(path, sizeof(path), path_size, ".txt")) {
+            return {};
+        }
+        return arena_copy_cstr(arena, StrRef(path, path_size));
+    }
+
+    [[nodiscard]] auto read_cached_window_rect(StrRef path, RECT& out_rect) -> bool {
+        std::FILE* const file = open_read_file(path);
+        if (file == nullptr) {
+            return false;
+        }
+
+        long x = 0;
+        long y = 0;
+        long width = 0;
+        long height = 0;
+#if defined(_MSC_VER)
+        int const count = fscanf_s(file, "%ld %ld %ld %ld", &x, &y, &width, &height);
+#else
+        int const count = std::fscanf(file, "%ld %ld %ld %ld", &x, &y, &width, &height);
+#endif
+        std::fclose(file);
+        if (count != 4 || width <= 0 || height <= 0) {
+            return false;
+        }
+
+        out_rect.left = x;
+        out_rect.top = y;
+        out_rect.right = x + width;
+        out_rect.bottom = y + height;
+        return true;
+    }
+
+    auto restore_window_rect(HWND hwnd, StrRef path) -> void {
+        RECT rect = {};
+        if (!read_cached_window_rect(path, rect)) {
+            return;
+        }
+
+        WINDOWPLACEMENT placement = {};
+        placement.length = static_cast<UINT>(sizeof(placement));
+        if (GetWindowPlacement(hwnd, &placement) == FALSE) {
+            return;
+        }
+        placement.showCmd = SW_SHOWNORMAL;
+        placement.rcNormalPosition = rect;
+        BASE_UNUSED(SetWindowPlacement(hwnd, &placement));
+    }
+
+    auto save_window_rect(HWND hwnd, StrRef path) -> void {
+        if (path.empty() || hwnd == nullptr || !IsWindow(hwnd)) {
+            return;
+        }
+
+        WINDOWPLACEMENT placement = {};
+        placement.length = static_cast<UINT>(sizeof(placement));
+        if (GetWindowPlacement(hwnd, &placement) == FALSE) {
+            return;
+        }
+
+        RECT const rect = placement.rcNormalPosition;
+        std::FILE* const file = open_write_file(path);
+        if (file == nullptr) {
+            return;
+        }
+        BASE_UNUSED(
+            fmt::fprintf(
+                file,
+                "%ld %ld %ld %ld\n",
+                rect.left,
+                rect.top,
+                rect.right - rect.left,
+                rect.bottom - rect.top
+            )
+        );
+        std::fclose(file);
+    }
+
+    [[nodiscard]] auto window_client_size(HWND hwnd) -> render::SizeU32 {
+        RECT rect = {};
+        if (GetClientRect(hwnd, &rect) == FALSE) {
+            return {INITIAL_WINDOW_WIDTH, INITIAL_WINDOW_HEIGHT};
+        }
+        return {
+            static_cast<uint32_t>(std::max<LONG>(1, rect.right - rect.left)),
+            static_cast<uint32_t>(std::max<LONG>(1, rect.bottom - rect.top)),
+        };
+    }
+
     auto window_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) -> LRESULT {
         switch (message) {
         case WM_SIZE:
@@ -493,6 +669,7 @@ namespace code_editor {
                     request_redraw(global_app_state);
                     return 0;
                 }
+                save_window_rect(hwnd, global_app_state->window_cache_path);
                 global_app_state->running = false;
             }
             DestroyWindow(hwnd);
@@ -528,7 +705,7 @@ namespace code_editor {
         ));
     }
 
-    [[nodiscard]] auto create_testbed_window(AppState* app_state) -> bool {
+    [[nodiscard]] auto create_testbed_window(AppState* app_state, StrRef window_cache) -> bool {
         HINSTANCE const instance = GetModuleHandleW(nullptr);
         WNDCLASSEXW window_class = {};
         window_class.cbSize = static_cast<UINT>(sizeof(window_class));
@@ -590,6 +767,7 @@ namespace code_editor {
         }
 
         apply_window_header_theme(hwnd);
+        restore_window_rect(hwnd, window_cache);
         app_state->hwnd = hwnd;
         ShowWindow(hwnd, SW_SHOW);
         UpdateWindow(hwnd);
@@ -602,18 +780,6 @@ namespace code_editor {
         }
         app_state->hwnd = nullptr;
         UnregisterClassW(WINDOW_CLASS_NAME, GetModuleHandleW(nullptr));
-    }
-
-    [[nodiscard]] auto open_read_file(StrRef path) -> std::FILE* {
-        std::FILE* file = nullptr;
-#if defined(_MSC_VER)
-        if (fopen_s(&file, path.data(), "rb") != 0) {
-            return nullptr;
-        }
-#else
-        file = std::fopen(path.data(), "rb");
-#endif
-        return file;
     }
 
     [[nodiscard]] auto read_file_text(Arena& arena, StrRef path, StrRef& out_text) -> bool {
@@ -686,19 +852,6 @@ namespace code_editor {
         DWORD const size = GetCurrentDirectoryA(static_cast<DWORD>(sizeof(buffer)), buffer);
         return size != 0u && size < sizeof(buffer) ? arena_copy_cstr(arena, StrRef(buffer, size))
                                                    : StrRef();
-    }
-
-    [[nodiscard]] auto append_buffer(char* buffer, size_t capacity, size_t& size, StrRef text)
-        -> bool {
-        if (text.size() >= capacity || size > capacity - text.size() - 1u) {
-            return false;
-        }
-        if (!text.empty()) {
-            std::memcpy(buffer + size, text.data(), text.size());
-            size += text.size();
-        }
-        buffer[size] = '\0';
-        return true;
     }
 
     [[nodiscard]] auto child_path_cstr(Arena& arena, StrRef directory, StrRef name) -> StrRef {
@@ -835,6 +988,7 @@ namespace code_editor {
         }
         if (initial_path.empty()) {
             launch.save_root_path = current_directory_cstr(arena);
+            launch.window_cache_path = window_cache_path(arena, launch.save_root_path);
             launch.tree_root_name = arena_copy_str(arena, path_leaf(launch.save_root_path));
             return true;
         }
@@ -845,6 +999,7 @@ namespace code_editor {
         }
 
         StrRef const path = path_without_trailing_slash(full_path);
+        launch.window_cache_path = window_cache_path(arena, path);
         if (path_is_directory(full_path)) {
             launch.save_root_path = path;
             launch.tree_root_name = arena_copy_str(arena, path_leaf(path));
@@ -916,8 +1071,9 @@ namespace code_editor {
         }
 
         AppState app_state = {};
+        app_state.window_cache_path = launch.window_cache_path;
         global_app_state = &app_state;
-        if (!create_testbed_window(&app_state)) {
+        if (!create_testbed_window(&app_state, launch.window_cache_path)) {
             global_app_state = nullptr;
             return 1;
         }
@@ -939,7 +1095,7 @@ namespace code_editor {
         render::Window render_window = {};
         render::WindowDesc window_desc = {};
         window_desc.native_window = app_state.hwnd;
-        window_desc.size = {INITIAL_WINDOW_WIDTH, INITIAL_WINDOW_HEIGHT};
+        window_desc.size = window_client_size(app_state.hwnd);
         window_desc.buffer_count = 2u;
         window_desc.present_mode = render::PresentMode::VSYNC;
 
@@ -1131,6 +1287,7 @@ namespace code_editor {
         }
         render::destroy_window(render_window);
         render::destroy_context(render_context);
+        save_window_rect(app_state.hwnd, launch.window_cache_path);
         destroy_testbed_window(&app_state);
         global_app_state = nullptr;
         return 0;
