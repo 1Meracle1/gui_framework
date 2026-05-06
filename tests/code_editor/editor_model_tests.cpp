@@ -750,6 +750,140 @@ namespace {
         TEST_EXPECT(context, editor.flag(EditorFlag::FILE_SEARCH_OPEN));
     }
 
+    TEST_CASE(editor_slash_searches_current_buffer_and_repeats_matches) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "alpha\nbeta alpha\ngamma alpha");
+
+        send_text(editor, "/alp");
+
+        TEST_EXPECT(context, editor.flag(EditorFlag::TEXT_SEARCH_ACTIVE));
+        TEST_EXPECT(context, code_editor::editor_text_search_text(editor) == "alp");
+        code_editor::EditorSelectionRange selection = code_editor::editor_selection_range(editor);
+        TEST_EXPECT(context, selection.active);
+        TEST_EXPECT(context, selection.start_line == 0u);
+        TEST_EXPECT(context, selection.start_column == 0u);
+        TEST_EXPECT(context, selection.end_line == 0u);
+        TEST_EXPECT(context, selection.end_column == 3u);
+
+        press_key(editor, gui::Key::ENTER);
+        TEST_EXPECT(context, !editor.flag(EditorFlag::TEXT_SEARCH_ACTIVE));
+
+        send_text(editor, "n");
+        selection = code_editor::editor_selection_range(editor);
+        TEST_EXPECT(context, selection.start_line == 1u);
+        TEST_EXPECT(context, selection.start_column == 5u);
+        TEST_EXPECT(context, selection.end_line == 1u);
+        TEST_EXPECT(context, selection.end_column == 8u);
+
+        send_text(editor, "N");
+        selection = code_editor::editor_selection_range(editor);
+        TEST_EXPECT(context, selection.start_line == 0u);
+        TEST_EXPECT(context, selection.start_column == 0u);
+        TEST_EXPECT(context, selection.end_line == 0u);
+        TEST_EXPECT(context, selection.end_column == 3u);
+    }
+
+    TEST_CASE(editor_text_search_uses_direct_case_insensitive_matches) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "aXlpha\nAlpha");
+
+        send_text(editor, "/alp");
+
+        code_editor::EditorSelectionRange const selection =
+            code_editor::editor_selection_range(editor);
+        TEST_EXPECT(context, selection.active);
+        TEST_EXPECT(context, selection.start_line == 1u);
+        TEST_EXPECT(context, selection.start_column == 0u);
+        TEST_EXPECT(context, selection.end_line == 1u);
+        TEST_EXPECT(context, selection.end_column == 3u);
+    }
+
+    TEST_CASE(editor_text_search_starts_at_cursor_line_before_wrapping) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "target\nother\nTARGET\ntarget");
+        editor.cursor_line = 2u;
+        editor.cursor_column = 0u;
+
+        send_text(editor, "/target");
+
+        code_editor::EditorSelectionRange selection = code_editor::editor_selection_range(editor);
+        TEST_EXPECT(context, selection.active);
+        TEST_EXPECT(context, selection.start_line == 2u);
+        TEST_EXPECT(context, selection.start_column == 0u);
+        TEST_EXPECT(context, selection.end_line == 2u);
+        TEST_EXPECT(context, selection.end_column == 6u);
+
+        press_key(editor, gui::Key::ENTER);
+        send_text(editor, "n");
+        selection = code_editor::editor_selection_range(editor);
+        TEST_EXPECT(context, selection.start_line == 3u);
+        send_text(editor, "n");
+        selection = code_editor::editor_selection_range(editor);
+        TEST_EXPECT(context, selection.start_line == 0u);
+    }
+
+    TEST_CASE(editor_text_search_shift_n_can_wrap_above_origin_line) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "target\nother");
+        editor.cursor_line = 1u;
+        editor.cursor_column = 0u;
+
+        send_text(editor, "/target");
+        TEST_EXPECT(context, !code_editor::editor_selection_range(editor).active);
+
+        press_key(editor, gui::Key::ENTER);
+        TEST_EXPECT(context, !editor.flag(EditorFlag::TEXT_SEARCH_ACTIVE));
+
+        send_text(editor, "N");
+        code_editor::EditorSelectionRange const selection =
+            code_editor::editor_selection_range(editor);
+        TEST_EXPECT(context, selection.active);
+        TEST_EXPECT(context, selection.start_line == 0u);
+        TEST_EXPECT(context, selection.start_column == 0u);
+        TEST_EXPECT(context, selection.end_line == 0u);
+        TEST_EXPECT(context, selection.end_column == 6u);
+    }
+
+    TEST_CASE(editor_search_command_opens_buffer_search_input) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "alpha\nbeta\ngamma");
+
+        send_text(editor, ":search");
+        press_key(editor, gui::Key::ENTER);
+        TEST_EXPECT(context, editor.flag(EditorFlag::TEXT_SEARCH_ACTIVE));
+        press_key(editor, gui::Key::ESCAPE);
+
+        send_text(editor, ":s");
+        press_key(editor, gui::Key::ENTER);
+
+        TEST_EXPECT(context, editor.flag(EditorFlag::TEXT_SEARCH_ACTIVE));
+        TEST_EXPECT(context, code_editor::editor_text_search_text(editor).empty());
+
+        send_text(editor, "gam");
+        code_editor::EditorSelectionRange const selection =
+            code_editor::editor_selection_range(editor);
+        TEST_EXPECT(context, selection.active);
+        TEST_EXPECT(context, selection.start_line == 2u);
+        TEST_EXPECT(context, selection.start_column == 0u);
+        TEST_EXPECT(context, selection.end_line == 2u);
+        TEST_EXPECT(context, selection.end_column == 3u);
+    }
+
     TEST_CASE(editor_new_scratch_shortcuts_request_scratch_buffer) {
         Arena arena = {};
         arena.init();

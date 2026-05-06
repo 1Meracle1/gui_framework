@@ -18,6 +18,7 @@ namespace code_editor {
         {"open", "o", "Open a file from the indexed tree."},
         {"toggle-sidebar", "tree", "Toggle the file tree sidebar."},
         {"format", "fmt", "Format the current C/C++ file."},
+        {"search", "s", "Search the current buffer."},
         {"symbols", "sym", "Open document symbols."},
         {"toggle-raster-policy", "rp", "Toggle text raster policy."},
     };
@@ -131,6 +132,10 @@ namespace code_editor {
         editor.file_search_open_file = FILE_SEARCH_NO_FILE;
         editor.set_flag(EditorFlag::BUFFER_SEARCH_OPEN, false);
         editor.buffer_search_open_file = FILE_SEARCH_NO_FILE;
+        editor.set_flag(EditorFlag::TEXT_SEARCH_ACTIVE, false);
+        editor.text_search_text_size = 0u;
+        editor.text_search_origin_line = 0u;
+        editor.text_search_text[0u] = '\0';
         editor.set_flag(EditorFlag::COMMAND_LINE_ACTIVE, false);
         editor.command_text_size = 0u;
         editor.command_selected = 0u;
@@ -1073,6 +1078,7 @@ namespace code_editor {
         editor.file_search_open_file = FILE_SEARCH_NO_FILE;
         editor.set_flag(EditorFlag::BUFFER_SEARCH_OPEN, false);
         editor.buffer_search_open_file = FILE_SEARCH_NO_FILE;
+        editor.set_flag(EditorFlag::TEXT_SEARCH_ACTIVE, false);
         clear_save_path_text(editor);
 
         StrRef const root = save_root_without_trailing_slash(editor.save_root_path);
@@ -1745,6 +1751,10 @@ namespace code_editor {
         return StrRef(editor.command_text, editor.command_text_size);
     }
 
+    [[nodiscard]] auto editor_text_search_text(EditorState const& editor) -> StrRef {
+        return StrRef(editor.text_search_text, editor.text_search_text_size);
+    }
+
     [[nodiscard]] auto editor_command_count() -> size_t {
         return sizeof(EDITOR_COMMANDS) / sizeof(EDITOR_COMMANDS[0u]);
     }
@@ -2003,6 +2013,7 @@ namespace code_editor {
         editor.file_search_reveal_selected = true;
         editor.file_search_open_file = FILE_SEARCH_NO_FILE;
         editor.buffer_search_open_file = FILE_SEARCH_NO_FILE;
+        editor.set_flag(EditorFlag::TEXT_SEARCH_ACTIVE, false);
         editor.set_flag(EditorFlag::SAVE_PATH_OPEN, false);
         editor.save_path_error = EditorSavePathError::NONE;
         editor.set_flag(EditorFlag::PENDING_LEADER, false);
@@ -2041,6 +2052,7 @@ namespace code_editor {
         }
         editor.file_search_open_file = FILE_SEARCH_NO_FILE;
         editor.buffer_search_open_file = FILE_SEARCH_NO_FILE;
+        editor.set_flag(EditorFlag::TEXT_SEARCH_ACTIVE, false);
         editor.set_flag(EditorFlag::SAVE_PATH_OPEN, false);
         editor.save_path_error = EditorSavePathError::NONE;
         editor.set_flag(EditorFlag::PENDING_LEADER, false);
@@ -2102,8 +2114,219 @@ namespace code_editor {
         editor.file_search_open_file = FILE_SEARCH_NO_FILE;
         editor.set_flag(EditorFlag::BUFFER_SEARCH_OPEN, false);
         editor.buffer_search_open_file = FILE_SEARCH_NO_FILE;
+        editor.set_flag(EditorFlag::TEXT_SEARCH_ACTIVE, false);
         editor.set_flag(EditorFlag::SAVE_PATH_OPEN, false);
         editor.save_path_error = EditorSavePathError::NONE;
+    }
+
+    struct TextSearchMatch {
+        EditorPosition start = {};
+        EditorPosition end = {};
+    };
+
+    [[nodiscard]] auto direct_line_match_at(StrRef line, StrRef query, size_t start) -> bool {
+        if (query.size() > line.size() - start) {
+            return false;
+        }
+        for (size_t index = 0u; index < query.size(); ++index) {
+            if (to_ascii_lower(line[start + index]) != to_ascii_lower(query[index])) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    [[nodiscard]] auto
+    direct_line_match(StrRef line, StrRef query, size_t column, size_t& out_start) -> bool {
+        if (query.empty() || query.size() > line.size()) {
+            return false;
+        }
+        size_t const last_start = line.size() - query.size();
+        if (column > last_start) {
+            return false;
+        }
+        char const first = to_ascii_lower(query[0u]);
+        for (size_t start = column; start <= last_start; ++start) {
+            if (to_ascii_lower(line[start]) == first && direct_line_match_at(line, query, start)) {
+                out_start = start;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    [[nodiscard]] auto
+    direct_line_match_before(StrRef line, StrRef query, size_t column, size_t& out_start) -> bool {
+        if (query.empty() || query.size() > line.size()) {
+            return false;
+        }
+        size_t const end_column = std::min(column, line.size());
+        if (end_column < query.size()) {
+            return false;
+        }
+        char const first = to_ascii_lower(query[0u]);
+        size_t start = end_column - query.size() + 1u;
+        while (start != 0u) {
+            start -= 1u;
+            if (to_ascii_lower(line[start]) == first && direct_line_match_at(line, query, start)) {
+                out_start = start;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    [[nodiscard]] auto find_text_search_match(
+        EditorState const& editor, EditorPosition origin, bool wrap, TextSearchMatch& match
+    ) -> bool {
+        StrRef const query = editor_text_search_text(editor);
+        size_t const line_count = editor_line_count(editor);
+        origin = clamp_position(editor, origin);
+        size_t const step_count = wrap ? line_count : line_count - origin.line;
+        for (size_t step = 0u; step < step_count; ++step) {
+            size_t const line_index = (origin.line + step) % line_count;
+            StrRef const line = editor_line_text(editor_line(editor, line_index));
+            size_t const column = step == 0u ? origin.column : 0u;
+            size_t start = 0u;
+            if (direct_line_match(line, query, column, start)) {
+                match = {{line_index, start}, {line_index, start + query.size()}};
+                return true;
+            }
+        }
+        return false;
+    }
+
+    [[nodiscard]] auto find_previous_text_search_match(
+        EditorState const& editor, EditorPosition origin, TextSearchMatch& match
+    ) -> bool {
+        StrRef const query = editor_text_search_text(editor);
+        size_t const line_count = editor_line_count(editor);
+        origin = clamp_position(editor, origin);
+        for (size_t step = 0u; step < line_count; ++step) {
+            size_t const line_index = (origin.line + line_count - step) % line_count;
+            StrRef const line = editor_line_text(editor_line(editor, line_index));
+            size_t const column = step == 0u ? origin.column : line.size();
+            size_t start = 0u;
+            if (direct_line_match_before(line, query, column, start)) {
+                match = {{line_index, start}, {line_index, start + query.size()}};
+                return true;
+            }
+        }
+        return false;
+    }
+
+    auto select_text_search_match(EditorState& editor, TextSearchMatch match) -> void {
+        editor.selection_anchor_line = match.start.line;
+        editor.selection_anchor_column = match.start.column;
+        editor.cursor_line = match.end.line;
+        editor.cursor_column = match.end.column;
+        editor.preferred_column = editor.cursor_column;
+        editor.selection_mode = EditorSelectionMode::NONE;
+        editor.set_flag(EditorFlag::SELECTION_ACTIVE, true);
+        if (split_valid(editor, editor.focused_split)) {
+            center_cursor(editor, editor.split_nodes[editor.focused_split].rect);
+        }
+    }
+
+    [[nodiscard]] auto update_text_search_selection(EditorState& editor) -> bool {
+        if (editor_text_search_text(editor).empty()) {
+            clear_selection(editor);
+            return false;
+        }
+        TextSearchMatch match = {};
+        if (!find_text_search_match(editor, {editor.text_search_origin_line, 0u}, false, match)) {
+            clear_selection(editor);
+            return false;
+        }
+        select_text_search_match(editor, match);
+        return true;
+    }
+
+    auto set_text_search_text(EditorState& editor, StrRef text) -> void {
+        editor.text_search_text_size =
+            text.copy_to(editor.text_search_text, TEXT_SEARCH_TEXT_CAPACITY - 1u);
+        editor.text_search_text[editor.text_search_text_size] = '\0';
+    }
+
+    auto open_text_search(EditorState& editor) -> void {
+        if (focused_pane_kind(editor) != EditorPaneKind::CODE) {
+            return;
+        }
+        set_text_search_text(editor, {});
+        editor.text_search_origin_line = editor.cursor_line;
+        editor.set_flag(EditorFlag::TEXT_SEARCH_ACTIVE, true);
+        editor.set_flag(EditorFlag::COMMAND_LINE_ACTIVE, false);
+        editor.set_flag(EditorFlag::FILE_SEARCH_OPEN, false);
+        editor.file_search_open_file = FILE_SEARCH_NO_FILE;
+        editor.set_flag(EditorFlag::BUFFER_SEARCH_OPEN, false);
+        editor.buffer_search_open_file = FILE_SEARCH_NO_FILE;
+        editor.set_flag(EditorFlag::SAVE_PATH_OPEN, false);
+        editor.save_path_error = EditorSavePathError::NONE;
+        editor.set_flag(EditorFlag::PENDING_LEADER, false);
+        editor.set_flag(EditorFlag::PENDING_WINDOW, false);
+        editor.set_flag(EditorFlag::PENDING_D, false);
+        editor.set_flag(EditorFlag::PENDING_G, false);
+        editor.set_flag(EditorFlag::PENDING_R, false);
+        editor.set_flag(EditorFlag::PENDING_LSP, false);
+        editor.set_flag(EditorFlag::PENDING_Z, false);
+        editor.pending_line_number = 0u;
+        editor.set_flag(EditorFlag::PENDING_LINE_NUMBER_ACTIVE, false);
+    }
+
+    auto finish_text_search(EditorState& editor) -> void {
+        BASE_UNUSED(update_text_search_selection(editor));
+        editor.set_flag(EditorFlag::TEXT_SEARCH_ACTIVE, false);
+    }
+
+    auto repeat_text_search(EditorState& editor, bool reverse) -> void {
+        if (editor_text_search_text(editor).empty()) {
+            return;
+        }
+        EditorSelectionRange const selection = editor_selection_range(editor);
+        EditorPosition const origin = selection.active
+                                          ? EditorPosition{
+                                                reverse ? selection.start_line : selection.end_line,
+                                                reverse ? selection.start_column
+                                                        : selection.end_column,
+                                            }
+                                          : cursor_position(editor);
+        TextSearchMatch match = {};
+        bool const found = reverse ? find_previous_text_search_match(editor, origin, match)
+                                   : find_text_search_match(editor, origin, true, match);
+        if (found) {
+            select_text_search_match(editor, match);
+        }
+    }
+
+    auto handle_text_search_event(EditorState& editor, gui::KeyEvent const& event) -> void {
+        if (event.kind == gui::KeyEventKind::TEXT) {
+            bool const text_input =
+                (event.mods & (gui::KEY_MOD_CTRL | gui::KEY_MOD_ALT | gui::KEY_MOD_SUPER)) == 0u;
+            if (text_input && event.codepoint >= 32u && event.codepoint <= 126u &&
+                editor.text_search_text_size + 1u < TEXT_SEARCH_TEXT_CAPACITY) {
+                editor.text_search_text[editor.text_search_text_size] =
+                    static_cast<char>(event.codepoint);
+                editor.text_search_text_size += 1u;
+                editor.text_search_text[editor.text_search_text_size] = '\0';
+                BASE_UNUSED(update_text_search_selection(editor));
+            }
+            return;
+        }
+
+        if (event.kind != gui::KeyEventKind::PRESS && event.kind != gui::KeyEventKind::REPEAT) {
+            return;
+        }
+        if (event.key == gui::Key::ESCAPE) {
+            editor.set_flag(EditorFlag::TEXT_SEARCH_ACTIVE, false);
+        } else if (event.key == gui::Key::ENTER) {
+            finish_text_search(editor);
+        } else if (event.key == gui::Key::BACKSPACE && editor.text_search_text_size != 0u) {
+            editor.text_search_text_size -= 1u;
+            editor.text_search_text[editor.text_search_text_size] = '\0';
+            BASE_UNUSED(update_text_search_selection(editor));
+        } else if (event.key == gui::Key::BACKSPACE) {
+            editor.set_flag(EditorFlag::TEXT_SEARCH_ACTIVE, false);
+        }
     }
 
     auto run_editor_command(EditorState& editor, size_t index) -> void {
@@ -2137,9 +2360,12 @@ namespace code_editor {
             request_lsp(editor, LspRequestKind::FORMATTING);
             break;
         case 9u:
-            request_lsp(editor, LspRequestKind::DOCUMENT_SYMBOL);
+            open_text_search(editor);
             break;
         case 10u:
+            request_lsp(editor, LspRequestKind::DOCUMENT_SYMBOL);
+            break;
+        case 11u:
             toggle_raster_policy(editor);
             break;
         default:
@@ -2644,6 +2870,9 @@ namespace code_editor {
         case ':':
             open_command_line(editor);
             break;
+        case '/':
+            open_text_search(editor);
+            break;
         case 'K':
             request_lsp(editor, LspRequestKind::HOVER);
             break;
@@ -2734,6 +2963,12 @@ namespace code_editor {
             break;
         case 'P':
             paste_around_selection(editor, clipboard, false);
+            break;
+        case 'n':
+            repeat_text_search(editor, false);
+            break;
+        case 'N':
+            repeat_text_search(editor, true);
             break;
         case '>':
             indent_selection(editor, true);
@@ -3395,6 +3630,10 @@ namespace code_editor {
             if (handle_lsp_popup_event(editor, event)) {
                 continue;
             }
+            if (editor.flag(EditorFlag::TEXT_SEARCH_ACTIVE)) {
+                handle_text_search_event(editor, event);
+                continue;
+            }
             if (editor.flag(EditorFlag::COMMAND_LINE_ACTIVE)) {
                 handle_command_line_event(editor, event);
                 continue;
@@ -3647,6 +3886,12 @@ namespace code_editor {
         hash = hash_bytes(hash, &editor.command_text_size, sizeof(editor.command_text_size));
         hash = hash_bytes(hash, &editor.command_selected, sizeof(editor.command_selected));
         hash = hash_bytes(hash, editor.command_text, editor.command_text_size);
+        hash =
+            hash_bytes(hash, &editor.text_search_text_size, sizeof(editor.text_search_text_size));
+        hash = hash_bytes(
+            hash, &editor.text_search_origin_line, sizeof(editor.text_search_origin_line)
+        );
+        hash = hash_bytes(hash, editor.text_search_text, editor.text_search_text_size);
         hash = hash_bytes(hash, &editor.lsp_popup, sizeof(editor.lsp_popup));
         hash = hash_bytes(hash, &editor.close_intent, sizeof(editor.close_intent));
         hash = hash_bytes(hash, &editor.lsp_selected, sizeof(editor.lsp_selected));

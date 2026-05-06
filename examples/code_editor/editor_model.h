@@ -36,6 +36,7 @@ namespace code_editor {
     inline constexpr size_t LSP_RENAME_TEXT_CAPACITY = 128u;
     inline constexpr size_t SAVE_PATH_TEXT_CAPACITY = 1024u;
     inline constexpr size_t COMMAND_TEXT_CAPACITY = 256u;
+    inline constexpr size_t TEXT_SEARCH_TEXT_CAPACITY = 256u;
 
     struct EditorCommand {
         StrRef name = {};
@@ -184,6 +185,7 @@ namespace code_editor {
         TREE_OPEN,
         FILE_SEARCH_OPEN,
         BUFFER_SEARCH_OPEN,
+        TEXT_SEARCH_ACTIVE,
         COMMAND_LINE_ACTIVE,
         SAVE_REQUESTED,
         SAVE_PATH_OPEN,
@@ -259,9 +261,12 @@ namespace code_editor {
         char file_search_text[FILE_SEARCH_TEXT_CAPACITY] = {};
         char save_path_text[SAVE_PATH_TEXT_CAPACITY] = {};
         char command_text[COMMAND_TEXT_CAPACITY] = {};
+        char text_search_text[TEXT_SEARCH_TEXT_CAPACITY] = {};
         gui::Vec2 file_search_mouse_pos = {};
         size_t file_search_text_size = 0u;
         size_t command_text_size = 0u;
+        size_t text_search_text_size = 0u;
+        size_t text_search_origin_line = 0u;
         size_t command_selected = 0u;
         size_t file_search_selected = 0u;
         size_t lsp_selected = 0u;
@@ -340,6 +345,7 @@ namespace code_editor {
     [[nodiscard]] auto editor_selection_range(EditorState const& editor) -> EditorSelectionRange;
     [[nodiscard]] auto editor_file_search_text(EditorState const& editor) -> StrRef;
     [[nodiscard]] auto editor_command_text(EditorState const& editor) -> StrRef;
+    [[nodiscard]] auto editor_text_search_text(EditorState const& editor) -> StrRef;
     [[nodiscard]] auto editor_command_count() -> size_t;
     [[nodiscard]] auto editor_command(size_t index) -> EditorCommand;
     [[nodiscard]] auto editor_selected_command(EditorState const& editor) -> EditorCommand;

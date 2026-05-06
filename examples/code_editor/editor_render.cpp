@@ -4271,7 +4271,18 @@ namespace code_editor {
                                 },
                             }
                         )) {
-                        if (editor.flag(EditorFlag::COMMAND_LINE_ACTIVE)) {
+                        if (editor.flag(EditorFlag::TEXT_SEARCH_ACTIVE)) {
+                            ui.label(
+                                fmt::tprintf(":search %s", editor.text_search_text),
+                                {
+                                    .layout = {.width = gui::text(), .height = gui::fill()},
+                                    .style = {
+                                        .foreground = palette.text,
+                                        .font_size = editor.font_size,
+                                    },
+                                }
+                            );
+                        } else if (editor.flag(EditorFlag::COMMAND_LINE_ACTIVE)) {
                             ui.label(
                                 fmt::tprintf(":%s", editor.command_text),
                                 {
