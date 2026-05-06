@@ -3044,6 +3044,20 @@ namespace code_editor {
         size_t lines = 0u;
     };
 
+    inline constexpr float LSP_POPUP_PADDING_X = 10.0f;
+    inline constexpr float LSP_POPUP_PADDING_Y = 8.0f;
+    inline constexpr float LSP_POPUP_SCROLL_EPSILON = 2.0f;
+    inline constexpr size_t LSP_HOVER_MAX_VISIBLE_LINES = 18u;
+
+    [[nodiscard]] auto lsp_text_line_height(font_cache::Font font, float font_size) -> float {
+        if (!font_cache::font_valid(font)) {
+            return font_size * 1.25f;
+        }
+        font_provider::Metrics metrics = {};
+        font_cache::metrics_from_font(font, font_size, metrics);
+        return std::ceil(metrics.ascent + metrics.descent + 4.0f);
+    }
+
     [[nodiscard]] auto
     measure_lsp_text(font_cache::Font font, float font_size, StrRef text, size_t max_lines)
         -> LspTextMetrics {
@@ -3053,6 +3067,9 @@ namespace code_editor {
             StrRef const line = next_text_line(text, offset);
             metrics.width =
                 std::max(metrics.width, font_cache::text_advance(font, font_size, line));
+            metrics.lines += 1u;
+        }
+        if (!text.empty() && text[text.size() - 1u] == '\n' && metrics.lines < max_lines) {
             metrics.lines += 1u;
         }
         if (metrics.lines == 0u) {
@@ -3071,8 +3088,8 @@ namespace code_editor {
         size_t max_lines
     ) -> void {
         draw::Rect const clip = {
-            {panel.min.x + 10.0f, panel.min.y + 8.0f},
-            {panel.max.x - 10.0f, panel.max.y - 8.0f},
+            {panel.min.x + LSP_POPUP_PADDING_X, panel.min.y + LSP_POPUP_PADDING_Y},
+            {panel.max.x - LSP_POPUP_PADDING_X, panel.max.y - LSP_POPUP_PADDING_Y},
         };
         draw::push_clip_rect(context, clip);
         draw::TextStyle style = {
@@ -3081,7 +3098,7 @@ namespace code_editor {
             .color = to_draw_color(palette.text),
         };
         float y = clip.min.y;
-        float const line_height = editor_line_height(editor);
+        float const line_height = lsp_text_line_height(font, editor.font_size);
         size_t offset = 0u;
         size_t line_count = 0u;
         while (offset < text.size() && line_count < max_lines) {
@@ -3167,6 +3184,9 @@ namespace code_editor {
                 1u, static_cast<size_t>(std::ceil(width / std::max(1.0f, wrap_width)))
             );
         }
+        if (!text.empty() && text[text.size() - 1u] == '\n') {
+            count += 1u;
+        }
         return std::max<size_t>(1u, count);
     }
 
@@ -3194,23 +3214,19 @@ namespace code_editor {
         float const max_width =
             std::max(120.0f, std::min(1040.0f, content.max.x - content.min.x - 8.0f));
         float const min_width = std::min(360.0f, max_width);
-        float const width = std::clamp(metrics.width + 22.0f, min_width, max_width);
-        float const wrap_width = std::max(1.0f, width - 20.0f);
-        float const line_height = editor_line_height(editor);
-        size_t constexpr BASE_LINES = 18u;
+        float const width = std::clamp(
+            metrics.width + 2.0f * LSP_POPUP_PADDING_X + LSP_POPUP_SCROLL_EPSILON,
+            min_width,
+            max_width
+        );
+        float const wrap_width = std::max(1.0f, width - 2.0f * LSP_POPUP_PADDING_X);
+        float const line_height = lsp_text_line_height(font, editor.font_size);
         size_t const lines = lsp_wrapped_line_count(
             font, editor.font_size, editor.lsp_bridge->hover.text, wrap_width
         );
-        float const content_height = static_cast<float>(lines) * line_height + 18.0f;
-        float const base_height =
-            std::min(content_height, static_cast<float>(BASE_LINES) * line_height + 18.0f);
-        float const line_top =
-            content.min.y + static_cast<float>(line) * line_height - editor.scroll_y;
-        float const below = std::max(0.0f, content.max.y - (line_top + line_height + 7.0f));
-        float const above = std::max(0.0f, line_top - content.min.y - 7.0f);
-        float const expand_height = std::max(base_height, std::max(above, below) * 0.45f);
         float const height =
-            content_height > base_height ? std::min(content_height, expand_height) : base_height;
+            static_cast<float>(std::min(lines, LSP_HOVER_MAX_VISIBLE_LINES)) * line_height +
+            2.0f * LSP_POPUP_PADDING_Y + LSP_POPUP_SCROLL_EPSILON;
         draw::Rect const panel =
             lsp_anchor_panel(editor, rect, char_width, line, column, width, height);
         return panel;
@@ -3259,7 +3275,7 @@ namespace code_editor {
                             .width = gui::px(width),
                             .height = gui::px(height),
                             .margin = gui::insets(panel.min.y, 0.0f, 0.0f, panel.min.x),
-                            .padding = gui::insets(8.0f, 10.0f),
+                            .padding = gui::insets(LSP_POPUP_PADDING_Y, LSP_POPUP_PADDING_X),
                         },
                     .style =
                         {
@@ -3316,7 +3332,7 @@ namespace code_editor {
         size_t constexpr MAX_LINES = static_cast<size_t>(-1);
         LspTextMetrics const metrics =
             measure_lsp_text(font, editor.font_size, diagnostic->message, MAX_LINES);
-        float const line_height = editor_line_height(editor);
+        float const line_height = lsp_text_line_height(font, editor.font_size);
         draw::Rect const panel = lsp_anchor_panel(
             editor,
             rect,
