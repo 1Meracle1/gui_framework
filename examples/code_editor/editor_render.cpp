@@ -42,6 +42,7 @@ namespace code_editor {
     inline constexpr size_t FILE_SEARCH_PREVIEW_TEXT_CAPACITY = 32u * 1024u;
     inline constexpr size_t FILE_SEARCH_PREVIEW_COLUMN_LIMIT = 128u;
     inline constexpr size_t FILE_SEARCH_PREVIEW_TOKENS_PER_LINE = 64u;
+    inline constexpr size_t FILE_SEARCH_PREVIEW_TOKEN_LIMIT = 384u;
     inline constexpr float COMMAND_OVERLAY_HEIGHT = 88.0f;
     inline constexpr float COMMAND_LIST_HEIGHT = 30.0f;
     inline constexpr char OVERWRITE_FILE_KEY = 'o';
@@ -1071,7 +1072,8 @@ namespace code_editor {
         gui::Rect rect,
         gui::InputState const& input,
         Palette const& palette,
-        bool apply_key_reveal
+        bool apply_key_reveal,
+        bool selection_visible
     ) -> bool {
         bool const scrolled = !editor.flag(EditorFlag::SIDEBAR_RESIZING) &&
                               input.scroll_delta_y != 0.0f && point_in_rect(rect, input.mouse_pos);
@@ -1133,7 +1135,7 @@ namespace code_editor {
         SyntaxTokenizer const tokenizer = syntax_tokenizer_for_file_name(editor.current_file_name);
         size_t line = first_line;
         while (line < line_count && y < content.max.y) {
-            if (line == editor.cursor_line) {
+            if (selection_visible && line == editor.cursor_line) {
                 draw::draw_rect_filled(
                     draw_context,
                     {{content.min.x, y}, {content.max.x, y + line_height}},
@@ -1143,19 +1145,22 @@ namespace code_editor {
             }
 
             EditorLine const& text_line = editor_line(editor, line);
-            draw_editor_selection(
-                draw_context,
-                selection,
-                text_line,
-                line,
-                text_x,
-                y,
-                line_height,
-                char_width,
-                content.max.x,
-                palette
-            );
-            if (!editor.flag(EditorFlag::INSERT_MODE) && line == editor.cursor_line) {
+            if (selection_visible) {
+                draw_editor_selection(
+                    draw_context,
+                    selection,
+                    text_line,
+                    line,
+                    text_x,
+                    y,
+                    line_height,
+                    char_width,
+                    content.max.x,
+                    palette
+                );
+            }
+            if (selection_visible && !editor.flag(EditorFlag::INSERT_MODE) &&
+                line == editor.cursor_line) {
                 size_t const cursor_column =
                     text_line.size == 0u ? 0u : std::min(editor.cursor_column, text_line.size - 1u);
                 float const cursor_x0 =
@@ -1173,7 +1178,9 @@ namespace code_editor {
                 .font = editor_font,
                 .size = editor.font_size,
                 .raster_policy = editor.raster_policy,
-                .color = to_draw_color(line == editor.cursor_line ? palette.text : palette.faint),
+                .color = to_draw_color(
+                    selection_visible && line == editor.cursor_line ? palette.text : palette.faint
+                ),
             };
             draw::draw_text(
                 draw_context,
@@ -1213,8 +1220,8 @@ namespace code_editor {
             std::round(text_x + char_width * static_cast<float>(editor.cursor_column));
         float const cursor_y =
             content.min.y + static_cast<float>(editor.cursor_line) * line_height - editor.scroll_y;
-        if (editor.flag(EditorFlag::INSERT_MODE) && cursor_y + line_height >= content.min.y &&
-            cursor_y < content.max.y) {
+        if (selection_visible && editor.flag(EditorFlag::INSERT_MODE) &&
+            cursor_y + line_height >= content.min.y && cursor_y < content.max.y) {
             draw::draw_rect_filled(
                 draw_context,
                 {{cursor_x, std::round(cursor_y + 2.0f)},
@@ -1238,7 +1245,8 @@ namespace code_editor {
         Palette const& palette,
         size_t split,
         size_t initial_focus,
-        size_t& target_focus
+        size_t& target_focus,
+        bool selection_visible
     ) -> void {
         if (split >= editor.split_nodes.size()) {
             return;
@@ -1262,7 +1270,8 @@ namespace code_editor {
                 palette,
                 node.first,
                 initial_focus,
-                target_focus
+                target_focus,
+                selection_visible
             );
             draw_editor_split_surface(
                 draw_context,
@@ -1274,7 +1283,8 @@ namespace code_editor {
                 palette,
                 node.second,
                 initial_focus,
-                target_focus
+                target_focus,
+                selection_visible
             );
             return;
         }
@@ -1305,7 +1315,8 @@ namespace code_editor {
             box->rect,
             surface_input,
             palette,
-            !popup_open && split == initial_focus && input.key_event_count != 0u
+            !popup_open && split == initial_focus && input.key_event_count != 0u,
+            selection_visible
         );
         if (clicked) {
             target_focus = split;
@@ -1419,7 +1430,8 @@ namespace code_editor {
         float char_width,
         gui::Frame const& ui,
         gui::InputState const& input,
-        Palette const& palette
+        Palette const& palette,
+        bool selection_visible
     ) -> void {
         draw_deleted_open_file_tab_marks(draw_context, ui, editor, palette);
         size_t const initial_focus = editor.focused_split;
@@ -1434,7 +1446,8 @@ namespace code_editor {
             palette,
             editor.root_split,
             initial_focus,
-            target_focus
+            target_focus,
+            selection_visible
         );
         focus_editor_split(editor, target_focus);
         draw_command_overlay(draw_context, editor_font, editor, ui, palette);
@@ -1644,9 +1657,10 @@ namespace code_editor {
         Palette const& palette,
         size_t split,
         gui::Size width,
-        gui::Size height
+        gui::Size height,
+        bool selection_visible
     ) -> void {
-        bool const focused = split == editor.focused_split;
+        bool const focused = selection_visible && split == editor.focused_split;
         if (auto sidebar = ui.scroll_panel(
                 editor_surface_id(split),
                 {
@@ -2143,28 +2157,36 @@ namespace code_editor {
             if (auto dialog = ui.row(
                     gui::id(buffers ? "buffer_search_dialog" : "file_search_dialog"),
                     {
-                        .layout = {
-                            .width = gui::fill(),
-                            .height = gui::px(dialog_height),
-                            .gap = DIALOG_GAP,
-                            .align_y = gui::Align::STRETCH,
+                        .layout =
+                            {
+                                .width = gui::fill(),
+                                .height = gui::px(dialog_height),
+                                .padding = gui::insets(PANEL_PADDING),
+                                .gap = DIALOG_GAP,
+                                .align_y = gui::Align::STRETCH,
+                            },
+                        .style = {
+                            .background = gui::color_alpha(palette.panel, 0.94f),
+                            .border = gui::color_alpha(palette.cursor, 0.72f),
+                            .border_thickness = 2.0f,
+                            .radius = 8.0f,
+                            .shadow = {
+                                .offset = {0.0f, 0.0f},
+                                .blur_radius = 26.0f,
+                                .spread = 1.0f,
+                                .color = gui::color_alpha(palette.cursor, 0.20f),
+                            },
                         },
                     }
                 )) {
                 if (auto left = ui.column(
                         gui::id(buffers ? "buffer_search_left" : "file_search_left"),
                         {
-                            .layout =
-                                {
-                                    .width = gui::fill(buffers ? 1.0f : 0.48f),
-                                    .height = gui::fill(),
-                                    .align_x = gui::Align::STRETCH,
-                                    .clip = true,
-                                },
-                            .style = {
-                                .background = palette.panel,
-                                .border = palette.border,
-                                .border_thickness = 1.0f,
+                            .layout = {
+                                .width = gui::fill(buffers ? 1.0f : 0.48f),
+                                .height = gui::fill(),
+                                .align_x = gui::Align::STRETCH,
+                                .clip = true,
                             },
                         }
                     )) {
@@ -2183,6 +2205,7 @@ namespace code_editor {
                                     .background = palette.panel_raised,
                                     .border = palette.border,
                                     .border_thickness = 1.0f,
+                                    .radius = 6.0f,
                                 },
                             }
                         )) {
@@ -2324,6 +2347,7 @@ namespace code_editor {
                                         .style = {
                                             .background =
                                                 selected ? palette.cursor_line : gui::Color{},
+                                            .radius = selected ? 5.0f : -1.0f,
                                         },
                                     }
                                 )) {
@@ -2393,17 +2417,11 @@ namespace code_editor {
                     if (auto preview = ui.column(
                             gui::id("file_search_preview"),
                             {
-                                .layout =
-                                    {
-                                        .width = gui::fill(0.52f),
-                                        .height = gui::fill(),
-                                        .padding = gui::insets(PANEL_PADDING),
-                                        .clip = true,
-                                    },
-                                .style = {
-                                    .background = palette.panel,
-                                    .border = palette.border,
-                                    .border_thickness = 1.0f,
+                                .layout = {
+                                    .width = gui::fill(0.52f),
+                                    .height = gui::fill(),
+                                    .padding = gui::insets(PANEL_PADDING),
+                                    .clip = true,
                                 },
                             }
                         )) {
@@ -2447,8 +2465,10 @@ namespace code_editor {
                                 (dialog_height - 2.0f * PANEL_PADDING) / line_height
                             )
                         );
-                        size_t token_budget =
-                            preview_line_limit * FILE_SEARCH_PREVIEW_TOKENS_PER_LINE;
+                        size_t token_budget = std::min(
+                            preview_line_limit * FILE_SEARCH_PREVIEW_TOKENS_PER_LINE,
+                            FILE_SEARCH_PREVIEW_TOKEN_LIMIT
+                        );
                         while (line_count < preview_line_limit && offset < preview_text.size() &&
                                token_budget != 0u) {
                             StrRef const line = next_text_line(preview_text, offset);
@@ -3867,7 +3887,8 @@ namespace code_editor {
         gui::InputState const& input,
         size_t split,
         gui::Size width,
-        gui::Size height
+        gui::Size height,
+        bool selection_visible
     ) -> void {
         if (split >= editor.split_nodes.size()) {
             return;
@@ -3876,10 +3897,12 @@ namespace code_editor {
         EditorSplitNode const node = editor.split_nodes[split];
         if (node.kind == EditorSplitKind::LEAF) {
             if (editor_split_pane_kind(editor, split) == EditorPaneKind::FILESYSTEM) {
-                draw_filesystem_panel(ui, editor, icon_font, palette, split, width, height);
+                draw_filesystem_panel(
+                    ui, editor, icon_font, palette, split, width, height, selection_visible
+                );
                 return;
             }
-            bool const focused = split == editor.focused_split;
+            bool const focused = selection_visible && split == editor.focused_split;
             if (auto editor_panel = ui.row(
                     editor_surface_id(split),
                     {
@@ -3931,7 +3954,15 @@ namespace code_editor {
         if (node.kind == EditorSplitKind::VERTICAL) {
             if (auto row = ui.row(editor_split_id(split), desc)) {
                 draw_editor_split_ui(
-                    ui, editor, icon_font, palette, input, node.first, gui::fill(ratio), gui::fill()
+                    ui,
+                    editor,
+                    icon_font,
+                    palette,
+                    input,
+                    node.first,
+                    gui::fill(ratio),
+                    gui::fill(),
+                    selection_visible
                 );
                 draw_editor_split_resizer(ui, editor, input, split, node.kind);
                 draw_editor_split_ui(
@@ -3942,12 +3973,21 @@ namespace code_editor {
                     input,
                     node.second,
                     gui::fill(1.0f - ratio),
-                    gui::fill()
+                    gui::fill(),
+                    selection_visible
                 );
             }
         } else if (auto column = ui.column(editor_split_id(split), desc)) {
             draw_editor_split_ui(
-                ui, editor, icon_font, palette, input, node.first, gui::fill(), gui::fill(ratio)
+                ui,
+                editor,
+                icon_font,
+                palette,
+                input,
+                node.first,
+                gui::fill(),
+                gui::fill(ratio),
+                selection_visible
             );
             draw_editor_split_resizer(ui, editor, input, split, node.kind);
             draw_editor_split_ui(
@@ -3958,7 +3998,8 @@ namespace code_editor {
                 input,
                 node.second,
                 gui::fill(),
-                gui::fill(1.0f - ratio)
+                gui::fill(1.0f - ratio),
+                selection_visible
             );
         }
     }
@@ -3976,6 +4017,8 @@ namespace code_editor {
     ) -> void {
         sync_lsp_result_popups(editor);
         handle_lsp_pending_actions(editor);
+        bool const picker_open = editor.flag(EditorFlag::FILE_SEARCH_OPEN) ||
+                                 editor.flag(EditorFlag::BUFFER_SEARCH_OPEN);
         if (editor.flag(EditorFlag::SIDEBAR_VISIBLE)) {
             ensure_filesystem_panel(editor);
         }
@@ -4115,7 +4158,8 @@ namespace code_editor {
                     input,
                     editor.root_split,
                     gui::fill(),
-                    gui::fill()
+                    gui::fill(),
+                    !picker_open
                 );
             }
 

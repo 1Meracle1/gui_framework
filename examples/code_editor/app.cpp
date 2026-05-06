@@ -37,6 +37,8 @@ namespace code_editor {
 
     constexpr int SOURCE_CODE_PRO_FONT_ID = 102;
     constexpr int WINDOWS_RCDATA_ID = 10;
+    constexpr float FILE_SEARCH_BACKDROP_BLUR_RADIUS = 14.0f;
+    constexpr float FILE_SEARCH_BACKDROP_DIM_ALPHA = 0.12f;
 
     struct Runtime {
         font_provider::Context provider = {};
@@ -360,9 +362,19 @@ namespace code_editor {
         gui::end_frame(ui);
 
         draw::begin_frame(runtime->draw_context);
-        gui::render_frame_base(ui, runtime->draw_context);
         bool const search_open = runtime->editor.flag(EditorFlag::FILE_SEARCH_OPEN) ||
                                  runtime->editor.flag(EditorFlag::BUFFER_SEARCH_OPEN);
+        if (search_open) {
+            draw::LayerDesc backdrop = {};
+            backdrop.bounds = {
+                {0.0f, 0.0f},
+                {static_cast<float>(window_size.width), static_cast<float>(window_size.height)}
+            };
+            backdrop.filter_kind = draw::FilterKind::BLUR;
+            backdrop.filter_radius = FILE_SEARCH_BACKDROP_BLUR_RADIUS;
+            draw::push_layer(runtime->draw_context, backdrop);
+        }
+        gui::render_frame_base(ui, runtime->draw_context);
         if (!runtime->editor.flag(EditorFlag::SAVE_PATH_OPEN)) {
             draw_editor_surface(
                 runtime->draw_context,
@@ -373,7 +385,18 @@ namespace code_editor {
                 search_open || runtime->editor.lsp_popup == EditorLspPopupKind::RENAME
                     ? gui::InputState{}
                     : input,
-                palette
+                palette,
+                !search_open
+            );
+        }
+        if (search_open) {
+            draw::pop_layer(runtime->draw_context);
+            draw::draw_rect_filled(
+                runtime->draw_context,
+                {{0.0f, 0.0f},
+                 {static_cast<float>(window_size.width), static_cast<float>(window_size.height)}},
+                {0.0f, 0.0f, 0.0f, FILE_SEARCH_BACKDROP_DIM_ALPHA},
+                0.0f
             );
         }
         gui::render_frame_floating(ui, runtime->draw_context);

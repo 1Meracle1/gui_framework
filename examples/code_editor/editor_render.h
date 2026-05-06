@@ -17,7 +17,8 @@ namespace code_editor {
         float char_width,
         gui::Frame const& ui,
         gui::InputState const& input,
-        Palette const& palette
+        Palette const& palette,
+        bool selection_visible
     ) -> void;
     auto draw_editor_ui(
         gui::Frame& ui,

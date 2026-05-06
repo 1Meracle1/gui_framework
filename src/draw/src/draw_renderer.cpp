@@ -17,6 +17,8 @@ namespace gui::draw {
         constexpr uint32_t STYLED_RECT_VERTICES_PER_COMMAND = 12u;
         constexpr uint32_t MASK_VERTEX_COUNT = 6u;
         constexpr float BLUR_KERNEL_EXTENT = 4.0f;
+        constexpr float BLUR_DOWNSAMPLE_THRESHOLD = 8.0f;
+        constexpr uint32_t BLUR_DOWNSAMPLE_FACTOR = 4u;
         struct RenderVertex {
             float position[2];
             float uv[2];
@@ -315,7 +317,13 @@ namespace gui::draw {
         }
 
         [[nodiscard]] auto blur_padding(float radius) -> float {
-            return std::ceil(std::max(radius, 0.0f) * BLUR_KERNEL_EXTENT);
+            radius = std::max(radius, 0.0f);
+            float scale = 1.0f;
+            while (radius > BLUR_DOWNSAMPLE_THRESHOLD) {
+                radius /= static_cast<float>(BLUR_DOWNSAMPLE_FACTOR);
+                scale *= static_cast<float>(BLUR_DOWNSAMPLE_FACTOR);
+            }
+            return std::ceil(radius * BLUR_KERNEL_EXTENT) * scale;
         }
 
         [[nodiscard]] auto
@@ -1333,6 +1341,64 @@ namespace gui::draw {
                 );
             }
 
+            if (radius > BLUR_DOWNSAMPLE_THRESHOLD && size.width > 2u && size.height > 2u) {
+                gui::render::SizeU32 const small_size = {
+                    std::max(
+                        1u, (size.width + BLUR_DOWNSAMPLE_FACTOR - 1u) / BLUR_DOWNSAMPLE_FACTOR
+                    ),
+                    std::max(
+                        1u, (size.height + BLUR_DOWNSAMPLE_FACTOR - 1u) / BLUR_DOWNSAMPLE_FACTOR
+                    )
+                };
+                if (small_size.width != size.width || small_size.height != size.height) {
+                    gui::render::Texture small_source = {};
+                    gui::render::Result const result =
+                        create_layer_texture(render_context, small_size, small_source);
+                    ASSERT(gui::render::result_succeeded(result));
+                    if (gui::render::result_failed(result)) {
+                        return false;
+                    }
+
+                    if (!render_texture_quad(
+                            renderer,
+                            render_context,
+                            source,
+                            small_source,
+                            renderer.layer_pipeline,
+                            {1.0f, 1.0f, 1.0f, 1.0f}
+                        )) {
+                        gui::render::destroy_texture(render_context, small_source);
+                        return false;
+                    }
+
+                    gui::render::Texture small_blurred = {};
+                    bool const blurred = blur_texture(
+                        renderer,
+                        render_context,
+                        small_source,
+                        small_size,
+                        radius / static_cast<float>(BLUR_DOWNSAMPLE_FACTOR),
+                        small_blurred
+                    );
+                    gui::render::destroy_texture(render_context, small_source);
+                    if (!blurred) {
+                        return false;
+                    }
+
+                    bool const upsampled = filter_texture(
+                        renderer,
+                        render_context,
+                        small_blurred,
+                        size,
+                        renderer.layer_pipeline,
+                        {1.0f, 1.0f, 1.0f, 1.0f},
+                        out_texture
+                    );
+                    gui::render::destroy_texture(render_context, small_blurred);
+                    return upsampled;
+                }
+            }
+
             gui::render::Texture temp = {};
             if (!filter_texture(
                     renderer,
@@ -1340,7 +1406,7 @@ namespace gui::draw {
                     source,
                     size,
                     renderer.blur_pipeline,
-                    {radius / static_cast<float>(size.width), 0.0f, 0.0f, 1.0f},
+                    {1.0f / static_cast<float>(size.width), 0.0f, radius, 1.0f},
                     temp
                 )) {
                 return false;
@@ -1352,7 +1418,7 @@ namespace gui::draw {
                 temp,
                 size,
                 renderer.blur_pipeline,
-                {0.0f, radius / static_cast<float>(size.height), 0.0f, 1.0f},
+                {0.0f, 1.0f / static_cast<float>(size.height), radius, 1.0f},
                 out_texture
             );
             gui::render::destroy_texture(render_context, temp);
@@ -1761,12 +1827,24 @@ struct PSInput
 
 float4 ps_main(PSInput input) : SV_Target
 {
-    float2 texel_step = input.color.xy;
-    float4 sum = g_texture.Sample(g_sampler, input.uv) * 0.2270270270f;
-    sum += g_texture.Sample(g_sampler, input.uv + (texel_step * 1.3846153846f)) * 0.3162162162f;
-    sum += g_texture.Sample(g_sampler, input.uv - (texel_step * 1.3846153846f)) * 0.3162162162f;
-    sum += g_texture.Sample(g_sampler, input.uv + (texel_step * 3.2307692308f)) * 0.0702702703f;
-    sum += g_texture.Sample(g_sampler, input.uv - (texel_step * 3.2307692308f)) * 0.0702702703f;
+    float2 texel_step = input.color.xy * input.color.z * 0.25f;
+    float4 sum = g_texture.Sample(g_sampler, input.uv) * 0.0997390995f;
+    sum += g_texture.Sample(g_sampler, input.uv + texel_step * 1.4765796511f) * 0.1846898964f;
+    sum += g_texture.Sample(g_sampler, input.uv - texel_step * 1.4765796511f) * 0.1846898964f;
+    sum += g_texture.Sample(g_sampler, input.uv + texel_step * 3.4455295350f) * 0.1357818440f;
+    sum += g_texture.Sample(g_sampler, input.uv - texel_step * 3.4455295350f) * 0.1357818440f;
+    sum += g_texture.Sample(g_sampler, input.uv + texel_step * 5.4148988458f) * 0.0780444320f;
+    sum += g_texture.Sample(g_sampler, input.uv - texel_step * 5.4148988458f) * 0.0780444320f;
+    sum += g_texture.Sample(g_sampler, input.uv + texel_step * 7.3849121445f) * 0.0350683123f;
+    sum += g_texture.Sample(g_sampler, input.uv - texel_step * 7.3849121445f) * 0.0350683123f;
+    sum += g_texture.Sample(g_sampler, input.uv + texel_step * 9.3557748935f) * 0.0123174240f;
+    sum += g_texture.Sample(g_sampler, input.uv - texel_step * 9.3557748935f) * 0.0123174240f;
+    sum += g_texture.Sample(g_sampler, input.uv + texel_step * 11.3276683008f) * 0.0033814724f;
+    sum += g_texture.Sample(g_sampler, input.uv - texel_step * 11.3276683008f) * 0.0033814724f;
+    sum += g_texture.Sample(g_sampler, input.uv + texel_step * 13.3007455789f) * 0.0007254584f;
+    sum += g_texture.Sample(g_sampler, input.uv - texel_step * 13.3007455789f) * 0.0007254584f;
+    sum += g_texture.Sample(g_sampler, input.uv + texel_step * 15.2751297238f) * 0.0001216108f;
+    sum += g_texture.Sample(g_sampler, input.uv - texel_step * 15.2751297238f) * 0.0001216108f;
     return sum;
 }
 )hlsl";
