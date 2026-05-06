@@ -138,6 +138,11 @@ namespace code_editor {
         uint8_t priority = 0u;
     };
 
+    enum class EditorJumpListKind : uint8_t {
+        HISTORY,
+        LSP_LOCATIONS,
+    };
+
     enum class EditorPaneKind : uint8_t {
         CODE,
         FILESYSTEM,
@@ -318,6 +323,7 @@ namespace code_editor {
         gui::TextSelection lsp_hover_selection = {};
         EditorLspPopupKind lsp_popup = EditorLspPopupKind::NONE;
         EditorCloseIntent close_intent = EditorCloseIntent::NONE;
+        EditorJumpListKind jump_list_kind = EditorJumpListKind::HISTORY;
         bool lsp_rename_text_selected = false;
         bool file_search_mouse_known = false;
         bool file_search_mouse_select = false;

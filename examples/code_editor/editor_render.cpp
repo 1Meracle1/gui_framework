@@ -2138,7 +2138,9 @@ namespace code_editor {
         }
         if (editor.lsp_seen_locations_generation != editor.lsp_bridge->locations_generation) {
             editor.lsp_seen_locations_generation = editor.lsp_bridge->locations_generation;
-            if (!editor.lsp_bridge->locations.empty()) {
+            if (editor.lsp_bridge->locations_kind == LspRequestKind::REFERENCES) {
+                open_editor_lsp_locations(editor);
+            } else if (!editor.lsp_bridge->locations.empty()) {
                 if (editor.lsp_bridge->locations.size() == 1u &&
                     (editor.lsp_bridge->locations_kind == LspRequestKind::DEFINITION ||
                      editor.lsp_bridge->locations_kind == LspRequestKind::DECLARATION)) {
@@ -2600,6 +2602,30 @@ namespace code_editor {
             .str();
     }
 
+    [[nodiscard]] auto lsp_location_jump(LspLocation const& location) -> EditorJump {
+        StrRef name = render_path_leaf(location.path);
+        if (name.empty()) {
+            name = location.path;
+        }
+        return {
+            .name = name,
+            .path = location.path,
+            .line = location.range.start.line,
+            .column = location.range.start.column,
+        };
+    }
+
+    [[nodiscard]] auto jump_list_entry(EditorState const& editor, size_t index) -> EditorJump {
+        if (editor.jump_list_kind == EditorJumpListKind::LSP_LOCATIONS &&
+            editor.lsp_bridge != nullptr && index < editor.lsp_bridge->locations.size()) {
+            return lsp_location_jump(editor.lsp_bridge->locations[index]);
+        }
+        if (index < editor.jumps.size()) {
+            return editor.jumps[index];
+        }
+        return {};
+    }
+
     [[nodiscard]] auto jump_preview_text(
         EditorState& editor,
         Arena& arena,
@@ -2672,7 +2698,7 @@ namespace code_editor {
         while (drawn < preview_line_limit && offset < preview_text.size() && token_budget != 0u) {
             StrRef const line = next_text_line(preview_text, offset);
             if (auto line_row = ui.row(
-                    gui::id("jump_list_preview_line", line_index),
+                    gui::id("jump_list_preview_line", drawn),
                     {
                         .layout = {
                             .width = gui::children(),
@@ -2883,8 +2909,14 @@ namespace code_editor {
                         editor.jump_list_reveal_selected = false;
                     }
                     if (match_count == 0u) {
+                        char const* const empty_text =
+                            editor.jump_list_kind == EditorJumpListKind::LSP_LOCATIONS
+                                ? (total_count == 0u ? "No locations found"
+                                                     : "No matching locations")
+                                : (editor.jumps.empty() ? "No jumps recorded"
+                                                        : "No matching jumps");
                         ui.label(
-                            editor.jumps.empty() ? "No jumps recorded" : "No matching jumps",
+                            empty_text,
                             {
                                 .layout =
                                     {
@@ -2917,8 +2949,12 @@ namespace code_editor {
                         ArenaTemp row_temp = begin_thread_temp_arena();
                         for (size_t index = results.first; index < results.end; ++index) {
                             bool selected = index == editor.jump_selected;
+                            size_t const visible_index = index - results.first;
+                            EditorJumpListKind const list_kind = editor.jump_list_kind;
+                            EditorJump const jump =
+                                jump_list_entry(editor, matches[index].jump_index);
                             if (auto row = results.row(
-                                    gui::id("jump_list_result", index),
+                                    gui::id("jump_list_result", visible_index),
                                     {
                                         .layout =
                                             {
@@ -2939,7 +2975,11 @@ namespace code_editor {
                                 }
                                 if (signal.clicked_left) {
                                     editor.jump_selected = index;
-                                    editor.jump_open_index = matches[index].jump_index;
+                                    if (list_kind == EditorJumpListKind::LSP_LOCATIONS) {
+                                        editor.lsp_open_location_index = matches[index].jump_index;
+                                    } else {
+                                        editor.jump_open_index = matches[index].jump_index;
+                                    }
                                     close_jump_list(editor);
                                 }
                                 selected = index == editor.jump_selected;
@@ -2952,8 +2992,8 @@ namespace code_editor {
                                         },
                                     }
                                 );
-                                EditorJump const& jump = editor.jumps[matches[index].jump_index];
                                 ui.label(
+                                    gui::id("jump_list_result_text", visible_index),
                                     jump_list_row_text(
                                         *row_temp.arena(), matches[index].jump_index, jump
                                     ),
@@ -2983,12 +3023,14 @@ namespace code_editor {
                         }
                     )) {
                     if (match_count != 0u) {
+                        EditorJump const jump =
+                            jump_list_entry(editor, matches[editor.jump_selected].jump_index);
                         draw_jump_source_preview(
                             ui,
                             editor,
                             editor_font,
                             palette,
-                            editor.jumps[matches[editor.jump_selected].jump_index],
+                            jump,
                             dialog_height - 2.0f * PANEL_PADDING
                         );
                     }

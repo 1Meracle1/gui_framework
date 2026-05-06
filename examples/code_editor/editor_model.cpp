@@ -1113,7 +1113,7 @@ namespace code_editor {
         editor.file_search_open_file = FILE_SEARCH_NO_FILE;
         editor.set_flag(EditorFlag::BUFFER_SEARCH_OPEN, false);
         editor.buffer_search_open_file = FILE_SEARCH_NO_FILE;
-        editor.set_flag(EditorFlag::JUMP_LIST_OPEN, false);
+        close_jump_list(editor);
         editor.set_flag(EditorFlag::TEXT_SEARCH_ACTIVE, false);
         clear_save_path_text(editor);
 
@@ -1990,7 +1990,7 @@ namespace code_editor {
     }
 
     [[nodiscard]] auto
-    jump_list_match(size_t index, EditorJump const& jump, StrRef query, JumpListMatch& match)
+    jump_list_match_text(size_t index, StrRef name, StrRef path, StrRef query, JumpListMatch& match)
         -> bool {
         match = {.jump_index = index};
         if (query.empty()) {
@@ -2007,11 +2007,11 @@ namespace code_editor {
 
         int32_t best_score = 0;
         bool matched = false;
-        if (file_search_fuzzy_score(jump.name, query, best_score)) {
+        if (file_search_fuzzy_score(name, query, best_score)) {
             matched = true;
         }
         int32_t path_score = 0;
-        if (!jump.path.empty() && file_search_fuzzy_score(jump.path, query, path_score) &&
+        if (!path.empty() && file_search_fuzzy_score(path, query, path_score) &&
             (!matched || path_score < best_score)) {
             best_score = path_score;
             matched = true;
@@ -2019,6 +2019,18 @@ namespace code_editor {
         match.score = best_score;
         match.priority = 1u;
         return matched;
+    }
+
+    [[nodiscard]] auto
+    jump_list_match(size_t index, EditorJump const& jump, StrRef query, JumpListMatch& match)
+        -> bool {
+        return jump_list_match_text(index, jump.name, jump.path, query, match);
+    }
+
+    [[nodiscard]] auto
+    jump_list_match(size_t index, LspLocation const& location, StrRef query, JumpListMatch& match)
+        -> bool {
+        return jump_list_match_text(index, location.path, {}, query, match);
     }
 
     [[nodiscard]] auto jump_list_match_less(JumpListMatch lhs, JumpListMatch rhs) -> bool {
@@ -2031,13 +2043,30 @@ namespace code_editor {
         return lhs.jump_index < rhs.jump_index;
     }
 
+    [[nodiscard]] auto jump_list_source_count(EditorState const& editor) -> size_t {
+        if (editor.jump_list_kind == EditorJumpListKind::LSP_LOCATIONS) {
+            return editor.lsp_bridge != nullptr ? editor.lsp_bridge->locations.size() : 0u;
+        }
+        return editor.jumps.size();
+    }
+
+    [[nodiscard]] auto
+    jump_list_source_match(EditorState const& editor, size_t index, JumpListMatch& match) -> bool {
+        StrRef const query = editor_file_search_text(editor);
+        if (editor.jump_list_kind == EditorJumpListKind::LSP_LOCATIONS) {
+            DEBUG_ASSERT(editor.lsp_bridge != nullptr);
+            return jump_list_match(index, editor.lsp_bridge->locations[index], query, match);
+        }
+        return jump_list_match(index, editor.jumps[index], query, match);
+    }
+
     [[nodiscard]] auto
     collect_jump_list_matches(EditorState const& editor, Slice<JumpListMatch> matches) -> size_t {
         size_t count = 0u;
-        StrRef const query = editor_file_search_text(editor);
-        for (size_t index = 0u; index < editor.jumps.size(); ++index) {
+        size_t const source_count = jump_list_source_count(editor);
+        for (size_t index = 0u; index < source_count; ++index) {
             JumpListMatch match = {};
-            if (!jump_list_match(index, editor.jumps[index], query, match)) {
+            if (!jump_list_source_match(editor, index, match)) {
                 continue;
             }
 
@@ -2101,15 +2130,15 @@ namespace code_editor {
     }
 
     [[nodiscard]] auto jump_list_total_count(EditorState const& editor) -> size_t {
-        return editor.jumps.size();
+        return jump_list_source_count(editor);
     }
 
     [[nodiscard]] auto jump_list_filtered_count(EditorState const& editor) -> size_t {
-        StrRef const query = editor_file_search_text(editor);
         size_t count = 0u;
-        for (size_t index = 0u; index < editor.jumps.size(); ++index) {
+        size_t const source_count = jump_list_source_count(editor);
+        for (size_t index = 0u; index < source_count; ++index) {
             JumpListMatch match = {};
-            if (jump_list_match(index, editor.jumps[index], query, match)) {
+            if (jump_list_source_match(editor, index, match)) {
                 count += 1u;
             }
         }
@@ -2129,7 +2158,7 @@ namespace code_editor {
     auto open_file_search(EditorState& editor) -> void {
         editor.set_flag(EditorFlag::FILE_SEARCH_OPEN, true);
         editor.set_flag(EditorFlag::BUFFER_SEARCH_OPEN, false);
-        editor.set_flag(EditorFlag::JUMP_LIST_OPEN, false);
+        close_jump_list(editor);
         editor.file_search_text_size = 0u;
         editor.file_search_text[0u] = '\0';
         editor.file_search_selected = 0u;
@@ -2160,7 +2189,7 @@ namespace code_editor {
         remember_open_file(editor, editor.current_file_name, editor.current_file_path);
         editor.set_flag(EditorFlag::BUFFER_SEARCH_OPEN, true);
         editor.set_flag(EditorFlag::FILE_SEARCH_OPEN, false);
-        editor.set_flag(EditorFlag::JUMP_LIST_OPEN, false);
+        close_jump_list(editor);
         editor.file_search_text_size = 0u;
         editor.file_search_text[0u] = '\0';
         editor.file_search_selected = 0u;
@@ -2196,16 +2225,14 @@ namespace code_editor {
         editor.file_search_mouse_select = false;
     }
 
-    auto open_editor_jump_list(EditorState& editor) -> void {
+    auto open_jump_list_picker(EditorState& editor, EditorJumpListKind kind) -> void {
+        editor.jump_list_kind = kind;
         editor.set_flag(EditorFlag::JUMP_LIST_OPEN, true);
         editor.set_flag(EditorFlag::FILE_SEARCH_OPEN, false);
         editor.set_flag(EditorFlag::BUFFER_SEARCH_OPEN, false);
         editor.file_search_text_size = 0u;
         editor.file_search_text[0u] = '\0';
-        editor.jump_selected =
-            editor.jump_cursor != JUMP_LIST_NO_SELECTION ? editor.jump_cursor : 0u;
-        editor.jump_selected =
-            editor.jumps.empty() ? 0u : std::min(editor.jump_selected, editor.jumps.size() - 1u);
+        editor.jump_selected = 0u;
         editor.jump_list_mouse_known = false;
         editor.jump_list_mouse_select = false;
         editor.jump_list_reveal_selected = true;
@@ -2225,10 +2252,19 @@ namespace code_editor {
         close_editor_lsp_popup(editor);
     }
 
+    auto open_editor_jump_list(EditorState& editor) -> void {
+        open_jump_list_picker(editor, EditorJumpListKind::HISTORY);
+        editor.jump_selected =
+            editor.jump_cursor != JUMP_LIST_NO_SELECTION ? editor.jump_cursor : 0u;
+        editor.jump_selected =
+            editor.jumps.empty() ? 0u : std::min(editor.jump_selected, editor.jumps.size() - 1u);
+    }
+
     auto close_jump_list(EditorState& editor) -> void {
         editor.set_flag(EditorFlag::JUMP_LIST_OPEN, false);
         editor.jump_selected = 0u;
         editor.jump_list_mouse_select = false;
+        editor.jump_list_kind = EditorJumpListKind::HISTORY;
     }
 
     auto clear_command_line(EditorState& editor) -> void {
@@ -2275,7 +2311,7 @@ namespace code_editor {
         editor.file_search_open_file = FILE_SEARCH_NO_FILE;
         editor.set_flag(EditorFlag::BUFFER_SEARCH_OPEN, false);
         editor.buffer_search_open_file = FILE_SEARCH_NO_FILE;
-        editor.set_flag(EditorFlag::JUMP_LIST_OPEN, false);
+        close_jump_list(editor);
         editor.set_flag(EditorFlag::TEXT_SEARCH_ACTIVE, false);
         editor.set_flag(EditorFlag::SAVE_PATH_OPEN, false);
         editor.save_path_error = EditorSavePathError::NONE;
@@ -2423,7 +2459,7 @@ namespace code_editor {
         editor.file_search_open_file = FILE_SEARCH_NO_FILE;
         editor.set_flag(EditorFlag::BUFFER_SEARCH_OPEN, false);
         editor.buffer_search_open_file = FILE_SEARCH_NO_FILE;
-        editor.set_flag(EditorFlag::JUMP_LIST_OPEN, false);
+        close_jump_list(editor);
         editor.set_flag(EditorFlag::SAVE_PATH_OPEN, false);
         editor.save_path_error = EditorSavePathError::NONE;
         editor.set_flag(EditorFlag::PENDING_LEADER, false);
@@ -2647,7 +2683,11 @@ namespace code_editor {
             return;
         }
         editor.jump_selected = std::min(editor.jump_selected, match_count - 1u);
-        editor.jump_open_index = matches[editor.jump_selected].jump_index;
+        if (editor.jump_list_kind == EditorJumpListKind::LSP_LOCATIONS) {
+            editor.lsp_open_location_index = matches[editor.jump_selected].jump_index;
+        } else {
+            editor.jump_open_index = matches[editor.jump_selected].jump_index;
+        }
         close_jump_list(editor);
     }
 
@@ -3712,11 +3752,10 @@ namespace code_editor {
     }
 
     auto open_editor_lsp_locations(EditorState& editor) -> void {
-        if (editor.lsp_bridge == nullptr || editor.lsp_bridge->locations.empty()) {
+        if (editor.lsp_bridge == nullptr) {
             return;
         }
-        close_editor_lsp_popup(editor);
-        editor.lsp_popup = EditorLspPopupKind::LOCATIONS;
+        open_jump_list_picker(editor, EditorJumpListKind::LSP_LOCATIONS);
     }
 
     auto collapse_selection(EditorState& editor, bool end) -> bool {
@@ -4231,6 +4270,7 @@ namespace code_editor {
         hash = hash_bytes(hash, &editor.jump_selected, sizeof(editor.jump_selected));
         hash = hash_bytes(hash, &editor.jump_cursor, sizeof(editor.jump_cursor));
         hash = hash_bytes(hash, &editor.jump_open_index, sizeof(editor.jump_open_index));
+        hash = hash_bytes(hash, &editor.jump_list_kind, sizeof(editor.jump_list_kind));
         hash = hash_bytes(hash, &editor.command_text_size, sizeof(editor.command_text_size));
         hash = hash_bytes(hash, &editor.command_selected, sizeof(editor.command_selected));
         hash = hash_bytes(hash, editor.command_text, editor.command_text_size);
