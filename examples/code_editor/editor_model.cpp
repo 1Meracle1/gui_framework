@@ -1815,6 +1815,37 @@ namespace code_editor {
         return !entry.relative_path.empty() ? entry.relative_path : entry.name;
     }
 
+    [[nodiscard]] auto file_search_path_separator(char value) -> bool {
+        return value == '\\' || value == '/';
+    }
+
+    [[nodiscard]] auto file_search_boundary(char value) -> bool {
+        return file_search_path_separator(value) || value == '_' || value == '-' || value == '.' ||
+               is_ascii_whitespace(value);
+    }
+
+    [[nodiscard]] auto file_search_char_equal(char lhs, char rhs) -> bool {
+        if (file_search_path_separator(lhs) && file_search_path_separator(rhs)) {
+            return true;
+        }
+        return to_ascii_lower(lhs) == to_ascii_lower(rhs);
+    }
+
+    [[nodiscard]] auto file_search_query_is_path_like(StrRef query) -> bool {
+        if (query.find_first_of("\\/") != StrRef::NPOS) {
+            return true;
+        }
+        size_t part_count = 0u;
+        for (StrRef const part : query.split_ascii_whitespace()) {
+            BASE_UNUSED(part);
+            part_count += 1u;
+            if (part_count > 1u) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     [[nodiscard]] auto file_search_fuzzy_score(StrRef text, StrRef query, int32_t& out_score)
         -> bool {
         if (query.empty()) {
@@ -1825,31 +1856,38 @@ namespace code_editor {
         size_t text_index = 0u;
         size_t previous = StrRef::NPOS;
         int32_t score = 0;
-        for (char query_ch : query) {
-            bool found = false;
-            while (text_index < text.size()) {
-                if (to_ascii_lower(text[text_index]) == to_ascii_lower(query_ch)) {
-                    size_t const gap =
-                        previous == StrRef::NPOS ? text_index : text_index - previous - 1u;
-                    score += static_cast<int32_t>(gap * 4u);
-                    if (text_index == 0u || text[text_index - 1u] == '\\' ||
-                        text[text_index - 1u] == '/' || text[text_index - 1u] == '_' ||
-                        text[text_index - 1u] == '-' || text[text_index - 1u] == '.') {
-                        score -= 8;
+        size_t query_size = 0u;
+        for (StrRef const part : query.split_ascii_whitespace()) {
+            query_size += part.size();
+            for (char query_ch : part) {
+                bool found = false;
+                while (text_index < text.size()) {
+                    if (file_search_char_equal(text[text_index], query_ch)) {
+                        size_t const gap =
+                            previous == StrRef::NPOS ? text_index : text_index - previous - 1u;
+                        score += static_cast<int32_t>(gap * 4u);
+                        if (text_index == 0u || file_search_boundary(text[text_index - 1u])) {
+                            score -= 8;
+                        }
+                        previous = text_index;
+                        text_index += 1u;
+                        found = true;
+                        break;
                     }
-                    previous = text_index;
                     text_index += 1u;
-                    found = true;
-                    break;
                 }
-                text_index += 1u;
-            }
-            if (!found) {
-                return false;
+                if (!found) {
+                    return false;
+                }
             }
         }
 
-        score += static_cast<int32_t>(text.size() - query.size());
+        if (query_size == 0u) {
+            out_score = 0;
+            return true;
+        }
+
+        score += static_cast<int32_t>(text.size() - query_size);
         out_score = score;
         return true;
     }
@@ -1879,22 +1917,28 @@ namespace code_editor {
 
     [[nodiscard]] auto
     file_search_match(FileTreeEntry const& entry, StrRef query, FileSearchMatch& match) -> bool {
-        StrRef const name = !entry.name.empty() ? entry.name : file_search_entry_text(entry);
+        StrRef const path = file_search_entry_text(entry);
+        StrRef const name = !entry.name.empty() ? entry.name : path;
+        bool const path_like = file_search_query_is_path_like(query);
         if (!query.empty() && name.equals_ignore_ascii_case(query)) {
             match.priority = 0u;
             match.score = 0;
             return true;
         }
-        if (file_search_fuzzy_score(name, query, match.score)) {
+        if (path_like && file_search_fuzzy_score(path, query, match.score)) {
             match.priority = 1u;
             return true;
         }
-        if (!query.empty() &&
-            file_search_folder_score(file_search_entry_text(entry), query, true, match.score)) {
+        if (file_search_fuzzy_score(name, query, match.score)) {
+            match.priority = path_like ? 2u : 1u;
+            return true;
+        }
+        if (!path_like && !query.empty() &&
+            file_search_folder_score(path, query, true, match.score)) {
             match.priority = 2u;
             return true;
         }
-        if (file_search_folder_score(file_search_entry_text(entry), query, false, match.score)) {
+        if (!path_like && file_search_folder_score(path, query, false, match.score)) {
             match.priority = 3u;
             return true;
         }
@@ -1956,6 +2000,25 @@ namespace code_editor {
         return !file.name.empty() ? file.name : file.path;
     }
 
+    [[nodiscard]] auto
+    buffer_search_match(OpenFile const& file, StrRef query, BufferSearchMatch& match) -> bool {
+        StrRef const name = buffer_search_entry_text(file);
+        int32_t best_score = 0;
+        bool matched = false;
+        if (file_search_query_is_path_like(query) && !file.path.empty() &&
+            file_search_fuzzy_score(file.path, query, best_score)) {
+            matched = true;
+        }
+        int32_t name_score = 0;
+        if (file_search_fuzzy_score(name, query, name_score) &&
+            (!matched || name_score < best_score)) {
+            best_score = name_score;
+            matched = true;
+        }
+        match.score = best_score;
+        return matched;
+    }
+
     [[nodiscard]] auto buffer_search_match_less(BufferSearchMatch lhs, BufferSearchMatch rhs)
         -> bool {
         if (lhs.score != rhs.score) {
@@ -1971,9 +2034,7 @@ namespace code_editor {
         StrRef const query = editor_file_search_text(editor);
         for (size_t index = 0u; index < editor.open_files.size(); ++index) {
             BufferSearchMatch match = {.open_file_index = index};
-            if (!file_search_fuzzy_score(
-                    buffer_search_entry_text(editor.open_files[index]), query, match.score
-                )) {
+            if (!buffer_search_match(editor.open_files[index], query, match)) {
                 continue;
             }
 
@@ -2221,8 +2282,8 @@ namespace code_editor {
         size_t count = 0u;
         if (buffers) {
             for (OpenFile const& file : editor.open_files) {
-                int32_t score = 0;
-                if (file_search_fuzzy_score(buffer_search_entry_text(file), query, score)) {
+                BufferSearchMatch match = {};
+                if (buffer_search_match(file, query, match)) {
                     count += 1u;
                 }
             }

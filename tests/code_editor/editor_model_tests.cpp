@@ -702,6 +702,70 @@ namespace {
         TEST_EXPECT(context, matches[3u].tree_file_index == 3u);
     }
 
+    TEST_CASE(file_search_matches_relative_path_prefix_with_slash_insensitive_query) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::FileTreeEntry tree[] = {
+            {
+                .name = "str_ref.h",
+                .path = "C:\\repo\\src\\base\\str_ref.h",
+                .relative_path = "src\\base\\str_ref.h",
+            },
+            {
+                .name = "src_helpers.h",
+                .path = "C:\\repo\\include\\src_helpers.h",
+                .relative_path = "include\\src_helpers.h",
+            },
+        };
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "");
+        editor.tree_files = Slice<code_editor::FileTreeEntry>(tree);
+        editor.file_search_text_size =
+            StrRef("src/base/")
+                .copy_to(editor.file_search_text, code_editor::FILE_SEARCH_TEXT_CAPACITY);
+        editor.file_search_text[editor.file_search_text_size] = '\0';
+
+        code_editor::FileSearchMatch matches[code_editor::FILE_SEARCH_RESULT_LIMIT] = {};
+        size_t const count = code_editor::collect_file_search_matches(editor, matches);
+
+        TEST_EXPECT(context, count == 1u);
+        TEST_EXPECT(context, matches[0u].tree_file_index == 0u);
+    }
+
+    TEST_CASE(file_search_matches_space_separated_path_parts) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::FileTreeEntry tree[] = {
+            {
+                .name = "str_ref.h",
+                .path = "C:\\repo\\src\\base\\str_ref.h",
+                .relative_path = "src\\base\\str_ref.h",
+            },
+            {
+                .name = "string_ref.h",
+                .path = "C:\\repo\\src\\buffer\\string_ref.h",
+                .relative_path = "src\\buffer\\string_ref.h",
+            },
+        };
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "");
+        editor.tree_files = Slice<code_editor::FileTreeEntry>(tree);
+        editor.file_search_text_size =
+            StrRef("src base str ref")
+                .copy_to(editor.file_search_text, code_editor::FILE_SEARCH_TEXT_CAPACITY);
+        editor.file_search_text[editor.file_search_text_size] = '\0';
+
+        code_editor::FileSearchMatch matches[code_editor::FILE_SEARCH_RESULT_LIMIT] = {};
+        size_t const count = code_editor::collect_file_search_matches(editor, matches);
+
+        TEST_EXPECT(context, count == 1u);
+        TEST_EXPECT(context, matches[0u].tree_file_index == 0u);
+    }
+
     TEST_CASE(editor_colon_opens_completes_and_closes_command_line) {
         Arena arena = {};
         arena.init();
@@ -1732,6 +1796,27 @@ namespace {
         press_key(editor, gui::Key::ENTER);
         TEST_EXPECT(context, !editor.flag(EditorFlag::BUFFER_SEARCH_OPEN));
         TEST_EXPECT(context, editor.buffer_search_open_file == 1u);
+    }
+
+    TEST_CASE(buffer_search_matches_path_like_queries_against_open_file_paths) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "");
+        code_editor::remember_open_file(editor, "str_ref.h", "C:\\repo\\src\\base\\str_ref.h");
+        code_editor::remember_open_file(editor, "main.cpp", "C:\\repo\\src\\main.cpp");
+
+        editor.file_search_text_size =
+            StrRef("src/base/")
+                .copy_to(editor.file_search_text, code_editor::FILE_SEARCH_TEXT_CAPACITY);
+        editor.file_search_text[editor.file_search_text_size] = '\0';
+
+        code_editor::BufferSearchMatch matches[code_editor::FILE_SEARCH_RESULT_LIMIT] = {};
+        size_t const count = code_editor::collect_buffer_search_matches(editor, matches);
+
+        TEST_EXPECT(context, count == 1u);
+        TEST_EXPECT(context, matches[0u].open_file_index == 0u);
     }
 
     TEST_CASE(editor_jump_list_records_filters_and_navigates) {
