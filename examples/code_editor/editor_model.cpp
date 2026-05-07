@@ -1168,6 +1168,10 @@ namespace code_editor {
         return text_buffer_line_size(editor.text, line);
     }
 
+    [[nodiscard]] auto line_has_trailing_newline(EditorState const& editor, size_t line) -> bool {
+        return line + 1u < editor_line_count(editor);
+    }
+
     struct EditorPosition {
         size_t line = 0u;
         size_t column = 0u;
@@ -1215,7 +1219,8 @@ namespace code_editor {
         -> EditorPosition {
         position = clamp_position(editor, position);
         size_t const size = line_size(editor, position.line);
-        if (position.column == size && size != 0u) {
+        if (position.column == size && size != 0u &&
+            !line_has_trailing_newline(editor, position.line)) {
             position.column -= 1u;
         }
         return position;
@@ -1722,7 +1727,10 @@ namespace code_editor {
         if (erase_selection(editor)) {
             return;
         }
-        if (editor.cursor_column >= line_size(editor, editor.cursor_line)) {
+        size_t const size = line_size(editor, editor.cursor_line);
+        if (editor.cursor_column > size ||
+            (editor.cursor_column == size &&
+             !line_has_trailing_newline(editor, editor.cursor_line))) {
             return;
         }
         EditorPosition const start = cursor_position(editor);
@@ -3577,7 +3585,9 @@ namespace code_editor {
 
     [[nodiscard]] auto can_delete_char(EditorState const& editor) -> bool {
         return editor.flag(EditorFlag::SELECTION_ACTIVE) ||
-               editor.cursor_column < line_size(editor, editor.cursor_line);
+               editor.cursor_column < line_size(editor, editor.cursor_line) ||
+               (editor.cursor_column == line_size(editor, editor.cursor_line) &&
+                line_has_trailing_newline(editor, editor.cursor_line));
     }
 
     [[nodiscard]] auto can_backspace_word(EditorState const& editor) -> bool {
@@ -4352,9 +4362,11 @@ namespace code_editor {
         float const text_min_x = content.min.x + editor_scaled_font_size(editor, LINE_NUMBER_WIDTH);
         float const visible_width = std::max(1.0f, content.max.x - text_min_x);
         size_t const line_size_value = line_size(editor, editor.cursor_line);
-        size_t const column = editor.flag(EditorFlag::INSERT_MODE) || line_size_value == 0u
-                                  ? editor.cursor_column
-                                  : std::min(editor.cursor_column, line_size_value - 1u);
+        size_t const column =
+            editor.flag(EditorFlag::INSERT_MODE) || line_size_value == 0u ? editor.cursor_column
+            : editor.cursor_column < line_size_value                      ? editor.cursor_column
+            : line_has_trailing_newline(editor, editor.cursor_line)       ? line_size_value
+                                                                          : line_size_value - 1u;
         float const cursor_left = static_cast<float>(column) * char_width;
         float const cursor_right =
             cursor_left + (editor.flag(EditorFlag::INSERT_MODE) ? 2.0f : char_width);

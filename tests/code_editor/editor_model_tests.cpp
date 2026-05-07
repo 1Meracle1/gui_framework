@@ -1420,6 +1420,39 @@ namespace {
         TEST_EXPECT(context, !code_editor::editor_selection_range(editor).active);
     }
 
+    TEST_CASE(editor_normal_v_can_select_newline_without_next_line_text) {
+        Arena arena = {};
+        arena.init();
+
+        ClipboardCapture clipboard = {};
+        code_editor::EditorClipboard clip = {
+            .set_clipboard_text = capture_clipboard_text,
+            .user_data = &clipboard,
+        };
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "abc\ndef");
+        editor.cursor_column = 2u;
+        editor.preferred_column = 2u;
+
+        send_text(editor, "v");
+        send_text(editor, "l", gui::KEY_MOD_NONE, clip);
+
+        code_editor::EditorSelectionRange const selection =
+            code_editor::editor_selection_range(editor);
+        TEST_EXPECT(context, selection.active);
+        TEST_EXPECT(context, !selection.full_line);
+        TEST_EXPECT(context, selection.start_line == 0u);
+        TEST_EXPECT(context, selection.start_column == 2u);
+        TEST_EXPECT(context, selection.end_line == 1u);
+        TEST_EXPECT(context, selection.end_column == 0u);
+
+        send_text(editor, "y", gui::KEY_MOD_NONE, clip);
+
+        TEST_EXPECT(context, clipboard.call_count == 1u);
+        TEST_EXPECT(context, StrRef(clipboard.text, clipboard.text_size) == "c\n");
+    }
+
     TEST_CASE(editor_normal_shift_v_selects_full_lines) {
         Arena arena = {};
         arena.init();
@@ -1614,6 +1647,26 @@ namespace {
         TEST_EXPECT(
             context, code_editor::editor_line_text(code_editor::editor_line(end, 0u)) == "abcd"
         );
+    }
+
+    TEST_CASE(editor_normal_x_deletes_newline_character) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "abc\ndef");
+        editor.cursor_column = 2u;
+        editor.preferred_column = 2u;
+
+        send_text(editor, "l");
+        send_text(editor, "x");
+
+        TEST_EXPECT(context, code_editor::editor_line_count(editor) == 1u);
+        TEST_EXPECT(
+            context, code_editor::editor_line_text(code_editor::editor_line(editor, 0u)) == "abcdef"
+        );
+        TEST_EXPECT(context, editor.cursor_line == 0u);
+        TEST_EXPECT(context, editor.cursor_column == 3u);
     }
 
     TEST_CASE(editor_normal_alt_delete_and_change_do_not_yank) {

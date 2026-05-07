@@ -1318,6 +1318,18 @@ namespace code_editor {
         );
     }
 
+    [[nodiscard]] auto
+    draw_cursor_column(EditorState const& editor, size_t line, size_t line_size, size_t column)
+        -> size_t {
+        if (editor.flag(EditorFlag::INSERT_MODE) || line_size == 0u) {
+            return column;
+        }
+        if (column < line_size) {
+            return column;
+        }
+        return line + 1u < editor_line_count(editor) ? line_size : line_size - 1u;
+    }
+
     [[nodiscard]] auto editor_surface_id(size_t split) -> gui::Id {
         return gui::id("editor_surface", split);
     }
@@ -1448,7 +1460,7 @@ namespace code_editor {
             if (selection_visible && !editor.flag(EditorFlag::INSERT_MODE) &&
                 line == editor.cursor_line) {
                 size_t const cursor_column =
-                    text_line.size == 0u ? 0u : std::min(editor.cursor_column, text_line.size - 1u);
+                    draw_cursor_column(editor, line, text_line.size, editor.cursor_column);
                 float const cursor_x0 =
                     std::round(text_x + char_width * static_cast<float>(cursor_column));
                 float const cursor_x1 =
