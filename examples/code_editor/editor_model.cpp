@@ -2542,37 +2542,6 @@ namespace code_editor {
         }
     }
 
-    auto handle_text_search_event(EditorState& editor, gui::KeyEvent const& event) -> void {
-        if (event.kind == gui::KeyEventKind::TEXT) {
-            bool const text_input =
-                (event.mods & (gui::KEY_MOD_CTRL | gui::KEY_MOD_ALT | gui::KEY_MOD_SUPER)) == 0u;
-            if (text_input && event.codepoint >= 32u && event.codepoint <= 126u &&
-                editor.text_search_text_size + 1u < TEXT_SEARCH_TEXT_CAPACITY) {
-                editor.text_search_text[editor.text_search_text_size] =
-                    static_cast<char>(event.codepoint);
-                editor.text_search_text_size += 1u;
-                editor.text_search_text[editor.text_search_text_size] = '\0';
-                BASE_UNUSED(update_text_search_selection(editor));
-            }
-            return;
-        }
-
-        if (event.kind != gui::KeyEventKind::PRESS && event.kind != gui::KeyEventKind::REPEAT) {
-            return;
-        }
-        if (event.key == gui::Key::ESCAPE) {
-            editor.set_flag(EditorFlag::TEXT_SEARCH_ACTIVE, false);
-        } else if (event.key == gui::Key::ENTER) {
-            finish_text_search(editor);
-        } else if (event.key == gui::Key::BACKSPACE && editor.text_search_text_size != 0u) {
-            editor.text_search_text_size -= 1u;
-            editor.text_search_text[editor.text_search_text_size] = '\0';
-            BASE_UNUSED(update_text_search_selection(editor));
-        } else if (event.key == gui::Key::BACKSPACE) {
-            editor.set_flag(EditorFlag::TEXT_SEARCH_ACTIVE, false);
-        }
-    }
-
     auto run_editor_command(EditorState& editor, size_t index) -> void {
         switch (index) {
         case 0u:
@@ -2641,39 +2610,6 @@ namespace code_editor {
             }
         }
         clear_command_line(editor);
-    }
-
-    auto handle_command_line_event(EditorState& editor, gui::KeyEvent const& event) -> void {
-        if (event.kind == gui::KeyEventKind::TEXT) {
-            bool const text_input =
-                (event.mods & (gui::KEY_MOD_CTRL | gui::KEY_MOD_ALT | gui::KEY_MOD_SUPER)) == 0u;
-            if (text_input && event.codepoint >= 32u && event.codepoint <= 126u &&
-                editor.command_text_size + 1u < COMMAND_TEXT_CAPACITY) {
-                editor.command_text[editor.command_text_size] = static_cast<char>(event.codepoint);
-                editor.command_text_size += 1u;
-                editor.command_text[editor.command_text_size] = '\0';
-                select_command_match(editor);
-            }
-            return;
-        }
-
-        if (event.kind != gui::KeyEventKind::PRESS && event.kind != gui::KeyEventKind::REPEAT) {
-            return;
-        }
-
-        if (event.key == gui::Key::ESCAPE) {
-            clear_command_line(editor);
-        } else if (event.key == gui::Key::ENTER) {
-            run_command_line(editor);
-        } else if (event.key == gui::Key::TAB) {
-            complete_command_line(editor);
-        } else if (event.key == gui::Key::BACKSPACE && editor.command_text_size != 0u) {
-            editor.command_text_size -= 1u;
-            editor.command_text[editor.command_text_size] = '\0';
-            select_command_match(editor);
-        } else if (event.key == gui::Key::BACKSPACE) {
-            clear_command_line(editor);
-        }
     }
 
     auto select_file_search_match(EditorState& editor) -> void {
@@ -4051,12 +3987,8 @@ namespace code_editor {
             if (handle_lsp_popup_event(editor, event)) {
                 continue;
             }
-            if (editor.flag(EditorFlag::TEXT_SEARCH_ACTIVE)) {
-                handle_text_search_event(editor, event);
-                continue;
-            }
-            if (editor.flag(EditorFlag::COMMAND_LINE_ACTIVE)) {
-                handle_command_line_event(editor, event);
+            if (editor.flag(EditorFlag::TEXT_SEARCH_ACTIVE) ||
+                editor.flag(EditorFlag::COMMAND_LINE_ACTIVE)) {
                 continue;
             }
             if (editor.flag(EditorFlag::JUMP_LIST_OPEN)) {

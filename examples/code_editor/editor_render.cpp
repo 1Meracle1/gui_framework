@@ -4888,9 +4888,29 @@ namespace code_editor {
                             },
                         }
                     );
+                    gui::InputTextDesc const bottom_input_desc = {
+                        .box =
+                            {
+                                .layout =
+                                    {
+                                        .width = gui::px(std::max(120.0f, client_width - 360.0f)),
+                                        .height = gui::fill(),
+                                        .padding = gui::insets(0.0f),
+                                    },
+                                .style =
+                                    {
+                                        .background = gui::rgba(0, 0, 0, 0),
+                                        .foreground = palette.text,
+                                        .border = gui::rgba(0, 0, 0, 0),
+                                        .font = editor_font,
+                                        .font_size = editor.font_size,
+                                    },
+                            },
+                        .ignore_input_on_focus = true,
+                    };
                     if (editor.flag(EditorFlag::TEXT_SEARCH_ACTIVE)) {
                         ui.label(
-                            fmt::tprintf(":search %s", editor.text_search_text),
+                            ":search",
                             {
                                 .layout = {.width = gui::text(), .height = gui::fill()},
                                 .style = {
@@ -4899,9 +4919,32 @@ namespace code_editor {
                                 },
                             }
                         );
+                        gui::Id const input_id = gui::id("bottom_bar_text_search_input");
+                        ui.request_focus(input_id);
+                        gui::Signal const text_input = ui.input_text(
+                            input_id,
+                            "",
+                            editor.text_search_text,
+                            TEXT_SEARCH_TEXT_CAPACITY,
+                            bottom_input_desc
+                        );
+                        if (text_input.changed) {
+                            editor.text_search_text_size = cstr_len(editor.text_search_text);
+                            BASE_UNUSED(update_text_search_selection(editor));
+                        }
+                        if (text_input.activated) {
+                            finish_text_search(editor);
+                        } else if (key_pressed(input, gui::Key::ESCAPE)) {
+                            editor.set_flag(EditorFlag::TEXT_SEARCH_ACTIVE, false);
+                        }
                     } else if (editor.flag(EditorFlag::COMMAND_LINE_ACTIVE)) {
+                        bool const complete = key_pressed(input, gui::Key::TAB, true);
+                        if (complete) {
+                            complete_command_line(editor);
+                            ui.clear_focus();
+                        }
                         ui.label(
-                            fmt::tprintf(":%s", editor.command_text),
+                            ":",
                             {
                                 .layout = {.width = gui::text(), .height = gui::fill()},
                                 .style = {
@@ -4910,6 +4953,24 @@ namespace code_editor {
                                 },
                             }
                         );
+                        gui::Id const input_id = gui::id("bottom_bar_command_input");
+                        ui.request_focus(input_id);
+                        gui::Signal const command_input = ui.input_text(
+                            input_id,
+                            "",
+                            editor.command_text,
+                            COMMAND_TEXT_CAPACITY,
+                            bottom_input_desc
+                        );
+                        if (command_input.changed) {
+                            editor.command_text_size = cstr_len(editor.command_text);
+                            select_command_match(editor);
+                        }
+                        if (command_input.activated) {
+                            run_command_line(editor);
+                        } else if (key_pressed(input, gui::Key::ESCAPE)) {
+                            clear_command_line(editor);
+                        }
                     } else if (editor.lsp_bridge != nullptr) {
                         ui.label(
                             lsp_status_bar_text(editor),

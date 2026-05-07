@@ -68,6 +68,31 @@ namespace {
         code_editor::process_editor_input(editor, input, clipboard);
     }
 
+    auto set_command_line_text(code_editor::EditorState& editor, StrRef text) -> void {
+        editor.command_text_size =
+            text.copy_to(editor.command_text, code_editor::COMMAND_TEXT_CAPACITY - 1u);
+        editor.command_text[editor.command_text_size] = '\0';
+        code_editor::select_command_match(editor);
+    }
+
+    auto run_command_line_text(code_editor::EditorState& editor, StrRef text) -> void {
+        send_text(editor, ":");
+        set_command_line_text(editor, text);
+        code_editor::run_command_line(editor);
+    }
+
+    auto set_text_search_text(code_editor::EditorState& editor, StrRef text) -> void {
+        editor.text_search_text_size =
+            text.copy_to(editor.text_search_text, code_editor::TEXT_SEARCH_TEXT_CAPACITY - 1u);
+        editor.text_search_text[editor.text_search_text_size] = '\0';
+        BASE_UNUSED(code_editor::update_text_search_selection(editor));
+    }
+
+    auto open_text_search_text(code_editor::EditorState& editor, StrRef text) -> void {
+        send_text(editor, "/");
+        set_text_search_text(editor, text);
+    }
+
     struct LspRequestCapture {
         code_editor::LspEditorRequest requests[8] = {};
         size_t count = 0u;
@@ -688,14 +713,14 @@ namespace {
         TEST_EXPECT(context, editor.flag(EditorFlag::COMMAND_LINE_ACTIVE));
         TEST_EXPECT(context, code_editor::editor_command_text(editor).empty());
 
-        press_key(editor, gui::Key::TAB);
+        code_editor::complete_command_line(editor);
         TEST_EXPECT(context, code_editor::editor_command_text(editor) == "write");
 
-        press_key(editor, gui::Key::ESCAPE);
+        code_editor::clear_command_line(editor);
         TEST_EXPECT(context, !editor.flag(EditorFlag::COMMAND_LINE_ACTIVE));
 
         send_text(editor, ":");
-        press_key(editor, gui::Key::BACKSPACE);
+        code_editor::clear_command_line(editor);
         TEST_EXPECT(context, !editor.flag(EditorFlag::COMMAND_LINE_ACTIVE));
     }
 
@@ -711,8 +736,7 @@ namespace {
         TEST_EXPECT(context, !editor.flag(EditorFlag::SAVE_REQUESTED));
 
         code_editor::close_save_path_popup(editor);
-        send_text(editor, ":w");
-        press_key(editor, gui::Key::ENTER);
+        run_command_line_text(editor, "w");
         TEST_EXPECT(context, editor.flag(EditorFlag::SAVE_PATH_OPEN));
         TEST_EXPECT(context, !editor.flag(EditorFlag::SAVE_REQUESTED));
         TEST_EXPECT(context, !editor.flag(EditorFlag::COMMAND_LINE_ACTIVE));
@@ -720,49 +744,41 @@ namespace {
         code_editor::close_save_path_popup(editor);
         editor.current_file_name = "file.cpp";
         editor.current_file_path = "C:\\src\\file.cpp";
-        send_text(editor, ":w");
-        press_key(editor, gui::Key::ENTER);
+        run_command_line_text(editor, "w");
         TEST_EXPECT(context, editor.flag(EditorFlag::SAVE_REQUESTED));
         TEST_EXPECT(context, !editor.flag(EditorFlag::COMMAND_LINE_ACTIVE));
 
-        send_text(editor, ":buffer-close");
-        press_key(editor, gui::Key::ENTER);
+        run_command_line_text(editor, "buffer-close");
         TEST_EXPECT(context, editor.flag(EditorFlag::CLOSE_CURRENT_REQUESTED));
         editor.set_flag(EditorFlag::CLOSE_CURRENT_REQUESTED, false);
 
-        send_text(editor, ":new");
-        press_key(editor, gui::Key::ENTER);
+        run_command_line_text(editor, "new");
         TEST_EXPECT(context, editor.flag(EditorFlag::NEW_SCRATCH_REQUESTED));
         editor.set_flag(EditorFlag::NEW_SCRATCH_REQUESTED, false);
 
-        send_text(editor, ":q!");
-        press_key(editor, gui::Key::ENTER);
+        run_command_line_text(editor, "q!");
         TEST_EXPECT(context, editor.flag(EditorFlag::CLOSE_CURRENT_REQUESTED));
         TEST_EXPECT(context, editor.flag(EditorFlag::CLOSE_CURRENT_FORCE_REQUESTED));
         editor.set_flag(EditorFlag::CLOSE_CURRENT_REQUESTED, false);
         editor.set_flag(EditorFlag::CLOSE_CURRENT_FORCE_REQUESTED, false);
 
-        send_text(editor, ":wq");
-        press_key(editor, gui::Key::ENTER);
+        run_command_line_text(editor, "wq");
         TEST_EXPECT(context, editor.flag(EditorFlag::WRITE_QUIT_REQUESTED));
         editor.set_flag(EditorFlag::WRITE_QUIT_REQUESTED, false);
 
         TEST_EXPECT(
             context, editor.raster_policy == gui::font_provider::RasterPolicy::SHARP_HINTED
         );
-        send_text(editor, ":rp");
-        press_key(editor, gui::Key::ENTER);
+        run_command_line_text(editor, "rp");
         TEST_EXPECT(
             context, editor.raster_policy == gui::font_provider::RasterPolicy::SMOOTH_HINTED
         );
-        send_text(editor, ":toggle-raster-policy");
-        press_key(editor, gui::Key::ENTER);
+        run_command_line_text(editor, "toggle-raster-policy");
         TEST_EXPECT(
             context, editor.raster_policy == gui::font_provider::RasterPolicy::SHARP_HINTED
         );
 
-        send_text(editor, ":open");
-        press_key(editor, gui::Key::ENTER);
+        run_command_line_text(editor, "open");
         TEST_EXPECT(context, editor.flag(EditorFlag::FILE_SEARCH_OPEN));
     }
 
@@ -773,7 +789,7 @@ namespace {
         code_editor::EditorState editor = {};
         code_editor::init_editor(arena, editor, "alpha\nbeta alpha\ngamma alpha");
 
-        send_text(editor, "/alp");
+        open_text_search_text(editor, "alp");
 
         TEST_EXPECT(context, editor.flag(EditorFlag::TEXT_SEARCH_ACTIVE));
         TEST_EXPECT(context, code_editor::editor_text_search_text(editor) == "alp");
@@ -784,7 +800,7 @@ namespace {
         TEST_EXPECT(context, selection.end_line == 0u);
         TEST_EXPECT(context, selection.end_column == 3u);
 
-        press_key(editor, gui::Key::ENTER);
+        code_editor::finish_text_search(editor);
         TEST_EXPECT(context, !editor.flag(EditorFlag::TEXT_SEARCH_ACTIVE));
 
         send_text(editor, "n");
@@ -809,7 +825,7 @@ namespace {
         code_editor::EditorState editor = {};
         code_editor::init_editor(arena, editor, "aXlpha\nAlpha");
 
-        send_text(editor, "/alp");
+        open_text_search_text(editor, "alp");
 
         code_editor::EditorSelectionRange const selection =
             code_editor::editor_selection_range(editor);
@@ -829,7 +845,7 @@ namespace {
         editor.cursor_line = 2u;
         editor.cursor_column = 0u;
 
-        send_text(editor, "/target");
+        open_text_search_text(editor, "target");
 
         code_editor::EditorSelectionRange selection = code_editor::editor_selection_range(editor);
         TEST_EXPECT(context, selection.active);
@@ -838,7 +854,7 @@ namespace {
         TEST_EXPECT(context, selection.end_line == 2u);
         TEST_EXPECT(context, selection.end_column == 6u);
 
-        press_key(editor, gui::Key::ENTER);
+        code_editor::finish_text_search(editor);
         send_text(editor, "n");
         selection = code_editor::editor_selection_range(editor);
         TEST_EXPECT(context, selection.start_line == 3u);
@@ -856,10 +872,10 @@ namespace {
         editor.cursor_line = 1u;
         editor.cursor_column = 0u;
 
-        send_text(editor, "/target");
+        open_text_search_text(editor, "target");
         TEST_EXPECT(context, !code_editor::editor_selection_range(editor).active);
 
-        press_key(editor, gui::Key::ENTER);
+        code_editor::finish_text_search(editor);
         TEST_EXPECT(context, !editor.flag(EditorFlag::TEXT_SEARCH_ACTIVE));
 
         send_text(editor, "N");
@@ -879,18 +895,16 @@ namespace {
         code_editor::EditorState editor = {};
         code_editor::init_editor(arena, editor, "alpha\nbeta\ngamma");
 
-        send_text(editor, ":search");
-        press_key(editor, gui::Key::ENTER);
+        run_command_line_text(editor, "search");
         TEST_EXPECT(context, editor.flag(EditorFlag::TEXT_SEARCH_ACTIVE));
-        press_key(editor, gui::Key::ESCAPE);
+        editor.set_flag(EditorFlag::TEXT_SEARCH_ACTIVE, false);
 
-        send_text(editor, ":s");
-        press_key(editor, gui::Key::ENTER);
+        run_command_line_text(editor, "s");
 
         TEST_EXPECT(context, editor.flag(EditorFlag::TEXT_SEARCH_ACTIVE));
         TEST_EXPECT(context, code_editor::editor_text_search_text(editor).empty());
 
-        send_text(editor, "gam");
+        set_text_search_text(editor, "gam");
         code_editor::EditorSelectionRange const selection =
             code_editor::editor_selection_range(editor);
         TEST_EXPECT(context, selection.active);
@@ -899,9 +913,8 @@ namespace {
         TEST_EXPECT(context, selection.end_line == 2u);
         TEST_EXPECT(context, selection.end_column == 3u);
 
-        press_key(editor, gui::Key::ENTER);
-        send_text(editor, ":s");
-        press_key(editor, gui::Key::ENTER);
+        code_editor::finish_text_search(editor);
+        run_command_line_text(editor, "s");
 
         TEST_EXPECT(context, editor.flag(EditorFlag::TEXT_SEARCH_ACTIVE));
         TEST_EXPECT(context, code_editor::editor_text_search_text(editor).empty());

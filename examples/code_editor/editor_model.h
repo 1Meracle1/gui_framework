@@ -383,6 +383,12 @@ namespace code_editor {
         -> void;
     auto open_editor_jump_list(EditorState& editor) -> void;
     auto close_jump_list(EditorState& editor) -> void;
+    auto clear_command_line(EditorState& editor) -> void;
+    auto select_command_match(EditorState& editor) -> void;
+    auto complete_command_line(EditorState& editor) -> void;
+    auto run_command_line(EditorState& editor) -> void;
+    [[nodiscard]] auto update_text_search_selection(EditorState& editor) -> bool;
+    auto finish_text_search(EditorState& editor) -> void;
     [[nodiscard]] auto editor_line_count(EditorState const& editor) -> size_t;
     [[nodiscard]] auto editor_line(EditorState const& editor, size_t index) -> EditorLine;
     [[nodiscard]] auto editor_line_text(EditorLine line) -> StrRef;
