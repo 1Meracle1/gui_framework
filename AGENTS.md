@@ -126,6 +126,22 @@ Use the root scripts for normal workflows:
 On Windows, the `.bat` scripts must be runnable from a normal shell. They are
 responsible for setting up the MSVC environment before invoking MSVC presets.
 
+For Windows GUI bug reproduction:
+
+- Put tracked repro helpers under `scripts/repro/`.
+- Start from `scripts/repro/code_editor_symbols_repro.ps1` for `code_editor`
+  window-driving automation.
+- Drive the spawned application by its HWND with `PostMessage`; do not use
+  global key injection when a targeted window-message path works.
+- Send command keys with `WM_KEYDOWN` and `WM_KEYUP`, and send typed text with
+  `WM_CHAR` to avoid duplicated characters.
+- Capture `stdout`, `stderr`, and milestone screenshots under
+  `_codex_artifacts/`, then inspect the screenshots to confirm the expected UI
+  state.
+- Keep repro scripts small and linear. Extend the existing sequence only as far
+  as the reported bug requires.
+- Read `scripts/repro/README.md` before extending a repro script.
+
 ## Verification
 
 Before handing off changes, run the smallest relevant set of checks. For build

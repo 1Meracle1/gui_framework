@@ -31,7 +31,7 @@ namespace gui::render::d3d12 {
         constexpr uint32_t FRAME_SHADER_DESCRIPTOR_COUNT = 2048u;
         constexpr uint32_t SHADER_DESCRIPTOR_COUNT =
             FRAME_RESOURCE_COUNT * FRAME_SHADER_DESCRIPTOR_COUNT;
-        constexpr uint32_t FRAME_SAMPLER_DESCRIPTOR_COUNT = 256u;
+        constexpr uint32_t FRAME_SAMPLER_DESCRIPTOR_COUNT = 1024u;
         constexpr uint32_t SAMPLER_DESCRIPTOR_COUNT =
             FRAME_RESOURCE_COUNT * FRAME_SAMPLER_DESCRIPTOR_COUNT;
         constexpr size_t FRAME_VERTEX_BUFFER_DEFAULT_SIZE = 64u * 1024u;
