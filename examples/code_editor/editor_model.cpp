@@ -2070,6 +2070,12 @@ namespace code_editor {
         return matched;
     }
 
+    [[nodiscard]] auto jump_list_match(
+        size_t index, LspDiagnostic const& diagnostic, StrRef query, JumpListMatch& match
+    ) -> bool {
+        return jump_list_match_text(index, diagnostic.message, diagnostic.path, query, match);
+    }
+
     [[nodiscard]] auto jump_list_match_less(JumpListMatch lhs, JumpListMatch rhs) -> bool {
         if (lhs.priority != rhs.priority) {
             return lhs.priority < rhs.priority;
@@ -2080,6 +2086,37 @@ namespace code_editor {
         return lhs.jump_index < rhs.jump_index;
     }
 
+    [[nodiscard]] auto jump_list_is_diagnostics(EditorJumpListKind kind) -> bool {
+        return kind == EditorJumpListKind::LSP_FILE_DIAGNOSTICS ||
+               kind == EditorJumpListKind::LSP_WORKSPACE_DIAGNOSTICS;
+    }
+
+    [[nodiscard]] auto
+    jump_list_diagnostic_visible(EditorState const& editor, LspDiagnostic const& diagnostic)
+        -> bool {
+        return editor.jump_list_kind == EditorJumpListKind::LSP_WORKSPACE_DIAGNOSTICS ||
+               diagnostic.path.equals_ignore_ascii_case(editor.current_file_path);
+    }
+
+    [[nodiscard]] auto jump_list_diagnostic_index(EditorState const& editor, size_t source_index)
+        -> size_t {
+        DEBUG_ASSERT(editor.lsp_bridge != nullptr);
+        if (editor.jump_list_kind == EditorJumpListKind::LSP_WORKSPACE_DIAGNOSTICS) {
+            return source_index;
+        }
+        size_t visible = 0u;
+        for (size_t index = 0u; index < editor.lsp_bridge->diagnostics.size(); ++index) {
+            if (!jump_list_diagnostic_visible(editor, editor.lsp_bridge->diagnostics[index])) {
+                continue;
+            }
+            if (visible == source_index) {
+                return index;
+            }
+            visible += 1u;
+        }
+        return LSP_NO_SELECTION;
+    }
+
     [[nodiscard]] auto jump_list_source_count(EditorState const& editor) -> size_t {
         if (editor.jump_list_kind == EditorJumpListKind::LSP_LOCATIONS) {
             return editor.lsp_bridge != nullptr ? editor.lsp_bridge->locations.size() : 0u;
@@ -2087,6 +2124,18 @@ namespace code_editor {
         if (editor.jump_list_kind == EditorJumpListKind::LSP_DOCUMENT_SYMBOLS ||
             editor.jump_list_kind == EditorJumpListKind::LSP_WORKSPACE_SYMBOLS) {
             return editor.lsp_bridge != nullptr ? editor.lsp_bridge->symbols.size() : 0u;
+        }
+        if (jump_list_is_diagnostics(editor.jump_list_kind)) {
+            if (editor.lsp_bridge == nullptr) {
+                return 0u;
+            }
+            size_t count = 0u;
+            for (LspDiagnostic const& diagnostic : editor.lsp_bridge->diagnostics) {
+                if (jump_list_diagnostic_visible(editor, diagnostic)) {
+                    count += 1u;
+                }
+            }
+            return count;
         }
         if (editor.jump_list_kind == EditorJumpListKind::GLOBAL_SEARCH) {
             return editor.global_search_results.size();
@@ -2105,6 +2154,16 @@ namespace code_editor {
             editor.jump_list_kind == EditorJumpListKind::LSP_WORKSPACE_SYMBOLS) {
             DEBUG_ASSERT(editor.lsp_bridge != nullptr);
             return jump_list_match(index, editor.lsp_bridge->symbols[index], query, match);
+        }
+        if (jump_list_is_diagnostics(editor.jump_list_kind)) {
+            DEBUG_ASSERT(editor.lsp_bridge != nullptr);
+            size_t const diagnostic_index = jump_list_diagnostic_index(editor, index);
+            if (diagnostic_index == LSP_NO_SELECTION) {
+                return false;
+            }
+            return jump_list_match(
+                diagnostic_index, editor.lsp_bridge->diagnostics[diagnostic_index], query, match
+            );
         }
         if (editor.jump_list_kind == EditorJumpListKind::GLOBAL_SEARCH) {
             match = {.jump_index = index};
@@ -2294,6 +2353,7 @@ namespace code_editor {
         editor.file_search_open_file = FILE_SEARCH_NO_FILE;
         editor.buffer_search_open_file = FILE_SEARCH_NO_FILE;
         editor.global_search_open_index = JUMP_LIST_NO_SELECTION;
+        editor.lsp_open_diagnostic_index = LSP_NO_SELECTION;
         editor.global_search_refresh_requested = false;
         if (kind == EditorJumpListKind::GLOBAL_SEARCH) {
             editor.global_search_results.clear();
@@ -2726,6 +2786,8 @@ namespace code_editor {
         } else if (editor.jump_list_kind == EditorJumpListKind::LSP_DOCUMENT_SYMBOLS ||
                    editor.jump_list_kind == EditorJumpListKind::LSP_WORKSPACE_SYMBOLS) {
             editor.lsp_open_symbol_index = matches[editor.jump_selected].jump_index;
+        } else if (jump_list_is_diagnostics(editor.jump_list_kind)) {
+            editor.lsp_open_diagnostic_index = matches[editor.jump_selected].jump_index;
         } else if (editor.jump_list_kind == EditorJumpListKind::GLOBAL_SEARCH) {
             editor.global_search_open_index = matches[editor.jump_selected].jump_index;
         } else {
@@ -3125,6 +3187,10 @@ namespace code_editor {
                 open_file_search(editor);
             } else if (ch == 'b') {
                 open_buffer_search(editor);
+            } else if (ch == 'd') {
+                open_editor_lsp_diagnostics(editor, EditorJumpListKind::LSP_FILE_DIAGNOSTICS);
+            } else if (ch == 'D') {
+                open_editor_lsp_diagnostics(editor, EditorJumpListKind::LSP_WORKSPACE_DIAGNOSTICS);
             } else if (ch == '/') {
                 open_editor_global_search(editor);
             } else if (ch == 'j') {
@@ -3816,6 +3882,13 @@ namespace code_editor {
     }
 
     auto open_editor_lsp_symbols(EditorState& editor, EditorJumpListKind kind) -> void {
+        if (editor.lsp_bridge == nullptr) {
+            return;
+        }
+        open_jump_list_picker(editor, kind);
+    }
+
+    auto open_editor_lsp_diagnostics(EditorState& editor, EditorJumpListKind kind) -> void {
         if (editor.lsp_bridge == nullptr) {
             return;
         }

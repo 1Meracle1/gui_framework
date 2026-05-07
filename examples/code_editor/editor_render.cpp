@@ -2274,6 +2274,26 @@ namespace code_editor {
         }
     }
 
+    auto open_lsp_diagnostic(EditorState& editor, LspDiagnostic const& diagnostic) -> void {
+        if (diagnostic.path.empty()) {
+            return;
+        }
+        record_current_jump(editor);
+        focus_code_split_for_open(editor);
+        StrRef const name = render_path_leaf(diagnostic.path);
+        if (open_file(editor, name.empty() ? diagnostic.path : name, diagnostic.path)) {
+            set_editor_cursor(editor, diagnostic.range.start.line, diagnostic.range.start.column);
+            center_current_cursor(editor);
+            record_editor_jump(
+                editor,
+                name.empty() ? diagnostic.path : name,
+                diagnostic.path,
+                diagnostic.range.start.line,
+                diagnostic.range.start.column
+            );
+        }
+    }
+
     auto open_recorded_jump(EditorState& editor, size_t index) -> void {
         if (index >= editor.jumps.size()) {
             return;
@@ -2378,6 +2398,13 @@ namespace code_editor {
             editor.lsp_open_symbol_index = LSP_NO_SELECTION;
             if (index < editor.lsp_bridge->symbols.size()) {
                 open_lsp_symbol(editor, editor.lsp_bridge->symbols[index]);
+            }
+        }
+        if (editor.lsp_open_diagnostic_index != LSP_NO_SELECTION) {
+            size_t const index = editor.lsp_open_diagnostic_index;
+            editor.lsp_open_diagnostic_index = LSP_NO_SELECTION;
+            if (index < editor.lsp_bridge->diagnostics.size()) {
+                open_lsp_diagnostic(editor, editor.lsp_bridge->diagnostics[index]);
             }
         }
         if (editor.lsp_apply_code_action_index != LSP_NO_SELECTION) {
@@ -2880,6 +2907,39 @@ namespace code_editor {
             .str();
     }
 
+    [[nodiscard]] auto render_jump_list_is_diagnostics(EditorJumpListKind kind) -> bool {
+        return kind == EditorJumpListKind::LSP_FILE_DIAGNOSTICS ||
+               kind == EditorJumpListKind::LSP_WORKSPACE_DIAGNOSTICS;
+    }
+
+    [[nodiscard]] auto lsp_diagnostic_row_text(
+        EditorState const& editor, Arena& arena, LspDiagnostic const& diagnostic
+    ) -> StrRef {
+        StrRef const message =
+            !diagnostic.message.empty() ? diagnostic.message : StrRef("diagnostic");
+        if (editor.jump_list_kind == EditorJumpListKind::LSP_WORKSPACE_DIAGNOSTICS) {
+            StrRef const path =
+                render_workspace_relative_path(editor.save_root_path, diagnostic.path);
+            return fmt::aprintf(
+                       arena.resource(),
+                       "%s:%zu:%zu  %s",
+                       path,
+                       diagnostic.range.start.line + 1u,
+                       diagnostic.range.start.column + 1u,
+                       message
+            )
+                .str();
+        }
+        return fmt::aprintf(
+                   arena.resource(),
+                   "%zu:%zu  %s",
+                   diagnostic.range.start.line + 1u,
+                   diagnostic.range.start.column + 1u,
+                   message
+        )
+            .str();
+    }
+
     [[nodiscard]] auto lsp_location_jump(LspLocation const& location) -> EditorJump {
         StrRef name = render_path_leaf(location.path);
         if (name.empty()) {
@@ -2904,6 +2964,16 @@ namespace code_editor {
         };
     }
 
+    [[nodiscard]] auto lsp_diagnostic_jump(LspDiagnostic const& diagnostic) -> EditorJump {
+        StrRef const name = render_path_leaf(diagnostic.path);
+        return {
+            .name = name.empty() ? diagnostic.path : name,
+            .path = diagnostic.path,
+            .line = diagnostic.range.start.line,
+            .column = diagnostic.range.start.column,
+        };
+    }
+
     [[nodiscard]] auto jump_list_entry(EditorState const& editor, size_t index) -> EditorJump {
         if (editor.jump_list_kind == EditorJumpListKind::LSP_LOCATIONS &&
             editor.lsp_bridge != nullptr && index < editor.lsp_bridge->locations.size()) {
@@ -2913,6 +2983,11 @@ namespace code_editor {
              editor.jump_list_kind == EditorJumpListKind::LSP_WORKSPACE_SYMBOLS) &&
             editor.lsp_bridge != nullptr && index < editor.lsp_bridge->symbols.size()) {
             return lsp_symbol_jump(editor, editor.lsp_bridge->symbols[index]);
+        }
+        if ((editor.jump_list_kind == EditorJumpListKind::LSP_FILE_DIAGNOSTICS ||
+             editor.jump_list_kind == EditorJumpListKind::LSP_WORKSPACE_DIAGNOSTICS) &&
+            editor.lsp_bridge != nullptr && index < editor.lsp_bridge->diagnostics.size()) {
+            return lsp_diagnostic_jump(editor.lsp_bridge->diagnostics[index]);
         }
         if (editor.jump_list_kind == EditorJumpListKind::GLOBAL_SEARCH &&
             index < editor.global_search_results.size()) {
@@ -2951,6 +3026,12 @@ namespace code_editor {
                     editor.jump_list_kind == EditorJumpListKind::LSP_WORKSPACE_SYMBOLS) &&
                    editor.lsp_bridge != nullptr && index < editor.lsp_bridge->symbols.size()) {
             mark.selection = editor.lsp_bridge->symbols[index].selection_range;
+            mark.selection_active = lsp_position_less(mark.selection.start, mark.selection.end);
+            mark.cursor = mark.selection.start;
+        } else if ((editor.jump_list_kind == EditorJumpListKind::LSP_FILE_DIAGNOSTICS ||
+                    editor.jump_list_kind == EditorJumpListKind::LSP_WORKSPACE_DIAGNOSTICS) &&
+                   editor.lsp_bridge != nullptr && index < editor.lsp_bridge->diagnostics.size()) {
+            mark.selection = editor.lsp_bridge->diagnostics[index].range;
             mark.selection_active = lsp_position_less(mark.selection.start, mark.selection.end);
             mark.cursor = mark.selection.start;
         }
@@ -3283,6 +3364,9 @@ namespace code_editor {
                                        EditorJumpListKind::LSP_WORKSPACE_SYMBOLS) {
                             empty_text =
                                 total_count == 0u ? "No symbols found" : "No matching symbols";
+                        } else if (render_jump_list_is_diagnostics(editor.jump_list_kind)) {
+                            empty_text = total_count == 0u ? "No diagnostics found"
+                                                           : "No matching diagnostics";
                         } else if (editor.jump_list_kind == EditorJumpListKind::GLOBAL_SEARCH) {
                             empty_text = "No global search results";
                         }
@@ -3353,6 +3437,9 @@ namespace code_editor {
                                                list_kind ==
                                                    EditorJumpListKind::LSP_WORKSPACE_SYMBOLS) {
                                         editor.lsp_open_symbol_index = matches[index].jump_index;
+                                    } else if (render_jump_list_is_diagnostics(list_kind)) {
+                                        editor.lsp_open_diagnostic_index =
+                                            matches[index].jump_index;
                                     } else if (list_kind == EditorJumpListKind::GLOBAL_SEARCH) {
                                         editor.global_search_open_index = matches[index].jump_index;
                                     } else {
@@ -3370,26 +3457,40 @@ namespace code_editor {
                                         },
                                     }
                                 );
+                                gui::Color text_color = selected ? palette.text : palette.muted;
+                                StrRef row_text = {};
+                                if (list_kind == EditorJumpListKind::GLOBAL_SEARCH) {
+                                    row_text = global_search_row_text(
+                                        editor,
+                                        *row_temp.arena(),
+                                        editor.global_search_results[matches[index].jump_index]
+                                    );
+                                } else if (render_jump_list_is_diagnostics(list_kind) &&
+                                           editor.lsp_bridge != nullptr &&
+                                           matches[index].jump_index <
+                                               editor.lsp_bridge->diagnostics.size()) {
+                                    LspDiagnostic const& diagnostic =
+                                        editor.lsp_bridge->diagnostics[matches[index].jump_index];
+                                    row_text = lsp_diagnostic_row_text(
+                                        editor, *row_temp.arena(), diagnostic
+                                    );
+                                    text_color = lsp_diagnostic_color(palette, diagnostic.severity);
+                                } else {
+                                    row_text = jump_list_row_text(
+                                        *row_temp.arena(),
+                                        matches[index].jump_index,
+                                        jump,
+                                        list_kind,
+                                        editor.save_root_path
+                                    );
+                                }
                                 ui.label(
                                     gui::id("jump_list_result_text", visible_index),
-                                    list_kind == EditorJumpListKind::GLOBAL_SEARCH
-                                        ? global_search_row_text(
-                                              editor,
-                                              *row_temp.arena(),
-                                              editor
-                                                  .global_search_results[matches[index].jump_index]
-                                          )
-                                        : jump_list_row_text(
-                                              *row_temp.arena(),
-                                              matches[index].jump_index,
-                                              jump,
-                                              list_kind,
-                                              editor.save_root_path
-                                          ),
+                                    row_text,
                                     {
                                         .layout = {.width = gui::fill(), .height = gui::fill()},
                                         .style = {
-                                            .foreground = selected ? palette.text : palette.muted,
+                                            .foreground = text_color,
                                             .font = editor_font,
                                             .font_size = editor.font_size,
                                         },

@@ -153,6 +153,8 @@ namespace code_editor {
         LSP_LOCATIONS,
         LSP_DOCUMENT_SYMBOLS,
         LSP_WORKSPACE_SYMBOLS,
+        LSP_FILE_DIAGNOSTICS,
+        LSP_WORKSPACE_DIAGNOSTICS,
         GLOBAL_SEARCH,
     };
 
@@ -315,6 +317,7 @@ namespace code_editor {
         size_t lsp_selected = 0u;
         size_t lsp_open_location_index = LSP_NO_SELECTION;
         size_t lsp_open_symbol_index = LSP_NO_SELECTION;
+        size_t lsp_open_diagnostic_index = LSP_NO_SELECTION;
         size_t lsp_apply_code_action_index = LSP_NO_SELECTION;
         size_t jump_selected = 0u;
         size_t jump_cursor = JUMP_LIST_NO_SELECTION;
@@ -393,6 +396,7 @@ namespace code_editor {
     auto accept_lsp_popup(EditorState& editor) -> void;
     auto open_editor_lsp_locations(EditorState& editor) -> void;
     auto open_editor_lsp_symbols(EditorState& editor, EditorJumpListKind kind) -> void;
+    auto open_editor_lsp_diagnostics(EditorState& editor, EditorJumpListKind kind) -> void;
     auto
     record_editor_jump(EditorState& editor, StrRef name, StrRef path, size_t line, size_t column)
         -> void;

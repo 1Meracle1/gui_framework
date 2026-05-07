@@ -1934,6 +1934,79 @@ namespace {
         );
     }
 
+    TEST_CASE(editor_space_d_and_shift_d_open_diagnostics) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "int main() {}");
+        editor.current_file_name = "main.cpp";
+        editor.current_file_path = "C:\\repo\\main.cpp";
+
+        code_editor::LspDiagnostic diagnostics[] = {
+            {
+                .path = "C:\\repo\\main.cpp",
+                .range = {.start = {2u, 4u}, .end = {2u, 8u}},
+                .severity = code_editor::LspDiagnosticSeverity::ERROR_DIAGNOSTIC,
+                .message = "expected ';'",
+            },
+            {
+                .path = "C:\\repo\\render.cpp",
+                .range = {.start = {8u, 1u}, .end = {8u, 7u}},
+                .severity = code_editor::LspDiagnosticSeverity::WARNING,
+                .message = "unused variable",
+            },
+        };
+        code_editor::LspBridge bridge = {
+            .diagnostics = Slice<code_editor::LspDiagnostic>(diagnostics)
+        };
+        editor.lsp_bridge = &bridge;
+
+        send_text(editor, " d");
+
+        TEST_EXPECT(context, editor.flag(EditorFlag::JUMP_LIST_OPEN));
+        TEST_EXPECT(
+            context, editor.jump_list_kind == code_editor::EditorJumpListKind::LSP_FILE_DIAGNOSTICS
+        );
+        TEST_EXPECT(context, code_editor::jump_list_total_count(editor) == 1u);
+
+        code_editor::JumpListMatch matches[code_editor::JUMP_LIST_LIMIT] = {};
+        size_t const count = code_editor::collect_jump_list_matches(editor, matches);
+        TEST_EXPECT(context, count == 1u);
+        TEST_EXPECT(context, matches[0u].jump_index == 0u);
+
+        press_key(editor, gui::Key::ENTER);
+
+        TEST_EXPECT(context, !editor.flag(EditorFlag::JUMP_LIST_OPEN));
+        TEST_EXPECT(context, editor.lsp_open_diagnostic_index == 0u);
+
+        send_text(editor, " ");
+        send_text(editor, "D", gui::KEY_MOD_SHIFT);
+
+        TEST_EXPECT(context, editor.flag(EditorFlag::JUMP_LIST_OPEN));
+        TEST_EXPECT(
+            context,
+            editor.jump_list_kind == code_editor::EditorJumpListKind::LSP_WORKSPACE_DIAGNOSTICS
+        );
+        TEST_EXPECT(context, code_editor::jump_list_total_count(editor) == 2u);
+
+        editor.file_search_text_size = StrRef("render").copy_to(
+            editor.file_search_text, code_editor::FILE_SEARCH_TEXT_CAPACITY
+        );
+        editor.file_search_text[editor.file_search_text_size] = '\0';
+
+        code_editor::JumpListMatch workspace_matches[code_editor::JUMP_LIST_LIMIT] = {};
+        size_t const workspace_count =
+            code_editor::collect_jump_list_matches(editor, workspace_matches);
+        TEST_EXPECT(context, workspace_count == 1u);
+        TEST_EXPECT(context, workspace_matches[0u].jump_index == 1u);
+
+        press_key(editor, gui::Key::ENTER);
+
+        TEST_EXPECT(context, !editor.flag(EditorFlag::JUMP_LIST_OPEN));
+        TEST_EXPECT(context, editor.lsp_open_diagnostic_index == 1u);
+    }
+
     TEST_CASE(editor_lsp_rename_prefills_and_selects_current_word) {
         Arena arena = {};
         arena.init();
