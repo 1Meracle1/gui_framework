@@ -3549,7 +3549,15 @@ namespace code_editor {
             }
             break;
         case 'c':
-            change_selection(editor, clipboard, true);
+            if (selection.active) {
+                change_selection(editor, clipboard, true);
+            } else {
+                if (can_delete_char(editor)) {
+                    save_editor_undo(editor);
+                    delete_char(editor);
+                }
+                enter_insert_at(editor, cursor_position(editor));
+            }
             break;
         default:
             break;

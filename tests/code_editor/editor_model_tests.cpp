@@ -1579,6 +1579,43 @@ namespace {
         );
     }
 
+    TEST_CASE(editor_normal_c_enters_insert_mode_and_deletes_next_character) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "abcd");
+        editor.cursor_column = 1u;
+        editor.preferred_column = 1u;
+
+        send_text(editor, "c");
+
+        TEST_EXPECT(context, editor.flag(EditorFlag::INSERT_MODE));
+        TEST_EXPECT(context, editor.cursor_column == 1u);
+        TEST_EXPECT(
+            context, code_editor::editor_line_text(code_editor::editor_line(editor, 0u)) == "acd"
+        );
+
+        send_text(editor, "Q");
+
+        TEST_EXPECT(
+            context, code_editor::editor_line_text(code_editor::editor_line(editor, 0u)) == "aQcd"
+        );
+
+        code_editor::EditorState end = {};
+        code_editor::init_editor(arena, end, "abcd");
+        end.cursor_column = 4u;
+        end.preferred_column = 4u;
+
+        send_text(end, "c");
+
+        TEST_EXPECT(context, end.flag(EditorFlag::INSERT_MODE));
+        TEST_EXPECT(context, end.cursor_column == 4u);
+        TEST_EXPECT(
+            context, code_editor::editor_line_text(code_editor::editor_line(end, 0u)) == "abcd"
+        );
+    }
+
     TEST_CASE(editor_normal_alt_delete_and_change_do_not_yank) {
         Arena arena = {};
         arena.init();
