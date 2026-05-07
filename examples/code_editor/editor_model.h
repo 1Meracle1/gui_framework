@@ -34,6 +34,8 @@ namespace code_editor {
     inline constexpr size_t FILE_SEARCH_NO_FILE = static_cast<size_t>(-1);
     inline constexpr size_t JUMP_LIST_LIMIT = 128u;
     inline constexpr size_t JUMP_LIST_NO_SELECTION = static_cast<size_t>(-1);
+    inline constexpr size_t GLOBAL_SEARCH_RESULT_LIMIT = JUMP_LIST_LIMIT;
+    inline constexpr size_t GLOBAL_SEARCH_LINE_TEXT_CAPACITY = 160u;
     inline constexpr size_t LSP_NO_SELECTION = static_cast<size_t>(-1);
     inline constexpr size_t LSP_RENAME_TEXT_CAPACITY = 128u;
     inline constexpr size_t SAVE_PATH_TEXT_CAPACITY = 1024u;
@@ -138,11 +140,20 @@ namespace code_editor {
         uint8_t priority = 0u;
     };
 
+    struct GlobalSearchResult {
+        size_t tree_file_index = 0u;
+        size_t line = 0u;
+        size_t column = 0u;
+        size_t line_text_size = 0u;
+        char line_text[GLOBAL_SEARCH_LINE_TEXT_CAPACITY] = {};
+    };
+
     enum class EditorJumpListKind : uint8_t {
         HISTORY,
         LSP_LOCATIONS,
         LSP_DOCUMENT_SYMBOLS,
         LSP_WORKSPACE_SYMBOLS,
+        GLOBAL_SEARCH,
     };
 
     enum class EditorPaneKind : uint8_t {
@@ -213,6 +224,7 @@ namespace code_editor {
         BUFFER_SEARCH_OPEN,
         JUMP_LIST_OPEN,
         TEXT_SEARCH_ACTIVE,
+        GLOBAL_SEARCH_ACTIVE,
         COMMAND_LINE_ACTIVE,
         SAVE_REQUESTED,
         SAVE_PATH_OPEN,
@@ -268,6 +280,7 @@ namespace code_editor {
         Vec<EditorSplitNode> split_nodes = {};
         Vec<OpenFile> open_files = {};
         Vec<EditorJump> jumps = {};
+        Vec<GlobalSearchResult> global_search_results = {};
         Slice<FileTreeEntry> tree_files = {};
         EditorUndoEntry* undo_stack = nullptr;
         EditorUndoEntry* redo_stack = nullptr;
@@ -306,6 +319,7 @@ namespace code_editor {
         size_t jump_selected = 0u;
         size_t jump_cursor = JUMP_LIST_NO_SELECTION;
         size_t jump_open_index = JUMP_LIST_NO_SELECTION;
+        size_t global_search_open_index = JUMP_LIST_NO_SELECTION;
         size_t file_search_open_file = FILE_SEARCH_NO_FILE;
         size_t buffer_search_open_file = FILE_SEARCH_NO_FILE;
         size_t pending_line_number = 0u;
@@ -333,6 +347,7 @@ namespace code_editor {
         bool jump_list_mouse_known = false;
         bool jump_list_mouse_select = false;
         bool jump_list_reveal_selected = false;
+        bool global_search_refresh_requested = false;
         EditorSavePathError save_path_error = EditorSavePathError::NONE;
         EditorFlags flags = {EditorFlag::TREE_OPEN};
     };
@@ -382,6 +397,7 @@ namespace code_editor {
     record_editor_jump(EditorState& editor, StrRef name, StrRef path, size_t line, size_t column)
         -> void;
     auto open_editor_jump_list(EditorState& editor) -> void;
+    auto open_editor_global_search(EditorState& editor) -> void;
     auto close_jump_list(EditorState& editor) -> void;
     auto clear_command_line(EditorState& editor) -> void;
     auto select_command_match(EditorState& editor) -> void;
@@ -389,6 +405,7 @@ namespace code_editor {
     auto run_command_line(EditorState& editor) -> void;
     [[nodiscard]] auto update_text_search_selection(EditorState& editor) -> bool;
     auto finish_text_search(EditorState& editor) -> void;
+    auto finish_global_search(EditorState& editor) -> void;
     [[nodiscard]] auto editor_line_count(EditorState const& editor) -> size_t;
     [[nodiscard]] auto editor_line(EditorState const& editor, size_t index) -> EditorLine;
     [[nodiscard]] auto editor_line_text(EditorLine line) -> StrRef;

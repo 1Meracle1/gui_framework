@@ -891,6 +891,114 @@ namespace code_editor {
         return text.substr(start, end - start);
     }
 
+    [[nodiscard]] auto search_line_match_at(StrRef line, StrRef query, size_t start) -> bool {
+        if (start > line.size() || query.size() > line.size() - start) {
+            return false;
+        }
+        for (size_t index = 0u; index < query.size(); ++index) {
+            if (to_ascii_lower(line[start + index]) != to_ascii_lower(query[index])) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    [[nodiscard]] auto
+    search_line_match(StrRef line, StrRef query, size_t start_column, size_t& out_start) -> bool {
+        if (query.empty() || start_column > line.size() || query.size() > line.size()) {
+            return false;
+        }
+        size_t const last_start = line.size() - query.size();
+        if (start_column > last_start) {
+            return false;
+        }
+        char const first = to_ascii_lower(query[0u]);
+        for (size_t start = start_column; start <= last_start; ++start) {
+            if (to_ascii_lower(line[start]) == first && search_line_match_at(line, query, start)) {
+                out_start = start;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    [[nodiscard]] auto global_search_file_text(
+        EditorState& editor, Arena& arena, FileTreeEntry const& file, StrRef& out_text
+    ) -> bool {
+        if (same_file(file.name, file.path, editor.current_file_name, editor.current_file_path)) {
+            out_text = text_buffer_copy(editor.text, arena);
+            return true;
+        }
+        OpenFile* const open = find_open_file(editor, file.name, file.path);
+        if (open != nullptr && open->text_valid) {
+            out_text = open->text;
+            return true;
+        }
+        return read_tree_file_display_text(arena, file.path, out_text);
+    }
+
+    auto refresh_global_search_results(EditorState& editor) -> void {
+        editor.global_search_results.clear();
+        StrRef const query = editor_file_search_text(editor);
+        if (query.empty()) {
+            editor.global_search_refresh_requested = false;
+            return;
+        }
+
+        ArenaTemp temp = begin_thread_temp_arena();
+        for (size_t file_index = 0u;
+             file_index < editor.tree_files.size() &&
+             editor.global_search_results.size() < GLOBAL_SEARCH_RESULT_LIMIT;
+             ++file_index) {
+            FileTreeEntry const& file = editor.tree_files[file_index];
+            if (file.is_directory || !file.file_search_visible) {
+                continue;
+            }
+
+            StrRef text = {};
+            if (!global_search_file_text(editor, *temp.arena(), file, text)) {
+                continue;
+            }
+            size_t offset = 0u;
+            size_t line_index = 0u;
+            while (offset < text.size() &&
+                   editor.global_search_results.size() < GLOBAL_SEARCH_RESULT_LIMIT) {
+                StrRef const line = next_text_line(text, offset);
+                size_t column = 0u;
+                while (search_line_match(line, query, column, column) &&
+                       editor.global_search_results.size() < GLOBAL_SEARCH_RESULT_LIMIT) {
+                    GlobalSearchResult result = {
+                        .tree_file_index = file_index,
+                        .line = line_index,
+                        .column = column,
+                    };
+                    StrRef const line_text = line.trim();
+                    result.line_text_size =
+                        line_text.copy_to(result.line_text, GLOBAL_SEARCH_LINE_TEXT_CAPACITY - 1u);
+                    result.line_text[result.line_text_size] = '\0';
+                    bool const ok = editor.global_search_results.push_back(result);
+                    DEBUG_ASSERT(ok);
+                    (void)ok;
+                    column += 1u;
+                }
+                line_index += 1u;
+            }
+        }
+        editor.global_search_refresh_requested = false;
+    }
+
+    [[nodiscard]] auto global_search_row_text(
+        EditorState const& editor, Arena& arena, GlobalSearchResult const& result
+    ) -> StrRef {
+        if (result.tree_file_index >= editor.tree_files.size()) {
+            return {};
+        }
+        FileTreeEntry const& file = editor.tree_files[result.tree_file_index];
+        StrRef const line(result.line_text, result.line_text_size);
+        StrRef const path = file_search_entry_text(file);
+        return line.empty() ? path : fmt::aprintf(arena.resource(), "%s  %s", path, line).str();
+    }
+
     auto draw_syntax_label_line(
         gui::Frame& ui,
         font_cache::Font font,
@@ -2103,6 +2211,25 @@ namespace code_editor {
         }
     }
 
+    auto open_global_search_match(EditorState& editor, size_t index) -> void {
+        if (index >= editor.global_search_results.size()) {
+            return;
+        }
+        GlobalSearchResult const result = editor.global_search_results[index];
+        if (result.tree_file_index >= editor.tree_files.size()) {
+            return;
+        }
+        FileTreeEntry const& file = editor.tree_files[result.tree_file_index];
+        if (file.is_directory) {
+            return;
+        }
+        focus_code_split_for_open(editor);
+        if (open_file(editor, file.name, file.path)) {
+            set_editor_cursor(editor, result.line, result.column);
+            center_current_cursor(editor);
+        }
+    }
+
     [[nodiscard]] auto find_or_add_open_file(EditorState& editor, StrRef path) -> OpenFile* {
         StrRef const name = render_path_leaf(path);
         remember_open_file(editor, name.empty() ? path : name, path);
@@ -2711,6 +2838,19 @@ namespace code_editor {
             editor.lsp_bridge != nullptr && index < editor.lsp_bridge->symbols.size()) {
             return lsp_symbol_jump(editor, editor.lsp_bridge->symbols[index]);
         }
+        if (editor.jump_list_kind == EditorJumpListKind::GLOBAL_SEARCH &&
+            index < editor.global_search_results.size()) {
+            GlobalSearchResult const& result = editor.global_search_results[index];
+            if (result.tree_file_index < editor.tree_files.size()) {
+                FileTreeEntry const& file = editor.tree_files[result.tree_file_index];
+                return {
+                    .name = file.name,
+                    .path = file.path,
+                    .line = result.line,
+                    .column = result.column,
+                };
+            }
+        }
         if (index < editor.jumps.size()) {
             return editor.jumps[index];
         }
@@ -2828,7 +2968,11 @@ namespace code_editor {
         float const dialog_height =
             std::max(180.0f, client_height - modal_margin_top - modal_margin_bottom);
 
+        bool const global_search = editor.jump_list_kind == EditorJumpListKind::GLOBAL_SEARCH;
         editor.file_search_text_size = cstr_len(editor.file_search_text);
+        if (global_search && editor.global_search_refresh_requested) {
+            refresh_global_search_results(editor);
+        }
         ArenaTemp search_temp = begin_thread_temp_arena();
         JumpListMatch* matches = nullptr;
         size_t match_count = 0u;
@@ -2928,41 +3072,55 @@ namespace code_editor {
                                 .style = {.foreground = palette.cursor, .font = editor_font},
                             }
                         );
-                        gui::Id const input_id = gui::id("jump_list_input");
-                        ui.request_focus(input_id);
-                        gui::Signal const text_input = ui.input_text(
-                            input_id,
-                            "",
-                            editor.file_search_text,
-                            FILE_SEARCH_TEXT_CAPACITY,
-                            gui::InputTextDesc{
-                                .box =
-                                    {
-                                        .layout =
-                                            {
-                                                .width = gui::fill(),
-                                                .height = gui::fill(),
-                                                .padding = gui::insets(0.0f),
-                                            },
-                                        .style =
-                                            {
-                                                .background = gui::rgba(0, 0, 0, 0),
-                                                .foreground = palette.text,
-                                                .border = gui::rgba(0, 0, 0, 0),
-                                                .border_thickness = 1.0f,
-                                                .radius = 0.0f,
-                                                .font = editor_font,
-                                                .font_size = editor.font_size,
-                                            },
+                        if (global_search) {
+                            ui.label(
+                                editor_file_search_text(editor),
+                                {
+                                    .layout = {.width = gui::fill(), .height = gui::fill()},
+                                    .style = {
+                                        .foreground = palette.text,
+                                        .font = editor_font,
+                                        .font_size = editor.font_size,
                                     },
-                                .ignore_input_on_focus = true,
+                                }
+                            );
+                        } else {
+                            gui::Id const input_id = gui::id("jump_list_input");
+                            ui.request_focus(input_id);
+                            gui::Signal const text_input = ui.input_text(
+                                input_id,
+                                "",
+                                editor.file_search_text,
+                                FILE_SEARCH_TEXT_CAPACITY,
+                                gui::InputTextDesc{
+                                    .box =
+                                        {
+                                            .layout =
+                                                {
+                                                    .width = gui::fill(),
+                                                    .height = gui::fill(),
+                                                    .padding = gui::insets(0.0f),
+                                                },
+                                            .style =
+                                                {
+                                                    .background = gui::rgba(0, 0, 0, 0),
+                                                    .foreground = palette.text,
+                                                    .border = gui::rgba(0, 0, 0, 0),
+                                                    .border_thickness = 1.0f,
+                                                    .radius = 0.0f,
+                                                    .font = editor_font,
+                                                    .font_size = editor.font_size,
+                                                },
+                                        },
+                                    .ignore_input_on_focus = true,
+                                }
+                            );
+                            if (text_input.changed) {
+                                editor.file_search_text_size = cstr_len(editor.file_search_text);
+                                editor.jump_selected = 0u;
+                                editor.jump_list_mouse_select = false;
+                                editor.jump_list_reveal_selected = true;
                             }
-                        );
-                        if (text_input.changed) {
-                            editor.file_search_text_size = cstr_len(editor.file_search_text);
-                            editor.jump_selected = 0u;
-                            editor.jump_list_mouse_select = false;
-                            editor.jump_list_reveal_selected = true;
                         }
                         filtered_count = jump_list_filtered_count(editor);
                         total_count = jump_list_total_count(editor);
@@ -3005,6 +3163,8 @@ namespace code_editor {
                                        EditorJumpListKind::LSP_WORKSPACE_SYMBOLS) {
                             empty_text =
                                 total_count == 0u ? "No symbols found" : "No matching symbols";
+                        } else if (editor.jump_list_kind == EditorJumpListKind::GLOBAL_SEARCH) {
+                            empty_text = "No global search results";
                         }
                         ui.label(
                             empty_text,
@@ -3073,6 +3233,8 @@ namespace code_editor {
                                                list_kind ==
                                                    EditorJumpListKind::LSP_WORKSPACE_SYMBOLS) {
                                         editor.lsp_open_symbol_index = matches[index].jump_index;
+                                    } else if (list_kind == EditorJumpListKind::GLOBAL_SEARCH) {
+                                        editor.global_search_open_index = matches[index].jump_index;
                                     } else {
                                         editor.jump_open_index = matches[index].jump_index;
                                     }
@@ -3090,13 +3252,20 @@ namespace code_editor {
                                 );
                                 ui.label(
                                     gui::id("jump_list_result_text", visible_index),
-                                    jump_list_row_text(
-                                        *row_temp.arena(),
-                                        matches[index].jump_index,
-                                        jump,
-                                        list_kind,
-                                        editor.save_root_path
-                                    ),
+                                    list_kind == EditorJumpListKind::GLOBAL_SEARCH
+                                        ? global_search_row_text(
+                                              editor,
+                                              *row_temp.arena(),
+                                              editor
+                                                  .global_search_results[matches[index].jump_index]
+                                          )
+                                        : jump_list_row_text(
+                                              *row_temp.arena(),
+                                              matches[index].jump_index,
+                                              jump,
+                                              list_kind,
+                                              editor.save_root_path
+                                          ),
                                     {
                                         .layout = {.width = gui::fill(), .height = gui::fill()},
                                         .style = {
@@ -4704,6 +4873,11 @@ namespace code_editor {
             editor.buffer_search_open_file = FILE_SEARCH_NO_FILE;
             open_buffer_search_match(editor, open_file_index);
         }
+        if (editor.global_search_open_index != JUMP_LIST_NO_SELECTION) {
+            size_t const index = editor.global_search_open_index;
+            editor.global_search_open_index = JUMP_LIST_NO_SELECTION;
+            open_global_search_match(editor, index);
+        }
         if (editor.jump_open_index != JUMP_LIST_NO_SELECTION) {
             size_t const index = editor.jump_open_index;
             editor.jump_open_index = JUMP_LIST_NO_SELECTION;
@@ -4908,9 +5082,12 @@ namespace code_editor {
                             },
                         .ignore_input_on_focus = true,
                     };
-                    if (editor.flag(EditorFlag::TEXT_SEARCH_ACTIVE)) {
+                    bool const bottom_search = editor.flag(EditorFlag::TEXT_SEARCH_ACTIVE) ||
+                                               editor.flag(EditorFlag::GLOBAL_SEARCH_ACTIVE);
+                    if (bottom_search) {
+                        bool const global_search = editor.flag(EditorFlag::GLOBAL_SEARCH_ACTIVE);
                         ui.label(
-                            ":search",
+                            global_search ? ":global-search" : ":search",
                             {
                                 .layout = {.width = gui::text(), .height = gui::fill()},
                                 .style = {
@@ -4930,12 +5107,22 @@ namespace code_editor {
                         );
                         if (text_input.changed) {
                             editor.text_search_text_size = cstr_len(editor.text_search_text);
-                            BASE_UNUSED(update_text_search_selection(editor));
+                            if (!global_search) {
+                                BASE_UNUSED(update_text_search_selection(editor));
+                            }
                         }
                         if (text_input.activated) {
-                            finish_text_search(editor);
+                            if (global_search) {
+                                finish_global_search(editor);
+                            } else {
+                                finish_text_search(editor);
+                            }
                         } else if (key_pressed(input, gui::Key::ESCAPE)) {
-                            editor.set_flag(EditorFlag::TEXT_SEARCH_ACTIVE, false);
+                            editor.set_flag(
+                                global_search ? EditorFlag::GLOBAL_SEARCH_ACTIVE
+                                              : EditorFlag::TEXT_SEARCH_ACTIVE,
+                                false
+                            );
                         }
                     } else if (editor.flag(EditorFlag::COMMAND_LINE_ACTIVE)) {
                         bool const complete = key_pressed(input, gui::Key::TAB, true);

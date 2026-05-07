@@ -921,6 +921,97 @@ namespace {
         TEST_EXPECT(context, !code_editor::editor_selection_range(editor).active);
     }
 
+    TEST_CASE(editor_global_search_commands_open_bottom_search_input) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "");
+
+        run_command_line_text(editor, "gs");
+        TEST_EXPECT(context, editor.flag(EditorFlag::GLOBAL_SEARCH_ACTIVE));
+        TEST_EXPECT(context, !editor.flag(EditorFlag::JUMP_LIST_OPEN));
+        TEST_EXPECT(context, !editor.flag(EditorFlag::TEXT_SEARCH_ACTIVE));
+
+        editor.set_flag(EditorFlag::GLOBAL_SEARCH_ACTIVE, false);
+        run_command_line_text(editor, "global-search");
+        TEST_EXPECT(context, editor.flag(EditorFlag::GLOBAL_SEARCH_ACTIVE));
+        TEST_EXPECT(context, !editor.flag(EditorFlag::JUMP_LIST_OPEN));
+    }
+
+    TEST_CASE(editor_space_slash_opens_global_search_input) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "");
+
+        send_text(editor, " /");
+
+        TEST_EXPECT(context, editor.flag(EditorFlag::GLOBAL_SEARCH_ACTIVE));
+        TEST_EXPECT(context, !editor.flag(EditorFlag::JUMP_LIST_OPEN));
+        TEST_EXPECT(context, !editor.flag(EditorFlag::PENDING_LEADER));
+        TEST_EXPECT(context, !editor.flag(EditorFlag::TEXT_SEARCH_ACTIVE));
+    }
+
+    TEST_CASE(editor_global_search_submit_opens_jump_picker_with_query) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "");
+        code_editor::open_editor_global_search(editor);
+        set_text_search_text(editor, "target");
+
+        code_editor::finish_global_search(editor);
+
+        TEST_EXPECT(context, !editor.flag(EditorFlag::GLOBAL_SEARCH_ACTIVE));
+        TEST_EXPECT(context, editor.flag(EditorFlag::JUMP_LIST_OPEN));
+        TEST_EXPECT(
+            context, editor.jump_list_kind == code_editor::EditorJumpListKind::GLOBAL_SEARCH
+        );
+        TEST_EXPECT(context, code_editor::editor_file_search_text(editor) == "target");
+        TEST_EXPECT(context, editor.global_search_refresh_requested);
+    }
+
+    TEST_CASE(editor_global_search_selects_cached_workspace_result) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::FileTreeEntry tree[] = {
+            {
+                .name = "app.cpp",
+                .path = "C:\\repo\\app.cpp",
+                .relative_path = "app.cpp",
+            },
+        };
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "");
+        editor.tree_files = Slice<code_editor::FileTreeEntry>(tree);
+        code_editor::open_editor_global_search(editor);
+        set_text_search_text(editor, "target");
+        code_editor::finish_global_search(editor);
+
+        bool const ok = editor.global_search_results.push_back({
+            .tree_file_index = 0u,
+            .line = 4u,
+            .column = 9u,
+        });
+        TEST_EXPECT(context, ok);
+
+        code_editor::JumpListMatch matches[code_editor::JUMP_LIST_LIMIT] = {};
+        size_t const count = code_editor::collect_jump_list_matches(editor, matches);
+        TEST_EXPECT(context, count == 1u);
+        TEST_EXPECT(context, matches[0u].jump_index == 0u);
+
+        press_key(editor, gui::Key::ENTER);
+
+        TEST_EXPECT(context, !editor.flag(EditorFlag::JUMP_LIST_OPEN));
+        TEST_EXPECT(context, editor.global_search_open_index == 0u);
+        TEST_EXPECT(context, editor.jump_open_index == code_editor::JUMP_LIST_NO_SELECTION);
+    }
+
     TEST_CASE(editor_star_search_submits_selected_text) {
         Arena arena = {};
         arena.init();
