@@ -999,52 +999,128 @@ namespace code_editor {
         return line.empty() ? path : fmt::aprintf(arena.resource(), "%s  %s", path, line).str();
     }
 
+    struct SourcePreviewMark {
+        LspPosition cursor = {};
+        LspRange selection = {};
+        bool selection_active = false;
+    };
+
+    auto draw_source_preview_cursor(
+        gui::Frame& ui, font_cache::Font font, Palette const& palette, float font_size
+    ) -> void {
+        float const width = std::max(1.0f, font_cache::text_advance(font, font_size, " "));
+        ui.spacer({
+            .layout = {.width = gui::px(width), .height = gui::fill()},
+            .style = {.background = gui::color_alpha(palette.cursor, 0.45f)},
+        });
+    }
+
     auto draw_syntax_label_line(
         gui::Frame& ui,
         font_cache::Font font,
         SyntaxTokenizer tokenizer,
         Palette const& palette,
         StrRef line,
-        float font_size
+        float font_size,
+        size_t line_index = 0u,
+        SourcePreviewMark const* mark = nullptr,
+        size_t column_limit = FILE_SEARCH_PREVIEW_COLUMN_LIMIT
     ) -> void {
+        column_limit = std::max<size_t>(8u, column_limit);
+        size_t selection_start = 0u;
+        size_t selection_end = 0u;
+        bool has_selection = false;
+        if (mark != nullptr && mark->selection_active && line_index >= mark->selection.start.line &&
+            line_index <= mark->selection.end.line) {
+            selection_start =
+                line_index == mark->selection.start.line ? mark->selection.start.column : 0u;
+            selection_end =
+                line_index == mark->selection.end.line ? mark->selection.end.column : line.size();
+            selection_start = std::min(selection_start, line.size());
+            selection_end = std::min(selection_end, line.size());
+            has_selection = selection_start < selection_end;
+        }
+        bool const has_cursor = mark != nullptr && mark->cursor.line == line_index;
+        size_t cursor_column =
+            has_cursor ? std::min(mark->cursor.column, line.size()) : static_cast<size_t>(-1);
         if (line.empty()) {
-            ui.spacer({.layout = {.width = gui::px(1.0f), .height = gui::fill()}});
+            if (has_cursor) {
+                draw_source_preview_cursor(ui, font, palette, font_size);
+            } else {
+                ui.spacer({.layout = {.width = gui::px(1.0f), .height = gui::fill()}});
+            }
             return;
         }
-        bool const truncated = line.size() > FILE_SEARCH_PREVIEW_COLUMN_LIMIT;
-        line = line.prefix(std::min(line.size(), FILE_SEARCH_PREVIEW_COLUMN_LIMIT));
+        size_t const full_line_size = line.size();
+        size_t visible_start = 0u;
+        if ((has_selection || has_cursor) && full_line_size > column_limit) {
+            size_t const target = has_selection ? selection_start : cursor_column;
+            size_t const context = column_limit / 3u;
+            visible_start =
+                target > context ? std::min(target - context, full_line_size - column_limit) : 0u;
+        }
+        size_t const visible_size = std::min(column_limit, full_line_size - visible_start);
+        line = line.slice(visible_start, visible_size);
+        if (has_selection) {
+            has_selection =
+                selection_start < visible_start + visible_size && selection_end > visible_start;
+            selection_start =
+                has_selection ? std::max(selection_start, visible_start) - visible_start : 0u;
+            selection_end = has_selection ? std::min(selection_end, visible_start + visible_size) -
+                                                visible_start
+                                          : 0u;
+        }
+        if (has_cursor) {
+            cursor_column = cursor_column >= visible_start
+                                ? std::min(cursor_column - visible_start, line.size())
+                                : static_cast<size_t>(-1);
+        }
         size_t index = 0u;
-        size_t token_index = 0u;
+        size_t part_index = 0u;
         while (index < line.size()) {
             SyntaxToken const token = syntax_next_token(tokenizer, line, index);
-            ui.label(
-                gui::id("file_search_preview_token", token_index),
-                line.substr(token.start, token.end - token.start),
-                {
-                    .layout = {.width = gui::text(), .height = gui::fill()},
-                    .style = {
-                        .foreground = syntax_token_color(palette, token.kind),
-                        .font = font,
-                        .font_size = font_size,
-                    },
+            size_t start = token.start;
+            while (start < token.end) {
+                size_t end = token.end;
+                if (has_selection && selection_start > start && selection_start < end) {
+                    end = selection_start;
                 }
-            );
+                if (has_selection && selection_end > start && selection_end < end) {
+                    end = selection_end;
+                }
+                if (has_cursor && cursor_column > start && cursor_column < end) {
+                    end = cursor_column;
+                }
+                if (has_cursor && cursor_column + 1u > start && cursor_column + 1u < end) {
+                    end = cursor_column + 1u;
+                }
+                bool const selected =
+                    has_selection && start >= selection_start && start < selection_end;
+                bool const cursor = has_cursor && start == cursor_column;
+                gui::Color const background = cursor     ? gui::color_alpha(palette.cursor, 0.45f)
+                                              : selected ? gui::color_alpha(palette.cursor, 0.28f)
+                                                         : gui::Color{};
+                ui.label(
+                    gui::id("file_search_preview_token", part_index),
+                    line.substr(start, end - start),
+                    {
+                        .layout = {.width = gui::text(), .height = gui::fill()},
+                        .style = {
+                            .background = background,
+                            .foreground = syntax_token_color(palette, token.kind),
+                            .font = font,
+                            .font_size = font_size,
+                        },
+                    }
+                );
+                start = end;
+                part_index += 1u;
+            }
             index = token.end;
-            token_index += 1u;
         }
-        if (truncated) {
-            ui.label(
-                gui::id("file_search_preview_token", token_index),
-                "...",
-                {
-                    .layout = {.width = gui::text(), .height = gui::fill()},
-                    .style = {
-                        .foreground = palette.muted,
-                        .font = font,
-                        .font_size = font_size,
-                    },
-                }
-            );
+        if (has_cursor && cursor_column == line.size() &&
+            visible_start + visible_size == full_line_size) {
+            draw_source_preview_cursor(ui, font, palette, font_size);
         }
     }
 
@@ -2857,6 +2933,30 @@ namespace code_editor {
         return {};
     }
 
+    [[nodiscard]] auto
+    jump_preview_mark(EditorState const& editor, size_t index, EditorJump const& jump)
+        -> SourcePreviewMark {
+        SourcePreviewMark mark = {.cursor = {jump.line, jump.column}};
+        if (editor.jump_list_kind == EditorJumpListKind::GLOBAL_SEARCH &&
+            index < editor.global_search_results.size()) {
+            GlobalSearchResult const& result = editor.global_search_results[index];
+            size_t const size = editor_file_search_text(editor).size();
+            mark.cursor = {result.line, result.column};
+            mark.selection = {
+                .start = mark.cursor,
+                .end = {result.line, result.column + size},
+            };
+            mark.selection_active = size != 0u;
+        } else if ((editor.jump_list_kind == EditorJumpListKind::LSP_DOCUMENT_SYMBOLS ||
+                    editor.jump_list_kind == EditorJumpListKind::LSP_WORKSPACE_SYMBOLS) &&
+                   editor.lsp_bridge != nullptr && index < editor.lsp_bridge->symbols.size()) {
+            mark.selection = editor.lsp_bridge->symbols[index].selection_range;
+            mark.selection_active = lsp_position_less(mark.selection.start, mark.selection.end);
+            mark.cursor = mark.selection.start;
+        }
+        return mark;
+    }
+
     [[nodiscard]] auto jump_preview_text(
         EditorState& editor,
         Arena& arena,
@@ -2888,6 +2988,8 @@ namespace code_editor {
         font_cache::Font editor_font,
         Palette const& palette,
         EditorJump const& jump,
+        SourcePreviewMark const& mark,
+        float preview_width,
         float preview_height
     ) -> void {
         ArenaTemp temp = begin_thread_temp_arena();
@@ -2921,6 +3023,10 @@ namespace code_editor {
         }
 
         SyntaxTokenizer const tokenizer = syntax_tokenizer_for_file_name(preview_name);
+        float const char_width =
+            std::max(1.0f, font_cache::text_advance(editor_font, editor.font_size, " "));
+        size_t const column_limit =
+            std::max<size_t>(8u, static_cast<size_t>(preview_width / char_width));
         size_t drawn = 0u;
         while (drawn < preview_line_limit && offset < preview_text.size()) {
             StrRef const line = next_text_line(preview_text, offset);
@@ -2934,7 +3040,17 @@ namespace code_editor {
                         },
                     }
                 )) {
-                draw_syntax_label_line(ui, editor_font, tokenizer, palette, line, editor.font_size);
+                draw_syntax_label_line(
+                    ui,
+                    editor_font,
+                    tokenizer,
+                    palette,
+                    line,
+                    editor.font_size,
+                    line_index,
+                    &mark,
+                    column_limit
+                );
             }
             line_index += 1u;
             drawn += 1u;
@@ -2967,6 +3083,10 @@ namespace code_editor {
         float const modal_margin_x = std::clamp(desired_margin_x, 20.0f, max_margin_x);
         float const dialog_height =
             std::max(180.0f, client_height - modal_margin_top - modal_margin_bottom);
+        float const dialog_width = std::max(1.0f, client_width - 2.0f * modal_margin_x);
+        float const preview_width = std::max(
+            1.0f, (dialog_width - 2.0f * PANEL_PADDING - DIALOG_GAP) * 0.52f - 2.0f * PANEL_PADDING
+        );
 
         bool const global_search = editor.jump_list_kind == EditorJumpListKind::GLOBAL_SEARCH;
         editor.file_search_text_size = cstr_len(editor.file_search_text);
@@ -3292,14 +3412,16 @@ namespace code_editor {
                         }
                     )) {
                     if (match_count != 0u) {
-                        EditorJump const jump =
-                            jump_list_entry(editor, matches[editor.jump_selected].jump_index);
+                        size_t const entry_index = matches[editor.jump_selected].jump_index;
+                        EditorJump const jump = jump_list_entry(editor, entry_index);
                         draw_jump_source_preview(
                             ui,
                             editor,
                             editor_font,
                             palette,
                             jump,
+                            jump_preview_mark(editor, entry_index, jump),
+                            preview_width,
                             dialog_height - 2.0f * PANEL_PADDING
                         );
                     }
