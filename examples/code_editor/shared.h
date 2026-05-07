@@ -102,6 +102,42 @@ namespace code_editor {
         bool file_search_visible = true;
     };
 
+    inline constexpr size_t TREE_OPERATION_PATH_CAPACITY = 2048u;
+
+    enum class TreeOperationKind : uint8_t {
+        NONE,
+        RENAME,
+        CREATE_FILE,
+        CREATE_DIRECTORY,
+        REMOVE,
+        UNDO,
+        REDO,
+    };
+
+    enum class TreeOperationUpdateKind : uint8_t {
+        NONE,
+        RENAME,
+        CREATE,
+        REMOVE,
+        RESTORE,
+    };
+
+    struct TreeOperationRequest {
+        uint64_t generation = 0u;
+        TreeOperationKind kind = TreeOperationKind::NONE;
+        char source_path[TREE_OPERATION_PATH_CAPACITY] = {};
+        char target_path[TREE_OPERATION_PATH_CAPACITY] = {};
+    };
+
+    struct TreeOperationResult {
+        uint64_t generation = 0u;
+        TreeOperationKind request_kind = TreeOperationKind::NONE;
+        TreeOperationUpdateKind update_kind = TreeOperationUpdateKind::NONE;
+        bool success = false;
+        char source_path[TREE_OPERATION_PATH_CAPACITY] = {};
+        char target_path[TREE_OPERATION_PATH_CAPACITY] = {};
+    };
+
     struct ModuleRuntimeContext {
         gui::render::Context render_context = {};
         void* native_window = nullptr;
@@ -114,6 +150,8 @@ namespace code_editor {
         StrRef const* shared_tree_root_name = nullptr;
         Slice<FileTreeEntry>* shared_tree_files = nullptr;
         uint64_t const* shared_file_change_generation = nullptr;
+        TreeOperationRequest* shared_tree_operation_request = nullptr;
+        TreeOperationResult* shared_tree_operation_result = nullptr;
         LspBridge const* lsp_bridge = nullptr;
         LspSendEditorRequestFn lsp_send_request = nullptr;
         void* lsp_user_data = nullptr;

@@ -871,6 +871,14 @@ namespace code_editor {
         runtime->editor.lsp_bridge = runtime->lsp_bridge;
         runtime->editor.lsp_send_request = runtime->lsp_send_request;
         runtime->editor.lsp_user_data = runtime->lsp_user_data;
+        runtime->editor.shared_tree_operation_request = context.shared_tree_operation_request;
+        runtime->editor.shared_tree_operation_result = context.shared_tree_operation_result;
+        if (context.shared_tree_operation_result != nullptr) {
+            runtime->editor.tree_operation_generation =
+                context.shared_tree_operation_result->generation;
+            runtime->editor.tree_operation_seen_generation =
+                context.shared_tree_operation_result->generation;
+        }
         if (!context.initial_file_name.empty()) {
             runtime->editor.current_file_name = context.initial_file_name;
         }
@@ -926,6 +934,7 @@ namespace code_editor {
         bool files_changed
     ) -> gui::Frame {
         reload_runtime_config(*runtime, false);
+        sync_tree_operation_result(runtime->editor);
         if (files_changed) {
             update_open_file_changes(runtime->editor);
         }
@@ -1011,6 +1020,7 @@ namespace code_editor {
             draw_editor_surface(
                 runtime->draw_context,
                 runtime->editor_font,
+                runtime->ui_font,
                 runtime->editor,
                 runtime->char_width,
                 ui,

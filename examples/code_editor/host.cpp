@@ -88,6 +88,20 @@ namespace code_editor {
     };
 
     struct LaunchDesc {
+        struct TreeSnapshotEntry {
+            StrRef relative_path = {};
+            StrRef text = {};
+            bool is_directory = false;
+        };
+
+        struct TreeHistoryEntry {
+            TreeHistoryEntry* previous = nullptr;
+            TreeOperationKind kind = TreeOperationKind::NONE;
+            StrRef source_path = {};
+            StrRef target_path = {};
+            Slice<TreeSnapshotEntry> snapshot = {};
+        };
+
         StrRef initial_text = {};
         StrRef initial_file_name = {};
         StrRef initial_file_path = {};
@@ -95,8 +109,13 @@ namespace code_editor {
         StrRef save_root_path = {};
         StrRef window_cache_path = {};
         Arena tree_arenas[2] = {};
+        Arena tree_history_arena = {};
         Vec<FileTreeEntry> tree_files = {};
         DirectoryWatcher tree_watcher = {};
+        TreeHistoryEntry* tree_undo_stack = nullptr;
+        TreeHistoryEntry* tree_redo_stack = nullptr;
+        TreeOperationRequest tree_operation_request = {};
+        TreeOperationResult tree_operation_result = {};
         uint32_t tree_arena_index = 0u;
         uint64_t file_change_generation = 0u;
         uint64_t file_change_ticks = 0u;
@@ -875,6 +894,244 @@ namespace code_editor {
         return arena_copy_cstr(arena, StrRef(path, size));
     }
 
+    [[nodiscard]] auto host_path_exists(StrRef path) -> bool {
+        return GetFileAttributesA(path.data()) != INVALID_FILE_ATTRIBUTES;
+    }
+
+    [[nodiscard]] auto joined_path(StrRef directory, StrRef name, char* buffer, size_t capacity)
+        -> StrRef {
+        size_t size = 0u;
+        StrRef const trimmed_directory = path_without_trailing_slash(directory);
+        if (!append_buffer(buffer, capacity, size, trimmed_directory)) {
+            return {};
+        }
+        if (!name.empty()) {
+            if (!trimmed_directory.empty() && !trimmed_directory.ends_with('\\') &&
+                !trimmed_directory.ends_with('/')) {
+                if (!append_buffer(buffer, capacity, size, "\\")) {
+                    return {};
+                }
+            }
+            if (!append_buffer(buffer, capacity, size, name)) {
+                return {};
+            }
+        }
+        return StrRef(buffer, size);
+    }
+
+    auto copy_tree_operation_path(char* target, StrRef source) -> void {
+        size_t const size = std::min(source.size(), TREE_OPERATION_PATH_CAPACITY - 1u);
+        if (size != 0u) {
+            std::memcpy(target, source.data(), size);
+        }
+        target[size] = '\0';
+    }
+
+    auto
+    clear_tree_operation_result(LaunchDesc& launch, uint64_t generation, TreeOperationKind kind)
+        -> void {
+        launch.tree_operation_result = {
+            .generation = generation,
+            .request_kind = kind,
+        };
+    }
+
+    auto set_tree_operation_result(
+        LaunchDesc& launch,
+        uint64_t generation,
+        TreeOperationKind request_kind,
+        TreeOperationUpdateKind update_kind,
+        bool success,
+        StrRef source_path = {},
+        StrRef target_path = {}
+    ) -> void {
+        launch.tree_operation_result = {
+            .generation = generation,
+            .request_kind = request_kind,
+            .update_kind = update_kind,
+            .success = success,
+        };
+        copy_tree_operation_path(launch.tree_operation_result.source_path, source_path);
+        copy_tree_operation_path(launch.tree_operation_result.target_path, target_path);
+    }
+
+    [[nodiscard]] auto write_file_bytes(StrRef path, StrRef text) -> bool {
+        std::FILE* const file = open_write_file(path);
+        if (file == nullptr) {
+            return false;
+        }
+        bool const ok =
+            text.empty() || std::fwrite(text.data(), 1u, text.size(), file) == text.size();
+        std::fclose(file);
+        return ok;
+    }
+
+    [[nodiscard]] auto delete_tree_path_recursive(StrRef path) -> bool {
+        if (!host_path_exists(path)) {
+            return true;
+        }
+        if (!path_is_directory(path)) {
+            return DeleteFileA(path.data()) != 0;
+        }
+
+        char search[MAX_PATH * 4] = {};
+        StrRef const search_path = joined_path(path, "*", search, sizeof(search));
+        if (search_path.empty()) {
+            return false;
+        }
+
+        WIN32_FIND_DATAA find_data = {};
+        HANDLE const find = FindFirstFileA(search_path.data(), &find_data);
+        if (find == INVALID_HANDLE_VALUE) {
+            return GetLastError() == ERROR_FILE_NOT_FOUND && RemoveDirectoryA(path.data()) != 0;
+        }
+
+        bool ok = true;
+        do {
+            StrRef const name(find_data.cFileName);
+            if (name == "." || name == "..") {
+                continue;
+            }
+            char child_buffer[MAX_PATH * 4] = {};
+            StrRef const child_path = joined_path(path, name, child_buffer, sizeof(child_buffer));
+            ok = !child_path.empty() && delete_tree_path_recursive(child_path);
+        } while (ok && FindNextFileA(find, &find_data));
+
+        FindClose(find);
+        return ok && RemoveDirectoryA(path.data()) != 0;
+    }
+
+    [[nodiscard]] auto push_snapshot_entry(
+        LaunchDesc& launch,
+        Vec<LaunchDesc::TreeSnapshotEntry>& snapshot,
+        StrRef relative_path,
+        StrRef text,
+        bool is_directory
+    ) -> bool {
+        return snapshot.push_back({
+            .relative_path = arena_copy_cstr(launch.tree_history_arena, relative_path),
+            .text = text,
+            .is_directory = is_directory,
+        });
+    }
+
+    [[nodiscard]] auto collect_tree_snapshot(
+        LaunchDesc& launch,
+        Vec<LaunchDesc::TreeSnapshotEntry>& snapshot,
+        StrRef path,
+        StrRef relative_path
+    ) -> bool {
+        bool const is_directory = path_is_directory(path);
+        if (!is_directory) {
+            StrRef text = {};
+            return read_file_text(launch.tree_history_arena, path, text) &&
+                   push_snapshot_entry(launch, snapshot, relative_path, text, false);
+        }
+
+        if (!push_snapshot_entry(launch, snapshot, relative_path, {}, true)) {
+            return false;
+        }
+
+        char search[MAX_PATH * 4] = {};
+        StrRef const search_path = joined_path(path, "*", search, sizeof(search));
+        if (search_path.empty()) {
+            return false;
+        }
+
+        WIN32_FIND_DATAA find_data = {};
+        HANDLE const find = FindFirstFileA(search_path.data(), &find_data);
+        if (find == INVALID_HANDLE_VALUE) {
+            return GetLastError() == ERROR_FILE_NOT_FOUND;
+        }
+
+        bool ok = true;
+        do {
+            StrRef const name(find_data.cFileName);
+            if (name == "." || name == "..") {
+                continue;
+            }
+            char child_path_buffer[MAX_PATH * 4] = {};
+            StrRef const child_path =
+                joined_path(path, name, child_path_buffer, sizeof(child_path_buffer));
+            char child_relative_buffer[MAX_PATH * 4] = {};
+            StrRef const child_relative = joined_path(
+                relative_path, name, child_relative_buffer, sizeof(child_relative_buffer)
+            );
+            ok = !child_path.empty() && !child_relative.empty() &&
+                 collect_tree_snapshot(launch, snapshot, child_path, child_relative);
+        } while (ok && FindNextFileA(find, &find_data));
+
+        FindClose(find);
+        return ok;
+    }
+
+    [[nodiscard]] auto
+    restore_tree_snapshot(StrRef root_path, Slice<LaunchDesc::TreeSnapshotEntry> snapshot) -> bool {
+        for (LaunchDesc::TreeSnapshotEntry const& entry : snapshot) {
+            char path_buffer[MAX_PATH * 4] = {};
+            StrRef const path =
+                entry.relative_path.empty()
+                    ? joined_path(root_path, {}, path_buffer, sizeof(path_buffer))
+                    : joined_path(root_path, entry.relative_path, path_buffer, sizeof(path_buffer));
+            if (path.empty()) {
+                return false;
+            }
+            if (entry.is_directory) {
+                if (CreateDirectoryA(path.data(), nullptr) == 0 &&
+                    GetLastError() != ERROR_ALREADY_EXISTS) {
+                    return false;
+                }
+                continue;
+            }
+            if (!write_file_bytes(path, entry.text)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    auto clear_tree_redo(LaunchDesc& launch) -> void {
+        launch.tree_redo_stack = nullptr;
+    }
+
+    auto push_tree_history_entry(
+        LaunchDesc& launch,
+        TreeOperationKind kind,
+        StrRef source_path,
+        StrRef target_path,
+        Slice<LaunchDesc::TreeSnapshotEntry> snapshot = {}
+    ) -> void {
+        auto* const entry = arena_new<LaunchDesc::TreeHistoryEntry>(launch.tree_history_arena);
+        entry->previous = launch.tree_undo_stack;
+        entry->kind = kind;
+        entry->source_path = arena_copy_cstr(launch.tree_history_arena, source_path);
+        entry->target_path = arena_copy_cstr(launch.tree_history_arena, target_path);
+        if (!snapshot.empty()) {
+            auto* const entries = arena_alloc<LaunchDesc::TreeSnapshotEntry>(
+                launch.tree_history_arena, snapshot.size()
+            );
+            for (size_t index = 0u; index < snapshot.size(); ++index) {
+                entries[index] = snapshot[index];
+            }
+            entry->snapshot = {entries, snapshot.size()};
+        }
+        launch.tree_undo_stack = entry;
+        clear_tree_redo(launch);
+    }
+
+    auto
+    move_tree_history_entry(LaunchDesc::TreeHistoryEntry*& from, LaunchDesc::TreeHistoryEntry*& to)
+        -> LaunchDesc::TreeHistoryEntry* {
+        if (from == nullptr) {
+            return nullptr;
+        }
+        LaunchDesc::TreeHistoryEntry* const entry = from;
+        from = entry->previous;
+        entry->previous = to;
+        to = entry;
+        return entry;
+    }
+
     [[nodiscard]] auto old_tree_entry_open(Slice<FileTreeEntry> old_files, StrRef relative_path)
         -> bool {
         for (FileTreeEntry const& file : old_files) {
@@ -1023,6 +1280,7 @@ namespace code_editor {
         -> bool {
         launch.tree_arenas[0u].init();
         launch.tree_arenas[1u].init();
+        launch.tree_history_arena.init();
         if (!launch.tree_files.init(32u, launch.tree_arenas[0u].resource())) {
             return false;
         }
@@ -1084,6 +1342,234 @@ namespace code_editor {
         launch.tree_files = std::move(files);
         launch.tree_arenas[old_index].reset();
         launch.tree_arena_index = new_index;
+    }
+
+    [[nodiscard]] auto tree_operation_targets_root(LaunchDesc const& launch, StrRef path) -> bool {
+        return !launch.save_root_path.empty() &&
+               path.equals_ignore_ascii_case(path_without_trailing_slash(launch.save_root_path));
+    }
+
+    [[nodiscard]] auto create_empty_tree_path(StrRef path, bool directory) -> bool {
+        if (directory) {
+            return CreateDirectoryA(path.data(), nullptr) != 0;
+        }
+        return write_file_bytes(path, {});
+    }
+
+    auto refresh_launch_tree_from_operation(LaunchDesc& launch) -> void {
+        refresh_launch_tree(launch);
+        launch.file_change_generation += 1u;
+        launch.file_change_ticks = 0u;
+    }
+
+    [[nodiscard]] auto apply_tree_create(
+        LaunchDesc& launch, TreeOperationKind kind, StrRef path, TreeOperationKind request_kind
+    ) -> bool {
+        if (path.empty() || host_path_exists(path)) {
+            return false;
+        }
+        bool const directory = kind == TreeOperationKind::CREATE_DIRECTORY;
+        if (!create_empty_tree_path(path, directory)) {
+            return false;
+        }
+
+        LaunchDesc::TreeSnapshotEntry snapshot_entry = {.is_directory = directory};
+        push_tree_history_entry(launch, kind, path, {}, {&snapshot_entry, 1u});
+        set_tree_operation_result(
+            launch,
+            launch.tree_operation_request.generation,
+            request_kind,
+            TreeOperationUpdateKind::CREATE,
+            true,
+            path
+        );
+        refresh_launch_tree_from_operation(launch);
+        return true;
+    }
+
+    [[nodiscard]] auto apply_tree_rename(
+        LaunchDesc& launch, StrRef source_path, StrRef target_path, TreeOperationKind request_kind
+    ) -> bool {
+        if (source_path.empty() || target_path.empty() ||
+            source_path.equals_ignore_ascii_case(target_path) || !host_path_exists(source_path) ||
+            host_path_exists(target_path) || tree_operation_targets_root(launch, source_path)) {
+            return false;
+        }
+        if (MoveFileExA(source_path.data(), target_path.data(), MOVEFILE_WRITE_THROUGH) == 0) {
+            return false;
+        }
+
+        push_tree_history_entry(launch, TreeOperationKind::RENAME, source_path, target_path);
+        set_tree_operation_result(
+            launch,
+            launch.tree_operation_request.generation,
+            request_kind,
+            TreeOperationUpdateKind::RENAME,
+            true,
+            source_path,
+            target_path
+        );
+        refresh_launch_tree_from_operation(launch);
+        return true;
+    }
+
+    [[nodiscard]] auto
+    apply_tree_delete(LaunchDesc& launch, StrRef path, TreeOperationKind request_kind) -> bool {
+        if (path.empty() || !host_path_exists(path) || tree_operation_targets_root(launch, path)) {
+            return false;
+        }
+
+        Vec<LaunchDesc::TreeSnapshotEntry> snapshot = {};
+        if (!snapshot.init(8u, launch.tree_history_arena.resource()) ||
+            !collect_tree_snapshot(launch, snapshot, path, {}) ||
+            !delete_tree_path_recursive(path)) {
+            return false;
+        }
+
+        push_tree_history_entry(launch, TreeOperationKind::REMOVE, path, {}, snapshot.slice());
+        set_tree_operation_result(
+            launch,
+            launch.tree_operation_request.generation,
+            request_kind,
+            TreeOperationUpdateKind::REMOVE,
+            true,
+            path
+        );
+        refresh_launch_tree_from_operation(launch);
+        return true;
+    }
+
+    [[nodiscard]] auto apply_tree_undo(LaunchDesc& launch) -> bool {
+        LaunchDesc::TreeHistoryEntry* const entry =
+            move_tree_history_entry(launch.tree_undo_stack, launch.tree_redo_stack);
+        if (entry == nullptr) {
+            return false;
+        }
+
+        bool ok = false;
+        TreeOperationUpdateKind update_kind = TreeOperationUpdateKind::NONE;
+        StrRef source_path = {};
+        StrRef target_path = {};
+        switch (entry->kind) {
+        case TreeOperationKind::RENAME:
+            ok = MoveFileExA(
+                     entry->target_path.data(), entry->source_path.data(), MOVEFILE_WRITE_THROUGH
+                 ) != 0;
+            update_kind = TreeOperationUpdateKind::RENAME;
+            source_path = entry->target_path;
+            target_path = entry->source_path;
+            break;
+        case TreeOperationKind::CREATE_FILE:
+        case TreeOperationKind::CREATE_DIRECTORY:
+            ok = delete_tree_path_recursive(entry->source_path);
+            update_kind = TreeOperationUpdateKind::REMOVE;
+            source_path = entry->source_path;
+            break;
+        case TreeOperationKind::REMOVE:
+            ok = restore_tree_snapshot(entry->source_path, entry->snapshot);
+            update_kind = TreeOperationUpdateKind::RESTORE;
+            source_path = entry->source_path;
+            break;
+        default:
+            break;
+        }
+
+        if (!ok) {
+            BASE_UNUSED(move_tree_history_entry(launch.tree_redo_stack, launch.tree_undo_stack));
+            return false;
+        }
+
+        set_tree_operation_result(
+            launch,
+            launch.tree_operation_request.generation,
+            TreeOperationKind::UNDO,
+            update_kind,
+            true,
+            source_path,
+            target_path
+        );
+        refresh_launch_tree_from_operation(launch);
+        return true;
+    }
+
+    [[nodiscard]] auto apply_tree_redo(LaunchDesc& launch) -> bool {
+        LaunchDesc::TreeHistoryEntry* const entry =
+            move_tree_history_entry(launch.tree_redo_stack, launch.tree_undo_stack);
+        if (entry == nullptr) {
+            return false;
+        }
+
+        bool ok = false;
+        TreeOperationUpdateKind update_kind = TreeOperationUpdateKind::NONE;
+        StrRef source_path = {};
+        StrRef target_path = {};
+        switch (entry->kind) {
+        case TreeOperationKind::RENAME:
+            ok = MoveFileExA(
+                     entry->source_path.data(), entry->target_path.data(), MOVEFILE_WRITE_THROUGH
+                 ) != 0;
+            update_kind = TreeOperationUpdateKind::RENAME;
+            source_path = entry->source_path;
+            target_path = entry->target_path;
+            break;
+        case TreeOperationKind::CREATE_FILE:
+        case TreeOperationKind::CREATE_DIRECTORY:
+            ok = restore_tree_snapshot(entry->source_path, entry->snapshot);
+            update_kind = TreeOperationUpdateKind::CREATE;
+            source_path = entry->source_path;
+            break;
+        case TreeOperationKind::REMOVE:
+            ok = delete_tree_path_recursive(entry->source_path);
+            update_kind = TreeOperationUpdateKind::REMOVE;
+            source_path = entry->source_path;
+            break;
+        default:
+            break;
+        }
+
+        if (!ok) {
+            BASE_UNUSED(move_tree_history_entry(launch.tree_undo_stack, launch.tree_redo_stack));
+            return false;
+        }
+
+        set_tree_operation_result(
+            launch,
+            launch.tree_operation_request.generation,
+            TreeOperationKind::REDO,
+            update_kind,
+            true,
+            source_path,
+            target_path
+        );
+        refresh_launch_tree_from_operation(launch);
+        return true;
+    }
+
+    [[nodiscard]] auto process_tree_operation_request(LaunchDesc& launch) -> bool {
+        TreeOperationRequest const& request = launch.tree_operation_request;
+        if (request.generation == 0u ||
+            request.generation == launch.tree_operation_result.generation) {
+            return false;
+        }
+
+        StrRef const source_path(request.source_path, cstr_len(request.source_path));
+        StrRef const target_path(request.target_path, cstr_len(request.target_path));
+        clear_tree_operation_result(launch, request.generation, request.kind);
+        switch (request.kind) {
+        case TreeOperationKind::RENAME:
+            return apply_tree_rename(launch, source_path, target_path, request.kind);
+        case TreeOperationKind::CREATE_FILE:
+        case TreeOperationKind::CREATE_DIRECTORY:
+            return apply_tree_create(launch, request.kind, source_path, request.kind);
+        case TreeOperationKind::REMOVE:
+            return apply_tree_delete(launch, source_path, request.kind);
+        case TreeOperationKind::UNDO:
+            return apply_tree_undo(launch);
+        case TreeOperationKind::REDO:
+            return apply_tree_redo(launch);
+        default:
+            return false;
+        }
     }
 
     [[nodiscard]] auto process_launch_file_changes(LaunchDesc& launch) -> bool {
@@ -1173,6 +1659,8 @@ namespace code_editor {
             .tree_root_name = launch.tree_root_name,
             .save_root_path = launch.save_root_path,
             .tree_files = launch.tree_files.slice(),
+            .shared_tree_operation_request = &launch.tree_operation_request,
+            .shared_tree_operation_result = &launch.tree_operation_result,
             .lsp_bridge = lsp_initialized ? lsp_client_bridge(lsp_client) : nullptr,
             .lsp_send_request = lsp_initialized ? lsp_client_send_editor_request : nullptr,
             .lsp_user_data = lsp_initialized ? &lsp_client : nullptr,
@@ -1261,6 +1749,16 @@ namespace code_editor {
                 hot_reload_overlay_visible = hot_reload_overlay_state.visible;
             }
 #endif
+            uint64_t const tree_operation_generation_before =
+                launch.tree_operation_result.generation;
+            bool const tree_operation_changed = process_tree_operation_request(launch);
+            if (launch.tree_operation_result.generation != tree_operation_generation_before) {
+                if (tree_operation_changed) {
+                    module_context.tree_root_name = launch.tree_root_name;
+                    module_context.tree_files = launch.tree_files.slice();
+                }
+                app_state.redraw_pending = true;
+            }
             if (process_launch_file_changes(launch)) {
                 module_context.tree_root_name = launch.tree_root_name;
                 module_context.tree_files = launch.tree_files.slice();

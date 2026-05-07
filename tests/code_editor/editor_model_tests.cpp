@@ -2589,6 +2589,86 @@ namespace {
         TEST_EXPECT(context, editor.flag(EditorFlag::TREE_OPEN));
     }
 
+    TEST_CASE(editor_filesystem_tree_insert_mode_survives_focus_round_trip) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::FileTreeEntry tree[] = {
+            {
+                .name = "src",
+                .path = "C:\\repo\\src",
+                .relative_path = "src",
+                .depth = 0u,
+                .is_directory = true,
+            },
+            {
+                .name = "main.cpp",
+                .path = "C:\\repo\\src\\main.cpp",
+                .relative_path = "src\\main.cpp",
+                .depth = 1u,
+            },
+        };
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "");
+        editor.tree_root_name = "repo";
+        editor.tree_files = Slice<code_editor::FileTreeEntry>(tree);
+
+        send_text(editor, " e");
+        size_t const filesystem = editor.split_nodes[editor.root_split].first;
+        size_t const code = editor.split_nodes[editor.root_split].second;
+        code_editor::focus_editor_split(editor, filesystem);
+
+        send_text(editor, "j");
+        send_text(editor, "i");
+
+        TEST_EXPECT(context, editor.flag(EditorFlag::INSERT_MODE));
+        TEST_EXPECT(context, editor.tree_edit_mode == code_editor::TreeEditMode::RENAME);
+
+        code_editor::focus_editor_split(editor, code);
+        code_editor::focus_editor_split(editor, filesystem);
+
+        TEST_EXPECT(context, editor.flag(EditorFlag::INSERT_MODE));
+        TEST_EXPECT(context, editor.tree_edit_mode == code_editor::TreeEditMode::RENAME);
+        TEST_EXPECT(
+            context, code_editor::editor_line_text(code_editor::editor_line(editor, 0u)) == "src"
+        );
+    }
+
+    TEST_CASE(editor_filesystem_tree_dd_queues_delete_request_for_root_file) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::FileTreeEntry tree[] = {
+            {
+                .name = "temp.txt",
+                .path = "C:\\repo\\temp.txt",
+                .relative_path = "temp.txt",
+                .depth = 0u,
+            },
+        };
+
+        code_editor::TreeOperationRequest request = {};
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "");
+        editor.tree_root_name = "repo";
+        editor.tree_files = Slice<code_editor::FileTreeEntry>(tree);
+        editor.shared_tree_operation_request = &request;
+
+        send_text(editor, " e");
+        size_t const filesystem = editor.split_nodes[editor.root_split].first;
+        code_editor::focus_editor_split(editor, filesystem);
+
+        send_text(editor, "j");
+        TEST_EXPECT(context, editor.tree_cursor == 0u);
+
+        send_text(editor, "dd");
+
+        TEST_EXPECT(context, editor.tree_operation_pending);
+        TEST_EXPECT(context, request.kind == code_editor::TreeOperationKind::REMOVE);
+        TEST_EXPECT(context, StrRef(request.source_path) == "C:\\repo\\temp.txt");
+    }
+
     TEST_CASE(editor_remembers_last_code_split_for_filesystem_open) {
         Arena arena = {};
         arena.init();

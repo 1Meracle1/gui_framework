@@ -171,6 +171,13 @@ namespace code_editor {
         FILESYSTEM,
     };
 
+    enum class TreeEditMode : uint8_t {
+        NONE,
+        RENAME,
+        CREATE_FILE,
+        CREATE_DIRECTORY,
+    };
+
     enum class EditorLspPopupKind : uint8_t {
         NONE,
         COMPLETION,
@@ -349,13 +356,18 @@ namespace code_editor {
         LspBridge const* lsp_bridge = nullptr;
         LspSendEditorRequestFn lsp_send_request = nullptr;
         void* lsp_user_data = nullptr;
+        TreeOperationRequest* shared_tree_operation_request = nullptr;
+        TreeOperationResult* shared_tree_operation_result = nullptr;
         char lsp_rename_text[LSP_RENAME_TEXT_CAPACITY] = {};
         size_t lsp_rename_text_size = 0u;
+        uint64_t tree_operation_generation = 0u;
+        uint64_t tree_operation_seen_generation = 0u;
         gui::TextSelection lsp_hover_selection = {};
         EditorLspPopupKind lsp_popup = EditorLspPopupKind::NONE;
         EditorCloseIntent close_intent = EditorCloseIntent::NONE;
         EditorConfigRequestKind config_request = EditorConfigRequestKind::NONE;
         EditorJumpListKind jump_list_kind = EditorJumpListKind::HISTORY;
+        TreeEditMode tree_edit_mode = TreeEditMode::NONE;
         bool lsp_rename_text_selected = false;
         bool file_search_mouse_known = false;
         bool file_search_mouse_select = false;
@@ -365,6 +377,7 @@ namespace code_editor {
         bool jump_list_mouse_select = false;
         bool jump_list_reveal_selected = false;
         bool global_search_refresh_requested = false;
+        bool tree_operation_pending = false;
         EditorSavePathError save_path_error = EditorSavePathError::NONE;
         EditorFlags flags = {EditorFlag::TREE_OPEN};
     };
