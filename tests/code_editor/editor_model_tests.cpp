@@ -1734,6 +1734,102 @@ namespace {
         TEST_EXPECT(context, editor.jump_open_index == code_editor::JUMP_LIST_NO_SELECTION);
     }
 
+    TEST_CASE(editor_lsp_symbols_use_jump_list_picker) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "");
+
+        code_editor::LspDocumentSymbol symbols[] = {
+            {
+                .path = "C:\\repo\\main.cpp",
+                .name = "draw_panel",
+                .detail = "void()",
+                .selection_range = {.start = {2u, 4u}, .end = {2u, 14u}},
+            },
+            {
+                .path = "C:\\repo\\render.cpp",
+                .name = "layout_window",
+                .detail = "void()",
+                .selection_range = {.start = {8u, 1u}, .end = {8u, 14u}},
+            },
+        };
+        code_editor::LspBridge bridge = {
+            .symbols = Slice<code_editor::LspDocumentSymbol>(symbols),
+            .symbols_kind = code_editor::LspRequestKind::WORKSPACE_SYMBOL,
+        };
+        editor.lsp_bridge = &bridge;
+
+        code_editor::open_editor_lsp_symbols(
+            editor, code_editor::EditorJumpListKind::LSP_WORKSPACE_SYMBOLS
+        );
+
+        TEST_EXPECT(context, editor.flag(EditorFlag::JUMP_LIST_OPEN));
+        TEST_EXPECT(
+            context, editor.jump_list_kind == code_editor::EditorJumpListKind::LSP_WORKSPACE_SYMBOLS
+        );
+        TEST_EXPECT(context, code_editor::jump_list_total_count(editor) == 2u);
+
+        editor.file_search_text_size = StrRef("layout").copy_to(
+            editor.file_search_text, code_editor::FILE_SEARCH_TEXT_CAPACITY
+        );
+        editor.file_search_text[editor.file_search_text_size] = '\0';
+
+        code_editor::JumpListMatch matches[code_editor::JUMP_LIST_LIMIT] = {};
+        size_t const count = code_editor::collect_jump_list_matches(editor, matches);
+        TEST_EXPECT(context, count == 1u);
+        TEST_EXPECT(context, matches[0u].jump_index == 1u);
+
+        editor.file_search_text_size =
+            StrRef("2").copy_to(editor.file_search_text, code_editor::FILE_SEARCH_TEXT_CAPACITY);
+        editor.file_search_text[editor.file_search_text_size] = '\0';
+
+        TEST_EXPECT(context, code_editor::collect_jump_list_matches(editor, matches) == 0u);
+
+        editor.file_search_text_size = StrRef("render").copy_to(
+            editor.file_search_text, code_editor::FILE_SEARCH_TEXT_CAPACITY
+        );
+        editor.file_search_text[editor.file_search_text_size] = '\0';
+
+        press_key(editor, gui::Key::ENTER);
+
+        TEST_EXPECT(context, !editor.flag(EditorFlag::JUMP_LIST_OPEN));
+        TEST_EXPECT(context, editor.lsp_open_symbol_index == 1u);
+        TEST_EXPECT(context, editor.jump_open_index == code_editor::JUMP_LIST_NO_SELECTION);
+    }
+
+    TEST_CASE(editor_space_s_requests_document_and_workspace_symbols) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "int main() {}");
+        editor.current_file_name = "main.cpp";
+        editor.current_file_path = "C:\\repo\\main.cpp";
+
+        code_editor::LspBridge bridge = {.status = code_editor::LspStatusKind::READY};
+        LspRequestCapture capture = {};
+        editor.lsp_bridge = &bridge;
+        editor.lsp_send_request = capture_lsp_request;
+        editor.lsp_user_data = &capture;
+
+        send_text(editor, " s");
+
+        TEST_EXPECT(context, capture.count == 3u);
+        TEST_EXPECT(
+            context, capture.requests[2u].kind == code_editor::LspRequestKind::DOCUMENT_SYMBOL
+        );
+
+        send_text(editor, " ");
+        send_text(editor, "S", gui::KEY_MOD_SHIFT);
+
+        TEST_EXPECT(context, capture.count == 4u);
+        TEST_EXPECT(
+            context, capture.requests[3u].kind == code_editor::LspRequestKind::WORKSPACE_SYMBOL
+        );
+    }
+
     TEST_CASE(editor_lsp_rename_prefills_and_selects_current_word) {
         Arena arena = {};
         arena.init();

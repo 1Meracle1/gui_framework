@@ -486,7 +486,8 @@ namespace code_editor {
             "\"regexp\",\"operator\",\"decorator\"],\"tokenModifiers\":[\"declaration\","
             "\"definition\",\"readonly\",\"static\",\"deprecated\",\"abstract\",\"async\","
             "\"modification\",\"documentation\",\"defaultLibrary\"],\"formats\":[\"relative\"],"
-            "\"overlappingTokenSupport\":false,\"multilineTokenSupport\":false}}},"
+            "\"overlappingTokenSupport\":false,\"multilineTokenSupport\":false}},"
+            "\"workspace\":{\"symbol\":{}}},"
             "\"trace\":\"off\"}}"
         ));
         write_json(client, json.str());
@@ -1090,27 +1091,37 @@ namespace code_editor {
         bridge_refresh(client);
     }
 
-    auto append_document_symbol(LspClient& client, LspJsonValue const* item) -> void {
+    auto append_document_symbol(LspClient& client, LspJsonValue const* item, StrRef fallback_path)
+        -> void {
         StrRef name = {};
         StrRef detail = {};
         size_t kind = 0u;
+        StrRef path = fallback_path;
         LspRange range = {};
         LspRange selection_range = {};
         if (!json_member_string(item, "name", name)) {
             return;
         }
-        BASE_UNUSED(json_member_string(item, "detail", detail));
+        if (!json_member_string(item, "detail", detail)) {
+            BASE_UNUSED(json_member_string(item, "containerName", detail));
+        }
         BASE_UNUSED(json_member_size(item, "kind", kind));
         if (!parse_range(lsp_json_object_get(item, "range"), range)) {
-            BASE_UNUSED(parse_range(
-                lsp_json_object_get(lsp_json_object_get(item, "location"), "range"), range
-            ));
+            LspJsonValue const* const location = lsp_json_object_get(item, "location");
+            StrRef location_path = parse_uri_path(client, lsp_json_object_get(location, "uri"));
+            if (!location_path.empty()) {
+                path = location_path;
+            }
+            if (!parse_range(lsp_json_object_get(location, "range"), range)) {
+                return;
+            }
         }
         if (!parse_range(lsp_json_object_get(item, "selectionRange"), selection_range)) {
             selection_range = range;
         }
-        StrRef const doc_text = current_doc_text(client, client.current_path);
+        StrRef const doc_text = current_doc_text(client, path);
         BASE_UNUSED(client.symbols.push_back({
+            .path = copy_result(client, path),
             .name = copy_result(client, name),
             .detail = copy_result(client, detail),
             .range = !doc_text.empty() ? lsp_range_utf16_to_byte(doc_text, range) : range,
@@ -1123,18 +1134,21 @@ namespace code_editor {
         LspJsonValue const* const children = lsp_json_object_get(item, "children");
         if (children != nullptr && children->kind == LspJsonKind::ARRAY) {
             for (LspJsonValue const* child : children->array) {
-                append_document_symbol(client, child);
+                append_document_symbol(client, child, path);
             }
         }
     }
 
-    auto parse_document_symbols_response(LspClient& client, LspJsonValue const* result) -> void {
+    auto parse_symbols_response(
+        LspClient& client, LspJsonValue const* result, LspClientPendingRequest const& pending
+    ) -> void {
         client.symbols.clear();
         if (result != nullptr && result->kind == LspJsonKind::ARRAY) {
             for (LspJsonValue const* item : result->array) {
-                append_document_symbol(client, item);
+                append_document_symbol(client, item, pending.path);
             }
         }
+        client.bridge.symbols_kind = pending.kind;
         client.bridge.symbols_generation += 1u;
         bridge_refresh(client);
     }
@@ -1298,7 +1312,8 @@ namespace code_editor {
             parse_code_actions_response(client, result);
             break;
         case LspRequestKind::DOCUMENT_SYMBOL:
-            parse_document_symbols_response(client, result);
+        case LspRequestKind::WORKSPACE_SYMBOL:
+            parse_symbols_response(client, result, pending);
             break;
         case LspRequestKind::SEMANTIC_TOKENS:
             parse_semantic_tokens_response(client, result, pending);
@@ -1593,6 +1608,16 @@ namespace code_editor {
         );
     }
 
+    auto send_workspace_symbol_request(LspClient& client, LspEditorRequest const& request) -> void {
+        ArenaTemp temp = begin_thread_temp_arena();
+        StringBuffer params = {};
+        BASE_UNUSED(params.init(32u, temp.arena()->resource()));
+        BASE_UNUSED(params.write_string("{\"query\":\"\"}"));
+        send_request_json(
+            client, LspRequestKind::WORKSPACE_SYMBOL, request.path, "workspace/symbol", params.str()
+        );
+    }
+
     auto send_semantic_tokens_request(LspClient& client, LspEditorRequest const& request) -> void {
         if (!client.semantic_tokens_supported) {
             return;
@@ -1658,6 +1683,9 @@ namespace code_editor {
             break;
         case LspRequestKind::DOCUMENT_SYMBOL:
             send_document_symbol_request(*client, request);
+            break;
+        case LspRequestKind::WORKSPACE_SYMBOL:
+            send_workspace_symbol_request(*client, request);
             break;
         case LspRequestKind::SEMANTIC_TOKENS:
             send_semantic_tokens_request(*client, request);

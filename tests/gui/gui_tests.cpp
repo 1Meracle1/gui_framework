@@ -165,6 +165,25 @@ namespace {
         TEST_EXPECT(context, !gui::context_valid(gui_context));
     }
 
+    TEST_CASE(context_box_storage_grows_past_initial_capacity) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {.initial_box_capacity = 1u}, gui_context);
+
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {100.0f, 100.0f}});
+        for (size_t index = 0u; index < 40u; ++index) {
+            ui.label(gui::id("box", index), "box");
+        }
+        gui::end_frame(ui);
+
+        TEST_EXPECT(context, ui.box_info_count() == 41u);
+        TEST_EXPECT(context, ui.box_info(40u) != nullptr);
+
+        gui::destroy_context(gui_context);
+    }
+
     TEST_CASE(column_layout_applies_fill_padding_gap_and_metadata) {
         Arena arena = {};
         arena.init();

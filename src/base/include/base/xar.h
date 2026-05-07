@@ -128,10 +128,12 @@ template <typename T> struct XarPushResult {
 template <typename T, size_t SHIFT> class XarArray final {
   public:
     static_assert(!std::is_const_v<T>, "XarArray value type must not be const");
-    static_assert(std::is_trivially_copyable_v<T>,
-                  "XarArray stores values with Odin-style byte copies");
-    static_assert(xar_detail::is_valid_shift(SHIFT),
-                  "XarArray SHIFT must be in range 1..XAR_MAX_SHIFT");
+    static_assert(
+        std::is_trivially_copyable_v<T>, "XarArray stores values with Odin-style byte copies"
+    );
+    static_assert(
+        xar_detail::is_valid_shift(SHIFT), "XarArray SHIFT must be in range 1..XAR_MAX_SHIFT"
+    );
 
     using Value = T;
 
@@ -320,6 +322,14 @@ template <typename T, size_t SHIFT> class XarArray final {
     [[nodiscard]] auto get_ptr(size_t index) const -> T const* {
         DEBUG_ASSERT(index < m_len);
         return get_ptr_unsafe(index);
+    }
+
+    [[nodiscard]] auto operator[](size_t index) -> T& {
+        return *get_ptr(index);
+    }
+
+    [[nodiscard]] auto operator[](size_t index) const -> T const& {
+        return *get_ptr(index);
     }
 
     [[nodiscard]] auto get_ptr_safe(size_t index) -> XarPtrResult<T> {
@@ -526,8 +536,9 @@ template <typename T, size_t SHIFT> class XarArray final {
 
 template <typename T, size_t SHIFT> class XarFreelistArray final {
   public:
-    static_assert(sizeof(T) >= sizeof(T*),
-                  "XarFreelistArray value type must fit a free-list pointer");
+    static_assert(
+        sizeof(T) >= sizeof(T*), "XarFreelistArray value type must fit a free-list pointer"
+    );
 
     using Value = T;
     using Array = XarArray<T, SHIFT>;

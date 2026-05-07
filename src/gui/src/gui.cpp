@@ -3,6 +3,7 @@
 #include <base/config.h>
 #include <base/memory.h>
 #include <base/stable_hash_map.h>
+#include <base/xar.h>
 #include <cmath>
 #include <cstring>
 #include <gui/gui.h>
@@ -19,6 +20,7 @@ namespace gui {
         inline constexpr float SCROLLBAR_MIN_THUMB_HEIGHT = 12.0f;
         inline constexpr float TEXT_SELECTION_AUTOSCROLL_LINES_PER_SECOND = 60.0f;
         inline constexpr float TEXT_RASTER_PADDING = 2.0f;
+        inline constexpr size_t BOX_ARRAY_SHIFT = 4u;
 
         struct TextUndoEntry {
             TextUndoEntry* previous = nullptr;
@@ -170,15 +172,12 @@ namespace gui {
         struct ContextImpl {
             Arena* context_arena = nullptr;
             Arena frame_arena = {};
-            BoxNode* boxes = nullptr;
-            BoxInfo* infos = nullptr;
-            size_t* parent_stack = nullptr;
-            Id* focus_order = nullptr;
+            XarArray<BoxNode, BOX_ARRAY_SHIFT> boxes;
+            XarArray<BoxInfo, BOX_ARRAY_SHIFT> infos;
+            XarArray<size_t, BOX_ARRAY_SHIFT> parent_stack;
+            XarArray<Id, BOX_ARRAY_SHIFT> focus_order;
             StateTable state_table = {};
-            size_t box_capacity = 0u;
             size_t box_count = 0u;
-            size_t parent_stack_count = 0u;
-            size_t focus_order_count = 0u;
             FrameDesc frame_desc = {};
             InputState previous_input = {};
             ThemeDesc theme = {};
@@ -1166,23 +1165,20 @@ namespace gui {
         }
 
         [[nodiscard]] auto top_parent_index(ContextImpl const* impl) -> size_t {
-            ASSERT(impl->parent_stack_count > 0u);
-            return impl->parent_stack[impl->parent_stack_count - 1u];
+            ASSERT(!impl->parent_stack.empty());
+            return impl->parent_stack[impl->parent_stack.size() - 1u];
         }
 
         auto push_parent(ContextImpl* impl, size_t box_index) -> void {
-            ASSERT(impl->parent_stack_count < impl->box_capacity);
-            impl->parent_stack[impl->parent_stack_count] = box_index;
-            impl->parent_stack_count += 1u;
+            ASSERT(impl->parent_stack.push_back(box_index));
         }
 
         auto pop_parent_to(ContextImpl* impl, size_t box_index) -> void {
             if (!impl->building) {
                 return;
             }
-            while (impl->parent_stack_count > 1u) {
-                size_t const top = impl->parent_stack[impl->parent_stack_count - 1u];
-                impl->parent_stack_count -= 1u;
+            while (impl->parent_stack.size() > 1u) {
+                size_t const top = impl->parent_stack.pop();
                 if (top == box_index) {
                     break;
                 }
@@ -1319,24 +1315,25 @@ namespace gui {
         }
 
         auto move_focus(ContextImpl* impl, bool reverse) -> void {
-            if (impl->focus_order_count == 0u) {
+            size_t const focus_order_count = impl->focus_order.size();
+            if (focus_order_count == 0u) {
                 return;
             }
 
-            size_t current = impl->focus_order_count;
-            for (size_t index = 0u; index < impl->focus_order_count; ++index) {
+            size_t current = focus_order_count;
+            for (size_t index = 0u; index < focus_order_count; ++index) {
                 if (impl->focus_order[index].value == impl->focused_id.value) {
                     current = index;
                     break;
                 }
             }
 
-            if (current == impl->focus_order_count) {
-                current = reverse ? impl->focus_order_count - 1u : 0u;
+            if (current == focus_order_count) {
+                current = reverse ? focus_order_count - 1u : 0u;
             } else if (reverse) {
-                current = current == 0u ? impl->focus_order_count - 1u : current - 1u;
+                current = current == 0u ? focus_order_count - 1u : current - 1u;
             } else {
-                current = (current + 1u) % impl->focus_order_count;
+                current = (current + 1u) % focus_order_count;
             }
             impl->focused_id = impl->focus_order[current];
         }
@@ -1404,9 +1401,7 @@ namespace gui {
             if (!box.focusable || box.focus_ordered) {
                 return;
             }
-            ASSERT(impl->focus_order_count < impl->box_capacity);
-            impl->focus_order[impl->focus_order_count] = box.id;
-            impl->focus_order_count += 1u;
+            ASSERT(impl->focus_order.push_back(box.id));
             box.focus_ordered = true;
             if (box.authored_id.value != 0u &&
                 box.authored_id.value == impl->focus_request_id.value) {
@@ -1468,37 +1463,37 @@ namespace gui {
         ) -> size_t {
             ASSERT(impl != nullptr);
             ASSERT(impl->building);
-            ASSERT(impl->box_count < impl->box_capacity);
 
             size_t const parent_index = top_parent_index(impl);
-            BoxNode& parent = impl->boxes[parent_index];
+            BoxNode* const parent = &impl->boxes[parent_index];
             size_t const box_index = impl->box_count;
-            BoxNode* const box = impl->boxes + box_index;
-            *box = {};
+            BoxNode* const box = impl->boxes.push_back_and_get_ptr({});
+            ASSERT(box != nullptr);
+            ASSERT(impl->infos.push_back({}));
             box->first_child = INVALID_INDEX;
             box->last_child = INVALID_INDEX;
             box->next_sibling = INVALID_INDEX;
             box->kind = kind;
             box->parent_index = parent_index;
-            box->parent_id = parent.id;
-            box->depth = parent.depth + 1u;
+            box->parent_id = parent->id;
+            box->depth = parent->depth + 1u;
             box->text = copy_frame_str(impl, text);
             box->debug_name = copy_frame_str(impl, desc.debug_name);
             box->layout = desc.layout;
             box->style = desc.style;
             box->icon = desc.icon;
-            box->flags = parent.flags | desc.flags;
+            box->flags = parent->flags | desc.flags;
             box->id = id_value;
             box->authored_id = authored_id;
             box->id_source = authored_id.value != 0u ? BoxIdSource::EXPLICIT
                              : !text.empty()         ? BoxIdSource::TEXT
                                                      : BoxIdSource::STRUCTURAL;
-            box->stable_id = parent.stable_id && box->id_source == BoxIdSource::EXPLICIT;
+            box->stable_id = parent->stable_id && box->id_source == BoxIdSource::EXPLICIT;
             box->interactive = interactive;
             box->focusable = focusable;
             box->state = state_entry(impl, box->id);
 
-            for (size_t child = parent.first_child; child != INVALID_INDEX;
+            for (size_t child = parent->first_child; child != INVALID_INDEX;
                  child = impl->boxes[child].next_sibling) {
                 if (impl->boxes[child].id.value == box->id.value) {
                     box->duplicate_id = true;
@@ -1510,13 +1505,13 @@ namespace gui {
                 }
             }
 
-            if (parent.last_child != INVALID_INDEX) {
-                impl->boxes[parent.last_child].next_sibling = box_index;
+            if (parent->last_child != INVALID_INDEX) {
+                impl->boxes[parent->last_child].next_sibling = box_index;
             } else {
-                parent.first_child = box_index;
+                parent->first_child = box_index;
             }
-            parent.last_child = box_index;
-            parent.child_count += 1u;
+            parent->last_child = box_index;
+            parent->child_count += 1u;
             impl->box_count += 1u;
 
             add_focus_order(impl, *box);
@@ -5375,18 +5370,16 @@ namespace gui {
         ContextImpl* const impl = arena_new<ContextImpl>(arena);
         size_t const capacity = std::max(desc.initial_box_capacity, size_t{16u});
         impl->context_arena = &arena;
-        impl->box_capacity = capacity;
         bool const state_table_initialized =
             impl->state_table.init(next_power_of_two(capacity * 4u), arena.resource());
-        ASSERT(state_table_initialized);
-        impl->boxes = arena_alloc<BoxNode>(arena, capacity);
-        impl->infos = arena_alloc<BoxInfo>(arena, capacity);
-        impl->parent_stack = arena_alloc<size_t>(arena, capacity);
-        impl->focus_order = arena_alloc<Id>(arena, capacity);
-        std::memset(impl->boxes, 0, sizeof(BoxNode) * capacity);
-        std::memset(impl->infos, 0, sizeof(BoxInfo) * capacity);
-        std::memset(impl->parent_stack, 0, sizeof(size_t) * capacity);
-        std::memset(impl->focus_order, 0, sizeof(Id) * capacity);
+        bool const boxes_initialized = impl->boxes.init(arena.resource());
+        bool const infos_initialized = impl->infos.init(arena.resource());
+        bool const parent_stack_initialized = impl->parent_stack.init(arena.resource());
+        bool const focus_order_initialized = impl->focus_order.init(arena.resource());
+        ASSERT(
+            state_table_initialized && boxes_initialized && infos_initialized &&
+            parent_stack_initialized && focus_order_initialized
+        );
         impl->frame_arena.init({desc.frame_arena_reserve_size, desc.frame_arena_commit_size});
         impl->theme = desc.theme != nullptr ? *desc.theme : default_theme();
         impl->set_clipboard_text = desc.set_clipboard_text;
@@ -5398,6 +5391,10 @@ namespace gui {
     auto destroy_context(Context& context) -> void {
         ContextImpl* const impl = impl_from_context(context);
         if (impl != nullptr) {
+            impl->focus_order.destroy();
+            impl->parent_stack.destroy();
+            impl->infos.destroy();
+            impl->boxes.destroy();
             impl->state_table.destroy();
             impl->frame_arena.destroy();
         }
@@ -7184,7 +7181,7 @@ namespace gui {
         if (impl == nullptr || index >= impl->box_count) {
             return nullptr;
         }
-        return impl->infos + index;
+        return &impl->infos[index];
     }
 
     auto Frame::find_box(Id id_value) const -> BoxInfo const* {
@@ -7195,12 +7192,12 @@ namespace gui {
         }
         for (size_t index = 0u; index < impl->box_count; ++index) {
             if (impl->infos[index].id.value == query_id.value) {
-                return impl->infos + index;
+                return &impl->infos[index];
             }
         }
         for (size_t index = 0u; index < impl->box_count; ++index) {
             if (impl->infos[index].authored_id.value == query_id.value) {
-                return impl->infos + index;
+                return &impl->infos[index];
             }
         }
         return nullptr;
@@ -7225,7 +7222,7 @@ namespace gui {
                     continue;
                 }
                 if (rect_contains(box.rect, point) && hit_passes_clips(impl, box_index, point)) {
-                    return impl->infos + box_index;
+                    return &impl->infos[box_index];
                 }
             }
         }
@@ -7239,7 +7236,7 @@ namespace gui {
         }
         for (size_t index = 0u; index < impl->box_count; ++index) {
             if (impl->boxes[index].signal.focused) {
-                return impl->infos + index;
+                return &impl->infos[index];
             }
         }
         return nullptr;
@@ -7259,17 +7256,20 @@ namespace gui {
         impl->hot_id = compute_hot_id(impl);
         process_focus_keys(impl);
         impl->frame_arena.reset();
+        impl->boxes.clear();
+        impl->infos.clear();
+        impl->parent_stack.clear();
+        impl->focus_order.clear();
         impl->box_count = 0u;
-        impl->parent_stack_count = 0u;
-        impl->focus_order_count = 0u;
         impl->id_scope = {};
         impl->frame_index += 1u;
         impl->building = true;
         impl->focus_cleared_this_frame = false;
         impl->redraw_requested = false;
 
-        BoxNode* const root = impl->boxes;
-        *root = {};
+        BoxNode* const root = impl->boxes.push_back_and_get_ptr({});
+        ASSERT(root != nullptr);
+        ASSERT(impl->infos.push_back({}));
         root->first_child = INVALID_INDEX;
         root->last_child = INVALID_INDEX;
         root->next_sibling = INVALID_INDEX;
@@ -7302,7 +7302,7 @@ namespace gui {
         publish_infos(impl);
         if (impl->focused_id.value != 0u) {
             bool focus_found = false;
-            for (size_t index = 0u; index < impl->focus_order_count; ++index) {
+            for (size_t index = 0u; index < impl->focus_order.size(); ++index) {
                 if (impl->focus_order[index].value == impl->focused_id.value) {
                     focus_found = true;
                     break;
@@ -7318,7 +7318,8 @@ namespace gui {
             impl->active_scroll_horizontal = false;
         }
         impl->previous_input = impl->frame_desc.input;
-        impl->parent_stack_count = 1u;
+        impl->parent_stack.clear();
+        ASSERT(impl->parent_stack.push_back(0u));
         impl->building = false;
     }
 

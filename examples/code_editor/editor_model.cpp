@@ -2033,6 +2033,35 @@ namespace code_editor {
         return jump_list_match_text(index, location.path, {}, query, match);
     }
 
+    [[nodiscard]] auto jump_list_match(
+        size_t index, LspDocumentSymbol const& symbol, StrRef query, JumpListMatch& match
+    ) -> bool {
+        match = {.jump_index = index};
+        if (query.empty()) {
+            return true;
+        }
+
+        int32_t best_score = 0;
+        bool matched = false;
+        if (file_search_fuzzy_score(symbol.name, query, best_score)) {
+            matched = true;
+        }
+        int32_t detail_score = 0;
+        if (!symbol.detail.empty() && file_search_fuzzy_score(symbol.detail, query, detail_score) &&
+            (!matched || detail_score < best_score)) {
+            best_score = detail_score;
+            matched = true;
+        }
+        int32_t path_score = 0;
+        if (!symbol.path.empty() && file_search_fuzzy_score(symbol.path, query, path_score) &&
+            (!matched || path_score < best_score)) {
+            best_score = path_score;
+            matched = true;
+        }
+        match.score = best_score;
+        return matched;
+    }
+
     [[nodiscard]] auto jump_list_match_less(JumpListMatch lhs, JumpListMatch rhs) -> bool {
         if (lhs.priority != rhs.priority) {
             return lhs.priority < rhs.priority;
@@ -2047,6 +2076,10 @@ namespace code_editor {
         if (editor.jump_list_kind == EditorJumpListKind::LSP_LOCATIONS) {
             return editor.lsp_bridge != nullptr ? editor.lsp_bridge->locations.size() : 0u;
         }
+        if (editor.jump_list_kind == EditorJumpListKind::LSP_DOCUMENT_SYMBOLS ||
+            editor.jump_list_kind == EditorJumpListKind::LSP_WORKSPACE_SYMBOLS) {
+            return editor.lsp_bridge != nullptr ? editor.lsp_bridge->symbols.size() : 0u;
+        }
         return editor.jumps.size();
     }
 
@@ -2056,6 +2089,11 @@ namespace code_editor {
         if (editor.jump_list_kind == EditorJumpListKind::LSP_LOCATIONS) {
             DEBUG_ASSERT(editor.lsp_bridge != nullptr);
             return jump_list_match(index, editor.lsp_bridge->locations[index], query, match);
+        }
+        if (editor.jump_list_kind == EditorJumpListKind::LSP_DOCUMENT_SYMBOLS ||
+            editor.jump_list_kind == EditorJumpListKind::LSP_WORKSPACE_SYMBOLS) {
+            DEBUG_ASSERT(editor.lsp_bridge != nullptr);
+            return jump_list_match(index, editor.lsp_bridge->symbols[index], query, match);
         }
         return jump_list_match(index, editor.jumps[index], query, match);
     }
@@ -2685,6 +2723,9 @@ namespace code_editor {
         editor.jump_selected = std::min(editor.jump_selected, match_count - 1u);
         if (editor.jump_list_kind == EditorJumpListKind::LSP_LOCATIONS) {
             editor.lsp_open_location_index = matches[editor.jump_selected].jump_index;
+        } else if (editor.jump_list_kind == EditorJumpListKind::LSP_DOCUMENT_SYMBOLS ||
+                   editor.jump_list_kind == EditorJumpListKind::LSP_WORKSPACE_SYMBOLS) {
+            editor.lsp_open_symbol_index = matches[editor.jump_selected].jump_index;
         } else {
             editor.jump_open_index = matches[editor.jump_selected].jump_index;
         }
@@ -3092,7 +3133,11 @@ namespace code_editor {
                 editor.set_flag(EditorFlag::NEW_SCRATCH_REQUESTED, true);
             } else if (ch == 'w') {
                 editor.set_flag(EditorFlag::PENDING_WINDOW, true);
-            } else if (ch == 'r' || ch == 'c' || ch == 's') {
+            } else if (ch == 's') {
+                request_lsp(editor, LspRequestKind::DOCUMENT_SYMBOL);
+            } else if (ch == 'S') {
+                request_lsp(editor, LspRequestKind::WORKSPACE_SYMBOL);
+            } else if (ch == 'r' || ch == 'c') {
                 editor.set_flag(EditorFlag::PENDING_LSP, true);
             }
             return;
@@ -3764,6 +3809,13 @@ namespace code_editor {
             return;
         }
         open_jump_list_picker(editor, EditorJumpListKind::LSP_LOCATIONS);
+    }
+
+    auto open_editor_lsp_symbols(EditorState& editor, EditorJumpListKind kind) -> void {
+        if (editor.lsp_bridge == nullptr) {
+            return;
+        }
+        open_jump_list_picker(editor, kind);
     }
 
     auto collapse_selection(EditorState& editor, bool end) -> bool {

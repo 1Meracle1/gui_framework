@@ -887,8 +887,7 @@ namespace code_editor {
         SyntaxTokenizer tokenizer,
         Palette const& palette,
         StrRef line,
-        float font_size,
-        size_t& token_budget
+        float font_size
     ) -> void {
         if (line.empty()) {
             ui.spacer({.layout = {.width = gui::px(1.0f), .height = gui::fill()}});
@@ -898,7 +897,7 @@ namespace code_editor {
         line = line.prefix(std::min(line.size(), FILE_SEARCH_PREVIEW_COLUMN_LIMIT));
         size_t index = 0u;
         size_t token_index = 0u;
-        while (index < line.size() && token_budget != 0u) {
+        while (index < line.size()) {
             SyntaxToken const token = syntax_next_token(tokenizer, line, index);
             ui.label(
                 gui::id("file_search_preview_token", token_index),
@@ -912,11 +911,10 @@ namespace code_editor {
                     },
                 }
             );
-            token_budget -= 1u;
             index = token.end;
             token_index += 1u;
         }
-        if (truncated && token_budget != 0u) {
+        if (truncated) {
             ui.label(
                 gui::id("file_search_preview_token", token_index),
                 "...",
@@ -929,7 +927,6 @@ namespace code_editor {
                     },
                 }
             );
-            token_budget -= 1u;
         }
     }
 
@@ -2066,6 +2063,23 @@ namespace code_editor {
         }
     }
 
+    auto open_lsp_symbol(EditorState& editor, LspDocumentSymbol const& symbol) -> void {
+        StrRef const path = symbol.path.empty() ? editor.current_file_path : symbol.path;
+        if (path.empty()) {
+            return;
+        }
+        record_current_jump(editor);
+        focus_code_split_for_open(editor);
+        StrRef const name = render_path_leaf(path);
+        if (open_file(editor, name.empty() ? path : name, path)) {
+            size_t const line = symbol.selection_range.start.line;
+            size_t const column = symbol.selection_range.start.column;
+            set_editor_cursor(editor, line, column);
+            center_current_cursor(editor);
+            record_editor_jump(editor, name.empty() ? path : name, path, line, column);
+        }
+    }
+
     auto open_recorded_jump(EditorState& editor, size_t index) -> void {
         if (index >= editor.jumps.size()) {
             return;
@@ -2150,19 +2164,7 @@ namespace code_editor {
             size_t const index = editor.lsp_open_symbol_index;
             editor.lsp_open_symbol_index = LSP_NO_SELECTION;
             if (index < editor.lsp_bridge->symbols.size()) {
-                LspDocumentSymbol const& symbol = editor.lsp_bridge->symbols[index];
-                record_current_jump(editor);
-                set_editor_cursor(
-                    editor, symbol.selection_range.start.line, symbol.selection_range.start.column
-                );
-                center_current_cursor(editor);
-                record_editor_jump(
-                    editor,
-                    editor.current_file_name,
-                    editor.current_file_path,
-                    symbol.selection_range.start.line,
-                    symbol.selection_range.start.column
-                );
+                open_lsp_symbol(editor, editor.lsp_bridge->symbols[index]);
             }
         }
         if (editor.lsp_apply_code_action_index != LSP_NO_SELECTION) {
@@ -2219,8 +2221,12 @@ namespace code_editor {
         if (editor.lsp_seen_symbols_generation != editor.lsp_bridge->symbols_generation) {
             editor.lsp_seen_symbols_generation = editor.lsp_bridge->symbols_generation;
             if (!editor.lsp_bridge->symbols.empty()) {
-                editor.lsp_popup = EditorLspPopupKind::SYMBOLS;
-                editor.lsp_selected = 0u;
+                open_editor_lsp_symbols(
+                    editor,
+                    editor.lsp_bridge->symbols_kind == LspRequestKind::WORKSPACE_SYMBOL
+                        ? EditorJumpListKind::LSP_WORKSPACE_SYMBOLS
+                        : EditorJumpListKind::LSP_DOCUMENT_SYMBOLS
+                );
             }
         }
     }
@@ -2604,12 +2610,7 @@ namespace code_editor {
                                 (dialog_height - 2.0f * PANEL_PADDING) / line_height
                             )
                         );
-                        size_t token_budget = std::min(
-                            preview_line_limit * FILE_SEARCH_PREVIEW_TOKENS_PER_LINE,
-                            FILE_SEARCH_PREVIEW_TOKEN_LIMIT
-                        );
-                        while (line_count < preview_line_limit && offset < preview_text.size() &&
-                               token_budget != 0u) {
+                        while (line_count < preview_line_limit && offset < preview_text.size()) {
                             StrRef const line = next_text_line(preview_text, offset);
                             if (auto line_row = ui.row(
                                     gui::id("file_search_preview_line", line_count),
@@ -2622,13 +2623,7 @@ namespace code_editor {
                                     }
                                 )) {
                                 draw_syntax_label_line(
-                                    ui,
-                                    editor_font,
-                                    tokenizer,
-                                    palette,
-                                    line,
-                                    editor.font_size,
-                                    token_budget
+                                    ui, editor_font, tokenizer, palette, line, editor.font_size
                                 );
                             }
                             line_count += 1u;
@@ -2639,7 +2634,8 @@ namespace code_editor {
         }
     }
 
-    [[nodiscard]] auto jump_list_row_text(Arena& arena, size_t index, EditorJump const& jump)
+    [[nodiscard]] auto
+    jump_list_row_text(Arena& arena, size_t index, EditorJump const& jump, EditorJumpListKind kind)
         -> StrRef {
         StrRef name = jump.name;
         if (name.empty()) {
@@ -2647,6 +2643,14 @@ namespace code_editor {
         }
         if (name.empty()) {
             name = jump.path;
+        }
+        if (kind == EditorJumpListKind::LSP_DOCUMENT_SYMBOLS) {
+            return name;
+        }
+        if (kind == EditorJumpListKind::LSP_WORKSPACE_SYMBOLS) {
+            return jump.path.empty()
+                       ? name
+                       : fmt::aprintf(arena.resource(), "%s  %s", name, jump.path).str();
         }
         return fmt::aprintf(
                    arena.resource(),
@@ -2672,10 +2676,26 @@ namespace code_editor {
         };
     }
 
+    [[nodiscard]] auto lsp_symbol_jump(EditorState const& editor, LspDocumentSymbol const& symbol)
+        -> EditorJump {
+        StrRef const path = symbol.path.empty() ? editor.current_file_path : symbol.path;
+        return {
+            .name = symbol.name,
+            .path = path,
+            .line = symbol.selection_range.start.line,
+            .column = symbol.selection_range.start.column,
+        };
+    }
+
     [[nodiscard]] auto jump_list_entry(EditorState const& editor, size_t index) -> EditorJump {
         if (editor.jump_list_kind == EditorJumpListKind::LSP_LOCATIONS &&
             editor.lsp_bridge != nullptr && index < editor.lsp_bridge->locations.size()) {
             return lsp_location_jump(editor.lsp_bridge->locations[index]);
+        }
+        if ((editor.jump_list_kind == EditorJumpListKind::LSP_DOCUMENT_SYMBOLS ||
+             editor.jump_list_kind == EditorJumpListKind::LSP_WORKSPACE_SYMBOLS) &&
+            editor.lsp_bridge != nullptr && index < editor.lsp_bridge->symbols.size()) {
+            return lsp_symbol_jump(editor, editor.lsp_bridge->symbols[index]);
         }
         if (index < editor.jumps.size()) {
             return editor.jumps[index];
@@ -2747,12 +2767,8 @@ namespace code_editor {
         }
 
         SyntaxTokenizer const tokenizer = syntax_tokenizer_for_file_name(preview_name);
-        size_t token_budget = std::min(
-            preview_line_limit * FILE_SEARCH_PREVIEW_TOKENS_PER_LINE,
-            FILE_SEARCH_PREVIEW_TOKEN_LIMIT
-        );
         size_t drawn = 0u;
-        while (drawn < preview_line_limit && offset < preview_text.size() && token_budget != 0u) {
+        while (drawn < preview_line_limit && offset < preview_text.size()) {
             StrRef const line = next_text_line(preview_text, offset);
             if (auto line_row = ui.row(
                     gui::id("jump_list_preview_line", drawn),
@@ -2764,9 +2780,7 @@ namespace code_editor {
                         },
                     }
                 )) {
-                draw_syntax_label_line(
-                    ui, editor_font, tokenizer, palette, line, editor.font_size, token_budget
-                );
+                draw_syntax_label_line(ui, editor_font, tokenizer, palette, line, editor.font_size);
             }
             line_index += 1u;
             drawn += 1u;
@@ -2966,12 +2980,18 @@ namespace code_editor {
                         editor.jump_list_reveal_selected = false;
                     }
                     if (match_count == 0u) {
-                        char const* const empty_text =
-                            editor.jump_list_kind == EditorJumpListKind::LSP_LOCATIONS
-                                ? (total_count == 0u ? "No locations found"
-                                                     : "No matching locations")
-                                : (editor.jumps.empty() ? "No jumps recorded"
-                                                        : "No matching jumps");
+                        char const* empty_text =
+                            editor.jumps.empty() ? "No jumps recorded" : "No matching jumps";
+                        if (editor.jump_list_kind == EditorJumpListKind::LSP_LOCATIONS) {
+                            empty_text =
+                                total_count == 0u ? "No locations found" : "No matching locations";
+                        } else if (editor.jump_list_kind ==
+                                       EditorJumpListKind::LSP_DOCUMENT_SYMBOLS ||
+                                   editor.jump_list_kind ==
+                                       EditorJumpListKind::LSP_WORKSPACE_SYMBOLS) {
+                            empty_text =
+                                total_count == 0u ? "No symbols found" : "No matching symbols";
+                        }
                         ui.label(
                             empty_text,
                             {
@@ -3034,6 +3054,11 @@ namespace code_editor {
                                     editor.jump_selected = index;
                                     if (list_kind == EditorJumpListKind::LSP_LOCATIONS) {
                                         editor.lsp_open_location_index = matches[index].jump_index;
+                                    } else if (list_kind ==
+                                                   EditorJumpListKind::LSP_DOCUMENT_SYMBOLS ||
+                                               list_kind ==
+                                                   EditorJumpListKind::LSP_WORKSPACE_SYMBOLS) {
+                                        editor.lsp_open_symbol_index = matches[index].jump_index;
                                     } else {
                                         editor.jump_open_index = matches[index].jump_index;
                                     }
@@ -3052,7 +3077,10 @@ namespace code_editor {
                                 ui.label(
                                     gui::id("jump_list_result_text", visible_index),
                                     jump_list_row_text(
-                                        *row_temp.arena(), matches[index].jump_index, jump
+                                        *row_temp.arena(),
+                                        matches[index].jump_index,
+                                        jump,
+                                        list_kind
                                     ),
                                     {
                                         .layout = {.width = gui::fill(), .height = gui::fill()},

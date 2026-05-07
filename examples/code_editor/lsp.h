@@ -36,6 +36,7 @@ namespace code_editor {
         FORMATTING,
         CODE_ACTION,
         DOCUMENT_SYMBOL,
+        WORKSPACE_SYMBOL,
         SEMANTIC_TOKENS,
     };
 
@@ -97,6 +98,7 @@ namespace code_editor {
     };
 
     struct LspDocumentSymbol {
+        StrRef path = {};
         StrRef name = {};
         StrRef detail = {};
         LspRange range = {};
@@ -124,6 +126,7 @@ namespace code_editor {
         StrRef progress_text = {};
         StrRef semantic_tokens_path = {};
         LspRequestKind locations_kind = LspRequestKind::NONE;
+        LspRequestKind symbols_kind = LspRequestKind::NONE;
         uint64_t semantic_tokens_revision = 0u;
         bool progress_active = false;
         uint64_t status_generation = 0u;

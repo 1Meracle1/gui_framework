@@ -141,6 +141,8 @@ namespace code_editor {
     enum class EditorJumpListKind : uint8_t {
         HISTORY,
         LSP_LOCATIONS,
+        LSP_DOCUMENT_SYMBOLS,
+        LSP_WORKSPACE_SYMBOLS,
     };
 
     enum class EditorPaneKind : uint8_t {
@@ -375,6 +377,7 @@ namespace code_editor {
     auto close_editor_lsp_popup(EditorState& editor) -> void;
     auto accept_lsp_popup(EditorState& editor) -> void;
     auto open_editor_lsp_locations(EditorState& editor) -> void;
+    auto open_editor_lsp_symbols(EditorState& editor, EditorJumpListKind kind) -> void;
     auto
     record_editor_jump(EditorState& editor, StrRef name, StrRef path, size_t line, size_t column)
         -> void;
