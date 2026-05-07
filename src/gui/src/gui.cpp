@@ -2073,13 +2073,18 @@ namespace gui {
             state->scroll_request_index_set = false;
         }
 
+        auto clear_direct_scroll_requests(StateEntry* state) -> void {
+            state->scroll_request_set = false;
+            state->scroll_request_end = false;
+        }
+
         auto consume_scroll_request(StateEntry* state, float max_y) -> void {
             if (state->scroll_request_end) {
                 state->scroll_y = max_y;
             } else if (state->scroll_request_set) {
                 state->scroll_y = state->scroll_request_y;
             }
-            clear_scroll_requests(state);
+            clear_direct_scroll_requests(state);
         }
 
         [[nodiscard]] auto list_reveal_scroll_y(
@@ -2125,6 +2130,69 @@ namespace gui {
             } else {
                 consume_scroll_request(state, max_y);
             }
+        }
+
+        [[nodiscard]] auto scroll_panel_reveal_scroll_y(
+            ContextImpl const* impl, BoxNode const& box, StateEntry const* state
+        ) -> float {
+            if (state == nullptr) {
+                return 0.0f;
+            }
+
+            Rect const content = content_rect(box.rect, box.layout.padding);
+            float const viewport_height = std::max(0.0f, rect_height(content));
+            size_t item_index = 0u;
+            for (size_t child_index = box.first_child; child_index != INVALID_INDEX;
+                 child_index = impl->boxes[child_index].next_sibling) {
+                BoxNode const& child = impl->boxes[child_index];
+                if (floating_box(child.kind)) {
+                    continue;
+                }
+                if (item_index == state->scroll_request_index) {
+                    float const item_start = child.rect.min.y - content.min.y + state->scroll_y;
+                    float const item_end = child.rect.max.y - content.min.y + state->scroll_y;
+                    switch (state->scroll_request_reveal) {
+                    case ScrollReveal::KEEP_VISIBLE:
+                        if (item_start < state->scroll_y) {
+                            return item_start;
+                        }
+                        if (item_end > state->scroll_y + viewport_height) {
+                            return item_end - viewport_height;
+                        }
+                        return state->scroll_y;
+                    case ScrollReveal::START:
+                        return item_start;
+                    case ScrollReveal::CENTER:
+                        return item_start + (item_end - item_start) * 0.5f - viewport_height * 0.5f;
+                    case ScrollReveal::END:
+                        return item_end - viewport_height;
+                    }
+                    return state->scroll_y;
+                }
+                item_index += 1u;
+            }
+            return state->scroll_y;
+        }
+
+        auto consume_scroll_panel_request(ContextImpl const* impl, BoxNode& box) -> bool {
+            StateEntry* const state = box.scroll_state;
+            if (state == nullptr) {
+                return false;
+            }
+
+            float const max_y =
+                std::max(0.0f, state->scroll_content_height - state->scroll_viewport_height);
+            if (!state->scroll_request_index_set) {
+                float const previous = state->scroll_y;
+                consume_scroll_request(state, max_y);
+                return state->scroll_y != previous;
+            }
+
+            float const previous = state->scroll_y;
+            state->scroll_y = scroll_panel_reveal_scroll_y(impl, box, state);
+            clear_scroll_requests(state);
+            state->scroll_y = std::clamp(state->scroll_y, 0.0f, max_y);
+            return state->scroll_y != previous;
         }
 
         auto update_scroll_metrics(
@@ -2370,6 +2438,13 @@ namespace gui {
                        box.kind == BoxKind::ROOT || box.kind == BoxKind::SCROLL_PANEL ||
                        box.kind == BoxKind::LIST) {
                 layout_children(impl, index, Axis::Y);
+                if (box.kind == BoxKind::SCROLL_PANEL && consume_scroll_panel_request(impl, box)) {
+                    box.scroll_offset_x =
+                        box.scroll_state != nullptr ? -box.scroll_state->scroll_x : 0.0f;
+                    box.scroll_offset_y =
+                        box.scroll_state != nullptr ? -box.scroll_state->scroll_y : 0.0f;
+                    layout_children(impl, index, Axis::Y);
+                }
             } else {
                 layout_overlay(impl, index);
             }

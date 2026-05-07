@@ -2215,6 +2215,52 @@ namespace {
         gui::destroy_context(gui_context);
     }
 
+    TEST_CASE(scroll_panel_scroll_to_index_keeps_requested_child_visible) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::Id const panel_id = gui::id("files");
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {100.0f, 50.0f}});
+        ui.scroll_to_index(panel_id, 2u);
+        {
+            auto panel = ui.scroll_panel(
+                panel_id, {.layout = {.width = gui::fill(), .height = gui::px(30.0f)}}
+            );
+            TEST_EXPECT(context, panel);
+            ui.spacer({.layout = {.width = gui::fill(), .height = gui::px(20.0f)}});
+            ui.spacer({.layout = {.width = gui::fill(), .height = gui::px(20.0f)}});
+            ui.spacer({.layout = {.width = gui::fill(), .height = gui::px(20.0f)}});
+        }
+        gui::end_frame(ui);
+
+        ui = gui::begin_frame(gui_context, {.size = {100.0f, 50.0f}});
+        {
+            auto panel = ui.scroll_panel(
+                panel_id, {.layout = {.width = gui::fill(), .height = gui::px(30.0f)}}
+            );
+            TEST_EXPECT(context, panel);
+            ui.spacer({.layout = {.width = gui::fill(), .height = gui::px(20.0f)}});
+            ui.spacer({.layout = {.width = gui::fill(), .height = gui::px(20.0f)}});
+            ui.spacer({.layout = {.width = gui::fill(), .height = gui::px(20.0f)}});
+        }
+        gui::end_frame(ui);
+
+        gui::ScrollState const state = ui.scroll_state(panel_id);
+        TEST_EXPECT(context, state.valid);
+        TEST_EXPECT(context, state.y == 30.0f);
+
+        gui::BoxInfo const* const third = ui.box_info(4u);
+        TEST_EXPECT(context, third != nullptr);
+        if (third != nullptr) {
+            expect_rect(context, third->rect, {{0.0f, 10.0f}, {100.0f, 30.0f}});
+        }
+
+        gui::destroy_context(gui_context);
+    }
+
     TEST_CASE(scroll_panel_renders_vertical_scrollbar_when_content_overflows) {
         Arena arena = {};
         arena.init();

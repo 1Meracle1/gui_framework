@@ -9,6 +9,8 @@
 namespace code_editor {
 
     inline constexpr size_t INVALID_INDEX = static_cast<size_t>(-1);
+    inline constexpr float FILESYSTEM_PANEL_PADDING_Y = 14.0f;
+    inline constexpr float FILESYSTEM_TREE_ROW_HEIGHT = 26.0f;
     inline constexpr EditorCommand EDITOR_COMMANDS[] = {
         {"write", "w", "Save the current file."},
         {"quit", "q", "Close the focused split."},
@@ -55,15 +57,19 @@ namespace code_editor {
     auto open_lsp_rename(EditorState& editor) -> void;
     auto close_jump_list(EditorState& editor) -> void;
     auto clear_config_request(EditorState& editor) -> void;
+    auto clear_pending_line_number(EditorState& editor) -> void;
     auto set_text_search_text(EditorState& editor, StrRef text) -> void;
     auto jump_list_previous(EditorState& editor) -> void;
     auto jump_list_next(EditorState& editor) -> void;
+    auto move_filesystem_tree_cursor(EditorState& editor, int32_t direction) -> void;
     [[nodiscard]] auto word_range_at_position(
         EditorState const& editor,
         EditorPosition position,
         EditorPosition& start,
         EditorPosition& end
     ) -> bool;
+    [[nodiscard]] auto
+    find_leaf_by_kind(EditorState const& editor, size_t split, EditorPaneKind kind) -> size_t;
     [[nodiscard]] auto split_in_direction(EditorState const& editor, char direction) -> size_t;
 
     [[nodiscard]] auto split_valid(EditorState const& editor, size_t split) -> bool {
@@ -81,6 +87,14 @@ namespace code_editor {
         return pane_index < editor.panes.size() && editor.panes[pane_index] != nullptr
                    ? editor.panes[pane_index]->kind
                    : EditorPaneKind::CODE;
+    }
+
+    auto remember_focused_code_split(EditorState& editor) -> void {
+        if (split_valid(editor, editor.focused_split) &&
+            pane_kind(editor, editor.split_nodes[editor.focused_split].pane) ==
+                EditorPaneKind::CODE) {
+            editor.last_code_split = editor.focused_split;
+        }
     }
 
     [[nodiscard]] auto focused_pane_kind(EditorState const& editor) -> EditorPaneKind {
@@ -325,6 +339,7 @@ namespace code_editor {
         (void)ok;
         editor.root_split = 0u;
         editor.focused_split = 0u;
+        editor.last_code_split = 0u;
         editor.set_flag(EditorFlag::PANE_LOADED, false);
         load_focused_pane(editor);
     }
@@ -401,6 +416,54 @@ namespace code_editor {
         }
     }
 
+    [[nodiscard]] auto find_tree_file_index(EditorState const& editor, StrRef path) -> size_t {
+        if (path.empty()) {
+            return INVALID_INDEX;
+        }
+        for (size_t index = 0u; index < editor.tree_files.size(); ++index) {
+            if (editor.tree_files[index].path == path) {
+                return index;
+            }
+        }
+        return INVALID_INDEX;
+    }
+
+    [[nodiscard]] auto tree_entry_visible(EditorState const& editor, size_t tree_file_index)
+        -> bool {
+        if (!editor.flag(EditorFlag::TREE_OPEN) || tree_file_index >= editor.tree_files.size()) {
+            return false;
+        }
+        size_t depth = editor.tree_files[tree_file_index].depth;
+        for (size_t index = tree_file_index; index > 0u && depth > 0u;) {
+            --index;
+            FileTreeEntry const& entry = editor.tree_files[index];
+            if (!entry.is_directory || entry.depth >= depth) {
+                continue;
+            }
+            if (!entry.open) {
+                return false;
+            }
+            depth = entry.depth;
+        }
+        return true;
+    }
+
+    auto set_tree_cursor(EditorState& editor, size_t tree_cursor) -> void {
+        editor.tree_cursor =
+            tree_cursor < editor.tree_files.size() ? tree_cursor : TREE_CURSOR_ROOT;
+        editor.tree_cursor_reveal = true;
+    }
+
+    auto clamp_filesystem_tree_cursor(EditorState& editor) -> void {
+        if (editor.tree_cursor == TREE_CURSOR_ROOT) {
+            return;
+        }
+        if (editor.tree_cursor >= editor.tree_files.size() ||
+            !tree_entry_visible(editor, editor.tree_cursor)) {
+            set_tree_cursor(editor, TREE_CURSOR_ROOT);
+        }
+    }
+
     auto expand_filesystem_tree_to_file(EditorState& editor, size_t tree_file_index) -> void {
         if (tree_file_index >= editor.tree_files.size() ||
             editor.tree_files[tree_file_index].is_directory) {
@@ -418,6 +481,28 @@ namespace code_editor {
             entry.open = true;
             depth = entry.depth;
         }
+        set_tree_cursor(editor, tree_file_index);
+    }
+
+    auto select_current_file_in_filesystem_tree(EditorState& editor) -> void {
+        size_t const tree_file_index = find_tree_file_index(editor, editor.current_file_path);
+        if (tree_file_index != INVALID_INDEX) {
+            expand_filesystem_tree_to_file(editor, tree_file_index);
+        }
+    }
+
+    [[nodiscard]] auto preferred_code_split_for_open(EditorState const& editor) -> size_t {
+        if (split_valid(editor, editor.focused_split) &&
+            pane_kind(editor, editor.split_nodes[editor.focused_split].pane) ==
+                EditorPaneKind::CODE) {
+            return editor.focused_split;
+        }
+        if (split_valid(editor, editor.last_code_split) &&
+            pane_kind(editor, editor.split_nodes[editor.last_code_split].pane) ==
+                EditorPaneKind::CODE) {
+            return editor.last_code_split;
+        }
+        return find_leaf_by_kind(editor, editor.root_split, EditorPaneKind::CODE);
     }
 
     [[nodiscard]] auto find_open_file_view(EditorPane& pane, StrRef name, StrRef path)
@@ -625,15 +710,24 @@ namespace code_editor {
             return;
         }
         if (split == editor.focused_split) {
+            remember_focused_code_split(editor);
             sync_shared_panes(editor);
             clamp_cursor(editor);
+            if (focused_pane_kind(editor) == EditorPaneKind::FILESYSTEM) {
+                clamp_filesystem_tree_cursor(editor);
+            }
             return;
         }
+        remember_focused_code_split(editor);
         sync_shared_panes(editor);
         store_focused_pane(editor);
         editor.focused_split = split;
         load_focused_pane(editor);
+        remember_focused_code_split(editor);
         clamp_cursor(editor);
+        if (focused_pane_kind(editor) == EditorPaneKind::FILESYSTEM) {
+            clamp_filesystem_tree_cursor(editor);
+        }
     }
 
     auto set_editor_split_rect(EditorState& editor, size_t split, gui::Rect rect) -> void {
@@ -759,6 +853,7 @@ namespace code_editor {
             editor.focused_split = old_child;
         }
         editor.set_flag(EditorFlag::SIDEBAR_VISIBLE, true);
+        set_tree_cursor(editor, TREE_CURSOR_ROOT);
     }
 
     auto close_filesystem_panels(EditorState& editor) -> void {
@@ -831,6 +926,7 @@ namespace code_editor {
 
         editor.focused_split = second;
         load_focused_pane(editor);
+        remember_focused_code_split(editor);
     }
 
     auto close_focused_split(EditorState& editor) -> void {
@@ -874,6 +970,7 @@ namespace code_editor {
         editor.set_flag(EditorFlag::PANE_LOADED, false);
         editor.focused_split = first_leaf(editor, parent);
         load_focused_pane(editor);
+        remember_focused_code_split(editor);
         clamp_cursor(editor);
         editor.set_flag(EditorFlag::SIDEBAR_VISIBLE, filesystem_panel_visible(editor));
     }
@@ -991,6 +1088,7 @@ namespace code_editor {
         editor.split_nodes[target].pane = source_pane;
         editor.focused_split = target;
         load_focused_pane(editor);
+        remember_focused_code_split(editor);
         clamp_cursor(editor);
         editor.set_flag(EditorFlag::SIDEBAR_VISIBLE, filesystem_panel_visible(editor));
     }
@@ -1382,6 +1480,20 @@ namespace code_editor {
         move_vertical(editor, static_cast<int32_t>(lines) * direction, false);
         editor.scroll_y += static_cast<float>(direction) * static_cast<float>(lines) * line_height;
         clamp_scroll(editor, rect);
+    }
+
+    auto move_filesystem_half_split(EditorState& editor, int32_t direction) -> void {
+        gui::Rect const rect = split_valid(editor, editor.focused_split)
+                                   ? editor.split_nodes[editor.focused_split].rect
+                                   : gui::Rect{};
+        float const visible_height =
+            std::max(1.0f, rect.max.y - rect.min.y - FILESYSTEM_PANEL_PADDING_Y * 2.0f);
+        size_t const rows = std::max<size_t>(
+            1u, static_cast<size_t>(visible_height / FILESYSTEM_TREE_ROW_HEIGHT * 0.5f)
+        );
+        for (size_t index = 0u; index < rows; ++index) {
+            move_filesystem_tree_cursor(editor, direction);
+        }
     }
 
     auto move_left(EditorState& editor, bool select) -> void {
@@ -3011,6 +3123,179 @@ namespace code_editor {
         editor.set_flag(EditorFlag::PENDING_LINE_NUMBER_ACTIVE, false);
     }
 
+    [[nodiscard]] auto tree_cursor_parent(EditorState const& editor) -> size_t {
+        if (editor.tree_cursor >= editor.tree_files.size()) {
+            return TREE_CURSOR_ROOT;
+        }
+        size_t const depth = editor.tree_files[editor.tree_cursor].depth;
+        if (depth == 0u) {
+            return TREE_CURSOR_ROOT;
+        }
+        for (size_t index = editor.tree_cursor; index > 0u;) {
+            --index;
+            FileTreeEntry const& entry = editor.tree_files[index];
+            if (entry.is_directory && entry.depth < depth) {
+                return index;
+            }
+        }
+        return TREE_CURSOR_ROOT;
+    }
+
+    [[nodiscard]] auto first_visible_tree_entry(EditorState const& editor) -> size_t {
+        for (size_t index = 0u; index < editor.tree_files.size(); ++index) {
+            if (tree_entry_visible(editor, index)) {
+                return index;
+            }
+        }
+        return TREE_CURSOR_ROOT;
+    }
+
+    [[nodiscard]] auto last_visible_tree_entry(EditorState const& editor) -> size_t {
+        for (size_t index = editor.tree_files.size(); index > 0u;) {
+            --index;
+            if (tree_entry_visible(editor, index)) {
+                return index;
+            }
+        }
+        return TREE_CURSOR_ROOT;
+    }
+
+    auto move_filesystem_tree_cursor(EditorState& editor, int32_t direction) -> void {
+        clamp_filesystem_tree_cursor(editor);
+        if (direction > 0) {
+            if (editor.tree_cursor == TREE_CURSOR_ROOT) {
+                set_tree_cursor(editor, first_visible_tree_entry(editor));
+                return;
+            }
+            for (size_t index = editor.tree_cursor + 1u; index < editor.tree_files.size();
+                 ++index) {
+                if (tree_entry_visible(editor, index)) {
+                    set_tree_cursor(editor, index);
+                    return;
+                }
+            }
+            return;
+        }
+        if (editor.tree_cursor == TREE_CURSOR_ROOT) {
+            return;
+        }
+        for (size_t index = editor.tree_cursor; index > 0u;) {
+            --index;
+            if (tree_entry_visible(editor, index)) {
+                set_tree_cursor(editor, index);
+                return;
+            }
+        }
+        set_tree_cursor(editor, TREE_CURSOR_ROOT);
+    }
+
+    auto expand_filesystem_tree_cursor(EditorState& editor) -> void {
+        clamp_filesystem_tree_cursor(editor);
+        if (editor.tree_cursor == TREE_CURSOR_ROOT) {
+            editor.set_flag(EditorFlag::TREE_OPEN, true);
+            editor.tree_cursor_reveal = true;
+            return;
+        }
+        FileTreeEntry& entry = editor.tree_files[editor.tree_cursor];
+        if (entry.is_directory) {
+            entry.open = true;
+            editor.tree_cursor_reveal = true;
+        }
+    }
+
+    auto collapse_filesystem_tree_cursor(EditorState& editor, bool move_parent) -> void {
+        clamp_filesystem_tree_cursor(editor);
+        if (editor.tree_cursor == TREE_CURSOR_ROOT) {
+            editor.set_flag(EditorFlag::TREE_OPEN, false);
+            editor.tree_cursor_reveal = true;
+            return;
+        }
+        FileTreeEntry& entry = editor.tree_files[editor.tree_cursor];
+        if (entry.is_directory && entry.open) {
+            entry.open = false;
+            editor.tree_cursor_reveal = true;
+            return;
+        }
+        if (move_parent) {
+            set_tree_cursor(editor, tree_cursor_parent(editor));
+        }
+    }
+
+    auto open_filesystem_tree_cursor(EditorState& editor) -> void {
+        clamp_filesystem_tree_cursor(editor);
+        if (editor.tree_cursor == TREE_CURSOR_ROOT) {
+            if (!editor.flag(EditorFlag::TREE_OPEN)) {
+                editor.set_flag(EditorFlag::TREE_OPEN, true);
+                editor.tree_cursor_reveal = true;
+            }
+            return;
+        }
+        FileTreeEntry const& entry = editor.tree_files[editor.tree_cursor];
+        if (entry.is_directory) {
+            expand_filesystem_tree_cursor(editor);
+            return;
+        }
+        editor.file_search_open_file = editor.tree_cursor;
+    }
+
+    auto activate_filesystem_tree_cursor(EditorState& editor) -> void {
+        clamp_filesystem_tree_cursor(editor);
+        if (editor.tree_cursor == TREE_CURSOR_ROOT) {
+            editor.set_flag(EditorFlag::TREE_OPEN, !editor.flag(EditorFlag::TREE_OPEN));
+            editor.tree_cursor_reveal = true;
+            return;
+        }
+        FileTreeEntry& entry = editor.tree_files[editor.tree_cursor];
+        if (entry.is_directory) {
+            entry.open = !entry.open;
+            editor.tree_cursor_reveal = true;
+            return;
+        }
+        editor.file_search_open_file = editor.tree_cursor;
+    }
+
+    auto handle_filesystem_normal_char(EditorState& editor, char ch) -> void {
+        if (editor.flag(EditorFlag::PENDING_G)) {
+            editor.set_flag(EditorFlag::PENDING_G, false);
+            if (ch == 'g') {
+                set_tree_cursor(editor, TREE_CURSOR_ROOT);
+            }
+            return;
+        }
+
+        switch (ch) {
+        case ' ':
+            editor.set_flag(EditorFlag::PENDING_LEADER, true);
+            break;
+        case 'j':
+            move_filesystem_tree_cursor(editor, 1);
+            break;
+        case 'k':
+            move_filesystem_tree_cursor(editor, -1);
+            break;
+        case 'h':
+            collapse_filesystem_tree_cursor(editor, true);
+            break;
+        case 'l':
+            open_filesystem_tree_cursor(editor);
+            break;
+        case '<':
+            collapse_filesystem_tree_cursor(editor, false);
+            break;
+        case '>':
+            expand_filesystem_tree_cursor(editor);
+            break;
+        case 'g':
+            editor.set_flag(EditorFlag::PENDING_G, true);
+            break;
+        case 'G':
+            set_tree_cursor(editor, last_visible_tree_entry(editor));
+            break;
+        default:
+            break;
+        }
+    }
+
     auto enter_insert_at(EditorState& editor, EditorPosition position) -> void {
         editor.set_flag(EditorFlag::INSERT_MODE, true);
         editor.set_flag(EditorFlag::PENDING_LEADER, false);
@@ -3218,55 +3503,6 @@ namespace code_editor {
     auto
     handle_normal_char(EditorState& editor, char ch, gui::KeyMods mods, EditorClipboard clipboard)
         -> void {
-        if (editor.flag(EditorFlag::PENDING_LSP)) {
-            editor.set_flag(EditorFlag::PENDING_LSP, false);
-            if (ch == 'n') {
-                open_lsp_rename(editor);
-            } else if (ch == 'a') {
-                request_lsp(editor, LspRequestKind::CODE_ACTION);
-            } else if (ch == 's') {
-                request_lsp(editor, LspRequestKind::DOCUMENT_SYMBOL);
-            } else if (ch == 'j') {
-                open_editor_jump_list(editor);
-            }
-            return;
-        }
-        if (editor.flag(EditorFlag::PENDING_R)) {
-            editor.set_flag(EditorFlag::PENDING_R, false);
-            replace_selection_with_char(editor, ch);
-            return;
-        }
-
-        if (editor.flag(EditorFlag::PENDING_D)) {
-            editor.set_flag(EditorFlag::PENDING_D, false);
-            if (ch == 'd') {
-                if (can_delete_line(editor)) {
-                    save_editor_undo(editor);
-                }
-                delete_line(editor);
-            }
-            return;
-        }
-        if (editor.flag(EditorFlag::PENDING_G)) {
-            editor.set_flag(EditorFlag::PENDING_G, false);
-            if (ch == 'g') {
-                move_cursor_to(editor, {0u, 0u}, visual_selecting(editor));
-            } else if (ch == 'd') {
-                request_lsp(editor, LspRequestKind::DEFINITION);
-            } else if (ch == 'D') {
-                request_lsp(editor, LspRequestKind::DECLARATION);
-            } else if (ch == 'r') {
-                request_lsp(editor, LspRequestKind::REFERENCES);
-            }
-            return;
-        }
-        if (editor.flag(EditorFlag::PENDING_Z)) {
-            editor.set_flag(EditorFlag::PENDING_Z, false);
-            if (ch == 'z') {
-                center_cursor(editor, editor.split_nodes[editor.focused_split].rect);
-            }
-            return;
-        }
         if (editor.flag(EditorFlag::PENDING_WINDOW)) {
             editor.set_flag(EditorFlag::PENDING_WINDOW, false);
             switch (ch) {
@@ -3346,8 +3582,63 @@ namespace code_editor {
         }
 
         if (focused_pane_kind(editor) == EditorPaneKind::FILESYSTEM) {
-            if (ch == ' ') {
-                editor.set_flag(EditorFlag::PENDING_LEADER, true);
+            clear_pending_line_number(editor);
+            editor.set_flag(EditorFlag::PENDING_LSP, false);
+            editor.set_flag(EditorFlag::PENDING_R, false);
+            editor.set_flag(EditorFlag::PENDING_D, false);
+            editor.set_flag(EditorFlag::PENDING_Z, false);
+            if (!alt) {
+                handle_filesystem_normal_char(editor, ch);
+            }
+            return;
+        }
+
+        if (editor.flag(EditorFlag::PENDING_LSP)) {
+            editor.set_flag(EditorFlag::PENDING_LSP, false);
+            if (ch == 'n') {
+                open_lsp_rename(editor);
+            } else if (ch == 'a') {
+                request_lsp(editor, LspRequestKind::CODE_ACTION);
+            } else if (ch == 's') {
+                request_lsp(editor, LspRequestKind::DOCUMENT_SYMBOL);
+            } else if (ch == 'j') {
+                open_editor_jump_list(editor);
+            }
+            return;
+        }
+        if (editor.flag(EditorFlag::PENDING_R)) {
+            editor.set_flag(EditorFlag::PENDING_R, false);
+            replace_selection_with_char(editor, ch);
+            return;
+        }
+
+        if (editor.flag(EditorFlag::PENDING_D)) {
+            editor.set_flag(EditorFlag::PENDING_D, false);
+            if (ch == 'd') {
+                if (can_delete_line(editor)) {
+                    save_editor_undo(editor);
+                }
+                delete_line(editor);
+            }
+            return;
+        }
+        if (editor.flag(EditorFlag::PENDING_G)) {
+            editor.set_flag(EditorFlag::PENDING_G, false);
+            if (ch == 'g') {
+                move_cursor_to(editor, {0u, 0u}, visual_selecting(editor));
+            } else if (ch == 'd') {
+                request_lsp(editor, LspRequestKind::DEFINITION);
+            } else if (ch == 'D') {
+                request_lsp(editor, LspRequestKind::DECLARATION);
+            } else if (ch == 'r') {
+                request_lsp(editor, LspRequestKind::REFERENCES);
+            }
+            return;
+        }
+        if (editor.flag(EditorFlag::PENDING_Z)) {
+            editor.set_flag(EditorFlag::PENDING_Z, false);
+            if (ch == 'z') {
+                center_cursor(editor, editor.split_nodes[editor.focused_split].rect);
             }
             return;
         }
@@ -4130,8 +4421,39 @@ namespace code_editor {
             clear_pending_line_number(editor);
         }
         if (focused_pane_kind(editor) == EditorPaneKind::FILESYSTEM) {
+            bool const ctrl_scroll = (event.mods & gui::KEY_MOD_CTRL) != 0u &&
+                                     (event.mods & (gui::KEY_MOD_ALT | gui::KEY_MOD_SUPER)) == 0u;
+            if (ctrl_scroll && event.key == gui::Key::D) {
+                move_filesystem_half_split(editor, 1);
+                return;
+            }
+            if (ctrl_scroll && event.key == gui::Key::U) {
+                move_filesystem_half_split(editor, -1);
+                return;
+            }
+            if (event.key == gui::Key::ENTER) {
+                activate_filesystem_tree_cursor(editor);
+                return;
+            }
             if (event.key == gui::Key::SPACE) {
                 editor.set_flag(EditorFlag::PENDING_LEADER, true);
+                return;
+            }
+            switch (event.key) {
+            case gui::Key::UP:
+                move_filesystem_tree_cursor(editor, -1);
+                return;
+            case gui::Key::DOWN:
+                move_filesystem_tree_cursor(editor, 1);
+                return;
+            case gui::Key::LEFT:
+                collapse_filesystem_tree_cursor(editor, true);
+                return;
+            case gui::Key::RIGHT:
+                open_filesystem_tree_cursor(editor);
+                return;
+            default:
+                break;
             }
             return;
         }
@@ -4252,6 +4574,9 @@ namespace code_editor {
         EditorState& editor, gui::InputState const& input, EditorClipboard clipboard
     ) -> void {
         load_focused_pane(editor);
+        if (focused_pane_kind(editor) == EditorPaneKind::FILESYSTEM) {
+            clamp_filesystem_tree_cursor(editor);
+        }
         if (input.key_events == nullptr) {
             return;
         }
@@ -4539,6 +4864,7 @@ namespace code_editor {
         hash = hash_bytes(
             hash, &editor.buffer_search_open_file, sizeof(editor.buffer_search_open_file)
         );
+        hash = hash_bytes(hash, &editor.tree_cursor, sizeof(editor.tree_cursor));
         hash = hash_bytes(hash, &editor.jump_selected, sizeof(editor.jump_selected));
         hash = hash_bytes(hash, &editor.jump_cursor, sizeof(editor.jump_cursor));
         hash = hash_bytes(hash, &editor.jump_open_index, sizeof(editor.jump_open_index));
@@ -4681,6 +5007,7 @@ namespace code_editor {
         hash = hash_bytes(hash, &editor.pending_line_number, sizeof(editor.pending_line_number));
         hash = hash_bytes(hash, &editor.root_split, sizeof(editor.root_split));
         hash = hash_bytes(hash, &editor.focused_split, sizeof(editor.focused_split));
+        hash = hash_bytes(hash, &editor.last_code_split, sizeof(editor.last_code_split));
         EditorPaneKind const active_kind = focused_pane_kind(editor);
         hash = hash_bytes(hash, &active_kind, sizeof(active_kind));
         size_t const split_count = editor.split_nodes.size();

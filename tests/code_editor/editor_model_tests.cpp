@@ -515,6 +515,7 @@ namespace {
         press_key(editor, gui::Key::SPACE);
         send_text(editor, " e");
         TEST_EXPECT(context, editor.flag(EditorFlag::SIDEBAR_VISIBLE));
+        TEST_EXPECT(context, editor.tree_cursor == code_editor::TREE_CURSOR_ROOT);
         send_text(editor, " e");
         TEST_EXPECT(context, !editor.flag(EditorFlag::SIDEBAR_VISIBLE));
     }
@@ -662,6 +663,48 @@ namespace {
         TEST_EXPECT(context, tree[0u].open);
         TEST_EXPECT(context, tree[1u].open);
         TEST_EXPECT(context, !tree[3u].open);
+        TEST_EXPECT(context, editor.tree_cursor == 2u);
+    }
+
+    TEST_CASE(select_current_file_in_filesystem_tree_expands_and_moves_cursor) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::FileTreeEntry tree[] = {
+            {
+                .name = "src",
+                .path = "C:\\repo\\src",
+                .relative_path = "src",
+                .depth = 0u,
+                .is_directory = true,
+            },
+            {
+                .name = "app",
+                .path = "C:\\repo\\src\\app",
+                .relative_path = "src\\app",
+                .depth = 1u,
+                .is_directory = true,
+            },
+            {
+                .name = "main.cpp",
+                .path = "C:\\repo\\src\\app\\main.cpp",
+                .relative_path = "src\\app\\main.cpp",
+                .depth = 2u,
+            },
+        };
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "");
+        editor.tree_files = Slice<code_editor::FileTreeEntry>(tree);
+        editor.current_file_name = "main.cpp";
+        editor.current_file_path = "C:\\repo\\src\\app\\main.cpp";
+
+        code_editor::select_current_file_in_filesystem_tree(editor);
+
+        TEST_EXPECT(context, editor.flag(EditorFlag::TREE_OPEN));
+        TEST_EXPECT(context, tree[0u].open);
+        TEST_EXPECT(context, tree[1u].open);
+        TEST_EXPECT(context, editor.tree_cursor == 2u);
     }
 
     TEST_CASE(file_search_prioritizes_file_names_before_folders) {
@@ -1814,6 +1857,43 @@ namespace {
         TEST_EXPECT(context, editor.scroll_y == 0.0f);
     }
 
+    TEST_CASE(editor_filesystem_panel_ctrl_d_u_moves_by_half_focused_split) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::FileTreeEntry tree[] = {
+            {.name = "0.cpp", .path = "C:\\repo\\0.cpp", .relative_path = "0.cpp"},
+            {.name = "1.cpp", .path = "C:\\repo\\1.cpp", .relative_path = "1.cpp"},
+            {.name = "2.cpp", .path = "C:\\repo\\2.cpp", .relative_path = "2.cpp"},
+            {.name = "3.cpp", .path = "C:\\repo\\3.cpp", .relative_path = "3.cpp"},
+            {.name = "4.cpp", .path = "C:\\repo\\4.cpp", .relative_path = "4.cpp"},
+            {.name = "5.cpp", .path = "C:\\repo\\5.cpp", .relative_path = "5.cpp"},
+            {.name = "6.cpp", .path = "C:\\repo\\6.cpp", .relative_path = "6.cpp"},
+            {.name = "7.cpp", .path = "C:\\repo\\7.cpp", .relative_path = "7.cpp"},
+        };
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "");
+        editor.tree_files = Slice<code_editor::FileTreeEntry>(tree);
+
+        send_text(editor, " e");
+        size_t const filesystem = editor.split_nodes[editor.root_split].first;
+        code_editor::focus_editor_split(editor, filesystem);
+        code_editor::set_editor_split_rect(editor, filesystem, {{0.0f, 0.0f}, {120.0f, 236.0f}});
+
+        press_key(editor, gui::Key::D, gui::KEY_MOD_CTRL);
+        TEST_EXPECT(context, editor.tree_cursor == 3u);
+
+        press_key(editor, gui::Key::D, gui::KEY_MOD_CTRL);
+        TEST_EXPECT(context, editor.tree_cursor == 7u);
+
+        press_key(editor, gui::Key::U, gui::KEY_MOD_CTRL);
+        TEST_EXPECT(context, editor.tree_cursor == 3u);
+
+        press_key(editor, gui::Key::U, gui::KEY_MOD_CTRL);
+        TEST_EXPECT(context, editor.tree_cursor == code_editor::TREE_CURSOR_ROOT);
+    }
+
     TEST_CASE(editor_reveal_cursor_scrolls_horizontally) {
         Arena arena = {};
         arena.init();
@@ -2394,6 +2474,147 @@ namespace {
             context,
             code_editor::editor_focused_pane_kind(editor) == code_editor::EditorPaneKind::CODE
         );
+    }
+
+    TEST_CASE(editor_filesystem_panel_normal_mode_navigates_tree_entries) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::FileTreeEntry tree[] = {
+            {
+                .name = "src",
+                .path = "C:\\repo\\src",
+                .relative_path = "src",
+                .depth = 0u,
+                .is_directory = true,
+            },
+            {
+                .name = "main.cpp",
+                .path = "C:\\repo\\src\\main.cpp",
+                .relative_path = "src\\main.cpp",
+                .depth = 1u,
+            },
+            {
+                .name = "include",
+                .path = "C:\\repo\\include",
+                .relative_path = "include",
+                .depth = 0u,
+                .is_directory = true,
+            },
+        };
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "");
+        editor.tree_root_name = "repo";
+        editor.tree_files = Slice<code_editor::FileTreeEntry>(tree);
+
+        send_text(editor, " e");
+        size_t const filesystem = editor.split_nodes[editor.root_split].first;
+        code_editor::focus_editor_split(editor, filesystem);
+
+        TEST_EXPECT(context, editor.tree_cursor == code_editor::TREE_CURSOR_ROOT);
+        TEST_EXPECT(context, code_editor::preferred_code_split_for_open(editor) != filesystem);
+
+        send_text(editor, "j");
+        TEST_EXPECT(context, editor.tree_cursor == 0u);
+
+        press_key(editor, gui::Key::ENTER);
+        TEST_EXPECT(context, tree[0u].open);
+
+        press_key(editor, gui::Key::DOWN);
+        TEST_EXPECT(context, editor.tree_cursor == 1u);
+
+        press_key(editor, gui::Key::UP);
+        TEST_EXPECT(context, editor.tree_cursor == 0u);
+
+        press_key(editor, gui::Key::RIGHT);
+        TEST_EXPECT(context, tree[0u].open);
+
+        send_text(editor, "j");
+        TEST_EXPECT(context, editor.tree_cursor == 1u);
+
+        press_key(editor, gui::Key::ENTER);
+        TEST_EXPECT(context, editor.file_search_open_file == 1u);
+        editor.file_search_open_file = code_editor::FILE_SEARCH_NO_FILE;
+
+        press_key(editor, gui::Key::RIGHT);
+        TEST_EXPECT(context, editor.file_search_open_file == 1u);
+        editor.file_search_open_file = code_editor::FILE_SEARCH_NO_FILE;
+
+        press_key(editor, gui::Key::ENTER);
+        TEST_EXPECT(context, editor.file_search_open_file == 1u);
+        editor.file_search_open_file = code_editor::FILE_SEARCH_NO_FILE;
+
+        press_key(editor, gui::Key::LEFT);
+        TEST_EXPECT(context, editor.tree_cursor == 0u);
+
+        send_text(editor, "h");
+        TEST_EXPECT(context, editor.tree_cursor == 0u);
+
+        send_text(editor, "<");
+        TEST_EXPECT(context, !tree[0u].open);
+        TEST_EXPECT(context, editor.tree_cursor == 0u);
+
+        press_key(editor, gui::Key::LEFT);
+        TEST_EXPECT(context, editor.tree_cursor == code_editor::TREE_CURSOR_ROOT);
+
+        press_key(editor, gui::Key::DOWN);
+        TEST_EXPECT(context, editor.tree_cursor == 0u);
+
+        send_text(editor, ">");
+        TEST_EXPECT(context, tree[0u].open);
+
+        press_key(editor, gui::Key::ENTER);
+        TEST_EXPECT(context, !tree[0u].open);
+
+        press_key(editor, gui::Key::RIGHT);
+        TEST_EXPECT(context, tree[0u].open);
+
+        press_key(editor, gui::Key::ENTER);
+        TEST_EXPECT(context, !tree[0u].open);
+
+        press_key(editor, gui::Key::ENTER);
+        TEST_EXPECT(context, tree[0u].open);
+
+        send_text(editor, "G");
+        TEST_EXPECT(context, editor.tree_cursor == 2u);
+
+        send_text(editor, "gg");
+        TEST_EXPECT(context, editor.tree_cursor == code_editor::TREE_CURSOR_ROOT);
+
+        press_key(editor, gui::Key::ENTER);
+        TEST_EXPECT(context, !editor.flag(EditorFlag::TREE_OPEN));
+
+        press_key(editor, gui::Key::ENTER);
+        TEST_EXPECT(context, editor.flag(EditorFlag::TREE_OPEN));
+    }
+
+    TEST_CASE(editor_remembers_last_code_split_for_filesystem_open) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "");
+
+        send_text(editor, " wv");
+        size_t const left_code = editor.split_nodes[editor.root_split].first;
+        size_t const right_code = editor.split_nodes[editor.root_split].second;
+
+        code_editor::focus_editor_split(editor, left_code);
+        TEST_EXPECT(context, code_editor::preferred_code_split_for_open(editor) == left_code);
+
+        send_text(editor, " e");
+        size_t const filesystem = editor.split_nodes[editor.root_split].first;
+        code_editor::focus_editor_split(editor, filesystem);
+
+        TEST_EXPECT(context, editor.last_code_split == left_code);
+        TEST_EXPECT(context, code_editor::preferred_code_split_for_open(editor) == left_code);
+
+        code_editor::focus_editor_split(editor, right_code);
+        code_editor::focus_editor_split(editor, filesystem);
+
+        TEST_EXPECT(context, editor.last_code_split == right_code);
+        TEST_EXPECT(context, code_editor::preferred_code_split_for_open(editor) == right_code);
     }
 
     TEST_CASE(editor_focused_filesystem_panel_can_split_and_close) {

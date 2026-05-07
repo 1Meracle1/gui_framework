@@ -335,17 +335,20 @@ namespace code_editor {
         }
         if (same_file(name, path, editor.current_file_name, editor.current_file_path)) {
             touch_open_file(editor, name, path);
+            select_current_file_in_filesystem_tree(editor);
             return true;
         }
         if (load_shared_editor_buffer(editor, name, path)) {
             store_current_open_file(editor);
             touch_open_file(editor, name, path);
+            select_current_file_in_filesystem_tree(editor);
             return true;
         }
         OpenFile const* const file = find_open_file(editor, name, path);
         if (file != nullptr && file->text_valid) {
             load_open_file_buffer(editor, *file);
             touch_open_file(editor, name, path);
+            select_current_file_in_filesystem_tree(editor);
             return true;
         }
         if (path.empty()) {
@@ -372,6 +375,7 @@ namespace code_editor {
         remember_open_file(editor, name, path);
         store_current_open_file(editor);
         touch_open_file(editor, name, path);
+        select_current_file_in_filesystem_tree(editor);
         return true;
     }
 
@@ -389,7 +393,12 @@ namespace code_editor {
 
     auto focus_code_split_for_open(EditorState& editor) -> void {
         if (editor_focused_pane_kind(editor) != EditorPaneKind::CODE) {
-            focus_first_code_split(editor);
+            size_t const split = preferred_code_split_for_open(editor);
+            if (split < editor.split_nodes.size()) {
+                focus_editor_split(editor, split);
+            } else {
+                focus_first_code_split(editor);
+            }
         }
     }
 
@@ -1794,15 +1803,37 @@ namespace code_editor {
         EditorState& editor,
         Palette const& palette,
         FileTreeEntry const& file,
-        size_t guide_count
+        size_t tree_file_index,
+        size_t guide_count,
+        bool cursor_focused
     ) -> void {
+        bool const selected = editor.current_file_path == file.path;
+        bool const cursor = editor.tree_cursor == tree_file_index;
+        gui::Color background = selected ? gui::rgb(34, 45, 58) : gui::Color{};
+        gui::Color border = {};
+        float border_thickness = 0.0f;
+        if (cursor) {
+            background = gui::color_alpha(
+                palette.cursor,
+                selected ? (cursor_focused ? 0.42f : 0.28f) : (cursor_focused ? 0.28f : 0.16f)
+            );
+            border = cursor_focused ? palette.cursor : gui::color_alpha(palette.cursor, 0.6f);
+            border_thickness = 1.0f;
+        }
         if (auto row = ui.row(
                 gui::id(file.path),
                 {
-                    .layout = {
-                        .width = gui::fill(),
-                        .height = gui::px(26.0f),
-                        .align_y = gui::Align::STRETCH,
+                    .layout =
+                        {
+                            .width = gui::fill(),
+                            .height = gui::px(26.0f),
+                            .align_y = gui::Align::STRETCH,
+                        },
+                    .style = {
+                        .background = background,
+                        .border = border,
+                        .border_thickness = border_thickness,
+                        .radius = cursor || selected ? 5.0f : -1.0f,
                     },
                 }
             )) {
@@ -1810,10 +1841,11 @@ namespace code_editor {
                 draw_tree_guide(ui, palette);
             }
             if (row.signal().clicked_left) {
+                editor.tree_cursor = tree_file_index;
+                editor.tree_cursor_reveal = true;
                 focus_code_split_for_open(editor);
                 open_tree_file(editor, file);
             }
-            bool const selected = editor.current_file_path == file.path;
             ui.label(
                 file.name,
                 {
@@ -1822,10 +1854,9 @@ namespace code_editor {
                          .height = gui::fill(),
                          .padding = gui::insets(0.0f, 12.0f, 0.0f, 4.0f)},
                     .style = {
-                        .role = selected ? gui::StyleRole::AUTO : gui::StyleRole::TEXT_MUTED,
-                        .background = selected ? gui::rgb(34, 45, 58) : gui::Color{},
-                        .foreground = selected ? palette.text : gui::Color{},
-                        .radius = selected ? 5.0f : -1.0f,
+                        .role =
+                            selected || cursor ? gui::StyleRole::AUTO : gui::StyleRole::TEXT_MUTED,
+                        .foreground = selected || cursor ? palette.text : gui::Color{},
                         .font_size = editor.font_size,
                     },
                 }
@@ -1835,21 +1866,37 @@ namespace code_editor {
 
     auto draw_tree_folder(
         gui::Frame& ui,
-        EditorState const& editor,
+        EditorState& editor,
         Palette const& palette,
         font_cache::Font icon_font,
         StrRef id_text,
         StrRef text,
+        size_t cursor_index,
         size_t guide_count,
+        bool cursor_focused,
         bool* open
     ) -> void {
+        bool const cursor = editor.tree_cursor == cursor_index;
+        gui::Color background =
+            cursor ? gui::color_alpha(palette.cursor, cursor_focused ? 0.28f : 0.16f)
+                   : gui::Color{};
+        gui::Color border =
+            cursor ? (cursor_focused ? palette.cursor : gui::color_alpha(palette.cursor, 0.6f))
+                   : gui::Color{};
         if (auto row = ui.row(
                 gui::id(id_text),
                 {
-                    .layout = {
-                        .width = gui::fill(),
-                        .height = gui::px(26.0f),
-                        .align_y = gui::Align::STRETCH,
+                    .layout =
+                        {
+                            .width = gui::fill(),
+                            .height = gui::px(26.0f),
+                            .align_y = gui::Align::STRETCH,
+                        },
+                    .style = {
+                        .background = background,
+                        .border = border,
+                        .border_thickness = cursor ? 1.0f : 0.0f,
+                        .radius = cursor ? 5.0f : -1.0f,
                     },
                 }
             )) {
@@ -1885,12 +1932,15 @@ namespace code_editor {
                          .height = gui::fill(),
                          .padding = gui::insets(0.0f, 8.0f, 0.0f, 4.0f)},
                     .style = {
-                        .role = gui::StyleRole::TEXT_MUTED,
+                        .role = cursor ? gui::StyleRole::AUTO : gui::StyleRole::TEXT_MUTED,
+                        .foreground = cursor ? palette.text : gui::Color{},
                         .font_size = editor.font_size,
                     },
                 }
             );
             if (open != nullptr && row.signal().clicked_left) {
+                editor.tree_cursor = cursor_index;
+                editor.tree_cursor_reveal = true;
                 *open = !*open;
             }
         }
@@ -1901,15 +1951,28 @@ namespace code_editor {
         EditorState& editor,
         Palette const& palette,
         font_cache::Font icon_font,
-        FileTreeEntry& entry
+        size_t tree_file_index,
+        FileTreeEntry& entry,
+        bool cursor_focused
     ) -> void {
         size_t const guide_count = entry.depth + 1u;
         if (entry.is_directory) {
             draw_tree_folder(
-                ui, editor, palette, icon_font, entry.path, entry.name, guide_count, &entry.open
+                ui,
+                editor,
+                palette,
+                icon_font,
+                entry.path,
+                entry.name,
+                tree_file_index,
+                guide_count,
+                cursor_focused,
+                &entry.open
             );
         } else {
-            draw_tree_file(ui, editor, palette, entry, guide_count);
+            draw_tree_file(
+                ui, editor, palette, entry, tree_file_index, guide_count, cursor_focused
+            );
         }
     }
 
@@ -1947,20 +2010,23 @@ namespace code_editor {
                 icon_font,
                 editor.tree_root_name,
                 editor.tree_root_name,
+                TREE_CURSOR_ROOT,
                 0u,
+                false,
                 &tree_open
             );
             editor.set_flag(EditorFlag::TREE_OPEN, tree_open);
             if (tree_open) {
                 size_t closed_depth = static_cast<size_t>(-1);
-                for (FileTreeEntry& entry : editor.tree_files) {
+                for (size_t index = 0u; index < editor.tree_files.size(); ++index) {
+                    FileTreeEntry& entry = editor.tree_files[index];
                     if (closed_depth != static_cast<size_t>(-1)) {
                         if (entry.depth > closed_depth) {
                             continue;
                         }
                         closed_depth = static_cast<size_t>(-1);
                     }
-                    draw_tree_entry(ui, editor, palette, icon_font, entry);
+                    draw_tree_entry(ui, editor, palette, icon_font, index, entry, false);
                     if (entry.is_directory && !entry.open) {
                         closed_depth = entry.depth;
                     }
@@ -2007,6 +2073,7 @@ namespace code_editor {
                 return;
             }
             bool tree_open = editor.flag(EditorFlag::TREE_OPEN);
+            size_t cursor_row = 0u;
             draw_tree_folder(
                 ui,
                 editor,
@@ -2014,24 +2081,36 @@ namespace code_editor {
                 icon_font,
                 editor.tree_root_name,
                 editor.tree_root_name,
+                TREE_CURSOR_ROOT,
                 0u,
+                focused,
                 &tree_open
             );
             editor.set_flag(EditorFlag::TREE_OPEN, tree_open);
+            size_t row_index = 1u;
             if (tree_open) {
                 size_t closed_depth = static_cast<size_t>(-1);
-                for (FileTreeEntry& entry : editor.tree_files) {
+                for (size_t index = 0u; index < editor.tree_files.size(); ++index) {
+                    FileTreeEntry& entry = editor.tree_files[index];
                     if (closed_depth != static_cast<size_t>(-1)) {
                         if (entry.depth > closed_depth) {
                             continue;
                         }
                         closed_depth = static_cast<size_t>(-1);
                     }
-                    draw_tree_entry(ui, editor, palette, icon_font, entry);
+                    if (editor.tree_cursor == index) {
+                        cursor_row = row_index;
+                    }
+                    draw_tree_entry(ui, editor, palette, icon_font, index, entry, focused);
+                    row_index += 1u;
                     if (entry.is_directory && !entry.open) {
                         closed_depth = entry.depth;
                     }
                 }
+            }
+            if (editor.tree_cursor_reveal) {
+                ui.scroll_to_index(editor_surface_id(split), cursor_row);
+                editor.tree_cursor_reveal = false;
             }
         }
     }

@@ -32,6 +32,7 @@ namespace code_editor {
     inline constexpr size_t FILE_SEARCH_TEXT_CAPACITY = 128u;
     inline constexpr size_t FILE_SEARCH_RESULT_LIMIT = 16u;
     inline constexpr size_t FILE_SEARCH_NO_FILE = static_cast<size_t>(-1);
+    inline constexpr size_t TREE_CURSOR_ROOT = static_cast<size_t>(-1);
     inline constexpr size_t JUMP_LIST_LIMIT = 128u;
     inline constexpr size_t JUMP_LIST_NO_SELECTION = static_cast<size_t>(-1);
     inline constexpr size_t GLOBAL_SEARCH_RESULT_LIMIT = JUMP_LIST_LIMIT;
@@ -297,6 +298,7 @@ namespace code_editor {
         uint64_t buffer_use_stamp = 0u;
         size_t root_split = 0u;
         size_t focused_split = 0u;
+        size_t last_code_split = 0u;
         size_t cursor_line = 0u;
         size_t cursor_column = 0u;
         size_t preferred_column = 0u;
@@ -334,6 +336,7 @@ namespace code_editor {
         size_t global_search_open_index = JUMP_LIST_NO_SELECTION;
         size_t file_search_open_file = FILE_SEARCH_NO_FILE;
         size_t buffer_search_open_file = FILE_SEARCH_NO_FILE;
+        size_t tree_cursor = TREE_CURSOR_ROOT;
         size_t pending_line_number = 0u;
         uint64_t lsp_synced_revision = 0u;
         uint64_t lsp_seen_completions_generation = 0u;
@@ -357,6 +360,7 @@ namespace code_editor {
         bool file_search_mouse_known = false;
         bool file_search_mouse_select = false;
         bool file_search_reveal_selected = false;
+        bool tree_cursor_reveal = false;
         bool jump_list_mouse_known = false;
         bool jump_list_mouse_select = false;
         bool jump_list_reveal_selected = false;
@@ -388,6 +392,8 @@ namespace code_editor {
     auto ensure_filesystem_panel(EditorState& editor) -> void;
     auto set_filesystem_panel_visible(EditorState& editor, bool visible) -> void;
     auto expand_filesystem_tree_to_file(EditorState& editor, size_t tree_file_index) -> void;
+    auto select_current_file_in_filesystem_tree(EditorState& editor) -> void;
+    [[nodiscard]] auto preferred_code_split_for_open(EditorState const& editor) -> size_t;
     auto focus_first_code_split(EditorState& editor) -> void;
     auto focus_editor_split(EditorState& editor, size_t split) -> void;
     auto set_editor_cursor(EditorState& editor, size_t line, size_t column) -> void;
