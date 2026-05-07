@@ -1658,22 +1658,41 @@ namespace code_editor {
             );
         }
 
-        float x = panel.min.x + 8.0f;
-        float const y = panel.max.y - COMMAND_LIST_HEIGHT + 3.0f;
+        float const list_width = std::max(0.0f, panel.max.x - panel.min.x - 16.0f);
+        float selected_max_x = 0.0f;
+        float content_width = 0.0f;
+        for (size_t index = 0u; index < editor_command_count(); ++index) {
+            float const width =
+                font_cache::text_advance(editor_font, font_size, editor_command(index).name) +
+                16.0f;
+            if (index == editor.command_selected) {
+                selected_max_x = content_width + width;
+            }
+            content_width += width;
+            if (index + 1u < editor_command_count()) {
+                content_width += 8.0f;
+            }
+        }
+        float const scroll_x = std::clamp(
+            selected_max_x - list_width, 0.0f, std::max(0.0f, content_width - list_width)
+        );
+
+        float x = panel.min.x + 8.0f - scroll_x;
+        float const y = panel.max.y - COMMAND_LIST_HEIGHT - 2.0f;
         for (size_t index = 0u; index < editor_command_count(); ++index) {
             EditorCommand const command = editor_command(index);
             float const width =
                 font_cache::text_advance(editor_font, font_size, command.name) + 16.0f;
             bool const active = index == editor.command_selected;
             if (active) {
-                draw::Rect const item = {{x, y}, {x + width, y + 22.0f}};
+                draw::Rect const item = {{x, y + 3.0f}, {x + width, y + 25.0f}};
                 draw::draw_rect_filled(
                     draw_context, item, to_draw_color(palette.cursor_line), 4.0f
                 );
                 draw::draw_rect(draw_context, item, to_draw_color(palette.cursor), 1.0f, 4.0f);
             }
             text_style.color = to_draw_color(active ? palette.text : palette.muted);
-            draw::draw_text(draw_context, {x + 8.0f, y + 3.0f}, text_style, command.name, nullptr);
+            draw::draw_text(draw_context, {x + 8.0f, y + 2.0f}, text_style, command.name, nullptr);
             x += width + 8.0f;
         }
 
