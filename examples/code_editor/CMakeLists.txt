@@ -48,6 +48,7 @@ if(WIN32)
     target_link_libraries(code_editor_module PRIVATE
         gui::gui
         draw::draw
+        encoding::encoding
         render::render
     )
     cpp_configure_target(code_editor_module)
@@ -64,6 +65,7 @@ target_include_directories(code_editor PRIVATE
     "${CMAKE_CURRENT_BINARY_DIR}/generated"
 )
 target_link_libraries(code_editor PRIVATE
+    encoding::encoding
     gui::gui
 )
 if(WIN32)

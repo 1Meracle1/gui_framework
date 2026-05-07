@@ -9,6 +9,7 @@
 #include <base/vec.h>
 #include <cstddef>
 #include <cstdint>
+#include <encoding/json.h>
 
 class StringBuffer;
 
@@ -154,30 +155,9 @@ namespace code_editor {
     using LspSendEditorRequestFn = auto (*)(void* user_data, LspEditorRequest const& request)
         -> void;
 
-    enum class LspJsonKind : uint8_t {
-        NULL_VALUE,
-        BOOL,
-        NUMBER,
-        STRING,
-        ARRAY,
-        OBJECT,
-    };
-
-    struct LspJsonValue;
-
-    struct LspJsonMember {
-        StrRef key = {};
-        LspJsonValue const* value = nullptr;
-    };
-
-    struct LspJsonValue {
-        LspJsonKind kind = LspJsonKind::NULL_VALUE;
-        bool bool_value = false;
-        double number = 0.0;
-        StrRef string = {};
-        Slice<LspJsonValue const*> array = {};
-        Slice<LspJsonMember> object = {};
-    };
+    using LspJsonKind = encoding::JsonKind;
+    using LspJsonMember = encoding::JsonMember;
+    using LspJsonValue = encoding::JsonValue;
 
     struct LspFramer {
         Vec<char> bytes = {};
@@ -204,14 +184,31 @@ namespace code_editor {
     auto lsp_json_write_escaped_string(StringBuffer& buffer, StrRef text) -> void;
     auto lsp_write_json_rpc_message(StringBuffer& buffer, StrRef json) -> bool;
 
-    [[nodiscard]] auto lsp_json_parse(Arena& arena, StrRef text, LspJsonValue const*& out_value)
-        -> bool;
-    [[nodiscard]] auto lsp_json_object_get(LspJsonValue const* value, StrRef key)
-        -> LspJsonValue const*;
-    [[nodiscard]] auto lsp_json_string(LspJsonValue const* value, StrRef& out) -> bool;
-    [[nodiscard]] auto lsp_json_int(LspJsonValue const* value, int32_t& out) -> bool;
-    [[nodiscard]] auto lsp_json_size(LspJsonValue const* value, size_t& out) -> bool;
-    [[nodiscard]] auto lsp_json_bool(LspJsonValue const* value, bool& out) -> bool;
+    [[nodiscard]] inline auto
+    lsp_json_parse(Arena& arena, StrRef text, LspJsonValue const*& out_value) -> bool {
+        return encoding::json_parse(arena, text, out_value);
+    }
+
+    [[nodiscard]] inline auto lsp_json_object_get(LspJsonValue const* value, StrRef key)
+        -> LspJsonValue const* {
+        return encoding::json_object_get(value, key);
+    }
+
+    [[nodiscard]] inline auto lsp_json_string(LspJsonValue const* value, StrRef& out) -> bool {
+        return encoding::json_string(value, out);
+    }
+
+    [[nodiscard]] inline auto lsp_json_int(LspJsonValue const* value, int32_t& out) -> bool {
+        return encoding::json_int(value, out);
+    }
+
+    [[nodiscard]] inline auto lsp_json_size(LspJsonValue const* value, size_t& out) -> bool {
+        return encoding::json_size(value, out);
+    }
+
+    [[nodiscard]] inline auto lsp_json_bool(LspJsonValue const* value, bool& out) -> bool {
+        return encoding::json_bool(value, out);
+    }
 
     [[nodiscard]] auto lsp_framer_init(LspFramer& framer, MemoryResource* resource) -> bool;
     auto lsp_framer_reset(LspFramer& framer) -> void;

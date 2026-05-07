@@ -23,6 +23,7 @@ cpp_configure_project()
 add_library(gui_framework STATIC)
 
 add_subdirectory(src/base)
+add_subdirectory(src/encoding)
 add_subdirectory(src/font_provider)
 add_subdirectory(src/font_cache)
 add_subdirectory(src/render)
@@ -184,7 +185,7 @@ if(BUILD_TESTS)
     target_include_directories(code_editor_model_tests PRIVATE
         "${PROJECT_SOURCE_DIR}/examples/code_editor"
     )
-    target_link_libraries(code_editor_model_tests PRIVATE gui::gui gui_test)
+    target_link_libraries(code_editor_model_tests PRIVATE gui::gui encoding::encoding gui_test)
     cpp_configure_target(code_editor_model_tests)
 
     add_executable(code_editor_syntax_tests
@@ -195,7 +196,7 @@ if(BUILD_TESTS)
     target_include_directories(code_editor_syntax_tests PRIVATE
         "${PROJECT_SOURCE_DIR}/examples/code_editor"
     )
-    target_link_libraries(code_editor_syntax_tests PRIVATE gui::gui gui_test)
+    target_link_libraries(code_editor_syntax_tests PRIVATE gui::gui encoding::encoding gui_test)
     cpp_configure_target(code_editor_syntax_tests)
 
     add_executable(code_editor_lsp_tests
@@ -205,7 +206,7 @@ if(BUILD_TESTS)
     target_include_directories(code_editor_lsp_tests PRIVATE
         "${PROJECT_SOURCE_DIR}/examples/code_editor"
     )
-    target_link_libraries(code_editor_lsp_tests PRIVATE base::base gui_test)
+    target_link_libraries(code_editor_lsp_tests PRIVATE base::base encoding::encoding gui_test)
     cpp_configure_target(code_editor_lsp_tests)
 
     add_test(NAME base_tests COMMAND base_tests)
