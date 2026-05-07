@@ -70,6 +70,13 @@ namespace code_editor {
         WRITE_FAILED,
     };
 
+    enum class EditorConfigRequestKind : uint8_t {
+        NONE,
+        OPEN,
+        RELOAD,
+        OVERRIDE,
+    };
+
     enum class EditorCloseIntent : uint8_t {
         NONE,
         BUFFER,
@@ -306,10 +313,12 @@ namespace code_editor {
         char file_search_text[FILE_SEARCH_TEXT_CAPACITY] = {};
         char save_path_text[SAVE_PATH_TEXT_CAPACITY] = {};
         char command_text[COMMAND_TEXT_CAPACITY] = {};
+        char config_request_text[COMMAND_TEXT_CAPACITY] = {};
         char text_search_text[TEXT_SEARCH_TEXT_CAPACITY] = {};
         gui::Vec2 file_search_mouse_pos = {};
         size_t file_search_text_size = 0u;
         size_t command_text_size = 0u;
+        size_t config_request_text_size = 0u;
         size_t text_search_text_size = 0u;
         size_t text_search_origin_line = 0u;
         size_t command_selected = 0u;
@@ -342,6 +351,7 @@ namespace code_editor {
         gui::TextSelection lsp_hover_selection = {};
         EditorLspPopupKind lsp_popup = EditorLspPopupKind::NONE;
         EditorCloseIntent close_intent = EditorCloseIntent::NONE;
+        EditorConfigRequestKind config_request = EditorConfigRequestKind::NONE;
         EditorJumpListKind jump_list_kind = EditorJumpListKind::HISTORY;
         bool lsp_rename_text_selected = false;
         bool file_search_mouse_known = false;
@@ -376,6 +386,7 @@ namespace code_editor {
     auto open_save_path_popup(EditorState& editor) -> void;
     auto close_save_path_popup(EditorState& editor) -> void;
     auto ensure_filesystem_panel(EditorState& editor) -> void;
+    auto set_filesystem_panel_visible(EditorState& editor, bool visible) -> void;
     auto expand_filesystem_tree_to_file(EditorState& editor, size_t tree_file_index) -> void;
     auto focus_first_code_split(EditorState& editor) -> void;
     auto focus_editor_split(EditorState& editor, size_t split) -> void;

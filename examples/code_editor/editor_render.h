@@ -9,6 +9,10 @@
 
 namespace code_editor {
 
+    [[nodiscard]] auto editor_file_write_stamp(StrRef path) -> uint64_t;
+    [[nodiscard]] auto editor_path_exists(StrRef path) -> bool;
+    [[nodiscard]] auto editor_write_text_file(StrRef path, StrRef text) -> bool;
+    [[nodiscard]] auto editor_open_path(EditorState& editor, StrRef path) -> bool;
     auto update_open_file_changes(EditorState& editor) -> void;
     auto draw_editor_surface(
         gui::draw::Context draw_context,

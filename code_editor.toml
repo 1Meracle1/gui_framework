@@ -1,0 +1,37 @@
+# code_editor config
+# Precedence: defaults -> global config -> local config -> :set overrides
+# Session examples:
+#   :set editor.font-size=14
+#   :set theme.ui.cursor="#ffcc00"
+
+[editor]
+font-size = 12
+# sidebar-visible = true
+# raster-policy = "sharp"
+
+[theme.ui]
+shell = "#0d1116"
+# panel = "#12171e"
+# panel-raised = "#181e26"
+# control-hovered = "#1f2731"
+# control-active = "#25313e"
+# border = "#313a46"
+# text = "#e0e6ec"
+# muted = "#7e8b99"
+# faint = "#525e6c"
+# cursor-line = "#1b242e"
+# cursor = "#52acff"
+
+[theme.syntax]
+# keyword = "#84b2ff"
+# type = "#56d3b2"
+# string = "#eeac69"
+# number = "#ca9cff"
+# comment = "#678470"
+# preprocessor = "#ff7484"
+# punctuation = "#99a6b5"
+# function = "#dcdcaa"
+
+[theme.mode]
+# insert = "#50c892"
+# normal = "#52acff"

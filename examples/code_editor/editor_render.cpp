@@ -233,6 +233,18 @@ namespace code_editor {
         return ok;
     }
 
+    [[nodiscard]] auto editor_file_write_stamp(StrRef path) -> uint64_t {
+        return file_write_stamp(path);
+    }
+
+    [[nodiscard]] auto editor_path_exists(StrRef path) -> bool {
+        return path_exists(path);
+    }
+
+    [[nodiscard]] auto editor_write_text_file(StrRef path, StrRef text) -> bool {
+        return write_tree_file_text(path, text);
+    }
+
     [[nodiscard]] auto same_file(StrRef lhs_name, StrRef lhs_path, StrRef rhs_name, StrRef rhs_path)
         -> bool {
         if (!lhs_path.empty() || !rhs_path.empty()) {
@@ -365,6 +377,14 @@ namespace code_editor {
 
     auto open_tree_file(EditorState& editor, FileTreeEntry const& file) -> void {
         BASE_UNUSED(open_file(editor, file.name, file.path));
+    }
+
+    [[nodiscard]] auto editor_open_path(EditorState& editor, StrRef path) -> bool {
+        StrRef name = render_path_leaf(path);
+        if (name.empty()) {
+            name = path;
+        }
+        return open_file(editor, name, path);
     }
 
     auto focus_code_split_for_open(EditorState& editor) -> void {

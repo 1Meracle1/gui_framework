@@ -2,6 +2,8 @@ set(CODE_EDITOR_RELOAD_SOURCES
     app.cpp
     app.h
     cpp_tokenizer.cpp
+    editor_config.cpp
+    editor_config.h
     editor_model.cpp
     editor_model.h
     editor_render.cpp

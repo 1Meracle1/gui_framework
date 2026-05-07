@@ -26,6 +26,9 @@ namespace code_editor {
         {"jump-forward", "jf", "Jump to next recorded location."},
         {"toggle-raster-policy", "rp", "Toggle text raster policy."},
         {"global-search", "gs", "Search indexed workspace files."},
+        {"config-open", "co", "Open the active config file: local override first, then global."},
+        {"config-reload", "cr", "Reload global/local config files and reapply session overrides."},
+        {"set", "cfg", "Apply a session override, for example set editor.font-size=14."},
     };
 
     struct EditorPosition;
@@ -51,6 +54,7 @@ namespace code_editor {
     auto request_lsp(EditorState& editor, LspRequestKind kind, StrRef new_name = {}) -> void;
     auto open_lsp_rename(EditorState& editor) -> void;
     auto close_jump_list(EditorState& editor) -> void;
+    auto clear_config_request(EditorState& editor) -> void;
     auto set_text_search_text(EditorState& editor, StrRef text) -> void;
     auto jump_list_previous(EditorState& editor) -> void;
     auto jump_list_next(EditorState& editor) -> void;
@@ -153,6 +157,7 @@ namespace code_editor {
         editor.command_text_size = 0u;
         editor.command_selected = 0u;
         editor.command_text[0u] = '\0';
+        clear_config_request(editor);
         editor.set_flag(EditorFlag::SAVE_REQUESTED, false);
         editor.set_flag(EditorFlag::SAVE_PATH_OPEN, false);
         editor.set_flag(EditorFlag::NEW_SCRATCH_REQUESTED, false);
@@ -774,6 +779,14 @@ namespace code_editor {
             close_filesystem_panels(editor);
         } else {
             ensure_filesystem_panel(editor);
+        }
+    }
+
+    auto set_filesystem_panel_visible(EditorState& editor, bool visible) -> void {
+        if (visible) {
+            ensure_filesystem_panel(editor);
+        } else {
+            close_filesystem_panels(editor);
         }
     }
 
@@ -1811,6 +1824,23 @@ namespace code_editor {
         return editor_command(std::min(editor.command_selected, editor_command_count() - 1u));
     }
 
+    struct ParsedCommandLine {
+        StrRef name = {};
+        StrRef args = {};
+    };
+
+    [[nodiscard]] auto parse_command_line(StrRef text) -> ParsedCommandLine {
+        text = text.trim();
+        size_t const separator = text.find_first_of(" \t");
+        if (separator == StrRef::NPOS) {
+            return {.name = text};
+        }
+        return {
+            .name = text.prefix(separator),
+            .args = text.substr(separator + 1u).trim(),
+        };
+    }
+
     [[nodiscard]] auto file_search_entry_text(FileTreeEntry const& entry) -> StrRef {
         return !entry.relative_path.empty() ? entry.relative_path : entry.name;
     }
@@ -2472,6 +2502,12 @@ namespace code_editor {
         editor.jump_list_kind = EditorJumpListKind::HISTORY;
     }
 
+    auto clear_config_request(EditorState& editor) -> void {
+        editor.config_request = EditorConfigRequestKind::NONE;
+        editor.config_request_text_size = 0u;
+        editor.config_request_text[0u] = '\0';
+    }
+
     auto clear_command_line(EditorState& editor) -> void {
         editor.set_flag(EditorFlag::COMMAND_LINE_ACTIVE, false);
         editor.command_text_size = 0u;
@@ -2480,16 +2516,16 @@ namespace code_editor {
     }
 
     auto select_command_match(EditorState& editor) -> void {
-        StrRef const text = editor_command_text(editor).trim();
-        if (text.empty()) {
+        ParsedCommandLine const command = parse_command_line(editor_command_text(editor));
+        if (command.name.empty()) {
             editor.command_selected =
                 std::min(editor.command_selected, editor_command_count() - 1u);
             return;
         }
         for (size_t index = 0u; index < editor_command_count(); ++index) {
-            EditorCommand const command = editor_command(index);
-            if (command.name.starts_with_ignore_ascii_case(text) ||
-                command.alias.starts_with_ignore_ascii_case(text)) {
+            EditorCommand const candidate = editor_command(index);
+            if (candidate.name.starts_with_ignore_ascii_case(command.name) ||
+                candidate.alias.starts_with_ignore_ascii_case(command.name)) {
                 editor.command_selected = index;
                 return;
             }
@@ -2502,6 +2538,10 @@ namespace code_editor {
     }
 
     auto complete_command_line(EditorState& editor) -> void {
+        ParsedCommandLine const command = parse_command_line(editor_command_text(editor));
+        if (!command.args.empty()) {
+            return;
+        }
         EditorCommand const selected = editor_selected_command(editor);
         if (editor_command_text(editor).equals_ignore_ascii_case(selected.name)) {
             editor.command_selected = (editor.command_selected + 1u) % editor_command_count();
@@ -2724,7 +2764,15 @@ namespace code_editor {
         }
     }
 
-    auto run_editor_command(EditorState& editor, size_t index) -> void {
+    auto set_config_request(EditorState& editor, EditorConfigRequestKind kind, StrRef text = {})
+        -> void {
+        editor.config_request = kind;
+        editor.config_request_text_size =
+            text.copy_to(editor.config_request_text, COMMAND_TEXT_CAPACITY - 1u);
+        editor.config_request_text[editor.config_request_text_size] = '\0';
+    }
+
+    auto run_editor_command(EditorState& editor, size_t index, StrRef args) -> void {
         switch (index) {
         case 0u:
             request_editor_save(editor);
@@ -2775,22 +2823,31 @@ namespace code_editor {
         case 15u:
             open_editor_global_search(editor);
             break;
+        case 16u:
+            set_config_request(editor, EditorConfigRequestKind::OPEN);
+            break;
+        case 17u:
+            set_config_request(editor, EditorConfigRequestKind::RELOAD);
+            break;
+        case 18u:
+            set_config_request(editor, EditorConfigRequestKind::OVERRIDE, args);
+            break;
         default:
             break;
         }
     }
 
     auto run_command_line(EditorState& editor) -> void {
-        StrRef const text = editor_command_text(editor).trim();
-        if (text.empty()) {
+        ParsedCommandLine const command_line = parse_command_line(editor_command_text(editor));
+        if (command_line.name.empty()) {
             clear_command_line(editor);
             return;
         }
         for (size_t index = 0u; index < editor_command_count(); ++index) {
             EditorCommand const command = editor_command(index);
-            if (text.equals_ignore_ascii_case(command.name) ||
-                text.equals_ignore_ascii_case(command.alias)) {
-                run_editor_command(editor, index);
+            if (command_line.name.equals_ignore_ascii_case(command.name) ||
+                command_line.name.equals_ignore_ascii_case(command.alias)) {
+                run_editor_command(editor, index, command_line.args);
                 break;
             }
         }

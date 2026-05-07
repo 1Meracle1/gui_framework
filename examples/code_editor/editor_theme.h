@@ -10,6 +10,8 @@ namespace code_editor {
         gui::Color shell = gui::rgb(13, 17, 22);
         gui::Color panel = gui::rgb(18, 23, 30);
         gui::Color panel_raised = gui::rgb(24, 30, 38);
+        gui::Color control_hovered = gui::rgb(31, 39, 49);
+        gui::Color control_active = gui::rgb(37, 49, 62);
         gui::Color border = gui::rgb(49, 58, 70);
         gui::Color text = gui::rgb(224, 230, 236);
         gui::Color muted = gui::rgb(126, 139, 153);

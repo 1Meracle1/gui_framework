@@ -9,6 +9,7 @@
 #include <windows.h>
 #endif
 
+#include "editor_config.h"
 #include "editor_model.h"
 #include "editor_render.h"
 #include "editor_theme.h"
@@ -19,6 +20,7 @@
 #include <base/memory.h>
 #include <base/slice.h>
 #include <base/unicode.h>
+#include <cstdio>
 #include <cstring>
 #if defined(_WIN32)
 #include <draw/draw_renderer.h>
@@ -39,6 +41,30 @@ namespace code_editor {
     constexpr int WINDOWS_RCDATA_ID = 10;
     constexpr float FILE_SEARCH_BACKDROP_BLUR_RADIUS = 14.0f;
     constexpr float FILE_SEARCH_BACKDROP_DIM_ALPHA = 0.12f;
+    constexpr float CONFIG_ERROR_MARGIN = 16.0f;
+    constexpr float CONFIG_ERROR_MIN_WIDTH = 360.0f;
+    constexpr float CONFIG_ERROR_MAX_WIDTH = 620.0f;
+    constexpr float CONFIG_ERROR_HEIGHT_FRACTION = 0.4f;
+    constexpr float CONFIG_ERROR_EXCERPT_FONT_SIZE = 11.0f;
+    constexpr float CONFIG_ERROR_EXCERPT_LINE_HEIGHT = 17.0f;
+    constexpr float CONFIG_ERROR_SECTION_GAP = 10.0f;
+    constexpr float CONFIG_ERROR_PATH_HEIGHT = 18.0f;
+    constexpr float CONFIG_ERROR_HEADER_HEIGHT = 28.0f;
+    constexpr float CONFIG_ERROR_MESSAGE_LINE_HEIGHT_SCALE = 1.45f;
+    constexpr float CONFIG_ERROR_MESSAGE_MIN_HEIGHT = 24.0f;
+    constexpr float CONFIG_ERROR_EXCERPT_PADDING = 20.0f;
+
+    struct RuntimeConfigState {
+        EditorConfig base = {};
+        EditorConfig effective = {};
+        EditorConfigPatch session_override = {};
+        EditorConfigError error = {};
+        char global_path[EDITOR_CONFIG_PATH_CAPACITY] = {};
+        char local_path[EDITOR_CONFIG_PATH_CAPACITY] = {};
+        uint64_t global_write_stamp = 0u;
+        uint64_t local_write_stamp = 0u;
+        bool error_visible = false;
+    };
 
     struct Runtime {
         font_provider::Context provider = {};
@@ -61,6 +87,7 @@ namespace code_editor {
         bool* app_close_confirmed = nullptr;
         uint64_t file_change_generation = 0u;
         float char_width = 8.0f;
+        RuntimeConfigState config = {};
     };
 
     static auto log_render_result(char const* operation, render::Result result) -> void {
@@ -120,6 +147,582 @@ namespace code_editor {
         }
         runtime.file_change_generation = generation;
         return true;
+    }
+
+    auto copy_cstr(char* buffer, size_t capacity, StrRef text) -> void {
+        if (capacity == 0u) {
+            return;
+        }
+        size_t const size = std::min(text.size(), capacity - 1u);
+        if (size != 0u) {
+            std::memcpy(buffer, text.data(), size);
+        }
+        buffer[size] = '\0';
+    }
+
+    [[nodiscard]] auto runtime_config_path(char const* buffer) -> StrRef {
+        return StrRef(buffer, cstr_len(buffer));
+    }
+
+    [[nodiscard]] auto key_pressed(gui::InputState const& input, gui::Key key) -> bool {
+        for (size_t index = 0u; index < input.key_event_count; ++index) {
+            gui::KeyEvent const& event = input.key_events[index];
+            if (event.kind == gui::KeyEventKind::PRESS && event.key == key) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    [[nodiscard]] auto line_count(StrRef text) -> size_t {
+        if (text.empty()) {
+            return 0u;
+        }
+        size_t count = 1u;
+        for (char const ch : text) {
+            if (ch == '\n') {
+                count += 1u;
+            }
+        }
+        if (text.back() == '\n' && count > 1u) {
+            count -= 1u;
+        }
+        return count;
+    }
+
+    [[nodiscard]] auto
+    wrapped_line_count(font_cache::Font font, float font_size, StrRef text, float max_width)
+        -> size_t {
+        if (text.empty() || max_width <= 1.0f) {
+            return text.empty() ? 0u : 1u;
+        }
+
+        float const space_width = font_cache::text_advance(font, font_size, " ");
+        size_t total_lines = 0u;
+        for (StrRef const raw_line : text.lines()) {
+            if (raw_line.empty()) {
+                total_lines += 1u;
+                continue;
+            }
+
+            size_t line_total = 1u;
+            float line_width = 0.0f;
+            for (StrRef const word : raw_line.split_ascii_whitespace()) {
+                float const word_width = font_cache::text_advance(font, font_size, word);
+                if (line_width <= 0.0f) {
+                    line_width = word_width;
+                    continue;
+                }
+                if (line_width + space_width + word_width <= max_width) {
+                    line_width += space_width + word_width;
+                    continue;
+                }
+                line_total += 1u;
+                line_width = word_width;
+            }
+            total_lines += line_total;
+        }
+        return total_lines;
+    }
+
+    auto append_error_note(EditorConfigError& error, StrRef note) -> void {
+        size_t const size = cstr_len(error.message);
+        if (size >= sizeof(error.message) - 1u || note.empty()) {
+            return;
+        }
+        size_t const available = sizeof(error.message) - size - 1u;
+        if (available <= note.size()) {
+            return;
+        }
+        std::memcpy(error.message + size, note.data(), note.size());
+        error.message[size + note.size()] = '\0';
+    }
+
+    [[nodiscard]] auto open_read_file(StrRef path) -> std::FILE* {
+        std::FILE* file = nullptr;
+#if defined(_MSC_VER)
+        if (fopen_s(&file, path.data(), "rb") != 0) {
+            return nullptr;
+        }
+#else
+        file = std::fopen(path.data(), "rb");
+#endif
+        return file;
+    }
+
+    [[nodiscard]] auto read_config_file_text(Arena& arena, StrRef path, StrRef& out_text) -> bool {
+        out_text = {};
+        if (path.empty() || !editor_path_exists(path)) {
+            return true;
+        }
+
+        std::FILE* const file = open_read_file(path);
+        if (file == nullptr) {
+            return false;
+        }
+
+        bool ok = std::fseek(file, 0, SEEK_END) == 0;
+        long const size = ok ? std::ftell(file) : -1l;
+        ok = ok && size >= 0l && std::fseek(file, 0, SEEK_SET) == 0;
+        if (ok) {
+            char* const text = arena_alloc<char>(arena, static_cast<size_t>(size) + 1u);
+            size_t const read_size = std::fread(text, 1u, static_cast<size_t>(size), file);
+            ok = read_size == static_cast<size_t>(size);
+            text[read_size] = '\0';
+            out_text = ok ? StrRef(text, read_size) : StrRef();
+        }
+        std::fclose(file);
+        if (out_text.starts_with("\xef\xbb\xbf")) {
+            out_text.remove_prefix(3u);
+        }
+        return ok;
+    }
+
+    [[nodiscard]] auto ensure_parent_directories(StrRef path) -> bool {
+        size_t const separator = path.find_last_of("\\/");
+        if (separator == StrRef::NPOS) {
+            return true;
+        }
+
+        char buffer[EDITOR_CONFIG_PATH_CAPACITY] = {};
+        copy_cstr(buffer, sizeof(buffer), path.prefix(separator));
+        size_t const size = cstr_len(buffer);
+        for (size_t index = 0u; index < size; ++index) {
+            if (buffer[index] != '\\' && buffer[index] != '/') {
+                continue;
+            }
+            if (index == 0u || (index == 2u && buffer[1u] == ':')) {
+                continue;
+            }
+            char const saved = buffer[index];
+            buffer[index] = '\0';
+            if (buffer[0u] != '\0') {
+                DWORD const result = CreateDirectoryA(buffer, nullptr);
+                if (result == 0u && GetLastError() != ERROR_ALREADY_EXISTS) {
+                    buffer[index] = saved;
+                    return false;
+                }
+            }
+            buffer[index] = saved;
+        }
+        if (buffer[0u] == '\0') {
+            return true;
+        }
+        DWORD const result = CreateDirectoryA(buffer, nullptr);
+        return result != 0u || GetLastError() == ERROR_ALREADY_EXISTS;
+    }
+
+    [[nodiscard]] auto ensure_config_file_exists(StrRef path) -> bool {
+        if (path.empty()) {
+            return false;
+        }
+        if (editor_path_exists(path)) {
+            return true;
+        }
+        if (!ensure_parent_directories(path)) {
+            return false;
+        }
+        return editor_write_text_file(path, editor_default_config_template());
+    }
+
+    auto apply_runtime_config(Runtime& runtime) -> void {
+        runtime.editor.font_size = runtime.config.effective.font_size;
+        runtime.editor.raster_policy = runtime.config.effective.raster_policy;
+        set_filesystem_panel_visible(runtime.editor, runtime.config.effective.sidebar_visible);
+    }
+
+    auto reload_runtime_config(Runtime& runtime, bool force) -> void {
+        StrRef const global_path = runtime_config_path(runtime.config.global_path);
+        StrRef const local_path = runtime_config_path(runtime.config.local_path);
+        uint64_t const global_stamp = editor_file_write_stamp(global_path);
+        uint64_t const local_stamp = editor_file_write_stamp(local_path);
+        if (!force && global_stamp == runtime.config.global_write_stamp &&
+            local_stamp == runtime.config.local_write_stamp) {
+            return;
+        }
+        runtime.config.global_write_stamp = global_stamp;
+        runtime.config.local_write_stamp = local_stamp;
+
+        ArenaTemp temp = begin_thread_temp_arena();
+        EditorConfig effective = runtime.config.base;
+        EditorConfigError global_error = {};
+        EditorConfigError local_error = {};
+
+        if (!global_path.empty() && global_stamp != 0u) {
+            StrRef text = {};
+            if (!read_config_file_text(*temp.arena(), global_path, text)) {
+                global_error.valid = true;
+                global_error.source = EditorConfigErrorSource::GLOBAL;
+                copy_cstr(global_error.path, sizeof(global_error.path), global_path);
+                copy_cstr(
+                    global_error.message,
+                    sizeof(global_error.message),
+                    "Failed to read global config file. Using built-in defaults for global "
+                    "settings."
+                );
+            } else {
+                EditorConfigPatch patch = {};
+                if (parse_editor_config(
+                        text, global_path, EditorConfigErrorSource::GLOBAL, patch, global_error
+                    )) {
+                    apply_editor_config_patch(effective, patch);
+                } else {
+                    append_error_note(
+                        global_error, " Using built-in defaults for global settings."
+                    );
+                }
+            }
+        }
+
+        if (!local_path.empty() && local_stamp != 0u) {
+            StrRef text = {};
+            if (!read_config_file_text(*temp.arena(), local_path, text)) {
+                local_error.valid = true;
+                local_error.source = EditorConfigErrorSource::LOCAL;
+                copy_cstr(local_error.path, sizeof(local_error.path), local_path);
+                copy_cstr(
+                    local_error.message,
+                    sizeof(local_error.message),
+                    global_error.valid
+                        ? "Failed to read local config file. Using built-in defaults instead."
+                        : "Failed to read local config file. Using global config values instead."
+                );
+            } else {
+                EditorConfigPatch patch = {};
+                if (parse_editor_config(
+                        text, local_path, EditorConfigErrorSource::LOCAL, patch, local_error
+                    )) {
+                    apply_editor_config_patch(effective, patch);
+                } else if (global_error.valid) {
+                    append_error_note(local_error, " Using built-in defaults instead.");
+                } else {
+                    append_error_note(local_error, " Using global config values instead.");
+                }
+            }
+        }
+
+        apply_editor_config_patch(effective, runtime.config.session_override);
+        runtime.config.effective = effective;
+        apply_runtime_config(runtime);
+        if (local_error.valid) {
+            runtime.config.error = local_error;
+            runtime.config.error_visible = true;
+        } else if (global_error.valid) {
+            runtime.config.error = global_error;
+            runtime.config.error_visible = true;
+        } else {
+            clear_editor_config_error(runtime.config.error);
+            runtime.config.error_visible = false;
+        }
+    }
+
+    auto handle_runtime_config_request(Runtime& runtime) -> void {
+        EditorConfigRequestKind const request = runtime.editor.config_request;
+        runtime.editor.config_request = EditorConfigRequestKind::NONE;
+        runtime.editor.config_request_text_size = 0u;
+        runtime.editor.config_request_text[0u] = '\0';
+        if (request == EditorConfigRequestKind::NONE) {
+            return;
+        }
+
+        switch (request) {
+        case EditorConfigRequestKind::OPEN: {
+            StrRef const local_path = runtime_config_path(runtime.config.local_path);
+            StrRef const global_path = runtime_config_path(runtime.config.global_path);
+            StrRef const target =
+                !local_path.empty() && editor_path_exists(local_path) ? local_path : global_path;
+            if (!target.empty() && ensure_config_file_exists(target)) {
+                BASE_UNUSED(editor_open_path(runtime.editor, target));
+            } else {
+                fmt::eprintf("code_editor: failed to open config file %s\n", target);
+            }
+        } break;
+        case EditorConfigRequestKind::RELOAD:
+            reload_runtime_config(runtime, true);
+            break;
+        case EditorConfigRequestKind::OVERRIDE: {
+            EditorConfigPatch patch = {};
+            EditorConfigError error = {};
+            StrRef const text(
+                runtime.editor.config_request_text, runtime.editor.config_request_text_size
+            );
+            if (parse_editor_config_override(text, patch, error)) {
+                merge_editor_config_patch(runtime.config.session_override, patch);
+                clear_editor_config_error(runtime.config.error);
+                runtime.config.error_visible = false;
+                reload_runtime_config(runtime, true);
+            } else {
+                append_error_note(error, " Keeping the previous session override values.");
+                runtime.config.error = error;
+                runtime.config.error_visible = true;
+            }
+        } break;
+        default:
+            break;
+        }
+    }
+
+    auto open_runtime_config_error_source(Runtime& runtime) -> void {
+        EditorConfigError const& error = runtime.config.error;
+        StrRef const path = StrRef(error.path);
+        if (path.empty()) {
+            return;
+        }
+        if (editor_focused_pane_kind(runtime.editor) != EditorPaneKind::CODE) {
+            focus_first_code_split(runtime.editor);
+        }
+        if (!editor_open_path(runtime.editor, path)) {
+            fmt::eprintf("code_editor: failed to open config error source %s\n", path);
+            return;
+        }
+        size_t const line = error.line > 0u ? error.line - 1u : 0u;
+        size_t const column = error.column > 0u ? error.column - 1u : 0u;
+        set_editor_cursor(runtime.editor, line, column);
+    }
+
+    auto draw_config_error_popup(
+        gui::Frame& ui,
+        Runtime& runtime,
+        Palette const& palette,
+        float client_width,
+        float client_height,
+        gui::InputState const& input
+    ) -> void {
+        if (!runtime.config.error_visible || !runtime.config.error.valid) {
+            return;
+        }
+
+        EditorConfigError const& error = runtime.config.error;
+        StrRef const message_text = StrRef(error.message);
+        StrRef const excerpt_text = StrRef(error.excerpt);
+        float const width = std::clamp(
+            client_width - CONFIG_ERROR_MARGIN * 2.0f,
+            CONFIG_ERROR_MIN_WIDTH,
+            CONFIG_ERROR_MAX_WIDTH
+        );
+        float const content_width = std::max(1.0f, width - 28.0f);
+        size_t const message_lines = std::max<size_t>(
+            1u,
+            wrapped_line_count(
+                runtime.ui_font, runtime.editor.font_size, message_text, content_width
+            )
+        );
+        float const message_height = std::max(
+            CONFIG_ERROR_MESSAGE_MIN_HEIGHT,
+            static_cast<float>(message_lines) *
+                (runtime.editor.font_size * CONFIG_ERROR_MESSAGE_LINE_HEIGHT_SCALE)
+        );
+        float const excerpt_height =
+            excerpt_text.empty()
+                ? 0.0f
+                : static_cast<float>(line_count(excerpt_text)) * CONFIG_ERROR_EXCERPT_LINE_HEIGHT +
+                      CONFIG_ERROR_EXCERPT_PADDING;
+        float const body_content_height =
+            CONFIG_ERROR_PATH_HEIGHT + message_height +
+            (excerpt_text.empty() ? CONFIG_ERROR_SECTION_GAP
+                                  : CONFIG_ERROR_SECTION_GAP * 2.0f + excerpt_height);
+        float const body_max_height = std::max(
+            1.0f,
+            client_height * CONFIG_ERROR_HEIGHT_FRACTION - CONFIG_ERROR_HEADER_HEIGHT -
+                CONFIG_ERROR_SECTION_GAP - CONFIG_ERROR_MARGIN * 2.0f
+        );
+        float const body_height = std::min(body_content_height, body_max_height);
+        float const x = std::max(CONFIG_ERROR_MARGIN, client_width - width - CONFIG_ERROR_MARGIN);
+        bool close = key_pressed(input, gui::Key::ESCAPE);
+        bool open_source = false;
+        if (auto popup = ui.popup(
+                gui::id("config_error_popup"),
+                {
+                    .layout =
+                        {
+                            .width = gui::px(width),
+                            .height = gui::children(),
+                            .margin = gui::insets(CONFIG_ERROR_MARGIN, 0.0f, 0.0f, x),
+                            .padding = gui::insets(14.0f),
+                            .gap = 10.0f,
+                            .align_x = gui::Align::START,
+                            .align_y = gui::Align::START,
+                        },
+                    .style =
+                        {
+                            .background = gui::color_alpha(palette.panel, 0.94f),
+                            .border = gui::color_alpha(palette.preprocessor, 0.82f),
+                            .border_thickness = 1.0f,
+                            .radius = 6.0f,
+                            .shadow =
+                                {
+                                    .offset = {0.0f, 12.0f},
+                                    .blur_radius = 28.0f,
+                                    .spread = 2.0f,
+                                    .color = gui::rgba(0, 0, 0, 110),
+                                },
+                        },
+                    .debug_name = "config_error_popup",
+                }
+            )) {
+            if (auto header = ui.row(
+                    gui::id("config_error_header"),
+                    {
+                        .layout = {
+                            .width = gui::fill(),
+                            .height = gui::px(CONFIG_ERROR_HEADER_HEIGHT),
+                            .gap = 8.0f,
+                            .align_y = gui::Align::CENTER,
+                        },
+                    }
+                )) {
+                StrRef const title = error.source == EditorConfigErrorSource::LOCAL
+                                         ? StrRef("Local config error")
+                                     : error.source == EditorConfigErrorSource::GLOBAL
+                                         ? StrRef("Global config error")
+                                         : StrRef("Session override error");
+                ui.label(
+                    title,
+                    {
+                        .layout = {.width = gui::children(), .height = gui::fill()},
+                        .style = {
+                            .foreground = palette.text, .font_size = runtime.editor.font_size
+                        },
+                    }
+                );
+                ui.spacer({.layout = {.width = gui::fill(), .height = gui::px(1.0f)}});
+                open_source =
+                    ui.button(
+                          gui::id("config_error_open_source"),
+                          "Go To Error",
+                          {
+                              .layout =
+                                  {
+                                      .width = gui::px(106.0f),
+                                      .height = gui::fill(),
+                                      .padding = gui::insets(0.0f, 10.0f),
+                                  },
+                              .style =
+                                  {
+                                      .background = gui::color_alpha(palette.panel_raised, 0.88f),
+                                      .foreground = palette.cursor,
+                                      .border = palette.cursor,
+                                      .border_thickness = 1.0f,
+                                      .radius = 4.0f,
+                                      .font_size = runtime.editor.font_size,
+                                  },
+                          }
+                    )
+                        .activated ||
+                    open_source;
+                close =
+                    ui.button(
+                          gui::id("config_error_close"),
+                          "Close",
+                          {
+                              .layout =
+                                  {
+                                      .width = gui::px(72.0f),
+                                      .height = gui::fill(),
+                                      .padding = gui::insets(0.0f, 10.0f),
+                                  },
+                              .style =
+                                  {
+                                      .background = gui::color_alpha(palette.panel_raised, 0.88f),
+                                      .foreground = palette.text,
+                                      .border = palette.border,
+                                      .border_thickness = 1.0f,
+                                      .radius = 4.0f,
+                                      .font_size = runtime.editor.font_size,
+                                  },
+                          }
+                    )
+                        .activated ||
+                    close;
+            }
+            if (auto body = ui.scroll_panel(
+                    gui::id("config_error_body"),
+                    {
+                        .layout =
+                            {
+                                .width = gui::fill(),
+                                .height = gui::px(body_height),
+                                .align_x = gui::Align::STRETCH,
+                            },
+                        .style = {.radius = 4.0f},
+                    }
+                )) {
+                if (auto content = ui.column(
+                        gui::id("config_error_content"),
+                        {
+                            .layout = {
+                                .width = gui::fill(),
+                                .height = gui::children(),
+                                .gap = 10.0f,
+                                .align_x = gui::Align::STRETCH,
+                            },
+                        }
+                    )) {
+                    ui.label(
+                        fmt::tprintf("%s:%zu:%zu", StrRef(error.path), error.line, error.column),
+                        {
+                            .layout = {.width = gui::fill(), .height = gui::px(18.0f)},
+                            .style = {
+                                .foreground = palette.cursor,
+                                .font_size = runtime.editor.font_size,
+                            },
+                        }
+                    );
+                    ui.label(
+                        StrRef(error.message),
+                        {
+                            .layout =
+                                {
+                                    .width = gui::fill(),
+                                    .height = gui::px(message_height),
+                                    .word_wrap = true,
+                                },
+                            .style = {
+                                .foreground = palette.muted,
+                                .font_size = runtime.editor.font_size,
+                            },
+                        }
+                    );
+                    if (!excerpt_text.empty()) {
+                        if (auto excerpt = ui.column(
+                                gui::id("config_error_excerpt"),
+                                {
+                                    .layout =
+                                        {
+                                            .width = gui::fill(),
+                                            .height = gui::px(excerpt_height),
+                                            .padding = gui::insets(10.0f),
+                                        },
+                                    .style = {
+                                        .background = gui::color_alpha(palette.panel_raised, 0.82f),
+                                        .border = gui::color_alpha(palette.border, 0.65f),
+                                        .border_thickness = 1.0f,
+                                        .radius = 4.0f,
+                                    },
+                                }
+                            )) {
+                            ui.label(
+                                excerpt_text,
+                                {
+                                    .layout = {.width = gui::fill(), .height = gui::fill()},
+                                    .style = {
+                                        .foreground = palette.text,
+                                        .font = runtime.editor_font,
+                                        .font_size = CONFIG_ERROR_EXCERPT_FONT_SIZE,
+                                    },
+                                }
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        if (open_source) {
+            open_runtime_config_error_source(runtime);
+        }
+        if (close) {
+            runtime.config.error_visible = false;
+        }
     }
 
     auto set_windows_clipboard_text(void* user_data, StrRef text) -> void {
@@ -250,29 +853,11 @@ namespace code_editor {
             font_cache::open_font_data(runtime->cache, source_code_pro, runtime->editor_font);
         }
         ASSERT(font_cache::font_valid(runtime->editor_font));
-        runtime->char_width = std::max(
-            1.0f, font_cache::text_advance(runtime->editor_font, runtime->editor.font_size, "M")
-        );
 
         draw::ContextDesc draw_desc = {};
         draw_desc.font_cache = runtime->cache;
         draw_desc.initial_command_capacity = 4096u;
         draw::create_context(arena, draw_desc, runtime->draw_context);
-
-        Palette const palette = {};
-        gui::ThemeDesc const theme =
-            code_editor_theme(runtime->ui_font, palette, runtime->editor.font_size);
-        gui::create_context(
-            arena,
-            {
-                .initial_box_capacity = 1024u,
-                .theme = &theme,
-                .set_clipboard_text = set_windows_clipboard_text,
-                .get_clipboard_text = get_windows_clipboard_text,
-                .clipboard_user_data = context.native_window,
-            },
-            runtime->ui_context
-        );
         runtime->native_window = context.native_window;
         runtime->shared_tree_root_name = context.shared_tree_root_name;
         runtime->shared_tree_files = context.shared_tree_files;
@@ -294,6 +879,39 @@ namespace code_editor {
         runtime->editor.save_root_path = context.save_root_path;
         runtime->editor.tree_files = context.tree_files;
         runtime->editor.set_flag(EditorFlag::SIDEBAR_VISIBLE, context.initial_sidebar_visible);
+        BASE_UNUSED(editor_global_config_path(
+            runtime->config.global_path, sizeof(runtime->config.global_path)
+        ));
+        BASE_UNUSED(editor_local_config_path(
+            runtime->editor.save_root_path,
+            runtime->config.local_path,
+            sizeof(runtime->config.local_path)
+        ));
+        runtime->config.base = {
+            .palette = {},
+            .raster_policy = runtime->editor.raster_policy,
+            .font_size = runtime->editor.font_size,
+            .sidebar_visible = runtime->editor.flag(EditorFlag::SIDEBAR_VISIBLE),
+        };
+        runtime->config.effective = runtime->config.base;
+        reload_runtime_config(*runtime, true);
+        runtime->char_width = std::max(
+            1.0f, font_cache::text_advance(runtime->editor_font, runtime->editor.font_size, "M")
+        );
+        gui::ThemeDesc const theme = code_editor_theme(
+            runtime->ui_font, runtime->config.effective.palette, runtime->editor.font_size
+        );
+        gui::create_context(
+            arena,
+            {
+                .initial_box_capacity = 1024u,
+                .theme = &theme,
+                .set_clipboard_text = set_windows_clipboard_text,
+                .get_clipboard_text = get_windows_clipboard_text,
+                .clipboard_user_data = context.native_window,
+            },
+            runtime->ui_context
+        );
         touch_open_file(
             runtime->editor, runtime->editor.current_file_name, runtime->editor.current_file_path
         );
@@ -307,6 +925,7 @@ namespace code_editor {
         float delta_time,
         bool files_changed
     ) -> gui::Frame {
+        reload_runtime_config(*runtime, false);
         if (files_changed) {
             update_open_file_changes(runtime->editor);
         }
@@ -331,10 +950,11 @@ namespace code_editor {
             );
             update_editor_lsp_document(runtime->editor);
         }
+        handle_runtime_config_request(*runtime);
         runtime->char_width = std::max(
             1.0f, font_cache::text_advance(runtime->editor_font, runtime->editor.font_size, "M")
         );
-        Palette const palette = {};
+        Palette const& palette = runtime->config.effective.palette;
         gui::ThemeDesc const theme =
             code_editor_theme(runtime->ui_font, palette, runtime->editor.font_size);
         gui::set_theme(runtime->ui_context, theme);
@@ -360,6 +980,14 @@ namespace code_editor {
             static_cast<float>(window_size.width),
             static_cast<float>(window_size.height),
             runtime->char_width,
+            input
+        );
+        draw_config_error_popup(
+            ui,
+            *runtime,
+            palette,
+            static_cast<float>(window_size.width),
+            static_cast<float>(window_size.height),
             input
         );
         gui::end_frame(ui);
