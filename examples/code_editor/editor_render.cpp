@@ -130,6 +130,16 @@ namespace code_editor {
                (path.size() >= 2u && path[1u] == ':');
     }
 
+    [[nodiscard]] auto render_workspace_relative_path(StrRef root, StrRef path) -> StrRef {
+        root = render_path_without_trailing_slash(root);
+        if (root.empty() || path.size() <= root.size() ||
+            !path.starts_with_ignore_ascii_case(root)) {
+            return path;
+        }
+        char const separator = path[root.size()];
+        return separator == '\\' || separator == '/' ? path.substr(root.size() + 1u) : path;
+    }
+
     [[nodiscard]] auto append_path_buffer(char* buffer, size_t capacity, size_t& size, StrRef text)
         -> bool {
         if (text.size() >= capacity || size > capacity - text.size() - 1u) {
@@ -2634,9 +2644,13 @@ namespace code_editor {
         }
     }
 
-    [[nodiscard]] auto
-    jump_list_row_text(Arena& arena, size_t index, EditorJump const& jump, EditorJumpListKind kind)
-        -> StrRef {
+    [[nodiscard]] auto jump_list_row_text(
+        Arena& arena,
+        size_t index,
+        EditorJump const& jump,
+        EditorJumpListKind kind,
+        StrRef root_path
+    ) -> StrRef {
         StrRef name = jump.name;
         if (name.empty()) {
             name = render_path_leaf(jump.path);
@@ -2648,9 +2662,9 @@ namespace code_editor {
             return name;
         }
         if (kind == EditorJumpListKind::LSP_WORKSPACE_SYMBOLS) {
-            return jump.path.empty()
-                       ? name
-                       : fmt::aprintf(arena.resource(), "%s  %s", name, jump.path).str();
+            StrRef const path = render_workspace_relative_path(root_path, jump.path);
+            return jump.path.empty() ? name
+                                     : fmt::aprintf(arena.resource(), "%s  %s", name, path).str();
         }
         return fmt::aprintf(
                    arena.resource(),
@@ -3080,7 +3094,8 @@ namespace code_editor {
                                         *row_temp.arena(),
                                         matches[index].jump_index,
                                         jump,
-                                        list_kind
+                                        list_kind,
+                                        editor.save_root_path
                                     ),
                                     {
                                         .layout = {.width = gui::fill(), .height = gui::fill()},
