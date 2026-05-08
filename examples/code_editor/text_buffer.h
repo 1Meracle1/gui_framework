@@ -44,7 +44,7 @@ namespace code_editor {
 
     auto text_buffer_init(EditorText& text, Arena& arena) -> void;
     auto text_buffer_set(EditorText& text, StrRef value) -> void;
-    auto text_buffer_clone(EditorText const& source, EditorText& target) -> void;
+    auto text_buffer_clone(EditorText const& source, EditorText& target, Arena& arena) -> void;
     auto text_buffer_insert(EditorText& text, size_t offset, StrRef value) -> void;
     auto text_buffer_erase(EditorText& text, size_t start, size_t end) -> void;
 

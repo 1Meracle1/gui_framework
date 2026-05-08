@@ -9,16 +9,10 @@
 #include <cstring>
 #include <initializer_list>
 #include <limits>
-#include <memory_resource>
 #include <type_traits>
-#include <utility>
 
 namespace vec_detail {
     inline constexpr size_t MIN_GROWN_CAPACITY = 8u;
-
-    [[nodiscard]] inline auto default_memory_resource() -> MemoryResource* {
-        return std::pmr::get_default_resource();
-    }
 
     [[nodiscard]] constexpr auto add_overflows(size_t lhs, size_t rhs, size_t& out) -> bool {
         if (lhs > std::numeric_limits<size_t>::max() - rhs) {
@@ -82,41 +76,26 @@ template <typename T> class Vec final {
     Vec() = default;
     explicit Vec(MemoryResource* resource) : m_resource(resource) {}
 
-    ~Vec() {
-        destroy();
-    }
-
-    Vec(Vec&& other) {
-        move_from(other);
-    }
-
-    Vec(Vec const&) = delete;
-
-    auto operator=(Vec&& other) -> Vec& {
-        if (this != &other) {
-            destroy();
-            move_from(other);
+    [[nodiscard]] auto init(size_t capacity, MemoryResource* resource) -> bool {
+        *this = {};
+        DEBUG_ASSERT(resource != nullptr);
+        if (resource == nullptr) {
+            return false;
         }
-        return *this;
-    }
-
-    auto operator=(Vec const&) -> Vec& = delete;
-
-    [[nodiscard]] auto init(size_t capacity = 0u, MemoryResource* resource = nullptr) -> bool {
-        destroy();
-        m_resource = resource != nullptr ? resource : vec_detail::default_memory_resource();
+        m_resource = resource;
         return reserve(capacity);
     }
 
-    auto destroy() -> void {
-        if (m_data != nullptr && m_resource != nullptr) {
-            m_resource->deallocate(m_data, allocation_size(m_cap), alignof(T));
+    [[nodiscard]] auto copy_from(Vec const& other, MemoryResource* resource) -> bool {
+        if (this == &other) {
+            return true;
         }
-
-        m_data = nullptr;
-        m_len = 0u;
-        m_cap = 0u;
-        m_resource = nullptr;
+        if (!init(other.m_len, resource)) {
+            return false;
+        }
+        size_t const copied = append(other.slice());
+        DEBUG_ASSERT(copied == other.m_len);
+        return copied == other.m_len;
     }
 
     auto clear() -> void {
@@ -128,11 +107,12 @@ template <typename T> class Vec final {
     }
 
     [[nodiscard]] auto reserve(size_t capacity) -> bool {
-        if (m_resource == nullptr) {
-            m_resource = vec_detail::default_memory_resource();
-        }
         if (capacity <= m_cap) {
             return true;
+        }
+        DEBUG_ASSERT(m_resource != nullptr);
+        if (m_resource == nullptr) {
+            return false;
         }
         return reallocate(capacity);
     }
@@ -374,12 +354,6 @@ template <typename T> class Vec final {
     }
 
   private:
-    [[nodiscard]] static auto allocation_size(size_t capacity) -> size_t {
-        size_t size = 0u;
-        BASE_UNUSED(vec_detail::mul_overflows(sizeof(T), capacity, size));
-        return size;
-    }
-
     [[nodiscard]] auto ensure_space(size_t item_count) -> bool {
         size_t needed = 0u;
         if (vec_detail::add_overflows(m_len, item_count, needed)) {
@@ -410,10 +384,6 @@ template <typename T> class Vec final {
         if (m_data != nullptr && new_len != 0u) {
             std::memcpy(new_data, m_data, sizeof(T) * new_len);
         }
-        if (m_data != nullptr && m_resource != nullptr) {
-            m_resource->deallocate(m_data, allocation_size(m_cap), alignof(T));
-        }
-
         m_data = new_data;
         m_len = new_len;
         m_cap = capacity;
@@ -443,19 +413,6 @@ template <typename T> class Vec final {
         return true;
     }
 
-    auto move_from(Vec& other) -> void {
-        m_data = other.m_data;
-        m_len = other.m_len;
-        m_cap = other.m_cap;
-        m_resource = other.m_resource;
-
-        other.m_data = nullptr;
-        other.m_len = 0u;
-        other.m_cap = 0u;
-        other.m_resource = nullptr;
-    }
-
-  private:
     T* m_data = nullptr;
     size_t m_len = 0u;
     size_t m_cap = 0u;

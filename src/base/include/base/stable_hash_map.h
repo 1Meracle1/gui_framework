@@ -35,10 +35,6 @@ namespace stable_hash_map_detail {
         bool occupied = false;
     };
 
-    [[nodiscard]] inline auto default_memory_resource() -> MemoryResource* {
-        return std::pmr::get_default_resource();
-    }
-
     [[nodiscard]] constexpr auto map_hash_is_empty(MapHash hash) -> bool {
         return hash == 0u;
     }
@@ -214,32 +210,20 @@ class StableHashMap final {
 
     StableHashMap() = default;
     explicit StableHashMap(MemoryResource* resource) : m_resource(resource) {}
-    StableHashMap(Hasher hasher, KeyEqual equal, MemoryResource* resource = nullptr)
+    StableHashMap(Hasher hasher, KeyEqual equal, MemoryResource* resource)
         : m_hasher(std::move(hasher)), m_equal(std::move(equal)), m_resource(resource) {}
-    ~StableHashMap() {
-        destroy();
-    }
 
-    StableHashMap(StableHashMap&& other) {
-        move_from(other);
-    }
-
-    StableHashMap(StableHashMap const&) = delete;
-
-    auto operator=(StableHashMap&& other) -> StableHashMap& {
-        if (this != &other) {
-            destroy();
-            move_from(other);
+    [[nodiscard]] auto init(size_t capacity, MemoryResource* resource) -> bool {
+        m_entries = {};
+        m_buckets = nullptr;
+        m_bucket_capacity = 0u;
+        m_len = 0u;
+        m_used_buckets = 0u;
+        DEBUG_ASSERT(resource != nullptr);
+        if (resource == nullptr) {
+            return false;
         }
-        return *this;
-    }
-
-    auto operator=(StableHashMap const&) -> StableHashMap& = delete;
-
-    [[nodiscard]] auto init(size_t capacity = 0u, MemoryResource* resource = nullptr) -> bool {
-        destroy();
-        m_resource =
-            resource != nullptr ? resource : stable_hash_map_detail::default_memory_resource();
+        m_resource = resource;
 
         if (!m_entries.init(m_resource)) {
             return false;
@@ -250,8 +234,32 @@ class StableHashMap final {
         return reserve(capacity);
     }
 
-    [[nodiscard]] auto init(std::initializer_list<Pair> pairs, MemoryResource* resource = nullptr)
-        -> bool {
+    [[nodiscard]] auto copy_from(StableHashMap const& other, MemoryResource* resource) -> bool {
+        if (this == &other) {
+            return true;
+        }
+
+        m_entries = {};
+        m_buckets = nullptr;
+        m_bucket_capacity = 0u;
+        m_len = 0u;
+        m_used_buckets = 0u;
+        m_resource = nullptr;
+        m_hasher = other.m_hasher;
+        m_equal = other.m_equal;
+
+        if (!init(other.m_len, resource)) {
+            return false;
+        }
+        for (ConstEntry entry : other) {
+            if (set(*entry.key, *entry.value) == nullptr) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    [[nodiscard]] auto init(std::initializer_list<Pair> pairs, MemoryResource* resource) -> bool {
         if (!init(pairs.size(), resource)) {
             return false;
         }
@@ -261,16 +269,6 @@ class StableHashMap final {
             }
         }
         return true;
-    }
-
-    auto destroy() -> void {
-        free_buckets(m_buckets, m_bucket_capacity);
-        m_buckets = nullptr;
-        m_bucket_capacity = 0u;
-        m_len = 0u;
-        m_used_buckets = 0u;
-        m_entries.destroy();
-        m_resource = nullptr;
     }
 
     auto clear() -> void {
@@ -437,6 +435,13 @@ class StableHashMap final {
     static_assert(
         std::is_trivially_copyable_v<Value>,
         "StableHashMap stores values with Odin-style byte copies"
+    );
+    static_assert(
+        std::is_trivially_copyable_v<Hasher>, "StableHashMap hasher type must be trivially copyable"
+    );
+    static_assert(
+        std::is_trivially_copyable_v<KeyEqual>,
+        "StableHashMap equality type must be trivially copyable"
     );
 
     [[nodiscard]] auto entry_count() const -> size_t {
@@ -606,7 +611,6 @@ class StableHashMap final {
             new_used_buckets += 1u;
         }
 
-        free_buckets(m_buckets, m_bucket_capacity);
         m_buckets = new_buckets;
         m_bucket_capacity = new_capacity;
         m_used_buckets = new_used_buckets;
@@ -622,6 +626,9 @@ class StableHashMap final {
         }
 
         DEBUG_ASSERT(m_resource != nullptr);
+        if (m_resource == nullptr) {
+            return false;
+        }
         void* const memory = m_resource->allocate(allocation_size, alignof(Bucket));
         if (memory == nullptr) {
             return false;
@@ -633,18 +640,6 @@ class StableHashMap final {
         return true;
     }
 
-    auto free_buckets(Bucket* buckets, size_t bucket_capacity) -> void {
-        if (buckets == nullptr || m_resource == nullptr) {
-            return;
-        }
-
-        size_t allocation_size = 0u;
-        BASE_UNUSED(
-            stable_hash_map_detail::mul_overflows(sizeof(Bucket), bucket_capacity, allocation_size)
-        );
-        m_resource->deallocate(buckets, allocation_size, alignof(Bucket));
-    }
-
     auto copy_key(Key* target, Key const* source) -> void {
         std::memcpy(target, source, sizeof(Key));
     }
@@ -653,24 +648,6 @@ class StableHashMap final {
         std::memcpy(target, source, sizeof(Value));
     }
 
-    auto move_from(StableHashMap& other) -> void {
-        m_entries = std::move(other.m_entries);
-        m_buckets = other.m_buckets;
-        m_bucket_capacity = other.m_bucket_capacity;
-        m_len = other.m_len;
-        m_used_buckets = other.m_used_buckets;
-        m_resource = other.m_resource;
-        m_hasher = std::move(other.m_hasher);
-        m_equal = std::move(other.m_equal);
-
-        other.m_buckets = nullptr;
-        other.m_bucket_capacity = 0u;
-        other.m_len = 0u;
-        other.m_used_buckets = 0u;
-        other.m_resource = nullptr;
-    }
-
-  private:
     XarArray<StoredEntry, stable_hash_map_detail::ENTRY_CHUNK_SHIFT> m_entries;
     Bucket* m_buckets = nullptr;
     size_t m_bucket_capacity = 0u;

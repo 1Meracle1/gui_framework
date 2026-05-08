@@ -114,6 +114,57 @@ do not prefix everything with
 - Keep headers lean.
 - Use custom allocators and custom foundational utilities as the project grows.
 
+## Allocation, Lifetimes, And Base Containers
+
+- Production allocation goes through `Arena`. Do not use C heap allocation,
+  owning `new`/`delete`, STL containers, or PMR default resources for
+  framework-owned data.
+- `MemoryResource*` parameters exist so base containers can allocate from an
+  explicit arena resource. Pass `arena.resource()`. For fixed storage, use an
+  API that explicitly accepts caller-provided backing memory. Do not call
+  `std::pmr::get_default_resource()` or rely on process global allocator state.
+- The arena owns allocated bytes. Any container, `Slice`, `StrRef`, pointer, or
+  handle into arena memory is valid only while that arena allocation remains
+  valid.
+- Use context-owned arenas for persistent framework state, frame arenas for one
+  frame of data, caller-owned arenas for output that must outlive the call, and
+  thread-local temporary arenas only for scratch data that does not escape the
+  scope or frame.
+- Use `ArenaTemp` or an arena marker when scratch allocations must be rolled back
+  before the next full arena reset. Call `keep()` only when the data is
+  intentionally promoted to the arena's remaining lifetime.
+- Base containers such as `Vec`, `HashMap`, `StableHashMap`, `XarArray`,
+  `XarFreelistArray`, and `StringBuffer` are small trivially copyable headers
+  pointing at arena-owned backing memory. They do not own or free their backing
+  allocations.
+- Container element types must be trivially copyable unless a container's API
+  explicitly says otherwise. Store indices, handles, pointers, or arena-owned
+  payloads instead of embedding non-trivial ownership in container elements.
+- Initialize arena-backed containers with an explicit resource before first
+  growth, for example `values.init(capacity, arena.resource())`. Passing a null
+  resource is a bug.
+- Container growth allocates new backing from the same resource and leaves old
+  backing for the arena to reclaim later. Reserve realistic capacity when a
+  long-lived arena would otherwise accumulate repeated growth allocations.
+- Direct assignment copies the container header only. It is the correct way to
+  transfer a header to the same backing lifetime; clear the source with
+  `source = {};` immediately after such a transfer when the source must no
+  longer alias the backing memory.
+- Use `copy_from(other, arena.resource())` when data must be copied into a
+  different lifetime. `copy_from` allocates destination backing, copies the
+  current contents, and leaves `other` unchanged. If the destination already
+  pointed at backing memory, that old backing remains owned by its arena until
+  the arena is reset or destroyed.
+- Do not add `take_from`, move-only ownership, destructors, or `destroy()` to
+  base containers. Dropping a container is just resetting its header with
+  `container = {};`; freeing memory is the arena's job.
+- Prefer typed zero initialization (`T value = {};`, `member = {};`) for
+  clearing headers and plain structs. Use `std::memset` only for raw byte
+  buffers or deliberately byte-filled storage.
+- Do not return or store containers, slices, strings, or pointers backed by a
+  temporary or frame arena unless the API name and documentation make that
+  short lifetime explicit.
+
 ## Scripts
 
 Use the root scripts for normal workflows:

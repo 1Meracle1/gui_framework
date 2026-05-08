@@ -42,7 +42,6 @@ namespace code_editor {
     inline constexpr size_t SAVE_PATH_TEXT_CAPACITY = 1024u;
     inline constexpr size_t COMMAND_TEXT_CAPACITY = 256u;
     inline constexpr size_t TEXT_SEARCH_TEXT_CAPACITY = 256u;
-
     struct EditorCommand {
         StrRef name = {};
         StrRef alias = {};
@@ -56,6 +55,14 @@ namespace code_editor {
         size_t end_column = 0u;
         bool active = false;
         bool full_line = false;
+    };
+
+    struct EditorCursor {
+        size_t line = 0u;
+        size_t column = 0u;
+        size_t preferred_column = 0u;
+        size_t selection_anchor_line = 0u;
+        size_t selection_anchor_column = 0u;
     };
 
     enum class EditorSelectionMode : uint8_t {
@@ -96,6 +103,7 @@ namespace code_editor {
         size_t cursor_line = 0u;
         size_t cursor_column = 0u;
         size_t preferred_column = 0u;
+        Vec<EditorCursor> extra_cursors = {};
         size_t selection_anchor_line = 0u;
         size_t selection_anchor_column = 0u;
         EditorSelectionMode selection_mode = EditorSelectionMode::NONE;
@@ -115,6 +123,7 @@ namespace code_editor {
         size_t cursor_line = 0u;
         size_t cursor_column = 0u;
         size_t preferred_column = 0u;
+        Vec<EditorCursor> extra_cursors = {};
         size_t selection_anchor_line = 0u;
         size_t selection_anchor_column = 0u;
         EditorSelectionMode selection_mode = EditorSelectionMode::NONE;
@@ -201,6 +210,7 @@ namespace code_editor {
         size_t cursor_line = 0u;
         size_t cursor_column = 0u;
         size_t preferred_column = 0u;
+        Vec<EditorCursor> extra_cursors = {};
         size_t selection_anchor_line = 0u;
         size_t selection_anchor_column = 0u;
         EditorSelectionMode selection_mode = EditorSelectionMode::NONE;
@@ -210,6 +220,8 @@ namespace code_editor {
         bool selection_active = false;
         bool mouse_selecting = false;
         bool mouse_was_down = false;
+        bool multi_cursor_dragging = false;
+        bool middle_mouse_was_down = false;
         bool dirty = false;
         bool external_change_pending = false;
         bool file_deleted_on_disk = false;
@@ -263,6 +275,8 @@ namespace code_editor {
         SELECTION_ACTIVE,
         MOUSE_SELECTING,
         MOUSE_WAS_DOWN,
+        MULTI_CURSOR_DRAGGING,
+        MIDDLE_MOUSE_WAS_DOWN,
         DIRTY,
         EXTERNAL_CHANGE_PENDING,
         FILE_DELETED_ON_DISK,
@@ -309,6 +323,7 @@ namespace code_editor {
         size_t cursor_line = 0u;
         size_t cursor_column = 0u;
         size_t preferred_column = 0u;
+        Vec<EditorCursor> extra_cursors = {};
         size_t selection_anchor_line = 0u;
         size_t selection_anchor_column = 0u;
         EditorSelectionMode selection_mode = EditorSelectionMode::NONE;
@@ -330,6 +345,8 @@ namespace code_editor {
         size_t config_request_text_size = 0u;
         size_t text_search_text_size = 0u;
         size_t text_search_origin_line = 0u;
+        size_t multi_cursor_anchor_line = 0u;
+        size_t multi_cursor_anchor_column = 0u;
         size_t command_selected = 0u;
         size_t file_search_selected = 0u;
         size_t lsp_selected = 0u;
@@ -444,6 +461,8 @@ namespace code_editor {
     [[nodiscard]] auto editor_line(EditorState const& editor, size_t index) -> EditorLine;
     [[nodiscard]] auto editor_line_text(EditorLine line) -> StrRef;
     [[nodiscard]] auto editor_selection_range(EditorState const& editor) -> EditorSelectionRange;
+    [[nodiscard]] auto editor_extra_selection_range(EditorState const& editor, size_t index)
+        -> EditorSelectionRange;
     [[nodiscard]] auto editor_file_search_text(EditorState const& editor) -> StrRef;
     [[nodiscard]] auto editor_command_text(EditorState const& editor) -> StrRef;
     [[nodiscard]] auto editor_text_search_text(EditorState const& editor) -> StrRef;
@@ -474,6 +493,12 @@ namespace code_editor {
     auto reveal_cursor(EditorState& editor, gui::Rect rect, float char_width) -> void;
     auto update_cursor_from_mouse(
         EditorState& editor, gui::Rect rect, gui::Vec2 mouse, float char_width, bool select
+    ) -> void;
+    auto begin_multi_cursor_from_mouse(
+        EditorState& editor, gui::Rect rect, gui::Vec2 mouse, float char_width
+    ) -> void;
+    auto update_multi_cursor_from_mouse(
+        EditorState& editor, gui::Rect rect, gui::Vec2 mouse, float char_width
     ) -> void;
     auto
     select_word_from_mouse(EditorState& editor, gui::Rect rect, gui::Vec2 mouse, float char_width)

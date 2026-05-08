@@ -5466,11 +5466,11 @@ namespace gui {
     auto destroy_context(Context& context) -> void {
         ContextImpl* const impl = impl_from_context(context);
         if (impl != nullptr) {
-            impl->focus_order.destroy();
-            impl->parent_stack.destroy();
-            impl->infos.destroy();
-            impl->boxes.destroy();
-            impl->state_table.destroy();
+            impl->focus_order = {};
+            impl->parent_stack = {};
+            impl->infos = {};
+            impl->boxes = {};
+            impl->state_table = {};
             impl->frame_arena.destroy();
         }
         context.handle = nullptr;

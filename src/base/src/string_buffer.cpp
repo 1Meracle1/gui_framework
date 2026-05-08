@@ -4,7 +4,6 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
-#include <memory_resource>
 
 namespace {
     inline constexpr size_t MIN_GROWN_STRING_BUFFER_CAPACITY = 64u;
@@ -29,22 +28,9 @@ namespace {
         return capacity;
     }
 
-    [[nodiscard]] auto default_memory_resource() -> MemoryResource* {
-        return std::pmr::get_default_resource();
-    }
-
-    [[nodiscard]] auto dynamic_allocation_size(size_t capacity) -> size_t {
-        size_t allocation_size = 0u;
-        bool const overflowed = add_overflows(capacity, 1u, &allocation_size);
-        DEBUG_ASSERT(!overflowed);
-        return allocation_size;
-    }
-
-    [[nodiscard]] auto pointer_in_range(void const* pointer,
-                                        void const* begin,
-                                        size_t size,
-                                        size_t width,
-                                        size_t* out_offset) -> bool {
+    [[nodiscard]] auto pointer_in_range(
+        void const* pointer, void const* begin, size_t size, size_t width, size_t* out_offset
+    ) -> bool {
         if (pointer == nullptr || begin == nullptr || width > size) {
             return false;
         }
@@ -61,27 +47,14 @@ namespace {
 
 } // namespace
 
-StringBuffer::~StringBuffer() {
-    destroy();
-}
-
-StringBuffer::StringBuffer(StringBuffer&& other) {
-    move_from(other);
-}
-
-auto StringBuffer::operator=(StringBuffer&& other) -> StringBuffer& {
-    if (this != &other) {
-        destroy();
-        move_from(other);
-    }
-
-    return *this;
-}
-
 auto StringBuffer::init(size_t capacity, MemoryResource* resource) -> bool {
-    destroy();
+    *this = {};
 
-    m_resource = resource != nullptr ? resource : default_memory_resource();
+    DEBUG_ASSERT(resource != nullptr);
+    if (resource == nullptr) {
+        return false;
+    }
+    m_resource = resource;
 
     if (capacity == 0u) {
         return true;
@@ -89,36 +62,41 @@ auto StringBuffer::init(size_t capacity, MemoryResource* resource) -> bool {
 
     size_t allocation_size = 0u;
     if (add_overflows(capacity, 1u, &allocation_size)) {
-        destroy();
+        *this = {};
         return false;
     }
 
     m_data = static_cast<char*>(m_resource->allocate(allocation_size, alignof(char)));
+    if (m_data == nullptr) {
+        *this = {};
+        return false;
+    }
     m_capacity = capacity;
     write_terminator();
     return true;
+}
+
+auto StringBuffer::copy_from(StringBuffer const& other, MemoryResource* resource) -> bool {
+    if (this == &other) {
+        return true;
+    }
+    if (!init(other.m_size, resource)) {
+        return false;
+    }
+    size_t const copied = write_bytes(other.data(), other.m_size);
+    DEBUG_ASSERT(copied == other.m_size);
+    return copied == other.m_size;
 }
 
 auto StringBuffer::init_with_backing(char* backing, size_t capacity) -> void {
     DEBUG_ASSERT(backing != nullptr);
     DEBUG_ASSERT(capacity > 0u);
 
-    destroy();
+    *this = {};
 
     m_data = backing;
     m_capacity = capacity;
     write_terminator();
-}
-
-auto StringBuffer::destroy() -> void {
-    if (m_data != nullptr && m_resource != nullptr) {
-        m_resource->deallocate(m_data, dynamic_allocation_size(m_capacity), alignof(char));
-    }
-
-    m_data = nullptr;
-    m_size = 0u;
-    m_capacity = 0u;
-    m_resource = nullptr;
 }
 
 auto StringBuffer::reset() -> void {
@@ -140,18 +118,18 @@ auto StringBuffer::reserve(size_t capacity) -> void {
         return;
     }
 
+    DEBUG_ASSERT(m_resource != nullptr);
     if (m_resource == nullptr) {
-        m_resource = default_memory_resource();
+        return;
     }
 
     char* const new_data = static_cast<char*>(m_resource->allocate(allocation_size, alignof(char)));
+    if (new_data == nullptr) {
+        return;
+    }
 
     if (m_data != nullptr && m_size != 0u) {
         std::memcpy(new_data, m_data, m_size);
-    }
-
-    if (m_data != nullptr) {
-        m_resource->deallocate(m_data, dynamic_allocation_size(m_capacity), alignof(char));
     }
 
     m_data = new_data;
@@ -322,16 +300,4 @@ auto StringBuffer::write_terminator() -> void {
     if (has_terminator_space()) {
         m_data[m_size] = '\0';
     }
-}
-
-auto StringBuffer::move_from(StringBuffer& other) -> void {
-    m_data = other.m_data;
-    m_size = other.m_size;
-    m_capacity = other.m_capacity;
-    m_resource = other.m_resource;
-
-    other.m_data = nullptr;
-    other.m_size = 0u;
-    other.m_capacity = 0u;
-    other.m_resource = nullptr;
 }

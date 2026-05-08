@@ -8,10 +8,8 @@
 #include <cstring>
 #include <initializer_list>
 #include <limits>
-#include <memory_resource>
 #include <span>
 #include <type_traits>
-#include <utility>
 
 inline constexpr size_t XAR_NPOS = std::numeric_limits<size_t>::max();
 
@@ -29,10 +27,6 @@ namespace xar_detail {
 
     template <size_t SHIFT>
     inline constexpr size_t MAX_CAPACITY = size_t{1u} << (SHIFT + CHUNK_COUNT<SHIFT> - 1u);
-
-    [[nodiscard]] inline auto default_memory_resource() -> MemoryResource* {
-        return std::pmr::get_default_resource();
-    }
 
     [[nodiscard]] constexpr auto mul_overflows(size_t lhs, size_t rhs, size_t& out) -> bool {
         if (lhs != 0u && rhs > std::numeric_limits<size_t>::max() / lhs) {
@@ -225,52 +219,33 @@ template <typename T, size_t SHIFT> class XarArray final {
         size_t m_index = 0u;
     };
 
-    explicit XarArray(MemoryResource* resource = xar_detail::default_memory_resource())
-        : m_resource(resource) {
-        if (m_resource == nullptr) {
-            m_resource = xar_detail::default_memory_resource();
+    XarArray() = default;
+    explicit XarArray(MemoryResource* resource) : m_resource(resource) {}
+
+    [[nodiscard]] auto init(MemoryResource* resource) -> bool {
+        m_chunks = {};
+        m_len = 0u;
+        DEBUG_ASSERT(resource != nullptr);
+        if (resource == nullptr) {
+            return false;
         }
-    }
-
-    ~XarArray() {
-        destroy();
-    }
-
-    XarArray(XarArray&& other) {
-        move_from(other);
-    }
-
-    XarArray(XarArray const&) = delete;
-
-    auto operator=(XarArray&& other) -> XarArray& {
-        if (this != &other) {
-            destroy();
-            move_from(other);
-        }
-        return *this;
-    }
-
-    auto operator=(XarArray const&) -> XarArray& = delete;
-
-    [[nodiscard]] auto init(MemoryResource* resource = nullptr) -> bool {
-        destroy();
-        m_resource = resource != nullptr ? resource : xar_detail::default_memory_resource();
+        m_resource = resource;
         return true;
     }
 
-    auto destroy() -> void {
-        if (m_resource != nullptr) {
-            for (size_t reverse_index = CHUNK_COUNT; reverse_index > 0u; --reverse_index) {
-                size_t const index = reverse_index - 1u;
-                if (m_chunks[index] != nullptr) {
-                    deallocate_chunk(index);
-                }
+    [[nodiscard]] auto copy_from(XarArray const& other, MemoryResource* resource) -> bool {
+        if (this == &other) {
+            return true;
+        }
+        if (!init(resource)) {
+            return false;
+        }
+        for (T const& value : other) {
+            if (!push_back(value)) {
+                return false;
             }
         }
-
-        m_chunks = {};
-        m_len = 0u;
-        m_resource = nullptr;
+        return true;
     }
 
     auto clear() -> void {
@@ -482,6 +457,9 @@ template <typename T, size_t SHIFT> class XarArray final {
             return false;
         }
         DEBUG_ASSERT(m_resource != nullptr);
+        if (m_resource == nullptr) {
+            return false;
+        }
         void* const memory = m_resource->allocate(allocation_size, alignof(T));
         if (memory == nullptr) {
             return false;
@@ -489,19 +467,6 @@ template <typename T, size_t SHIFT> class XarArray final {
 
         m_chunks[chunk_index] = static_cast<T*>(memory);
         return true;
-    }
-
-    auto deallocate_chunk(size_t chunk_index) -> void {
-        T* const chunk = m_chunks[chunk_index];
-        if (chunk == nullptr) {
-            return;
-        }
-
-        size_t const chunk_capacity = xar_detail::chunk_capacity<SHIFT>(chunk_index);
-        size_t allocation_size = 0u;
-        BASE_UNUSED(xar_detail::mul_overflows(sizeof(T), chunk_capacity, allocation_size));
-        m_resource->deallocate(chunk, allocation_size, alignof(T));
-        m_chunks[chunk_index] = nullptr;
     }
 
     [[nodiscard]] auto get_ptr_unsafe(size_t index) -> T* {
@@ -518,17 +483,6 @@ template <typename T, size_t SHIFT> class XarArray final {
         return m_chunks[meta.chunk_index] + meta.element_index;
     }
 
-    auto move_from(XarArray& other) -> void {
-        m_chunks = other.m_chunks;
-        m_len = other.m_len;
-        m_resource = other.m_resource;
-
-        other.m_chunks = {};
-        other.m_len = 0u;
-        other.m_resource = nullptr;
-    }
-
-  private:
     std::array<T*, CHUNK_COUNT> m_chunks = {};
     size_t m_len = 0u;
     MemoryResource* m_resource = nullptr;
@@ -603,30 +557,28 @@ template <typename T, size_t SHIFT> class XarFreelistArray final {
     XarFreelistArray() = default;
     explicit XarFreelistArray(MemoryResource* resource) : m_array(resource) {}
 
-    XarFreelistArray(XarFreelistArray&& other) {
-        move_from(other);
-    }
-
-    XarFreelistArray(XarFreelistArray const&) = delete;
-
-    auto operator=(XarFreelistArray&& other) -> XarFreelistArray& {
-        if (this != &other) {
-            destroy();
-            move_from(other);
-        }
-        return *this;
-    }
-
-    auto operator=(XarFreelistArray const&) -> XarFreelistArray& = delete;
-
-    [[nodiscard]] auto init(MemoryResource* resource = nullptr) -> bool {
+    [[nodiscard]] auto init(MemoryResource* resource) -> bool {
+        m_array = {};
         m_freelist = nullptr;
         return m_array.init(resource);
     }
 
-    auto destroy() -> void {
-        m_array.destroy();
+    [[nodiscard]] auto copy_from(XarFreelistArray const& other, MemoryResource* resource) -> bool {
+        if (this == &other) {
+            return true;
+        }
+        if (!m_array.copy_from(other.m_array, resource)) {
+            m_freelist = nullptr;
+            return false;
+        }
         m_freelist = nullptr;
+        for (size_t index = m_array.len(); index > 0u; --index) {
+            size_t const item = index - 1u;
+            if (other.is_freed(item)) {
+                release(item);
+            }
+        }
+        return true;
     }
 
     auto clear() -> void {
@@ -756,13 +708,6 @@ template <typename T, size_t SHIFT> class XarFreelistArray final {
         return next;
     }
 
-    auto move_from(XarFreelistArray& other) -> void {
-        m_array = std::move(other.m_array);
-        m_freelist = other.m_freelist;
-        other.m_freelist = nullptr;
-    }
-
-  private:
     Array m_array;
     T* m_freelist = nullptr;
 };

@@ -18,11 +18,10 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
-#include <memory_resource>
 #include <string>
 #include <string_view>
 #include <test/test.h>
-#include <utility>
+#include <type_traits>
 #include <vector>
 
 namespace {
@@ -84,6 +83,11 @@ namespace {
     static_assert(!make_constexpr_bit_set().contains(Direction::NORTH));
     static_assert(card(make_constexpr_bit_set()) == 1u);
     static_assert(sizeof(UppercaseSet) == sizeof(uint64_t));
+    static_assert(std::is_trivially_copyable_v<Vec<int>>);
+    static_assert(std::is_trivially_copyable_v<XarArray<int, 2u>>);
+    static_assert(std::is_trivially_copyable_v<HashMap<int, int>>);
+    static_assert(std::is_trivially_copyable_v<StableHashMap<int, int>>);
+    static_assert(std::is_trivially_copyable_v<StringBuffer>);
 
     auto expect_file_text(test::Context* context, std::FILE* file, StrRef expected) -> bool {
         char buffer[256] = {};
@@ -372,11 +376,15 @@ namespace {
     }
 
     TEST_CASE(slice_views_raw_arrays_std_arrays_std_vectors_and_vecs) {
+        Arena arena = {};
+        arena.init();
+
         int raw_values[] = {1, 2, 3};
         std::array<int, 3u> fixed_values = {4, 5, 6};
         std::vector<int> standard_values = {7, 8, 9};
         Vec<int> vec_values;
 
+        TEST_EXPECT(context, vec_values.init(0u, arena.resource()));
         TEST_EXPECT(context, vec_values.append({10, 11, 12}) == 3u);
 
         Slice<int> raw = slice(raw_values);
@@ -406,8 +414,12 @@ namespace {
     }
 
     TEST_CASE(vec_grows_resizes_appends_and_removes_values) {
+        Arena arena = {};
+        arena.init();
+
         Vec<int> values;
 
+        TEST_EXPECT(context, values.init(0u, arena.resource()));
         TEST_EXPECT(context, values.empty());
         TEST_EXPECT(context, values.append({1, 2, 3}) == 3u);
         TEST_EXPECT(context, values.len() == 3u);
@@ -440,13 +452,26 @@ namespace {
         TEST_EXPECT(context, values.get(0u) == 1);
         TEST_EXPECT(context, values.get(1u) == 9);
         TEST_EXPECT(context, values.get(2u) == 4);
+
+        Arena copy_arena = {};
+        copy_arena.init();
+        Vec<int> copied;
+        TEST_EXPECT(context, copied.copy_from(values, copy_arena.resource()));
+        values.set(0u, 99);
+        TEST_EXPECT(context, copied.len() == 3u);
+        TEST_EXPECT(context, copied.get(0u) == 1);
+
         values.clear();
         TEST_EXPECT(context, values.empty());
     }
 
     TEST_CASE(vec_safe_access_zero_append_self_append_and_shrink) {
+        Arena arena = {};
+        arena.init();
+
         Vec<int> values;
 
+        TEST_EXPECT(context, values.init(0u, arena.resource()));
         TEST_EXPECT(context, values.append({1, 2, 3}) == 3u);
         TEST_EXPECT(context, values.append(values.slice()) == 3u);
         TEST_EXPECT(context, values.len() == 6u);
@@ -538,9 +563,12 @@ namespace {
     }
 
     TEST_CASE(xar_array_grows_in_exponential_chunks_and_keeps_stable_addresses) {
+        Arena arena = {};
+        arena.init();
+
         XarArray<int, 2u> values;
 
-        TEST_EXPECT(context, values.init());
+        TEST_EXPECT(context, values.init(arena.resource()));
         TEST_EXPECT(context, values.empty());
 
         int* const first = values.push_back_and_get_ptr(10);
@@ -562,6 +590,15 @@ namespace {
         TEST_EXPECT(context, second != nullptr && *second == 20);
         TEST_EXPECT(context, values.get(16u) == 170);
 
+        Arena copy_arena = {};
+        copy_arena.init();
+        XarArray<int, 2u> copied;
+        TEST_EXPECT(context, copied.copy_from(values, copy_arena.resource()));
+        values.set(0u, 99);
+        TEST_EXPECT(context, copied.len() == values.len());
+        TEST_EXPECT(context, copied.get(0u) == 10);
+        values.set(0u, 10);
+
         int sum = 0;
         for (int const value : values) {
             sum += value;
@@ -571,8 +608,12 @@ namespace {
     }
 
     TEST_CASE(xar_array_safe_access_pop_and_unordered_remove_match_odin_container) {
+        Arena arena = {};
+        arena.init();
+
         XarArray<int, 3u> values;
 
+        TEST_EXPECT(context, values.init(arena.resource()));
         TEST_EXPECT(context, values.append({1, 2, 3, 4}) == 4u);
 
         XarResult<int> const found = values.get_safe(2u);
@@ -605,10 +646,15 @@ namespace {
         }
     };
 
+    static_assert(std::is_trivially_copyable_v<XarFreelistArray<XarFreelistValue, 2u>>);
+
     TEST_CASE(xar_freelist_reuses_released_slots_and_skips_them_when_iterating) {
+        Arena arena = {};
+        arena.init();
+
         XarFreelistArray<XarFreelistValue, 2u> values;
 
-        TEST_EXPECT(context, values.init());
+        TEST_EXPECT(context, values.init(arena.resource()));
 
         XarPushResult<XarFreelistValue> const first = values.push_with_index({1u, 10u});
         XarPushResult<XarFreelistValue> const second = values.push_with_index({2u, 20u});
@@ -643,6 +689,15 @@ namespace {
         TEST_EXPECT(context, reused.ptr == second.ptr);
         TEST_EXPECT(context, values.get(1u).id == 4u);
         TEST_EXPECT(context, !values.is_freed(1u));
+
+        values.release(0u);
+        Arena copy_arena = {};
+        copy_arena.init();
+        XarFreelistArray<XarFreelistValue, 2u> copied;
+        TEST_EXPECT(context, copied.copy_from(values, copy_arena.resource()));
+        TEST_EXPECT(context, copied.len() == values.len());
+        TEST_EXPECT(context, copied.is_freed(0u));
+        TEST_EXPECT(context, copied.get(1u).id == 4u);
     }
 
     TEST_CASE(thread_temp_arenas_reset_each_frame) {
@@ -679,9 +734,12 @@ namespace {
     }
 
     TEST_CASE(hash_map_sets_gets_updates_and_iterates_entries) {
+        Arena arena = {};
+        arena.init();
+
         HashMap<int, int> map;
 
-        TEST_EXPECT(context, map.init());
+        TEST_EXPECT(context, map.init(0u, arena.resource()));
         TEST_EXPECT(context, map.empty());
         TEST_EXPECT(context, map.set(10, 100) != nullptr);
         TEST_EXPECT(context, map.set(20, 200) != nullptr);
@@ -697,6 +755,15 @@ namespace {
         TEST_EXPECT(context, map.get(30) == nullptr);
         TEST_EXPECT(context, map.size() == 2u);
         TEST_EXPECT(context, map.capacity() >= 8u);
+
+        Arena copy_arena = {};
+        copy_arena.init();
+        HashMap<int, int> copied;
+        TEST_EXPECT(context, copied.copy_from(map, copy_arena.resource()));
+        TEST_EXPECT(context, map.set(10, 175) != nullptr);
+        int const* const copied_ten = copied.get(10);
+        TEST_EXPECT(context, copied_ten != nullptr && *copied_ten == 150);
+        TEST_EXPECT(context, map.set(10, 150) != nullptr);
 
         int key_sum = 0;
         int value_sum = 0;
@@ -714,9 +781,12 @@ namespace {
     }
 
     TEST_CASE(hash_map_grows_and_preserves_entries) {
+        Arena arena = {};
+        arena.init();
+
         HashMap<int, int> map;
 
-        TEST_EXPECT(context, map.init());
+        TEST_EXPECT(context, map.init(0u, arena.resource()));
 
         for (int value = 0; value < 200; ++value) {
             TEST_EXPECT(context, map.set(value, value * 10) != nullptr);
@@ -733,12 +803,15 @@ namespace {
     }
 
     TEST_CASE(hash_map_uses_str_ref_content_for_default_hashing) {
+        Arena arena = {};
+        arena.init();
+
         char first_key[] = "panel";
         char equivalent_key[] = "panel";
         char other_key[] = "dock";
         HashMap<StrRef, int> map;
 
-        TEST_EXPECT(context, map.init());
+        TEST_EXPECT(context, map.init(0u, arena.resource()));
         TEST_EXPECT(context, map.set(StrRef(first_key), 7) != nullptr);
         TEST_EXPECT(context, map.set(StrRef(other_key), 3) != nullptr);
 
@@ -752,9 +825,12 @@ namespace {
     }
 
     TEST_CASE(hash_map_initializes_from_key_value_pairs) {
+        Arena arena = {};
+        arena.init();
+
         HashMap<StrRef, int> map;
 
-        TEST_EXPECT(context, map.init({{"panel", 7}, {"dock", 3}, {"panel", 9}}));
+        TEST_EXPECT(context, map.init({{"panel", 7}, {"dock", 3}, {"panel", 9}}, arena.resource()));
 
         int const* const panel = map.get("panel");
         int const* const dock = map.get("dock");
@@ -767,9 +843,12 @@ namespace {
     }
 
     TEST_CASE(hash_map_erases_tombstones_and_reuses_collision_slots) {
+        Arena arena = {};
+        arena.init();
+
         HashMap<int, int, CollidingIntHasher> map;
 
-        TEST_EXPECT(context, map.init());
+        TEST_EXPECT(context, map.init(0u, arena.resource()));
 
         for (int value = 0; value < 32; ++value) {
             TEST_EXPECT(context, map.set(value, value + 1000) != nullptr);
@@ -805,9 +884,12 @@ namespace {
     }
 
     TEST_CASE(stable_hash_map_sets_gets_updates_and_iterates_entries) {
+        Arena arena = {};
+        arena.init();
+
         StableHashMap<int, int> map;
 
-        TEST_EXPECT(context, map.init());
+        TEST_EXPECT(context, map.init(0u, arena.resource()));
         TEST_EXPECT(context, map.empty());
         TEST_EXPECT(context, map.set(10, 100) != nullptr);
         TEST_EXPECT(context, map.set(20, 200) != nullptr);
@@ -823,6 +905,15 @@ namespace {
         TEST_EXPECT(context, map.get(30) == nullptr);
         TEST_EXPECT(context, map.size() == 2u);
         TEST_EXPECT(context, map.capacity() >= 8u);
+
+        Arena copy_arena = {};
+        copy_arena.init();
+        StableHashMap<int, int> copied;
+        TEST_EXPECT(context, copied.copy_from(map, copy_arena.resource()));
+        TEST_EXPECT(context, map.set(10, 175) != nullptr);
+        int const* const copied_ten = copied.get(10);
+        TEST_EXPECT(context, copied_ten != nullptr && *copied_ten == 150);
+        TEST_EXPECT(context, map.set(10, 150) != nullptr);
 
         int key_sum = 0;
         int value_sum = 0;
@@ -840,9 +931,12 @@ namespace {
     }
 
     TEST_CASE(stable_hash_map_grows_without_moving_entries) {
+        Arena arena = {};
+        arena.init();
+
         StableHashMap<int, int> map;
 
-        TEST_EXPECT(context, map.init());
+        TEST_EXPECT(context, map.init(0u, arena.resource()));
 
         int* const first = map.set(0, 0);
         StableHashMap<int, int>::Entry const first_entry = map.find_entry(0);
@@ -868,12 +962,15 @@ namespace {
     }
 
     TEST_CASE(stable_hash_map_uses_str_ref_content_for_default_hashing) {
+        Arena arena = {};
+        arena.init();
+
         char first_key[] = "panel";
         char equivalent_key[] = "panel";
         char other_key[] = "dock";
         StableHashMap<StrRef, int> map;
 
-        TEST_EXPECT(context, map.init());
+        TEST_EXPECT(context, map.init(0u, arena.resource()));
         TEST_EXPECT(context, map.set(StrRef(first_key), 7) != nullptr);
         TEST_EXPECT(context, map.set(StrRef(other_key), 3) != nullptr);
 
@@ -887,9 +984,12 @@ namespace {
     }
 
     TEST_CASE(stable_hash_map_erases_tombstones_without_moving_other_entries) {
+        Arena arena = {};
+        arena.init();
+
         StableHashMap<int, int, CollidingIntHasher> map;
 
-        TEST_EXPECT(context, map.init());
+        TEST_EXPECT(context, map.init(0u, arena.resource()));
 
         for (int value = 0; value < 32; ++value) {
             TEST_EXPECT(context, map.set(value, value + 1000) != nullptr);
@@ -1116,8 +1216,12 @@ namespace {
     }
 
     TEST_CASE(string_buffer_writes_and_views_dynamic_text) {
+        Arena arena = {};
+        arena.init();
+
         StringBuffer buffer;
 
+        TEST_EXPECT(context, buffer.init(0u, arena.resource()));
         TEST_EXPECT(context, buffer.write_string("gui") == 3u);
         TEST_EXPECT(context, buffer.write_byte('_') == 1u);
         TEST_EXPECT(context, buffer.write_fill('x', 3u) == 3u);
@@ -1144,9 +1248,12 @@ namespace {
     }
 
     TEST_CASE(string_buffer_reserves_resizes_and_keeps_c_string_space) {
+        Arena arena = {};
+        arena.init();
+
         StringBuffer buffer;
 
-        TEST_EXPECT(context, buffer.init(2u));
+        TEST_EXPECT(context, buffer.init(2u, arena.resource()));
         TEST_EXPECT(context, buffer.capacity() == 2u);
         TEST_EXPECT(context, buffer.write_string("ab") == 2u);
         TEST_EXPECT(context, buffer.size() == buffer.capacity());
@@ -1177,10 +1284,13 @@ namespace {
         TEST_EXPECT(context, StrRef(buffer.c_str()) == "abcd");
     }
 
-    TEST_CASE(string_buffer_self_appends_across_growth_and_moves) {
+    TEST_CASE(string_buffer_self_appends_across_growth_and_copies_header) {
+        Arena arena = {};
+        arena.init();
+
         StringBuffer buffer;
 
-        TEST_EXPECT(context, buffer.init(4u));
+        TEST_EXPECT(context, buffer.init(4u, arena.resource()));
         TEST_EXPECT(context, buffer.write_string("abcd") == 4u);
 
         StrRef const original = buffer.str();
@@ -1188,17 +1298,26 @@ namespace {
         TEST_EXPECT(context, buffer.write_string(original) == original.size());
         TEST_EXPECT(context, buffer.str() == "abcdabcd");
 
-        StringBuffer moved = std::move(buffer);
+        StringBuffer copied = buffer;
 
-        TEST_EXPECT(context, moved.str() == "abcdabcd");
-        TEST_EXPECT(context, buffer.empty());
-        TEST_EXPECT(context, buffer.data() == nullptr);
+        TEST_EXPECT(context, copied.str() == "abcdabcd");
+        TEST_EXPECT(context, buffer.str() == "abcdabcd");
+
+        Arena copy_arena = {};
+        copy_arena.init();
+        StringBuffer deep_copy;
+        TEST_EXPECT(context, deep_copy.copy_from(buffer, copy_arena.resource()));
+        TEST_EXPECT(context, buffer.write_byte('!') == 1u);
+        TEST_EXPECT(context, deep_copy.str() == "abcdabcd");
     }
 
     TEST_CASE(string_buffer_init_replaces_existing_storage) {
+        Arena arena = {};
+        arena.init();
+
         StringBuffer buffer;
 
-        TEST_EXPECT(context, buffer.init(4u));
+        TEST_EXPECT(context, buffer.init(4u, arena.resource()));
         TEST_EXPECT(context, buffer.write_string("dynamic") == 7u);
         TEST_EXPECT(context, buffer.capacity() >= 7u);
 
@@ -1210,7 +1329,7 @@ namespace {
         TEST_EXPECT(context, buffer.write_string("fixed") == sizeof(backing));
         TEST_EXPECT(context, buffer.str() == "fixe");
 
-        TEST_EXPECT(context, buffer.init(2u));
+        TEST_EXPECT(context, buffer.init(2u, arena.resource()));
         TEST_EXPECT(context, buffer.empty());
         TEST_EXPECT(context, buffer.capacity() == 2u);
         TEST_EXPECT(context, buffer.write_string("abc") == 3u);

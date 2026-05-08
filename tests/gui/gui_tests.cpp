@@ -698,6 +698,7 @@ namespace {
 
         gui::Id const field_id = gui::id("field");
         StringBuffer buffer;
+        TEST_EXPECT(context, buffer.init(0u, arena.resource()));
         TEST_EXPECT(context, buffer.write_string("AB CD") == 5u);
 
         gui::Frame ui = gui::begin_frame(gui_context, {.size = {100.0f, 80.0f}});
@@ -3918,6 +3919,7 @@ namespace {
         gui::Id const field_id = gui::id("field");
         gui::BoxDesc const box = {.layout = {.width = gui::px(40.0f), .height = gui::px(40.0f)}};
         StringBuffer buffer;
+        TEST_EXPECT(context, buffer.init(0u, arena.resource()));
         TEST_EXPECT(context, buffer.write_string("abcdefghi") == 9u);
 
         gui::Frame ui = gui::begin_frame(gui_context, {.size = {80.0f, 60.0f}});
@@ -3947,7 +3949,7 @@ namespace {
 
         gui::Id const field_id = gui::id("field");
         StringBuffer buffer;
-        TEST_EXPECT(context, buffer.init(2u));
+        TEST_EXPECT(context, buffer.init(2u, arena.resource()));
         TEST_EXPECT(context, buffer.write_string("Hi") == 2u);
 
         gui::KeyEvent const events[] = {
@@ -3995,6 +3997,7 @@ namespace {
         gui::Id const field_id = gui::id("field");
         gui::BoxDesc const box = {.layout = {.width = gui::px(120.0f), .height = gui::px(40.0f)}};
         StringBuffer buffer;
+        TEST_EXPECT(context, buffer.init(0u, arena.resource()));
         TEST_EXPECT(context, buffer.write_string("ABCDE") == 5u);
         gui::KeyEvent const select_all[] = {{.key = gui::Key::A, .mods = gui::KEY_MOD_CTRL}};
         gui::InputState input = {.key_events = select_all, .key_event_count = 1u};
@@ -4033,6 +4036,7 @@ namespace {
 
         gui::Id const field_id = gui::id("field");
         StringBuffer buffer;
+        TEST_EXPECT(context, buffer.init(0u, arena.resource()));
         TEST_EXPECT(context, buffer.write_string("a") == 1u);
 
         gui::Frame ui = gui::begin_frame(gui_context, {.size = {220.0f, 80.0f}});
@@ -4082,6 +4086,7 @@ namespace {
 
         gui::Id const field_id = gui::id("field");
         StringBuffer buffer;
+        TEST_EXPECT(context, buffer.init(0u, arena.resource()));
         TEST_EXPECT(context, buffer.write_string("a") == 1u);
 
         gui::KeyEvent const events[] = {{.key = gui::Key::TAB}};
@@ -4117,6 +4122,7 @@ namespace {
 
         gui::Id const field_id = gui::id("field");
         StringBuffer buffer;
+        TEST_EXPECT(context, buffer.init(0u, arena.resource()));
         TEST_EXPECT(context, buffer.write_string("abc\nde\nghi") == 10u);
 
         gui::KeyEvent const events[] = {
@@ -4161,6 +4167,7 @@ namespace {
             }
         };
         StringBuffer buffer;
+        TEST_EXPECT(context, buffer.init(0u, arena.resource()));
         TEST_EXPECT(context, buffer.write_string("AB CD") == 5u);
 
         gui::KeyEvent const events[] = {
@@ -4193,6 +4200,7 @@ namespace {
         gui::Id const field_id = gui::id("field");
         gui::BoxDesc const box = {.layout = {.width = gui::px(80.0f), .height = gui::px(40.0f)}};
         StringBuffer buffer;
+        TEST_EXPECT(context, buffer.init(0u, arena.resource()));
         TEST_EXPECT(context, buffer.write_string("A\nB\nC\nD\nE") == 9u);
 
         gui::Frame ui = gui::begin_frame(gui_context, {.size = {100.0f, 60.0f}});
@@ -4267,6 +4275,7 @@ namespace {
         gui::Id const field_id = gui::id("field");
         gui::BoxDesc const box = {.layout = {.width = gui::px(80.0f), .height = gui::px(40.0f)}};
         StringBuffer buffer;
+        TEST_EXPECT(context, buffer.init(0u, arena.resource()));
         TEST_EXPECT(context, buffer.write_string("A\nB\nC\nD\nE") == 9u);
 
         gui::KeyEvent const home[] = {{.key = gui::Key::HOME}};

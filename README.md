@@ -73,3 +73,68 @@ pinned with `CCACHE`.
 - `third_party`: approved vendored dependencies only.
 
 No dependency is fetched by CMake.
+
+## Memory And Containers
+
+Framework-owned memory is allocated from `Arena`. Production code should not use
+the C heap, owning `new`/`delete`, STL containers, or PMR default resources for
+owned data. When an API asks for `MemoryResource*`, pass `arena.resource()`.
+Fixed storage should use an API that explicitly accepts caller-provided backing
+memory.
+
+An arena defines the lifetime of everything allocated from it. Use persistent
+context-owned arenas for cached or long-lived state, frame arenas for data that
+dies at the end of a frame, caller-owned arenas for returned data, and
+thread-local temporary arenas only for scratch data that does not escape the
+scope or frame.
+
+Base containers are trivially copyable headers over arena-owned backing memory:
+`Vec`, `HashMap`, `StableHashMap`, `XarArray`, `XarFreelistArray`, and
+`StringBuffer` do not own or free their backing allocations. Initialize them
+with an explicit resource:
+
+```cpp
+Arena arena = {};
+arena.init();
+
+Vec<int> values = {};
+DEBUG_ASSERT(values.init(64u, arena.resource()));
+DEBUG_ASSERT(values.push_back(7));
+```
+
+Container assignment copies only the header. Use it when transferring a header
+inside the same backing lifetime, then clear the source if the old name must stop
+referring to that backing:
+
+```cpp
+Vec<int> transferred = values;
+values = {};
+```
+
+Use `copy_from(other, arena.resource())` when data must be reallocated into a
+different lifetime. It allocates destination backing, copies the contents, and
+does not modify `other`:
+
+```cpp
+Arena copy_arena = {};
+copy_arena.init();
+
+Vec<int> copied = {};
+DEBUG_ASSERT(copied.copy_from(transferred, copy_arena.resource()));
+```
+
+If the destination already referenced backing memory, `copy_from` replaces the
+header and leaves the old backing for its arena to reclaim later.
+
+Do not add container destructors, `destroy()`, move-only ownership, or
+`take_from()` helpers. Dropping a container is just resetting its header with
+`container = {};`; reclaiming backing memory is done by `arena.reset()`,
+`arena.reset_to(marker)`, or `arena.destroy()`.
+
+Container growth allocates new backing from the same resource and leaves old
+backing for the arena to reclaim later. Reserve enough capacity when growing a
+container repeatedly in a long-lived arena.
+
+Container element types must be trivially copyable unless a container documents
+otherwise. Store indices, handles, pointers, or arena-owned payloads instead of
+embedding non-trivial ownership in container elements.

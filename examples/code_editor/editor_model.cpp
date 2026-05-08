@@ -4,7 +4,6 @@
 #include <charconv>
 #include <cmath>
 #include <cstring>
-#include <utility>
 
 namespace code_editor {
 
@@ -43,12 +42,14 @@ namespace code_editor {
         size_t cursor_column = 0u;
         size_t selection_anchor_line = 0u;
         size_t selection_anchor_column = 0u;
+        Vec<EditorCursor> extra_cursors = {};
         EditorSelectionMode selection_mode = EditorSelectionMode::NONE;
         float scroll_x = 0.0f;
         float scroll_y = 0.0f;
         bool selection_active = false;
     };
 
+    auto clear_extra_cursors(EditorState& editor) -> void;
     auto clamp_cursor(EditorState& editor) -> void;
     auto sync_shared_panes(EditorState& editor) -> void;
     auto close_focused_split(EditorState& editor) -> void;
@@ -133,6 +134,11 @@ namespace code_editor {
         }
     }
 
+    auto clear_extra_cursors(EditorState& editor) -> void {
+        editor.extra_cursors.clear();
+        editor.set_flag(EditorFlag::MULTI_CURSOR_DRAGGING, false);
+    }
+
     auto set_editor_text_impl(EditorState& editor, StrRef text, bool clear_undo, bool clear_dirty)
         -> void {
         DEBUG_ASSERT(editor.text.arena != nullptr);
@@ -144,11 +150,13 @@ namespace code_editor {
         editor.cursor_line = 0u;
         editor.cursor_column = 0u;
         editor.preferred_column = 0u;
+        clear_extra_cursors(editor);
         editor.selection_anchor_line = 0u;
         editor.selection_anchor_column = 0u;
         editor.selection_mode = EditorSelectionMode::NONE;
         editor.set_flag(EditorFlag::SELECTION_ACTIVE, false);
         editor.set_flag(EditorFlag::MOUSE_SELECTING, false);
+        editor.set_flag(EditorFlag::MIDDLE_MOUSE_WAS_DOWN, false);
         editor.scroll_x = 0.0f;
         editor.scroll_y = 0.0f;
         editor.set_flag(EditorFlag::PENDING_LEADER, false);
@@ -198,12 +206,17 @@ namespace code_editor {
         text_buffer_init(text, arena);
     }
 
-    auto clone_text(EditorText const& source, EditorText& target) -> void {
-        text_buffer_clone(source, target);
+    auto clone_text(EditorText const& source, EditorText& target, Arena& arena) -> void {
+        text_buffer_clone(source, target, arena);
+    }
+
+    auto take_text(EditorText& target, EditorText& source) -> void {
+        target = source;
+        source = {};
     }
 
     auto move_editor_to_pane(EditorState& editor, EditorPane& pane) -> void {
-        pane.text = std::move(editor.text);
+        take_text(pane.text, editor.text);
         pane.current_file_name = editor.current_file_name;
         pane.current_file_path = editor.current_file_path;
         pane.scratch_text = editor.scratch_text;
@@ -214,6 +227,10 @@ namespace code_editor {
         pane.cursor_line = editor.cursor_line;
         pane.cursor_column = editor.cursor_column;
         pane.preferred_column = editor.preferred_column;
+        bool const cursors_ok =
+            pane.extra_cursors.copy_from(editor.extra_cursors, editor.arena->resource());
+        DEBUG_ASSERT(cursors_ok);
+        (void)cursors_ok;
         pane.selection_anchor_line = editor.selection_anchor_line;
         pane.selection_anchor_column = editor.selection_anchor_column;
         pane.selection_mode = editor.selection_mode;
@@ -223,13 +240,15 @@ namespace code_editor {
         pane.selection_active = editor.flag(EditorFlag::SELECTION_ACTIVE);
         pane.mouse_selecting = editor.flag(EditorFlag::MOUSE_SELECTING);
         pane.mouse_was_down = editor.flag(EditorFlag::MOUSE_WAS_DOWN);
+        pane.multi_cursor_dragging = editor.flag(EditorFlag::MULTI_CURSOR_DRAGGING);
+        pane.middle_mouse_was_down = editor.flag(EditorFlag::MIDDLE_MOUSE_WAS_DOWN);
         pane.dirty = editor.flag(EditorFlag::DIRTY);
         pane.external_change_pending = editor.flag(EditorFlag::EXTERNAL_CHANGE_PENDING);
         pane.file_deleted_on_disk = editor.flag(EditorFlag::FILE_DELETED_ON_DISK);
     }
 
     auto move_pane_to_editor(EditorState& editor, EditorPane& pane) -> void {
-        editor.text = std::move(pane.text);
+        take_text(editor.text, pane.text);
         editor.current_file_name = pane.current_file_name;
         editor.current_file_path = pane.current_file_path;
         editor.scratch_text = pane.scratch_text;
@@ -240,6 +259,10 @@ namespace code_editor {
         editor.cursor_line = pane.cursor_line;
         editor.cursor_column = pane.cursor_column;
         editor.preferred_column = pane.preferred_column;
+        bool const cursors_ok =
+            editor.extra_cursors.copy_from(pane.extra_cursors, editor.arena->resource());
+        DEBUG_ASSERT(cursors_ok);
+        (void)cursors_ok;
         editor.selection_anchor_line = pane.selection_anchor_line;
         editor.selection_anchor_column = pane.selection_anchor_column;
         editor.selection_mode = pane.selection_mode;
@@ -249,6 +272,8 @@ namespace code_editor {
         editor.set_flag(EditorFlag::SELECTION_ACTIVE, pane.selection_active);
         editor.set_flag(EditorFlag::MOUSE_SELECTING, pane.mouse_selecting);
         editor.set_flag(EditorFlag::MOUSE_WAS_DOWN, pane.mouse_was_down);
+        editor.set_flag(EditorFlag::MULTI_CURSOR_DRAGGING, pane.multi_cursor_dragging);
+        editor.set_flag(EditorFlag::MIDDLE_MOUSE_WAS_DOWN, pane.middle_mouse_was_down);
         editor.set_flag(EditorFlag::DIRTY, pane.dirty);
         editor.set_flag(EditorFlag::EXTERNAL_CHANGE_PENDING, pane.external_change_pending);
         editor.set_flag(EditorFlag::FILE_DELETED_ON_DISK, pane.file_deleted_on_disk);
@@ -295,6 +320,9 @@ namespace code_editor {
         DEBUG_ASSERT(editor.arena != nullptr);
         EditorPane* const pane = arena_new<EditorPane>(*editor.arena);
         init_text_storage(pane->text, *editor.arena);
+        bool const cursors_ok = pane->extra_cursors.init(0u, editor.arena->resource());
+        DEBUG_ASSERT(cursors_ok);
+        (void)cursors_ok;
         bool const views_ok = pane->open_file_views.init(0u, editor.arena->resource());
         DEBUG_ASSERT(views_ok);
         (void)views_ok;
@@ -306,7 +334,7 @@ namespace code_editor {
 
     auto clone_active_to_pane(EditorState& editor, EditorPane& pane) -> void {
         pane.kind = focused_pane_kind(editor);
-        clone_text(editor.text, pane.text);
+        clone_text(editor.text, pane.text, *editor.arena);
         pane.current_file_name = editor.current_file_name;
         pane.current_file_path = editor.current_file_path;
         pane.scratch_text = editor.scratch_text;
@@ -354,6 +382,10 @@ namespace code_editor {
         if (first_init) {
             editor.arena = &arena;
             init_text_storage(editor.text, arena);
+
+            bool const cursors_ok = editor.extra_cursors.init(0u, arena.resource());
+            DEBUG_ASSERT(cursors_ok);
+            (void)cursors_ok;
 
             bool const panes_ok = editor.panes.init(0u, arena.resource());
             DEBUG_ASSERT(panes_ok);
@@ -524,6 +556,7 @@ namespace code_editor {
         editor.cursor_line = 0u;
         editor.cursor_column = 0u;
         editor.preferred_column = 0u;
+        clear_extra_cursors(editor);
         editor.selection_anchor_line = 0u;
         editor.selection_anchor_column = 0u;
         editor.selection_mode = EditorSelectionMode::NONE;
@@ -533,6 +566,7 @@ namespace code_editor {
         editor.set_flag(EditorFlag::SELECTION_ACTIVE, false);
         editor.set_flag(EditorFlag::MOUSE_SELECTING, false);
         editor.set_flag(EditorFlag::MOUSE_WAS_DOWN, false);
+        editor.set_flag(EditorFlag::MIDDLE_MOUSE_WAS_DOWN, false);
     }
 
     auto store_focused_open_file_view(EditorState& editor) -> void {
@@ -559,6 +593,10 @@ namespace code_editor {
         view->cursor_line = editor.cursor_line;
         view->cursor_column = editor.cursor_column;
         view->preferred_column = editor.preferred_column;
+        bool const cursors_ok =
+            view->extra_cursors.copy_from(editor.extra_cursors, editor.arena->resource());
+        DEBUG_ASSERT(cursors_ok);
+        (void)cursors_ok;
         view->selection_anchor_line = editor.selection_anchor_line;
         view->selection_anchor_column = editor.selection_anchor_column;
         view->selection_mode = editor.selection_mode;
@@ -585,6 +623,10 @@ namespace code_editor {
         editor.cursor_line = view->cursor_line;
         editor.cursor_column = view->cursor_column;
         editor.preferred_column = view->preferred_column;
+        bool const cursors_ok =
+            editor.extra_cursors.copy_from(view->extra_cursors, editor.arena->resource());
+        DEBUG_ASSERT(cursors_ok);
+        (void)cursors_ok;
         editor.selection_anchor_line = view->selection_anchor_line;
         editor.selection_anchor_column = view->selection_anchor_column;
         editor.selection_mode = view->selection_mode;
@@ -609,7 +651,7 @@ namespace code_editor {
                 continue;
             }
 
-            clone_text(pane->text, editor.text);
+            clone_text(pane->text, editor.text, *editor.arena);
             editor.current_file_name = pane->current_file_name;
             editor.current_file_path = pane->current_file_path;
             editor.scratch_text = pane->scratch_text;
@@ -652,6 +694,30 @@ namespace code_editor {
         pane.cursor_line = std::min(pane.cursor_line, pane_line_count(pane) - 1u);
         pane.cursor_column = std::min(pane.cursor_column, pane_line_size(pane, pane.cursor_line));
         pane.preferred_column = std::min(pane.preferred_column, pane.cursor_column);
+        size_t extra_count = 0u;
+        for (size_t index = 0u; index < pane.extra_cursors.size(); ++index) {
+            EditorCursor cursor = pane.extra_cursors[index];
+            cursor.line = std::min(cursor.line, pane_line_count(pane) - 1u);
+            cursor.column = std::min(cursor.column, pane_line_size(pane, cursor.line));
+            cursor.preferred_column = std::min(cursor.preferred_column, cursor.column);
+            cursor.selection_anchor_line =
+                std::min(cursor.selection_anchor_line, pane_line_count(pane) - 1u);
+            cursor.selection_anchor_column = std::min(
+                cursor.selection_anchor_column, pane_line_size(pane, cursor.selection_anchor_line)
+            );
+            bool duplicate = cursor.line == pane.cursor_line && cursor.column == pane.cursor_column;
+            for (size_t other = 0u; other < extra_count && !duplicate; ++other) {
+                duplicate = cursor.line == pane.extra_cursors[other].line &&
+                            cursor.column == pane.extra_cursors[other].column;
+            }
+            if (!duplicate) {
+                pane.extra_cursors[extra_count] = cursor;
+                extra_count += 1u;
+            }
+        }
+        bool const resize_ok = pane.extra_cursors.resize(extra_count);
+        DEBUG_ASSERT(resize_ok);
+        (void)resize_ok;
         pane.selection_anchor_line =
             std::min(pane.selection_anchor_line, pane_line_count(pane) - 1u);
         pane.selection_anchor_column = std::min(
@@ -680,7 +746,7 @@ namespace code_editor {
                 continue;
             }
             if (pane->text.revision != editor.text.revision) {
-                clone_text(editor.text, pane->text);
+                clone_text(editor.text, pane->text, *editor.arena);
             }
             pane->scratch_text = editor.scratch_text;
             pane->saved_text = editor.saved_text;
@@ -1365,6 +1431,10 @@ namespace code_editor {
         entry->text_size = text.size();
         entry->cursor_line = editor.cursor_line;
         entry->cursor_column = editor.cursor_column;
+        bool const cursors_ok =
+            entry->extra_cursors.copy_from(editor.extra_cursors, editor.text.arena->resource());
+        DEBUG_ASSERT(cursors_ok);
+        (void)cursors_ok;
         entry->selection_anchor_line = editor.selection_anchor_line;
         entry->selection_anchor_column = editor.selection_anchor_column;
         entry->selection_mode = editor.selection_mode;
@@ -1386,6 +1456,10 @@ namespace code_editor {
         editor.cursor_line = entry.cursor_line;
         editor.cursor_column = entry.cursor_column;
         editor.preferred_column = editor.cursor_column;
+        bool const cursors_ok =
+            editor.extra_cursors.copy_from(entry.extra_cursors, editor.text.arena->resource());
+        DEBUG_ASSERT(cursors_ok);
+        (void)cursors_ok;
         editor.selection_anchor_line = entry.selection_anchor_line;
         editor.selection_anchor_column = entry.selection_anchor_column;
         editor.selection_mode = entry.selection_mode;
@@ -1540,6 +1614,8 @@ namespace code_editor {
 
     [[nodiscard]] auto next_position(EditorState const& editor, EditorPosition position)
         -> EditorPosition;
+    [[nodiscard]] auto has_extra_cursors(EditorState const& editor) -> bool;
+    auto move_all_cursors_vertical(EditorState& editor, int32_t delta, bool select) -> void;
 
     [[nodiscard]] auto selection_anchor(EditorState const& editor) -> EditorPosition {
         return {editor.selection_anchor_line, editor.selection_anchor_column};
@@ -1566,6 +1642,11 @@ namespace code_editor {
     auto clear_selection(EditorState& editor) -> void {
         editor.selection_anchor_line = editor.cursor_line;
         editor.selection_anchor_column = editor.cursor_column;
+        for (size_t index = 0u; index < editor.extra_cursors.size(); ++index) {
+            EditorCursor& cursor = editor.extra_cursors[index];
+            cursor.selection_anchor_line = cursor.line;
+            cursor.selection_anchor_column = cursor.column;
+        }
         editor.selection_mode = EditorSelectionMode::NONE;
         editor.set_flag(EditorFlag::SELECTION_ACTIVE, false);
     }
@@ -1603,13 +1684,15 @@ namespace code_editor {
         }
     }
 
-    [[nodiscard]] auto editor_selection_range(EditorState const& editor) -> EditorSelectionRange {
+    [[nodiscard]] auto
+    selection_range(EditorState const& editor, EditorPosition cursor, EditorPosition anchor)
+        -> EditorSelectionRange {
         if (!editor.flag(EditorFlag::SELECTION_ACTIVE)) {
             return {};
         }
 
-        EditorPosition cursor = cursor_position(editor);
-        EditorPosition anchor = selection_anchor(editor);
+        cursor = clamp_position(editor, cursor);
+        anchor = clamp_position(editor, anchor);
         if (editor.selection_mode == EditorSelectionMode::LINE) {
             size_t const start_line = std::min(cursor.line, anchor.line);
             size_t const end_line = std::max(cursor.line, anchor.line);
@@ -1659,6 +1742,23 @@ namespace code_editor {
         };
     }
 
+    [[nodiscard]] auto editor_selection_range(EditorState const& editor) -> EditorSelectionRange {
+        return selection_range(editor, cursor_position(editor), selection_anchor(editor));
+    }
+
+    [[nodiscard]] auto editor_extra_selection_range(EditorState const& editor, size_t index)
+        -> EditorSelectionRange {
+        if (index >= editor.extra_cursors.size()) {
+            return {};
+        }
+        EditorCursor const cursor = editor.extra_cursors[index];
+        return selection_range(
+            editor,
+            {cursor.line, cursor.column},
+            {cursor.selection_anchor_line, cursor.selection_anchor_column}
+        );
+    }
+
     auto clamp_cursor(EditorState& editor) -> void {
         if (editor_line_count(editor) == 0u) {
             insert_line(editor, 0u, "");
@@ -1667,6 +1767,31 @@ namespace code_editor {
         editor.cursor_column =
             std::min(editor.cursor_column, line_size(editor, editor.cursor_line));
         editor.preferred_column = std::min(editor.preferred_column, editor.cursor_column);
+        size_t extra_count = 0u;
+        for (size_t index = 0u; index < editor.extra_cursors.size(); ++index) {
+            EditorCursor cursor = editor.extra_cursors[index];
+            cursor.line = std::min(cursor.line, editor_line_count(editor) - 1u);
+            cursor.column = std::min(cursor.column, line_size(editor, cursor.line));
+            cursor.preferred_column = std::min(cursor.preferred_column, cursor.column);
+            cursor.selection_anchor_line =
+                std::min(cursor.selection_anchor_line, editor_line_count(editor) - 1u);
+            cursor.selection_anchor_column = std::min(
+                cursor.selection_anchor_column, line_size(editor, cursor.selection_anchor_line)
+            );
+            bool duplicate =
+                cursor.line == editor.cursor_line && cursor.column == editor.cursor_column;
+            for (size_t other = 0u; other < extra_count && !duplicate; ++other) {
+                duplicate = cursor.line == editor.extra_cursors[other].line &&
+                            cursor.column == editor.extra_cursors[other].column;
+            }
+            if (!duplicate) {
+                editor.extra_cursors[extra_count] = cursor;
+                extra_count += 1u;
+            }
+        }
+        bool const resize_ok = editor.extra_cursors.resize(extra_count);
+        DEBUG_ASSERT(resize_ok);
+        (void)resize_ok;
         clamp_selection(editor);
     }
 
@@ -1675,10 +1800,15 @@ namespace code_editor {
     }
 
     auto set_editor_cursor(EditorState& editor, size_t line, size_t column) -> void {
+        clear_extra_cursors(editor);
         set_cursor(editor, line, column);
     }
 
     auto move_vertical(EditorState& editor, int32_t delta, bool select) -> void {
+        if (has_extra_cursors(editor)) {
+            move_all_cursors_vertical(editor, delta, select);
+            return;
+        }
         size_t line = editor.cursor_line;
         if (delta < 0) {
             size_t const amount = static_cast<size_t>(-delta);
@@ -1735,11 +1865,214 @@ namespace code_editor {
         }
     }
 
+    struct EditorCursorEdit {
+        size_t offset = 0u;
+        size_t anchor_offset = 0u;
+        size_t preferred_column = 0u;
+        bool primary = false;
+    };
+
+    [[nodiscard]] auto has_extra_cursors(EditorState const& editor) -> bool {
+        return !editor.extra_cursors.empty();
+    }
+
+    [[nodiscard]] auto cursor_edit_count(EditorState const& editor) -> size_t {
+        return editor.extra_cursors.size() + 1u;
+    }
+
+    [[nodiscard]] auto collect_cursors(EditorState const& editor, EditorCursorEdit* cursors)
+        -> size_t {
+        size_t count = 1u;
+        cursors[0u] = {
+            .offset = position_offset(editor, cursor_position(editor)),
+            .anchor_offset = position_offset(editor, selection_anchor(editor)),
+            .preferred_column = editor.preferred_column,
+            .primary = true,
+        };
+        for (size_t index = 0u; index < editor.extra_cursors.size(); ++index) {
+            EditorCursor const cursor = editor.extra_cursors[index];
+            EditorPosition const position = clamp_position(editor, {cursor.line, cursor.column});
+            size_t const offset = position_offset(editor, position);
+            bool duplicate = cursors[0u].offset == offset;
+            for (size_t other = 1u; other < count && !duplicate; ++other) {
+                duplicate = cursors[other].offset == offset;
+            }
+            if (!duplicate) {
+                cursors[count] = {
+                    .offset = offset,
+                    .anchor_offset = position_offset(
+                        editor, {cursor.selection_anchor_line, cursor.selection_anchor_column}
+                    ),
+                    .preferred_column = cursor.preferred_column,
+                };
+                count += 1u;
+            }
+        }
+        return count;
+    }
+
+    auto sort_cursors_by_offset(EditorCursorEdit* cursors, size_t count, bool descending) -> void {
+        std::sort(
+            cursors, cursors + count, [descending](EditorCursorEdit lhs, EditorCursorEdit rhs) {
+                return descending ? lhs.offset > rhs.offset : lhs.offset < rhs.offset;
+            }
+        );
+    }
+
+    [[nodiscard]] auto selection_active(EditorCursorEdit const* cursors, size_t count) -> bool {
+        for (size_t index = 0u; index < count; ++index) {
+            if (cursors[index].offset != cursors[index].anchor_offset) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    auto store_cursors(
+        EditorState& editor, EditorCursorEdit* cursors, size_t count, bool clear_selection_value
+    ) -> void {
+        sort_cursors_by_offset(cursors, count, false);
+        size_t primary = 0u;
+        for (size_t index = 0u; index < count; ++index) {
+            if (cursors[index].primary) {
+                primary = index;
+                break;
+            }
+        }
+
+        EditorTextPosition const primary_position =
+            text_buffer_offset_to_position(editor.text, cursors[primary].offset);
+        editor.cursor_line = primary_position.line;
+        editor.cursor_column = primary_position.column;
+        editor.preferred_column = cursors[primary].preferred_column;
+        EditorTextPosition const primary_anchor =
+            clear_selection_value
+                ? primary_position
+                : text_buffer_offset_to_position(editor.text, cursors[primary].anchor_offset);
+        editor.selection_anchor_line = primary_anchor.line;
+        editor.selection_anchor_column = primary_anchor.column;
+        editor.extra_cursors.clear();
+        bool const reserve_ok = editor.extra_cursors.reserve(count - 1u);
+        DEBUG_ASSERT(reserve_ok);
+        (void)reserve_ok;
+        for (size_t index = 0u; index < count; ++index) {
+            if (index == primary) {
+                continue;
+            }
+            EditorTextPosition const position =
+                text_buffer_offset_to_position(editor.text, cursors[index].offset);
+            if (position.line == editor.cursor_line && position.column == editor.cursor_column) {
+                continue;
+            }
+            EditorTextPosition const anchor =
+                clear_selection_value
+                    ? position
+                    : text_buffer_offset_to_position(editor.text, cursors[index].anchor_offset);
+            bool const push_ok = editor.extra_cursors.push_back({
+                .line = position.line,
+                .column = position.column,
+                .preferred_column = cursors[index].preferred_column,
+                .selection_anchor_line = anchor.line,
+                .selection_anchor_column = anchor.column,
+            });
+            DEBUG_ASSERT(push_ok);
+            (void)push_ok;
+        }
+        if (clear_selection_value) {
+            clear_selection(editor);
+        }
+        clamp_cursor(editor);
+        if (!clear_selection_value) {
+            editor.set_flag(
+                EditorFlag::SELECTION_ACTIVE,
+                editor.selection_mode != EditorSelectionMode::NONE ||
+                    selection_active(cursors, count)
+            );
+        }
+    }
+
+    auto move_all_cursors_by(
+        EditorState& editor, EditorPosition (*move)(EditorState const&, EditorPosition), bool select
+    ) -> void {
+        ArenaTemp temp = begin_thread_temp_arena();
+        EditorCursorEdit* const cursors =
+            arena_alloc<EditorCursorEdit>(*temp.arena(), cursor_edit_count(editor));
+        size_t const count = collect_cursors(editor, cursors);
+        for (size_t index = 0u; index < count; ++index) {
+            EditorTextPosition const text_position =
+                text_buffer_offset_to_position(editor.text, cursors[index].offset);
+            EditorPosition const position =
+                move(editor, {text_position.line, text_position.column});
+            cursors[index].offset = position_offset(editor, position);
+            cursors[index].preferred_column = position.column;
+        }
+        store_cursors(editor, cursors, count, !select);
+    }
+
+    auto move_all_cursors_vertical(EditorState& editor, int32_t delta, bool select) -> void {
+        ArenaTemp temp = begin_thread_temp_arena();
+        EditorCursorEdit* const cursors =
+            arena_alloc<EditorCursorEdit>(*temp.arena(), cursor_edit_count(editor));
+        size_t const count = collect_cursors(editor, cursors);
+        for (size_t index = 0u; index < count; ++index) {
+            EditorTextPosition const text_position =
+                text_buffer_offset_to_position(editor.text, cursors[index].offset);
+            size_t line = text_position.line;
+            if (delta < 0) {
+                size_t const amount = static_cast<size_t>(-delta);
+                line = amount < line ? line - amount : 0u;
+            } else {
+                line = std::min(line + static_cast<size_t>(delta), editor_line_count(editor) - 1u);
+            }
+            size_t const column =
+                std::min(cursors[index].preferred_column, line_size(editor, line));
+            cursors[index].offset = position_offset(editor, {line, column});
+        }
+        store_cursors(editor, cursors, count, !select);
+    }
+
+    auto move_all_cursors_line_start(EditorState& editor, bool select) -> void {
+        ArenaTemp temp = begin_thread_temp_arena();
+        EditorCursorEdit* const cursors =
+            arena_alloc<EditorCursorEdit>(*temp.arena(), cursor_edit_count(editor));
+        size_t const count = collect_cursors(editor, cursors);
+        for (size_t index = 0u; index < count; ++index) {
+            EditorTextPosition const position =
+                text_buffer_offset_to_position(editor.text, cursors[index].offset);
+            cursors[index].offset = position_offset(editor, {position.line, 0u});
+            cursors[index].preferred_column = 0u;
+        }
+        store_cursors(editor, cursors, count, !select);
+    }
+
+    auto move_all_cursors_line_end(EditorState& editor, bool select) -> void {
+        ArenaTemp temp = begin_thread_temp_arena();
+        EditorCursorEdit* const cursors =
+            arena_alloc<EditorCursorEdit>(*temp.arena(), cursor_edit_count(editor));
+        size_t const count = collect_cursors(editor, cursors);
+        for (size_t index = 0u; index < count; ++index) {
+            EditorTextPosition const position =
+                text_buffer_offset_to_position(editor.text, cursors[index].offset);
+            size_t const column = line_size(editor, position.line);
+            cursors[index].offset = position_offset(editor, {position.line, column});
+            cursors[index].preferred_column = column;
+        }
+        store_cursors(editor, cursors, count, !select);
+    }
+
     auto move_left(EditorState& editor, bool select) -> void {
+        if (has_extra_cursors(editor)) {
+            move_all_cursors_by(editor, previous_position, select);
+            return;
+        }
         move_cursor_to(editor, previous_position(editor, cursor_position(editor)), select);
     }
 
     auto move_right(EditorState& editor, bool select) -> void {
+        if (has_extra_cursors(editor)) {
+            move_all_cursors_by(editor, next_position, select);
+            return;
+        }
         move_cursor_to(editor, next_position(editor, cursor_position(editor)), select);
     }
 
@@ -1894,26 +2227,50 @@ namespace code_editor {
     }
 
     auto move_word_left(EditorState& editor, bool select) -> void {
+        if (has_extra_cursors(editor)) {
+            move_all_cursors_by(editor, previous_word_position, select);
+            return;
+        }
         move_cursor_to(editor, previous_word_position(editor, cursor_position(editor)), select);
     }
 
     auto move_word_right(EditorState& editor, bool select) -> void {
+        if (has_extra_cursors(editor)) {
+            move_all_cursors_by(editor, next_word_position, select);
+            return;
+        }
         move_cursor_to(editor, next_word_position(editor, cursor_position(editor)), select);
     }
 
     auto move_word_end(EditorState& editor, bool select) -> void {
+        if (has_extra_cursors(editor)) {
+            move_all_cursors_by(editor, next_word_end_position, select);
+            return;
+        }
         move_cursor_to(editor, next_word_end_position(editor, cursor_position(editor)), select);
     }
 
     auto move_big_word_left(EditorState& editor, bool select) -> void {
+        if (has_extra_cursors(editor)) {
+            move_all_cursors_by(editor, previous_big_word_position, select);
+            return;
+        }
         move_cursor_to(editor, previous_big_word_position(editor, cursor_position(editor)), select);
     }
 
     auto move_big_word_right(EditorState& editor, bool select) -> void {
+        if (has_extra_cursors(editor)) {
+            move_all_cursors_by(editor, next_big_word_position, select);
+            return;
+        }
         move_cursor_to(editor, next_big_word_position(editor, cursor_position(editor)), select);
     }
 
     auto move_big_word_end(EditorState& editor, bool select) -> void {
+        if (has_extra_cursors(editor)) {
+            move_all_cursors_by(editor, next_big_word_end_position, select);
+            return;
+        }
         move_cursor_to(editor, next_big_word_end_position(editor, cursor_position(editor)), select);
     }
 
@@ -1955,11 +2312,17 @@ namespace code_editor {
         );
     }
 
+    [[nodiscard]] auto erase_all_selections(EditorState& editor) -> bool;
+
     [[nodiscard]] auto erase_selection(EditorState& editor) -> bool {
+        if (has_extra_cursors(editor) && editor.flag(EditorFlag::SELECTION_ACTIVE)) {
+            return erase_all_selections(editor);
+        }
         EditorSelectionRange const selection = editor_selection_range(editor);
         if (!selection.active) {
             return false;
         }
+        clear_extra_cursors(editor);
         if (selection.full_line) {
             size_t const first = selection.start_line;
             size_t const end = selection.end_column == 0u && selection.end_line > first
@@ -1985,6 +2348,7 @@ namespace code_editor {
     }
 
     auto select_all(EditorState& editor) -> void {
+        clear_extra_cursors(editor);
         editor.selection_anchor_line = 0u;
         editor.selection_anchor_column = 0u;
         editor.cursor_line = editor_line_count(editor) - 1u;
@@ -2010,7 +2374,236 @@ namespace code_editor {
         );
     }
 
+    auto adjust_inserted_offsets(
+        EditorCursorEdit* cursors, size_t processed_count, size_t offset, size_t size
+    ) -> void {
+        for (size_t index = 0u; index < processed_count; ++index) {
+            if (cursors[index].offset >= offset) {
+                cursors[index].offset += size;
+            }
+        }
+    }
+
+    auto adjust_erased_offsets(
+        EditorCursorEdit* cursors, size_t processed_count, size_t start, size_t end
+    ) -> void {
+        size_t const size = end - start;
+        for (size_t index = 0u; index < processed_count; ++index) {
+            if (cursors[index].offset > start) {
+                cursors[index].offset =
+                    cursors[index].offset < end ? start : cursors[index].offset - size;
+            }
+        }
+    }
+
+    auto refresh_cursor_columns(EditorState const& editor, EditorCursorEdit* cursors, size_t count)
+        -> void {
+        for (size_t index = 0u; index < count; ++index) {
+            EditorTextPosition const position =
+                text_buffer_offset_to_position(editor.text, cursors[index].offset);
+            cursors[index].preferred_column = position.column;
+        }
+    }
+
+    struct SelectionEdit {
+        size_t start = 0u;
+        size_t end = 0u;
+        size_t anchor = 0u;
+        size_t preferred_column = 0u;
+        bool primary = false;
+    };
+
+    auto add_selection_edit(
+        EditorState const& editor,
+        SelectionEdit* edits,
+        size_t& count,
+        EditorSelectionRange selection,
+        size_t preferred_column,
+        bool primary
+    ) -> void {
+        if (!selection.active) {
+            return;
+        }
+        edits[count] = {
+            .start = position_offset(editor, {selection.start_line, selection.start_column}),
+            .end = position_offset(editor, {selection.end_line, selection.end_column}),
+            .anchor = position_offset(editor, {selection.start_line, selection.start_column}),
+            .preferred_column = preferred_column,
+            .primary = primary,
+        };
+        count += 1u;
+    }
+
+    [[nodiscard]] auto collect_selection_edits(EditorState const& editor, SelectionEdit* edits)
+        -> size_t {
+        size_t count = 0u;
+        add_selection_edit(
+            editor, edits, count, editor_selection_range(editor), editor.cursor_column, true
+        );
+        for (size_t index = 0u; index < editor.extra_cursors.size(); ++index) {
+            add_selection_edit(
+                editor,
+                edits,
+                count,
+                editor_extra_selection_range(editor, index),
+                editor.extra_cursors[index].column,
+                false
+            );
+        }
+        return count;
+    }
+
+    auto sort_selection_edits_descending(SelectionEdit* edits, size_t count) -> void {
+        std::sort(edits, edits + count, [](SelectionEdit lhs, SelectionEdit rhs) {
+            return lhs.start > rhs.start;
+        });
+    }
+
+    auto selection_edits_to_cursors(
+        EditorState const& editor, SelectionEdit const* edits, size_t count, EditorCursorEdit* out
+    ) -> void {
+        for (size_t index = 0u; index < count; ++index) {
+            EditorTextPosition const position =
+                text_buffer_offset_to_position(editor.text, edits[index].start);
+            out[index] = {
+                .offset = edits[index].start,
+                .anchor_offset = edits[index].start,
+                .preferred_column = position.column,
+                .primary = edits[index].primary,
+            };
+        }
+    }
+
+    auto replace_all_selections_with_text(EditorState& editor, StrRef text) -> bool {
+        ArenaTemp temp = begin_thread_temp_arena();
+        SelectionEdit* const edits =
+            arena_alloc<SelectionEdit>(*temp.arena(), cursor_edit_count(editor));
+        size_t const count = collect_selection_edits(editor, edits);
+        if (count == 0u) {
+            return false;
+        }
+
+        sort_selection_edits_descending(edits, count);
+        size_t limit = text_buffer_size(editor.text);
+        for (size_t index = 0u; index < count; ++index) {
+            edits[index].end = std::min(edits[index].end, limit);
+            if (edits[index].start < edits[index].end) {
+                text_buffer_erase(editor.text, edits[index].start, edits[index].end);
+                for (size_t previous = 0u; previous < index; ++previous) {
+                    if (edits[previous].start > edits[index].start) {
+                        edits[previous].start -= edits[index].end - edits[index].start;
+                    }
+                }
+            }
+            text_buffer_insert(editor.text, edits[index].start, text);
+            for (size_t previous = 0u; previous < index; ++previous) {
+                if (edits[previous].start >= edits[index].start) {
+                    edits[previous].start += text.size();
+                }
+            }
+            edits[index].start += text.size();
+            limit = edits[index].start - text.size();
+        }
+
+        EditorCursorEdit* const cursors = arena_alloc<EditorCursorEdit>(*temp.arena(), count);
+        selection_edits_to_cursors(editor, edits, count, cursors);
+        store_cursors(editor, cursors, count, true);
+        return true;
+    }
+
+    [[nodiscard]] auto erase_all_selections(EditorState& editor) -> bool {
+        return replace_all_selections_with_text(editor, {});
+    }
+
+    auto insert_text_at_all_cursors(EditorState& editor, StrRef text) -> void {
+        ArenaTemp temp = begin_thread_temp_arena();
+        EditorCursorEdit* const cursors =
+            arena_alloc<EditorCursorEdit>(*temp.arena(), cursor_edit_count(editor));
+        size_t const count = collect_cursors(editor, cursors);
+        sort_cursors_by_offset(cursors, count, true);
+        for (size_t index = 0u; index < count; ++index) {
+            size_t const offset = cursors[index].offset;
+            text_buffer_insert(editor.text, offset, text);
+            adjust_inserted_offsets(cursors, index, offset, text.size());
+            cursors[index].offset = offset + text.size();
+        }
+        refresh_cursor_columns(editor, cursors, count);
+        store_cursors(editor, cursors, count, true);
+    }
+
+    auto insert_newline_at_all_cursors(EditorState& editor) -> void {
+        ArenaTemp temp = begin_thread_temp_arena();
+        EditorCursorEdit* const cursors =
+            arena_alloc<EditorCursorEdit>(*temp.arena(), cursor_edit_count(editor));
+        size_t const count = collect_cursors(editor, cursors);
+        sort_cursors_by_offset(cursors, count, true);
+        for (size_t index = 0u; index < count; ++index) {
+            size_t const offset = cursors[index].offset;
+            text_buffer_insert(editor.text, offset, "\n");
+            adjust_inserted_offsets(cursors, index, offset, 1u);
+            cursors[index].offset = offset + 1u;
+        }
+        refresh_cursor_columns(editor, cursors, count);
+        store_cursors(editor, cursors, count, true);
+    }
+
+    auto backspace_at_all_cursors(EditorState& editor) -> void {
+        ArenaTemp temp = begin_thread_temp_arena();
+        EditorCursorEdit* const cursors =
+            arena_alloc<EditorCursorEdit>(*temp.arena(), cursor_edit_count(editor));
+        size_t const count = collect_cursors(editor, cursors);
+        sort_cursors_by_offset(cursors, count, true);
+        for (size_t index = 0u; index < count; ++index) {
+            EditorTextPosition const position =
+                text_buffer_offset_to_position(editor.text, cursors[index].offset);
+            EditorPosition const end = {position.line, position.column};
+            EditorPosition const start = previous_position(editor, end);
+            if (same_position(start, end)) {
+                continue;
+            }
+            size_t const start_offset = position_offset(editor, start);
+            size_t const end_offset = position_offset(editor, end);
+            text_buffer_erase(editor.text, start_offset, end_offset);
+            adjust_erased_offsets(cursors, index, start_offset, end_offset);
+            cursors[index].offset = start_offset;
+        }
+        refresh_cursor_columns(editor, cursors, count);
+        store_cursors(editor, cursors, count, true);
+    }
+
+    auto delete_char_at_all_cursors(EditorState& editor) -> void {
+        ArenaTemp temp = begin_thread_temp_arena();
+        EditorCursorEdit* const cursors =
+            arena_alloc<EditorCursorEdit>(*temp.arena(), cursor_edit_count(editor));
+        size_t const count = collect_cursors(editor, cursors);
+        sort_cursors_by_offset(cursors, count, true);
+        for (size_t index = 0u; index < count; ++index) {
+            EditorTextPosition const position =
+                text_buffer_offset_to_position(editor.text, cursors[index].offset);
+            EditorPosition const start = {position.line, position.column};
+            EditorPosition const end = next_position(editor, start);
+            if (same_position(start, end)) {
+                continue;
+            }
+            size_t const start_offset = position_offset(editor, start);
+            size_t const end_offset = position_offset(editor, end);
+            text_buffer_erase(editor.text, start_offset, end_offset);
+            adjust_erased_offsets(cursors, index, start_offset, end_offset);
+            cursors[index].offset = start_offset;
+        }
+        refresh_cursor_columns(editor, cursors, count);
+        store_cursors(editor, cursors, count, true);
+    }
+
     auto insert_char(EditorState& editor, char value) -> void {
+        if (has_extra_cursors(editor) && editor.flag(EditorFlag::SELECTION_ACTIVE)) {
+            replace_all_selections_with_text(editor, StrRef(&value, 1u));
+            return;
+        }
+        if (has_extra_cursors(editor) && !editor.flag(EditorFlag::SELECTION_ACTIVE)) {
+            insert_text_at_all_cursors(editor, StrRef(&value, 1u));
+            return;
+        }
         (void)erase_selection(editor);
         char const text[] = {value};
         text_buffer_insert(
@@ -2040,12 +2633,24 @@ namespace code_editor {
     }
 
     auto insert_newline(EditorState& editor) -> void {
+        if (has_extra_cursors(editor) && editor.flag(EditorFlag::SELECTION_ACTIVE)) {
+            replace_all_selections_with_text(editor, "\n");
+            return;
+        }
+        if (has_extra_cursors(editor) && !editor.flag(EditorFlag::SELECTION_ACTIVE)) {
+            insert_newline_at_all_cursors(editor);
+            return;
+        }
         (void)erase_selection(editor);
         text_buffer_insert(editor.text, position_offset(editor, cursor_position(editor)), "\n");
         set_cursor(editor, editor.cursor_line + 1u, 0u);
     }
 
     auto backspace(EditorState& editor) -> void {
+        if (has_extra_cursors(editor) && !editor.flag(EditorFlag::SELECTION_ACTIVE)) {
+            backspace_at_all_cursors(editor);
+            return;
+        }
         if (erase_selection(editor)) {
             return;
         }
@@ -2075,6 +2680,10 @@ namespace code_editor {
     }
 
     auto delete_char(EditorState& editor) -> void {
+        if (has_extra_cursors(editor) && !editor.flag(EditorFlag::SELECTION_ACTIVE)) {
+            delete_char_at_all_cursors(editor);
+            return;
+        }
         if (erase_selection(editor)) {
             return;
         }
@@ -2094,6 +2703,9 @@ namespace code_editor {
     }
 
     auto backspace_word(EditorState& editor) -> void {
+        if (has_extra_cursors(editor)) {
+            clear_extra_cursors(editor);
+        }
         if (erase_selection(editor)) {
             return;
         }
@@ -2103,6 +2715,9 @@ namespace code_editor {
     }
 
     auto delete_word(EditorState& editor) -> void {
+        if (has_extra_cursors(editor)) {
+            clear_extra_cursors(editor);
+        }
         if (erase_selection(editor)) {
             return;
         }
@@ -2112,12 +2727,14 @@ namespace code_editor {
     }
 
     auto delete_line(EditorState& editor) -> void {
+        clear_extra_cursors(editor);
         delete_line_at(editor, editor.cursor_line);
         clamp_cursor(editor);
         clear_selection(editor);
     }
 
     auto open_line(EditorState& editor, size_t line) -> void {
+        clear_extra_cursors(editor);
         size_t const insert_at = std::min(line, editor_line_count(editor));
         insert_line(editor, insert_at, "");
         editor.set_flag(EditorFlag::INSERT_MODE, true);
@@ -3609,7 +4226,68 @@ namespace code_editor {
         editor.selection_mode = mode;
         editor.selection_anchor_line = editor.cursor_line;
         editor.selection_anchor_column = editor.cursor_column;
+        for (size_t index = 0u; index < editor.extra_cursors.size(); ++index) {
+            EditorCursor& cursor = editor.extra_cursors[index];
+            cursor.selection_anchor_line = cursor.line;
+            cursor.selection_anchor_column = cursor.column;
+        }
         editor.set_flag(EditorFlag::SELECTION_ACTIVE, true);
+    }
+
+    auto add_cursor_line(EditorState& editor, int32_t direction) -> void {
+        ArenaTemp temp = begin_thread_temp_arena();
+        EditorCursorEdit* const cursors =
+            arena_alloc<EditorCursorEdit>(*temp.arena(), cursor_edit_count(editor) + 1u);
+        size_t count = collect_cursors(editor, cursors);
+        sort_cursors_by_offset(cursors, count, false);
+
+        size_t const edge = direction > 0 ? count - 1u : 0u;
+        EditorTextPosition const edge_position =
+            text_buffer_offset_to_position(editor.text, cursors[edge].offset);
+        size_t line = edge_position.line;
+        if (direction < 0) {
+            if (line == 0u) {
+                return;
+            }
+            line -= 1u;
+        } else {
+            if (line + 1u >= editor_line_count(editor)) {
+                return;
+            }
+            line += 1u;
+        }
+
+        size_t const preferred = cursors[edge].preferred_column;
+        size_t const column = std::min(preferred, line_size(editor, line));
+        size_t const offset = position_offset(editor, {line, column});
+        for (size_t index = 0u; index < count; ++index) {
+            if (cursors[index].offset == offset) {
+                return;
+            }
+        }
+
+        cursors[count] = {.offset = offset, .preferred_column = preferred};
+        count += 1u;
+        store_cursors(editor, cursors, count, true);
+    }
+
+    [[nodiscard]] auto multi_cursor_key(gui::KeyEvent const& event, int32_t& direction) -> bool {
+        if ((event.mods & (gui::KEY_MOD_CTRL | gui::KEY_MOD_ALT)) !=
+            (gui::KEY_MOD_CTRL | gui::KEY_MOD_ALT)) {
+            return false;
+        }
+        if ((event.mods & gui::KEY_MOD_SUPER) != 0u) {
+            return false;
+        }
+        if (event.key == gui::Key::UP) {
+            direction = -1;
+            return true;
+        }
+        if (event.key == gui::Key::DOWN) {
+            direction = 1;
+            return true;
+        }
+        return false;
     }
 
     [[nodiscard]] auto can_delete_char(EditorState const& editor) -> bool;
@@ -3899,6 +4577,7 @@ namespace code_editor {
         if (editor.flag(EditorFlag::PENDING_G)) {
             editor.set_flag(EditorFlag::PENDING_G, false);
             if (ch == 'g') {
+                clear_extra_cursors(editor);
                 move_cursor_to(editor, {0u, 0u}, visual_selecting(editor));
             } else if (ch == 'd') {
                 request_lsp(editor, LspRequestKind::DEFINITION);
@@ -3951,6 +4630,10 @@ namespace code_editor {
         case ':':
             open_command_line(editor);
             break;
+        case ',':
+            clear_extra_cursors(editor);
+            clear_selection(editor);
+            break;
         case '/':
             open_text_search(editor);
             break;
@@ -3996,11 +4679,21 @@ namespace code_editor {
             );
             break;
         case 'I':
+            if (has_extra_cursors(editor) && !selection.active) {
+                move_all_cursors_line_start(editor, false);
+                enter_insert_at(editor, cursor_position(editor));
+                break;
+            }
             enter_insert_at(
                 editor, {selection.active ? selection.start_line : editor.cursor_line, 0u}
             );
             break;
         case 'a':
+            if (has_extra_cursors(editor) && !selection.active) {
+                move_all_cursors_by(editor, next_position, false);
+                enter_insert_at(editor, cursor_position(editor));
+                break;
+            }
             enter_insert_at(
                 editor,
                 selection.active
@@ -4014,10 +4707,18 @@ namespace code_editor {
             );
             break;
         case 'A': {
+            if (has_extra_cursors(editor) && !selection.active) {
+                move_all_cursors_line_end(editor, false);
+                enter_insert_at(editor, cursor_position(editor));
+                break;
+            }
             size_t const line =
                 selection.active ? selection_last_line(editor, selection) : editor.cursor_line;
             enter_insert_at(editor, {line, line_size(editor, line)});
         } break;
+        case 'C':
+            add_cursor_line(editor, 1);
+            break;
         case 'o':
             save_editor_undo(editor);
             open_line(
@@ -4076,12 +4777,20 @@ namespace code_editor {
             delete_char(editor);
             break;
         case '0':
-            move_cursor_to(editor, {editor.cursor_line, 0u}, select);
+            if (has_extra_cursors(editor)) {
+                move_all_cursors_line_start(editor, select);
+            } else {
+                move_cursor_to(editor, {editor.cursor_line, 0u}, select);
+            }
             break;
         case '$':
-            move_cursor_to(
-                editor, {editor.cursor_line, line_size(editor, editor.cursor_line)}, select
-            );
+            if (has_extra_cursors(editor)) {
+                move_all_cursors_line_end(editor, select);
+            } else {
+                move_cursor_to(
+                    editor, {editor.cursor_line, line_size(editor, editor.cursor_line)}, select
+                );
+            }
             break;
         case 'w':
             move_word_right(editor, select);
@@ -4108,6 +4817,7 @@ namespace code_editor {
             editor.set_flag(EditorFlag::PENDING_Z, true);
             break;
         case 'G':
+            clear_extra_cursors(editor);
             if (has_line_number) {
                 move_cursor_to(
                     editor, {std::min(line_number, editor_line_count(editor)) - 1u, 0u}, select
@@ -4144,15 +4854,35 @@ namespace code_editor {
     }
 
     [[nodiscard]] auto can_backspace(EditorState const& editor) -> bool {
-        return editor.flag(EditorFlag::SELECTION_ACTIVE) || editor.cursor_column != 0u ||
-               editor.cursor_line != 0u;
+        if (editor.flag(EditorFlag::SELECTION_ACTIVE) || editor.cursor_column != 0u ||
+            editor.cursor_line != 0u) {
+            return true;
+        }
+        for (size_t index = 0u; index < editor.extra_cursors.size(); ++index) {
+            if (editor.extra_cursors[index].column != 0u ||
+                editor.extra_cursors[index].line != 0u) {
+                return true;
+            }
+        }
+        return false;
     }
 
     [[nodiscard]] auto can_delete_char(EditorState const& editor) -> bool {
-        return editor.flag(EditorFlag::SELECTION_ACTIVE) ||
-               editor.cursor_column < line_size(editor, editor.cursor_line) ||
-               (editor.cursor_column == line_size(editor, editor.cursor_line) &&
-                line_has_trailing_newline(editor, editor.cursor_line));
+        if (editor.flag(EditorFlag::SELECTION_ACTIVE) ||
+            editor.cursor_column < line_size(editor, editor.cursor_line) ||
+            (editor.cursor_column == line_size(editor, editor.cursor_line) &&
+             line_has_trailing_newline(editor, editor.cursor_line))) {
+            return true;
+        }
+        for (size_t index = 0u; index < editor.extra_cursors.size(); ++index) {
+            EditorCursor const cursor = editor.extra_cursors[index];
+            if (cursor.column < line_size(editor, cursor.line) ||
+                (cursor.column == line_size(editor, cursor.line) &&
+                 line_has_trailing_newline(editor, cursor.line))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     [[nodiscard]] auto can_backspace_word(EditorState const& editor) -> bool {
@@ -4325,6 +5055,7 @@ namespace code_editor {
     auto set_lsp_completion_selection(EditorState& editor, LspRange range, bool select) -> void {
         EditorPosition const start = lsp_clamped_position(editor, range.start);
         EditorPosition const end = lsp_clamped_position(editor, range.end);
+        clear_extra_cursors(editor);
         editor.selection_anchor_line = start.line;
         editor.selection_anchor_column = start.column;
         editor.cursor_line = end.line;
@@ -4770,11 +5501,34 @@ namespace code_editor {
             move_vertical(editor, 1, select);
             return true;
         case gui::Key::HOME:
+            if (has_extra_cursors(editor) && !word) {
+                move_all_cursors_line_start(editor, select);
+                return true;
+            }
+            if (!select && has_extra_cursors(editor)) {
+                if (word) {
+                    clear_extra_cursors(editor);
+                    move_cursor_to(editor, {}, false);
+                }
+                return true;
+            }
             move_cursor_to(
                 editor, word ? EditorPosition{} : EditorPosition{editor.cursor_line, 0u}, select
             );
             return true;
         case gui::Key::END:
+            if (has_extra_cursors(editor) && !word) {
+                move_all_cursors_line_end(editor, select);
+                return true;
+            }
+            if (!select && has_extra_cursors(editor)) {
+                if (word) {
+                    clear_extra_cursors(editor);
+                    size_t const line = editor_line_count(editor) - 1u;
+                    move_cursor_to(editor, {line, line_size(editor, line)}, false);
+                }
+                return true;
+            }
             if (word) {
                 size_t const line = editor_line_count(editor) - 1u;
                 move_cursor_to(editor, {line, line_size(editor, line)}, select);
@@ -4796,6 +5550,8 @@ namespace code_editor {
             return;
         }
         if (event.key == gui::Key::ESCAPE) {
+            bool const collapse_extra_cursors =
+                !editor.flag(EditorFlag::INSERT_MODE) && !editor.flag(EditorFlag::SELECTION_ACTIVE);
             if (focused_pane_kind(editor) == EditorPaneKind::FILESYSTEM &&
                 tree_edit_active(editor)) {
                 cancel_tree_edit(editor);
@@ -4811,6 +5567,9 @@ namespace code_editor {
             clear_pending_line_number(editor);
             clamp_cursor(editor);
             clear_selection(editor);
+            if (collapse_extra_cursors) {
+                clear_extra_cursors(editor);
+            }
             return;
         }
         if (font_zoom_key(event)) {
@@ -4910,6 +5669,11 @@ namespace code_editor {
             default:
                 break;
             }
+            return;
+        }
+        int32_t multi_cursor_direction = 0;
+        if (multi_cursor_key(event, multi_cursor_direction)) {
+            add_cursor_line(editor, multi_cursor_direction);
             return;
         }
         if (shortcut_key(event, gui::Key::SPACE)) {
@@ -5172,7 +5936,65 @@ namespace code_editor {
         return clamp_position(editor, {line, column});
     }
 
+    auto set_multi_cursor_range(EditorState& editor, EditorPosition focus) -> void {
+        focus = clamp_position(editor, focus);
+        size_t const focus_line = focus.line;
+        size_t const first = std::min(editor.multi_cursor_anchor_line, focus_line);
+        size_t const last = std::max(editor.multi_cursor_anchor_line, focus_line);
+
+        ArenaTemp temp = begin_thread_temp_arena();
+        EditorCursorEdit* const cursors =
+            arena_alloc<EditorCursorEdit>(*temp.arena(), last - first + 1u);
+        size_t count = 1u;
+        cursors[0u] = {
+            .offset = position_offset(editor, focus),
+            .anchor_offset = position_offset(
+                editor,
+                {
+                    focus_line,
+                    std::min(editor.multi_cursor_anchor_column, line_size(editor, focus_line)),
+                }
+            ),
+            .preferred_column = focus.column,
+            .primary = true,
+        };
+        for (size_t line = first; line <= last; ++line) {
+            if (line == focus_line) {
+                continue;
+            }
+            size_t const column = std::min(focus.column, line_size(editor, line));
+            cursors[count] = {
+                .offset = position_offset(editor, {line, column}),
+                .anchor_offset = position_offset(
+                    editor,
+                    {line, std::min(editor.multi_cursor_anchor_column, line_size(editor, line))}
+                ),
+                .preferred_column = focus.column,
+            };
+            count += 1u;
+        }
+        editor.selection_mode = EditorSelectionMode::NONE;
+        store_cursors(editor, cursors, count, false);
+    }
+
+    auto begin_multi_cursor_from_mouse(
+        EditorState& editor, gui::Rect rect, gui::Vec2 mouse, float char_width
+    ) -> void {
+        EditorPosition const position = position_from_mouse(editor, rect, mouse, char_width);
+        editor.multi_cursor_anchor_line = position.line;
+        editor.multi_cursor_anchor_column = position.column;
+        set_multi_cursor_range(editor, position);
+    }
+
+    auto update_multi_cursor_from_mouse(
+        EditorState& editor, gui::Rect rect, gui::Vec2 mouse, float char_width
+    ) -> void {
+        EditorPosition const position = position_from_mouse(editor, rect, mouse, char_width);
+        set_multi_cursor_range(editor, position);
+    }
+
     auto select_range(EditorState& editor, EditorPosition start, EditorPosition end) -> void {
+        clear_extra_cursors(editor);
         start = clamp_position(editor, start);
         end = clamp_position(editor, end);
         editor.selection_anchor_line = start.line;
@@ -5216,6 +6038,7 @@ namespace code_editor {
     auto update_cursor_from_mouse(
         EditorState& editor, gui::Rect rect, gui::Vec2 mouse, float char_width, bool select
     ) -> void {
+        clear_extra_cursors(editor);
         move_cursor_to(editor, position_from_mouse(editor, rect, mouse, char_width), select);
     }
 
@@ -5229,6 +6052,7 @@ namespace code_editor {
             )) {
             select_range(editor, start, end);
         } else {
+            clear_extra_cursors(editor);
             move_cursor_to(editor, position_from_mouse(editor, rect, mouse, char_width), false);
         }
     }
@@ -5265,6 +6089,10 @@ namespace code_editor {
         hash = hash_text(hash, pane.text);
         hash = hash_bytes(hash, &pane.cursor_line, sizeof(pane.cursor_line));
         hash = hash_bytes(hash, &pane.cursor_column, sizeof(pane.cursor_column));
+        size_t const extra_cursor_count = pane.extra_cursors.size();
+        hash = hash_bytes(hash, &extra_cursor_count, sizeof(extra_cursor_count));
+        hash =
+            hash_bytes(hash, pane.extra_cursors.data(), extra_cursor_count * sizeof(EditorCursor));
         hash = hash_bytes(hash, &pane.selection_anchor_line, sizeof(pane.selection_anchor_line));
         hash =
             hash_bytes(hash, &pane.selection_anchor_column, sizeof(pane.selection_anchor_column));
@@ -5295,6 +6123,11 @@ namespace code_editor {
         hash = hash_text(hash, editor.text);
         hash = hash_bytes(hash, &editor.cursor_line, sizeof(editor.cursor_line));
         hash = hash_bytes(hash, &editor.cursor_column, sizeof(editor.cursor_column));
+        size_t const extra_cursor_count = editor.extra_cursors.size();
+        hash = hash_bytes(hash, &extra_cursor_count, sizeof(extra_cursor_count));
+        hash = hash_bytes(
+            hash, editor.extra_cursors.data(), extra_cursor_count * sizeof(EditorCursor)
+        );
         hash =
             hash_bytes(hash, &editor.selection_anchor_line, sizeof(editor.selection_anchor_line));
         hash = hash_bytes(
@@ -5415,6 +6248,11 @@ namespace code_editor {
             hash = hash_bytes(hash, &file.cursor_line, sizeof(file.cursor_line));
             hash = hash_bytes(hash, &file.cursor_column, sizeof(file.cursor_column));
             hash = hash_bytes(hash, &file.preferred_column, sizeof(file.preferred_column));
+            size_t const file_extra_cursor_count = file.extra_cursors.size();
+            hash = hash_bytes(hash, &file_extra_cursor_count, sizeof(file_extra_cursor_count));
+            hash = hash_bytes(
+                hash, file.extra_cursors.data(), file_extra_cursor_count * sizeof(EditorCursor)
+            );
             hash =
                 hash_bytes(hash, &file.selection_anchor_line, sizeof(file.selection_anchor_line));
             hash = hash_bytes(

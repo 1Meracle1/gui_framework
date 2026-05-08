@@ -413,7 +413,8 @@ namespace code_editor {
             BASE_UNUSED(next.write_bytes(buffer.data(), start));
             BASE_UNUSED(next.write_string(edit.new_text));
             BASE_UNUSED(next.write_bytes(buffer.data() + end, buffer.size() - end));
-            buffer = std::move(next);
+            buffer = next;
+            next = {};
         }
 
         return arena_copy_str(arena, buffer.str());

@@ -8,7 +8,6 @@
 #include <base/string_buffer.h>
 #include <base/unicode.h>
 #include <cstring>
-#include <utility>
 
 namespace code_editor {
 
@@ -281,7 +280,8 @@ namespace code_editor {
             io.bytes.clear();
             io.offset = 0u;
             if (!io.backlog.empty()) {
-                io.bytes = std::move(io.backlog);
+                io.bytes = io.backlog;
+                io.backlog = {};
                 BASE_UNUSED(io.backlog.init(4096u, client.arena.resource()));
             }
         }
@@ -568,18 +568,18 @@ namespace code_editor {
         close_handle(client.stdout_io.event);
         close_handle(client.stderr_io.event);
         terminate_process(client);
-        client.stdin_io.bytes.destroy();
-        client.stdin_io.backlog.destroy();
-        client.pending.destroy();
-        client.diagnostics.destroy();
-        client.completions.destroy();
-        client.locations.destroy();
-        client.code_actions.destroy();
-        client.symbols.destroy();
-        client.text_edits.destroy();
-        client.semantic_tokens.destroy();
-        client.semantic_token_types.destroy();
-        client.framer.bytes.destroy();
+        client.stdin_io.bytes = {};
+        client.stdin_io.backlog = {};
+        client.pending = {};
+        client.diagnostics = {};
+        client.completions = {};
+        client.locations = {};
+        client.code_actions = {};
+        client.symbols = {};
+        client.text_edits = {};
+        client.semantic_tokens = {};
+        client.semantic_token_types = {};
+        client.framer.bytes = {};
         client.result_arena.destroy();
         client.message_arena.destroy();
         client.document_arena.destroy();

@@ -10,7 +10,6 @@
 #include <cstring>
 #include <initializer_list>
 #include <limits>
-#include <memory_resource>
 #include <type_traits>
 #include <utility>
 
@@ -194,10 +193,6 @@ namespace hash_map_detail {
         return hash != 0u && (hash & TOMBSTONE_MASK) == 0u;
     }
 
-    [[nodiscard]] inline auto default_memory_resource() -> MemoryResource* {
-        return std::pmr::get_default_resource();
-    }
-
 } // namespace hash_map_detail
 
 template <typename T> struct HashMapDefaultHasher {
@@ -216,8 +211,10 @@ template <typename T> struct HashMapDefaultHasher {
 
             return hash_map_detail::hash_bytes(&key, sizeof(key), seed);
         } else {
-            static_assert(std::is_trivially_copyable_v<Key>,
-                          "HashMapDefaultHasher requires a trivially copyable key type");
+            static_assert(
+                std::is_trivially_copyable_v<Key>,
+                "HashMapDefaultHasher requires a trivially copyable key type"
+            );
             return hash_map_detail::hash_bytes(&key, sizeof(key), seed);
         }
     }
@@ -235,10 +232,11 @@ template <typename T> struct HashMapDefaultEqual {
     }
 };
 
-template <typename Key,
-          typename Value,
-          typename Hasher = HashMapDefaultHasher<Key>,
-          typename KeyEqual = HashMapDefaultEqual<Key>>
+template <
+    typename Key,
+    typename Value,
+    typename Hasher = HashMapDefaultHasher<Key>,
+    typename KeyEqual = HashMapDefaultEqual<Key>>
 class HashMap final {
   public:
     struct Entry {
@@ -370,32 +368,17 @@ class HashMap final {
 
     HashMap() = default;
     explicit HashMap(MemoryResource* resource) : m_resource(resource) {}
-    HashMap(Hasher hasher, KeyEqual equal, MemoryResource* resource = nullptr)
+    HashMap(Hasher hasher, KeyEqual equal, MemoryResource* resource)
         : m_hasher(std::move(hasher)), m_equal(std::move(equal)), m_resource(resource) {}
-    ~HashMap() {
-        destroy();
-    }
 
-    HashMap(HashMap&& other) {
-        move_from(other);
-    }
-
-    HashMap(HashMap const&) = delete;
-
-    auto operator=(HashMap&& other) -> HashMap& {
-        if (this != &other) {
-            destroy();
-            move_from(other);
+    [[nodiscard]] auto init(size_t capacity, MemoryResource* resource) -> bool {
+        m_data = 0u;
+        m_len = 0u;
+        DEBUG_ASSERT(resource != nullptr);
+        if (resource == nullptr) {
+            return false;
         }
-
-        return *this;
-    }
-
-    auto operator=(HashMap const&) -> HashMap& = delete;
-
-    [[nodiscard]] auto init(size_t capacity = 0u, MemoryResource* resource = nullptr) -> bool {
-        destroy();
-        m_resource = resource != nullptr ? resource : hash_map_detail::default_memory_resource();
+        m_resource = resource;
 
         if (capacity == 0u) {
             return true;
@@ -404,8 +387,29 @@ class HashMap final {
         return reserve(capacity);
     }
 
-    [[nodiscard]] auto init(std::initializer_list<Pair> pairs, MemoryResource* resource = nullptr)
-        -> bool {
+    [[nodiscard]] auto copy_from(HashMap const& other, MemoryResource* resource) -> bool {
+        if (this == &other) {
+            return true;
+        }
+
+        m_data = 0u;
+        m_len = 0u;
+        m_resource = nullptr;
+        m_hasher = other.m_hasher;
+        m_equal = other.m_equal;
+
+        if (!init(other.m_len, resource)) {
+            return false;
+        }
+        for (ConstEntry entry : other) {
+            if (set(*entry.key, *entry.value) == nullptr) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    [[nodiscard]] auto init(std::initializer_list<Pair> pairs, MemoryResource* resource) -> bool {
         if (!init(pairs.size(), resource)) {
             return false;
         }
@@ -415,15 +419,6 @@ class HashMap final {
             }
         }
         return true;
-    }
-
-    auto destroy() -> void {
-        if (m_data != 0u) {
-            free_data(m_data);
-        }
-        m_data = 0u;
-        m_len = 0u;
-        m_resource = nullptr;
     }
 
     auto clear() -> void {
@@ -458,7 +453,7 @@ class HashMap final {
         }
 
         if (m_data != 0u) {
-            HashMap resized(std::move(m_hasher), std::move(m_equal), m_resource);
+            HashMap resized(m_hasher, m_equal, m_resource);
             resized.m_data = resized_data;
 
             size_t remaining = m_len;
@@ -476,11 +471,7 @@ class HashMap final {
                 remaining -= 1u;
             }
 
-            free_data(m_data);
             m_data = resized.m_data;
-            m_hasher = std::move(resized.m_hasher);
-            m_equal = std::move(resized.m_equal);
-            resized.m_data = 0u;
         } else {
             m_data = resized_data;
         }
@@ -636,14 +627,26 @@ class HashMap final {
   private:
     static_assert(!std::is_const_v<Key>, "HashMap key type must not be const");
     static_assert(!std::is_const_v<Value>, "HashMap value type must not be const");
-    static_assert(std::is_trivially_copyable_v<Key>,
-                  "HashMap stores keys with Odin-style byte copies");
-    static_assert(std::is_trivially_copyable_v<Value>,
-                  "HashMap stores values with Odin-style byte copies");
-    static_assert(hash_map_detail::HAS_ODIN_CELL_ALIGNMENT<Key>,
-                  "HashMap key alignment must fit within a map cache line");
-    static_assert(hash_map_detail::HAS_ODIN_CELL_ALIGNMENT<Value>,
-                  "HashMap value alignment must fit within a map cache line");
+    static_assert(
+        std::is_trivially_copyable_v<Key>, "HashMap stores keys with Odin-style byte copies"
+    );
+    static_assert(
+        std::is_trivially_copyable_v<Value>, "HashMap stores values with Odin-style byte copies"
+    );
+    static_assert(
+        hash_map_detail::HAS_ODIN_CELL_ALIGNMENT<Key>,
+        "HashMap key alignment must fit within a map cache line"
+    );
+    static_assert(
+        hash_map_detail::HAS_ODIN_CELL_ALIGNMENT<Value>,
+        "HashMap value alignment must fit within a map cache line"
+    );
+    static_assert(
+        std::is_trivially_copyable_v<Hasher>, "HashMap hasher type must be trivially copyable"
+    );
+    static_assert(
+        std::is_trivially_copyable_v<KeyEqual>, "HashMap equality type must be trivially copyable"
+    );
 
     [[nodiscard]] auto log2_cap() const -> size_t {
         return static_cast<size_t>(m_data & hash_map_detail::DATA_TAG_MASK);
@@ -689,8 +692,9 @@ class HashMap final {
 
         if (!hash_map_detail::cell_storage_size<Key>(map_capacity, &key_size) ||
             !hash_map_detail::cell_storage_size<Value>(map_capacity, &value_size) ||
-            !hash_map_detail::cell_storage_size<hash_map_detail::MapHash>(map_capacity,
-                                                                          &hash_size) ||
+            !hash_map_detail::cell_storage_size<hash_map_detail::MapHash>(
+                map_capacity, &hash_size
+            ) ||
             hash_map_detail::add_overflows(key_size, value_size, key_value_size)) {
             return false;
         }
@@ -792,6 +796,11 @@ class HashMap final {
             return false;
         }
 
+        DEBUG_ASSERT(m_resource != nullptr);
+        if (m_resource == nullptr) {
+            return false;
+        }
+
         void* const data =
             m_resource->allocate(allocation_size, hash_map_detail::MAP_CACHE_LINE_SIZE);
         uintptr_t const data_address = reinterpret_cast<uintptr_t>(data);
@@ -811,20 +820,6 @@ class HashMap final {
         std::memset(hashes(), 0, map_capacity * sizeof(hash_map_detail::MapHash));
         m_data = old_data;
         return true;
-    }
-
-    auto free_data(uintptr_t tagged_data) -> void {
-        if (tagged_data == 0u) {
-            return;
-        }
-
-        size_t const old_log2 = static_cast<size_t>(tagged_data & hash_map_detail::DATA_TAG_MASK);
-        size_t const old_capacity = size_t{1u} << old_log2;
-        size_t allocation_size = 0u;
-        BASE_UNUSED(total_allocation_size(old_capacity, allocation_size));
-
-        void* const data = std::bit_cast<void*>(tagged_data & ~hash_map_detail::DATA_TAG_MASK);
-        m_resource->deallocate(data, allocation_size, hash_map_detail::MAP_CACHE_LINE_SIZE);
     }
 
     [[nodiscard]] auto check_grow() -> bool {
@@ -879,9 +874,9 @@ class HashMap final {
         }
     }
 
-    [[nodiscard]] auto insert_hash_with_key(hash_map_detail::MapHash hash,
-                                            Key const* inserted_key,
-                                            Value const* inserted_value) -> Entry {
+    [[nodiscard]] auto insert_hash_with_key(
+        hash_map_detail::MapHash hash, Key const* inserted_key, Value const* inserted_value
+    ) -> Entry {
         hash_map_detail::MapHash moving_hash = hash;
         size_t position = desired_position(hash);
         size_t distance = 0u;
@@ -1049,19 +1044,6 @@ class HashMap final {
         }
     }
 
-    auto move_from(HashMap& other) -> void {
-        m_data = other.m_data;
-        m_len = other.m_len;
-        m_resource = other.m_resource;
-        m_hasher = std::move(other.m_hasher);
-        m_equal = std::move(other.m_equal);
-
-        other.m_data = 0u;
-        other.m_len = 0u;
-        other.m_resource = nullptr;
-    }
-
-  private:
     uintptr_t m_data = 0u;
     size_t m_len = 0u;
     MemoryResource* m_resource = nullptr;

@@ -310,7 +310,7 @@ namespace {
         code_editor::text_buffer_erase(text, 1u, 2u);
 
         code_editor::EditorText clone = {};
-        code_editor::text_buffer_clone(text, clone);
+        code_editor::text_buffer_clone(text, clone, arena);
         code_editor::text_buffer_insert(text, 0u, "S");
         code_editor::text_buffer_insert(clone, code_editor::text_buffer_size(clone), "T");
 
@@ -454,6 +454,213 @@ namespace {
 
         TEST_EXPECT(context, code_editor::editor_line_count(editor) == 131u);
         TEST_EXPECT(context, editor.cursor_line == 130u);
+    }
+
+    TEST_CASE(editor_ctrl_alt_down_adds_cursor_for_insert_text) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "aa\nbb\ncc");
+        editor.cursor_column = 2u;
+        editor.preferred_column = 2u;
+
+        press_key(editor, gui::Key::DOWN, gui::KEY_MOD_CTRL | gui::KEY_MOD_ALT);
+        editor.set_flag(EditorFlag::INSERT_MODE, true);
+        send_text(editor, "X");
+
+        TEST_EXPECT(context, editor.extra_cursors.size() == 1u);
+        TEST_EXPECT(context, editor.cursor_line == 0u);
+        TEST_EXPECT(context, editor.cursor_column == 3u);
+        TEST_EXPECT(context, editor.extra_cursors[0u].line == 1u);
+        TEST_EXPECT(context, editor.extra_cursors[0u].column == 3u);
+        TEST_EXPECT(context, code_editor::text_buffer_copy(editor.text, arena) == "aaX\nbbX\ncc");
+    }
+
+    TEST_CASE(editor_multi_cursor_backspace_updates_all_cursors) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "aaX\nbbX\ncc");
+        editor.cursor_line = 0u;
+        editor.cursor_column = 3u;
+        editor.preferred_column = 3u;
+        press_key(editor, gui::Key::DOWN, gui::KEY_MOD_CTRL | gui::KEY_MOD_ALT);
+        editor.set_flag(EditorFlag::INSERT_MODE, true);
+
+        press_key(editor, gui::Key::BACKSPACE);
+
+        TEST_EXPECT(context, code_editor::text_buffer_copy(editor.text, arena) == "aa\nbb\ncc");
+        TEST_EXPECT(context, editor.cursor_column == 2u);
+        TEST_EXPECT(context, editor.extra_cursors.size() == 1u);
+        TEST_EXPECT(context, editor.extra_cursors[0u].line == 1u);
+        TEST_EXPECT(context, editor.extra_cursors[0u].column == 2u);
+    }
+
+    TEST_CASE(editor_multi_cursor_count_is_not_capped_at_old_fixed_limit) {
+        Arena arena = {};
+        arena.init();
+
+        StringBuffer text = {};
+        TEST_EXPECT(context, text.init(512u, arena.resource()));
+        StringBuffer expected = {};
+        TEST_EXPECT(context, expected.init(512u, arena.resource()));
+        for (size_t line = 0u; line < 81u; ++line) {
+            TEST_EXPECT(context, text.write_byte('x') == 1u);
+            TEST_EXPECT(context, expected.write_string("x!") == 2u);
+            if (line + 1u < 81u) {
+                TEST_EXPECT(context, text.write_byte('\n') == 1u);
+                TEST_EXPECT(context, expected.write_byte('\n') == 1u);
+            }
+        }
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, text.str());
+        editor.cursor_column = 1u;
+        editor.preferred_column = 1u;
+        for (size_t index = 0u; index < 80u; ++index) {
+            press_key(editor, gui::Key::DOWN, gui::KEY_MOD_CTRL | gui::KEY_MOD_ALT);
+        }
+        editor.set_flag(EditorFlag::INSERT_MODE, true);
+        send_text(editor, "!");
+
+        TEST_EXPECT(context, editor.extra_cursors.size() == 80u);
+        TEST_EXPECT(context, code_editor::text_buffer_copy(editor.text, arena) == expected.str());
+    }
+
+    TEST_CASE(editor_middle_drag_builds_line_cursors) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "aa\nbb\ncc");
+        gui::Rect const rect = {{0.0f, 0.0f}, {260.0f, 120.0f}};
+        float constexpr CHAR_WIDTH = 10.0f;
+        float const text_x = code_editor::editor_text_x(editor, rect);
+        float const content_y = code_editor::editor_content_rect(rect).min.y;
+        float const line_height = code_editor::editor_line_height(editor);
+
+        code_editor::begin_multi_cursor_from_mouse(
+            editor, rect, {text_x + CHAR_WIDTH * 2.0f, content_y + 1.0f}, CHAR_WIDTH
+        );
+        code_editor::update_multi_cursor_from_mouse(
+            editor, rect, {text_x + CHAR_WIDTH * 2.0f, content_y + line_height * 2.0f}, CHAR_WIDTH
+        );
+        editor.set_flag(EditorFlag::INSERT_MODE, true);
+        send_text(editor, "!");
+
+        TEST_EXPECT(context, editor.extra_cursors.size() == 2u);
+        TEST_EXPECT(context, code_editor::text_buffer_copy(editor.text, arena) == "aa!\nbb!\ncc!");
+    }
+
+    TEST_CASE(editor_middle_drag_selects_columns_on_each_line) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "abcd\nefgh\nijkl");
+        gui::Rect const rect = {{0.0f, 0.0f}, {260.0f, 120.0f}};
+        float constexpr CHAR_WIDTH = 10.0f;
+        float const text_x = code_editor::editor_text_x(editor, rect);
+        float const content_y = code_editor::editor_content_rect(rect).min.y;
+        float const line_height = code_editor::editor_line_height(editor);
+
+        code_editor::begin_multi_cursor_from_mouse(
+            editor, rect, {text_x + CHAR_WIDTH, content_y + 1.0f}, CHAR_WIDTH
+        );
+        code_editor::update_multi_cursor_from_mouse(
+            editor, rect, {text_x + CHAR_WIDTH * 3.0f, content_y + line_height * 2.0f}, CHAR_WIDTH
+        );
+        editor.set_flag(EditorFlag::INSERT_MODE, true);
+        send_text(editor, "X");
+
+        TEST_EXPECT(context, editor.extra_cursors.size() == 2u);
+        TEST_EXPECT(context, code_editor::text_buffer_copy(editor.text, arena) == "aXd\neXh\niXl");
+    }
+
+    TEST_CASE(editor_multi_cursor_visual_selects_and_deletes) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "abc\ndef");
+
+        press_key(editor, gui::Key::DOWN, gui::KEY_MOD_CTRL | gui::KEY_MOD_ALT);
+        send_text(editor, "v");
+        send_text(editor, "l");
+        send_text(editor, "x");
+
+        TEST_EXPECT(context, editor.extra_cursors.size() == 1u);
+        TEST_EXPECT(context, editor.cursor_line == 0u);
+        TEST_EXPECT(context, editor.cursor_column == 0u);
+        TEST_EXPECT(context, editor.extra_cursors[0u].line == 1u);
+        TEST_EXPECT(context, editor.extra_cursors[0u].column == 0u);
+        TEST_EXPECT(context, code_editor::text_buffer_copy(editor.text, arena) == "c\nf");
+    }
+
+    TEST_CASE(editor_multi_cursor_visual_zero_and_dollar_move_all_cursors) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "abcd\nefgh");
+        editor.cursor_column = 2u;
+        editor.preferred_column = 2u;
+
+        press_key(editor, gui::Key::DOWN, gui::KEY_MOD_CTRL | gui::KEY_MOD_ALT);
+        send_text(editor, "v");
+        send_text(editor, "0");
+
+        TEST_EXPECT(context, editor.cursor_column == 0u);
+        TEST_EXPECT(context, editor.extra_cursors.size() == 1u);
+        TEST_EXPECT(context, editor.extra_cursors[0u].column == 0u);
+
+        send_text(editor, "$");
+
+        code_editor::EditorSelectionRange const extra_selection =
+            code_editor::editor_extra_selection_range(editor, 0u);
+        TEST_EXPECT(context, editor.cursor_column == 4u);
+        TEST_EXPECT(context, editor.extra_cursors[0u].column == 4u);
+        TEST_EXPECT(context, extra_selection.active);
+        TEST_EXPECT(context, extra_selection.start_line == 1u);
+        TEST_EXPECT(context, extra_selection.start_column == 2u);
+        TEST_EXPECT(context, extra_selection.end_line == 1u);
+        TEST_EXPECT(context, extra_selection.end_column == 4u);
+    }
+
+    TEST_CASE(editor_comma_clears_extra_cursors) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "aa\nbb");
+
+        press_key(editor, gui::Key::DOWN, gui::KEY_MOD_CTRL | gui::KEY_MOD_ALT);
+        send_text(editor, ",");
+
+        TEST_EXPECT(context, editor.extra_cursors.empty());
+        TEST_EXPECT(context, !editor.flag(EditorFlag::SELECTION_ACTIVE));
+        TEST_EXPECT(context, code_editor::text_buffer_copy(editor.text, arena) == "aa\nbb");
+    }
+
+    TEST_CASE(editor_escape_collapses_extra_cursors_from_normal_mode) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "aa\nbb");
+
+        press_key(editor, gui::Key::DOWN, gui::KEY_MOD_CTRL | gui::KEY_MOD_ALT);
+        editor.set_flag(EditorFlag::INSERT_MODE, true);
+        press_key(editor, gui::Key::ESCAPE);
+
+        TEST_EXPECT(context, editor.extra_cursors.size() == 1u);
+        TEST_EXPECT(context, !editor.flag(EditorFlag::INSERT_MODE));
+
+        press_key(editor, gui::Key::ESCAPE);
+
+        TEST_EXPECT(context, editor.extra_cursors.empty());
     }
 
     TEST_CASE(editor_backspace_joins_long_lines) {

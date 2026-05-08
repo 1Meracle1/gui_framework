@@ -461,9 +461,10 @@ namespace code_editor {
         text.revision += 1u;
     }
 
-    auto text_buffer_clone(EditorText const& source, EditorText& target) -> void {
+    auto text_buffer_clone(EditorText const& source, EditorText& target, Arena& arena) -> void {
         DEBUG_ASSERT(source.arena != nullptr);
-        text_buffer_init(target, *source.arena);
+        target = {};
+        text_buffer_init(target, arena);
         copy_storage(source.original, target.original);
         copy_storage(source.added, target.added);
         target.root = clone_tree(target, source.root);

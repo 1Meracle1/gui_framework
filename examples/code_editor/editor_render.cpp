@@ -33,6 +33,7 @@ namespace code_editor {
     inline constexpr float EDITOR_SPLIT_GAP = 6.0f;
     inline constexpr float EDITOR_SPLIT_MIN_RATIO = 0.08f;
     inline constexpr float EDITOR_SPLIT_MAX_RATIO = 0.92f;
+
     inline constexpr float OPEN_TAB_HEIGHT = 28.0f;
     inline constexpr float OPEN_TAB_GAP = 6.0f;
     inline constexpr float OPEN_TAB_HEADER_PADDING = 6.0f;
@@ -350,6 +351,10 @@ namespace code_editor {
         file->cursor_line = editor.cursor_line;
         file->cursor_column = editor.cursor_column;
         file->preferred_column = editor.preferred_column;
+        bool const cursors_ok =
+            file->extra_cursors.copy_from(editor.extra_cursors, editor.arena->resource());
+        DEBUG_ASSERT(cursors_ok);
+        (void)cursors_ok;
         file->selection_anchor_line = editor.selection_anchor_line;
         file->selection_anchor_column = editor.selection_anchor_column;
         file->selection_mode = editor.selection_mode;
@@ -374,6 +379,10 @@ namespace code_editor {
         editor.cursor_line = file.cursor_line;
         editor.cursor_column = file.cursor_column;
         editor.preferred_column = file.preferred_column;
+        bool const cursors_ok =
+            editor.extra_cursors.copy_from(file.extra_cursors, editor.arena->resource());
+        DEBUG_ASSERT(cursors_ok);
+        (void)cursors_ok;
         editor.selection_anchor_line = file.selection_anchor_line;
         editor.selection_anchor_column = file.selection_anchor_column;
         editor.selection_mode = file.selection_mode;
@@ -499,6 +508,7 @@ namespace code_editor {
         pane.cursor_line = 0u;
         pane.cursor_column = 0u;
         pane.preferred_column = 0u;
+        pane.extra_cursors.clear();
         pane.selection_anchor_line = 0u;
         pane.selection_anchor_column = 0u;
         pane.selection_mode = EditorSelectionMode::NONE;
@@ -508,6 +518,8 @@ namespace code_editor {
         pane.selection_active = false;
         pane.mouse_selecting = false;
         pane.mouse_was_down = false;
+        pane.multi_cursor_dragging = false;
+        pane.middle_mouse_was_down = false;
         pane.dirty = false;
         pane.external_change_pending = false;
         pane.file_deleted_on_disk = false;
@@ -529,7 +541,7 @@ namespace code_editor {
                 )) {
                 continue;
             }
-            text_buffer_clone(editor.text, pane->text);
+            text_buffer_clone(editor.text, pane->text, *editor.arena);
             pane->scratch_text = editor.scratch_text;
             pane->saved_text = editor.saved_text;
             pane->undo_stack = editor.undo_stack;
@@ -824,6 +836,7 @@ namespace code_editor {
             file.cursor_line = 0u;
             file.cursor_column = 0u;
             file.preferred_column = 0u;
+            file.extra_cursors.clear();
             file.selection_anchor_line = 0u;
             file.selection_anchor_column = 0u;
             file.selection_mode = EditorSelectionMode::NONE;
@@ -1400,6 +1413,68 @@ namespace code_editor {
         return line + 1u < editor_line_count(editor) ? line_size : line_size - 1u;
     }
 
+    [[nodiscard]] auto editor_has_cursor_on_line(EditorState const& editor, size_t line) -> bool {
+        if (editor.cursor_line == line) {
+            return true;
+        }
+        for (size_t index = 0u; index < editor.extra_cursors.size(); ++index) {
+            if (editor.extra_cursors[index].line == line) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    auto draw_editor_block_cursor(
+        draw::Context context,
+        EditorState const& editor,
+        Palette const& palette,
+        size_t line,
+        size_t line_size,
+        size_t column,
+        float text_x,
+        float y,
+        float line_height,
+        float char_width
+    ) -> void {
+        size_t const cursor_column = draw_cursor_column(editor, line, line_size, column);
+        float const cursor_x0 = std::round(text_x + char_width * static_cast<float>(cursor_column));
+        float const cursor_x1 =
+            std::round(text_x + char_width * static_cast<float>(cursor_column + 1u));
+        draw::draw_rect_filled(
+            context,
+            {{cursor_x0, y}, {std::max(cursor_x0 + 1.0f, cursor_x1), y + line_height}},
+            to_draw_color(gui::color_alpha(palette.cursor, 0.45f)),
+            2.0f
+        );
+    }
+
+    auto draw_editor_insert_cursor(
+        draw::Context context,
+        Palette const& palette,
+        size_t line,
+        size_t column,
+        float text_x,
+        float content_min_y,
+        float content_max_y,
+        float scroll_y,
+        float line_height,
+        float char_width
+    ) -> void {
+        float const cursor_x = std::round(text_x + char_width * static_cast<float>(column));
+        float const cursor_y = content_min_y + static_cast<float>(line) * line_height - scroll_y;
+        if (cursor_y + line_height < content_min_y || cursor_y >= content_max_y) {
+            return;
+        }
+        draw::draw_rect_filled(
+            context,
+            {{cursor_x, std::round(cursor_y + 2.0f)},
+             {cursor_x + 2.0f, std::round(cursor_y + line_height - 2.0f)}},
+            to_draw_color(palette.mode_insert),
+            0.0f
+        );
+    }
+
     [[nodiscard]] auto editor_surface_id(size_t split) -> gui::Id {
         return gui::id("editor_surface", split);
     }
@@ -1427,17 +1502,30 @@ namespace code_editor {
                               input.scroll_delta_y != 0.0f && point_in_rect(rect, input.mouse_pos);
         bool const hovered = point_in_rect(rect, input.mouse_pos);
         bool const mouse_pressed = input.mouse_down[0u] && !editor.flag(EditorFlag::MOUSE_WAS_DOWN);
+        bool const middle_mouse_pressed =
+            input.mouse_down[1u] && !editor.flag(EditorFlag::MIDDLE_MOUSE_WAS_DOWN);
         bool const double_clicked =
             !editor.flag(EditorFlag::SIDEBAR_RESIZING) && hovered && input.mouse_double_clicked[0u];
         bool const triple_clicked =
             !editor.flag(EditorFlag::SIDEBAR_RESIZING) && hovered && input.mouse_triple_clicked[0u];
         bool const clicked = !editor.flag(EditorFlag::SIDEBAR_RESIZING) && mouse_pressed && hovered;
+        bool const middle_clicked =
+            !editor.flag(EditorFlag::SIDEBAR_RESIZING) && middle_mouse_pressed && hovered;
         bool const dragged = !editor.flag(EditorFlag::SIDEBAR_RESIZING) &&
                              editor.flag(EditorFlag::MOUSE_SELECTING) && input.mouse_down[0u];
+        bool const middle_dragged = !editor.flag(EditorFlag::SIDEBAR_RESIZING) &&
+                                    editor.flag(EditorFlag::MULTI_CURSOR_DRAGGING) &&
+                                    input.mouse_down[1u];
         if (scrolled) {
             editor.scroll_y -= input.scroll_delta_y;
         }
-        if (triple_clicked) {
+        if (middle_clicked) {
+            begin_multi_cursor_from_mouse(editor, rect, input.mouse_pos, char_width);
+            editor.set_flag(EditorFlag::MULTI_CURSOR_DRAGGING, true);
+            editor.set_flag(EditorFlag::MOUSE_SELECTING, false);
+        } else if (middle_dragged) {
+            update_multi_cursor_from_mouse(editor, rect, input.mouse_pos, char_width);
+        } else if (triple_clicked) {
             select_line_from_mouse(editor, rect, input.mouse_pos, char_width);
             editor.set_flag(EditorFlag::MOUSE_SELECTING, false);
         } else if (double_clicked) {
@@ -1458,8 +1546,13 @@ namespace code_editor {
         if (!input.mouse_down[0u]) {
             editor.set_flag(EditorFlag::MOUSE_SELECTING, false);
         }
+        if (!input.mouse_down[1u]) {
+            editor.set_flag(EditorFlag::MULTI_CURSOR_DRAGGING, false);
+        }
         editor.set_flag(EditorFlag::MOUSE_WAS_DOWN, input.mouse_down[0u]);
-        if (clicked || dragged || double_clicked || triple_clicked || apply_key_reveal) {
+        editor.set_flag(EditorFlag::MIDDLE_MOUSE_WAS_DOWN, input.mouse_down[1u]);
+        if (clicked || dragged || middle_clicked || middle_dragged || double_clicked ||
+            triple_clicked || apply_key_reveal) {
             reveal_cursor(editor, rect, char_width);
         } else {
             clamp_scroll(editor, rect);
@@ -1486,7 +1579,8 @@ namespace code_editor {
         Slice<LspSemanticToken const> const semantic_tokens = semantic_tokens_for_editor(editor);
         size_t line = first_line;
         while (line < line_count && y < content.max.y) {
-            if (selection_visible && line == editor.cursor_line) {
+            bool const cursor_line = editor_has_cursor_on_line(editor, line);
+            if (selection_visible && cursor_line) {
                 draw::draw_rect_filled(
                     draw_context,
                     {{content.min.x, y}, {content.max.x, y + line_height}},
@@ -1500,9 +1594,8 @@ namespace code_editor {
                 .font = editor_font,
                 .size = editor.font_size,
                 .raster_policy = editor.raster_policy,
-                .color = to_draw_color(
-                    selection_visible && line == editor.cursor_line ? palette.text : palette.faint
-                ),
+                .color =
+                    to_draw_color(selection_visible && cursor_line ? palette.text : palette.faint),
             };
             draw::draw_text(
                 draw_context,
@@ -1526,21 +1619,54 @@ namespace code_editor {
                     content.max.x,
                     palette
                 );
+                for (size_t index = 0u; index < editor.extra_cursors.size(); ++index) {
+                    draw_editor_selection(
+                        draw_context,
+                        editor_extra_selection_range(editor, index),
+                        text_line,
+                        line,
+                        text_x,
+                        y,
+                        line_height,
+                        char_width,
+                        content.max.x,
+                        palette
+                    );
+                }
             }
             if (selection_visible && !editor.flag(EditorFlag::INSERT_MODE) &&
                 line == editor.cursor_line) {
-                size_t const cursor_column =
-                    draw_cursor_column(editor, line, text_line.size, editor.cursor_column);
-                float const cursor_x0 =
-                    std::round(text_x + char_width * static_cast<float>(cursor_column));
-                float const cursor_x1 =
-                    std::round(text_x + char_width * static_cast<float>(cursor_column + 1u));
-                draw::draw_rect_filled(
+                draw_editor_block_cursor(
                     draw_context,
-                    {{cursor_x0, y}, {std::max(cursor_x0 + 1.0f, cursor_x1), y + line_height}},
-                    to_draw_color(gui::color_alpha(palette.cursor, 0.45f)),
-                    2.0f
+                    editor,
+                    palette,
+                    line,
+                    text_line.size,
+                    editor.cursor_column,
+                    text_x,
+                    y,
+                    line_height,
+                    char_width
                 );
+            }
+            if (selection_visible && !editor.flag(EditorFlag::INSERT_MODE)) {
+                for (size_t index = 0u; index < editor.extra_cursors.size(); ++index) {
+                    EditorCursor const cursor = editor.extra_cursors[index];
+                    if (cursor.line == line) {
+                        draw_editor_block_cursor(
+                            draw_context,
+                            editor,
+                            palette,
+                            line,
+                            text_line.size,
+                            cursor.column,
+                            text_x,
+                            y,
+                            line_height,
+                            char_width
+                        );
+                    }
+                }
             }
             draw_syntax_line(
                 draw_context,
@@ -1584,25 +1710,40 @@ namespace code_editor {
             line += 1u;
         }
 
-        float const cursor_x =
-            std::round(text_x + char_width * static_cast<float>(editor.cursor_column));
-        float const cursor_y =
-            content.min.y + static_cast<float>(editor.cursor_line) * line_height - editor.scroll_y;
-        if (selection_visible && editor.flag(EditorFlag::INSERT_MODE) &&
-            cursor_y + line_height >= content.min.y && cursor_y < content.max.y) {
+        if (selection_visible && editor.flag(EditorFlag::INSERT_MODE)) {
             draw::push_clip_rect(draw_context, text_clip);
-            draw::draw_rect_filled(
+            draw_editor_insert_cursor(
                 draw_context,
-                {{cursor_x, std::round(cursor_y + 2.0f)},
-                 {cursor_x + 2.0f, std::round(cursor_y + line_height - 2.0f)}},
-                to_draw_color(palette.mode_insert),
-                0.0f
+                palette,
+                editor.cursor_line,
+                editor.cursor_column,
+                text_x,
+                content.min.y,
+                content.max.y,
+                editor.scroll_y,
+                line_height,
+                char_width
             );
+            for (size_t index = 0u; index < editor.extra_cursors.size(); ++index) {
+                EditorCursor const cursor = editor.extra_cursors[index];
+                draw_editor_insert_cursor(
+                    draw_context,
+                    palette,
+                    cursor.line,
+                    cursor.column,
+                    text_x,
+                    content.min.y,
+                    content.max.y,
+                    editor.scroll_y,
+                    line_height,
+                    char_width
+                );
+            }
             draw::pop_clip_rect(draw_context);
         }
 
         draw::pop_clip_rect(draw_context);
-        return clicked || double_clicked || triple_clicked;
+        return clicked || middle_clicked || double_clicked || triple_clicked;
     }
 
     auto draw_editor_split_surface(
@@ -5840,9 +5981,17 @@ namespace code_editor {
                         }
                     );
                     ui.label(
-                        fmt::tprintf(
-                            "Ln %zu, Col %zu", editor.cursor_line + 1u, editor.cursor_column + 1u
-                        ),
+                        editor.extra_cursors.empty() ? fmt::tprintf(
+                                                           "Ln %zu, Col %zu",
+                                                           editor.cursor_line + 1u,
+                                                           editor.cursor_column + 1u
+                                                       )
+                                                     : fmt::tprintf(
+                                                           "Ln %zu, Col %zu, %zu cursors",
+                                                           editor.cursor_line + 1u,
+                                                           editor.cursor_column + 1u,
+                                                           editor.extra_cursors.size() + 1u
+                                                       ),
                         {
                             .layout = {.width = gui::text(), .height = gui::fill()},
                             .style = {

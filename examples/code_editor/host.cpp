@@ -19,7 +19,6 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
-#include <utility>
 #if defined(_WIN32)
 #include <code_editor_hot_reload_manifest.h>
 #include <dwmapi.h>
@@ -315,6 +314,15 @@ namespace code_editor {
         }
         state->last_click_pos = pos;
         state->last_click_ticks = ticks;
+        request_redraw(state);
+    }
+
+    auto push_middle_mouse_down(AppState* state, gui::Vec2 pos) -> void {
+        if (state == nullptr) {
+            return;
+        }
+        state->input.mouse_down[1u] = true;
+        state->input.mouse_pos = pos;
         request_redraw(state);
     }
 
@@ -619,6 +627,7 @@ namespace code_editor {
                 bool const needs_frame = global_app_state->redraw_pending ||
                                          !frame_ready(global_app_state->last_frame) ||
                                          global_app_state->input.mouse_down[0u] ||
+                                         global_app_state->input.mouse_down[1u] ||
                                          hit_id.value != global_app_state->mouse_hit_id.value;
                 global_app_state->input.mouse_pos = pos;
                 global_app_state->mouse_hit_id = hit_id;
@@ -643,8 +652,27 @@ namespace code_editor {
                 global_app_state->input.mouse_pos = {lparam_x(lparam), lparam_y(lparam)};
                 request_redraw(global_app_state);
             }
-            if (GetCapture() == hwnd) {
+            if ((global_app_state == nullptr || !global_app_state->input.mouse_down[1u]) &&
+                GetCapture() == hwnd) {
                 ReleaseCapture();
+            }
+            return 0;
+        case WM_MBUTTONDOWN:
+            push_middle_mouse_down(global_app_state, {lparam_x(lparam), lparam_y(lparam)});
+            SetCapture(hwnd);
+            SetFocus(hwnd);
+            return 0;
+        case WM_MBUTTONUP:
+            if (global_app_state != nullptr) {
+                global_app_state->input.mouse_down[1u] = false;
+                global_app_state->input.mouse_pos = {lparam_x(lparam), lparam_y(lparam)};
+                request_redraw(global_app_state);
+            }
+            if (global_app_state == nullptr || (!global_app_state->input.mouse_down[0u] &&
+                                                !global_app_state->input.mouse_down[1u])) {
+                if (GetCapture() == hwnd) {
+                    ReleaseCapture();
+                }
             }
             return 0;
         case WM_MOUSEWHEEL:
@@ -1395,7 +1423,8 @@ namespace code_editor {
             return;
         }
 
-        launch.tree_files = std::move(files);
+        launch.tree_files = files;
+        files = {};
         launch.tree_arenas[old_index].reset();
         launch.tree_arena_index = new_index;
     }
@@ -2204,6 +2233,7 @@ namespace code_editor {
                 if (hot_reload_overlay_state.capture_input) {
                     module_input.scroll_delta_y = 0.0f;
                     module_input.mouse_down[0u] = false;
+                    module_input.mouse_down[1u] = false;
                     module_input.mouse_double_clicked[0u] = false;
                     module_input.mouse_triple_clicked[0u] = false;
                     module_input.key_event_count = 0u;

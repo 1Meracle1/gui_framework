@@ -123,7 +123,7 @@ namespace gui {
         if (font_provider::context_valid(impl->provider)) {
             font_provider::destroy_context(impl->provider);
         }
-        impl->log_text.destroy();
+        impl->log_text = {};
         impl->~HotReloadOverlayImpl();
         overlay->handle = nullptr;
     }
@@ -174,7 +174,9 @@ namespace gui {
             },
             impl->ui_context
         );
-        BASE_UNUSED(impl->log_text.init(HOT_RELOAD_LOG_CAPACITY + HOT_RELOAD_LOG_LINE_COUNT));
+        BASE_UNUSED(impl->log_text.init(
+            HOT_RELOAD_LOG_CAPACITY + HOT_RELOAD_LOG_LINE_COUNT, arena.resource()
+        ));
         return true;
     }
 

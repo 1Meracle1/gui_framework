@@ -7,16 +7,10 @@
 class StringBuffer final {
   public:
     StringBuffer() = default;
-    ~StringBuffer();
 
-    StringBuffer(StringBuffer&& other);
-    StringBuffer(StringBuffer const&) = delete;
-    auto operator=(StringBuffer&& other) -> StringBuffer&;
-    auto operator=(StringBuffer const&) -> StringBuffer& = delete;
-
-    [[nodiscard]] auto init(size_t capacity = 0u, MemoryResource* resource = nullptr) -> bool;
+    [[nodiscard]] auto init(size_t capacity, MemoryResource* resource) -> bool;
+    [[nodiscard]] auto copy_from(StringBuffer const& other, MemoryResource* resource) -> bool;
     auto init_with_backing(char* backing, size_t capacity) -> void;
-    auto destroy() -> void;
 
     auto reset() -> void;
     auto reserve(size_t capacity) -> void;
@@ -45,7 +39,6 @@ class StringBuffer final {
     [[nodiscard]] auto has_terminator_space() const -> bool;
     [[nodiscard]] auto prepare_write(size_t size) -> size_t;
     auto write_terminator() -> void;
-    auto move_from(StringBuffer& other) -> void;
 
   private:
     char* m_data = nullptr;
