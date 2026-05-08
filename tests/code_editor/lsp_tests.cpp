@@ -65,6 +65,37 @@ namespace {
         TEST_EXPECT(context, code_editor::lsp_utf16_column_to_byte(line, 4u) == 8u);
     }
 
+    TEST_CASE(lsp_snippet_expansion_keeps_first_placeholder_selection) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::LspSnippetExpansion const expansion = code_editor::lsp_expand_snippet(
+            arena, "for (${1:int i = 0}; ${2:i < count}; ${3:++i}) {\n    $0\n}"
+        );
+
+        TEST_EXPECT(context, expansion.text == "for (int i = 0; i < count; ++i) {\n    \n}");
+        TEST_EXPECT(context, expansion.has_selection);
+        TEST_EXPECT(context, expansion.selection.start.line == 0u);
+        TEST_EXPECT(context, expansion.selection.start.column == 5u);
+        TEST_EXPECT(context, expansion.selection.end.line == 0u);
+        TEST_EXPECT(context, expansion.selection.end.column == 14u);
+    }
+
+    TEST_CASE(lsp_snippet_expansion_uses_choice_and_final_tabstop) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::LspSnippetExpansion const expansion =
+            code_editor::lsp_expand_snippet(arena, "${1|public,private|}:\n$0");
+
+        TEST_EXPECT(context, expansion.text == "public:\n");
+        TEST_EXPECT(context, expansion.has_selection);
+        TEST_EXPECT(context, expansion.selection.start.line == 0u);
+        TEST_EXPECT(context, expansion.selection.start.column == 0u);
+        TEST_EXPECT(context, expansion.selection.end.line == 0u);
+        TEST_EXPECT(context, expansion.selection.end.column == 6u);
+    }
+
     TEST_CASE(lsp_text_edits_apply_from_end_to_start) {
         Arena arena = {};
         arena.init();

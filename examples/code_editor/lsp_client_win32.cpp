@@ -476,7 +476,9 @@ namespace code_editor {
         BASE_UNUSED(json.write_string(
             ",\"capabilities\":{\"window\":{\"workDoneProgress\":true},\"textDocument\":{"
             "\"synchronization\":{\"didSave\":false},\"completion\":{\"completionItem\":{"
-            "\"snippetSupport\":false}},\"hover\":{},\"definition\":{},\"declaration\":{},"
+            "\"snippetSupport\":true,\"insertReplaceSupport\":true},\"completionList\":{"
+            "\"itemDefaults\":[\"editRange\",\"insertTextFormat\"]}},\"hover\":{},"
+            "\"definition\":{},\"declaration\":{},"
             "\"references\":{},\"rename\":{},\"formatting\":{},\"codeAction\":{},"
             "\"documentSymbol\":{},\"semanticTokens\":{\"dynamicRegistration\":false,"
             "\"requests\":{\"range\":false,\"full\":true},\"tokenTypes\":[\"namespace\","
@@ -699,6 +701,11 @@ namespace code_editor {
         return lsp_json_size(lsp_json_object_get(object, key), out);
     }
 
+    [[nodiscard]] auto json_member_int(LspJsonValue const* object, StrRef key, int32_t& out)
+        -> bool {
+        return lsp_json_int(lsp_json_object_get(object, key), out);
+    }
+
     [[nodiscard]] auto json_member_bool(LspJsonValue const* object, StrRef key, bool& out) -> bool {
         return lsp_json_bool(lsp_json_object_get(object, key), out);
     }
@@ -906,10 +913,66 @@ namespace code_editor {
         bridge_refresh(client);
     }
 
-    auto parse_completion_response(LspClient& client, LspJsonValue const* result, StrRef path)
-        -> void {
+    struct CompletionItemDefaults {
+        LspRange edit_range = {};
+        bool has_edit_range = false;
+        bool is_snippet = false;
+    };
+
+    [[nodiscard]] auto
+    parse_completion_edit_range(LspJsonValue const* value, StrRef doc_text, LspRange& out) -> bool {
+        LspRange range = {};
+        if (parse_range(value, range)) {
+            out = !doc_text.empty() ? lsp_range_utf16_to_byte(doc_text, range) : range;
+            return true;
+        }
+
+        LspJsonValue const* range_value = lsp_json_object_get(value, "range");
+        if (parse_range(range_value, range)) {
+            out = !doc_text.empty() ? lsp_range_utf16_to_byte(doc_text, range) : range;
+            return true;
+        }
+
+        range_value = lsp_json_object_get(value, "replace");
+        if (range_value == nullptr) {
+            range_value = lsp_json_object_get(value, "insert");
+        }
+        if (!parse_range(range_value, range)) {
+            return false;
+        }
+        out = !doc_text.empty() ? lsp_range_utf16_to_byte(doc_text, range) : range;
+        return true;
+    }
+
+    [[nodiscard]] auto parse_completion_item_defaults(LspJsonValue const* result, StrRef doc_text)
+        -> CompletionItemDefaults {
+        CompletionItemDefaults defaults = {};
+        LspJsonValue const* const item_defaults = lsp_json_object_get(result, "itemDefaults");
+        int32_t insert_text_format = 1;
+        defaults.is_snippet =
+            json_member_int(item_defaults, "insertTextFormat", insert_text_format) &&
+            insert_text_format == 2;
+        defaults.has_edit_range = parse_completion_edit_range(
+            lsp_json_object_get(item_defaults, "editRange"), doc_text, defaults.edit_range
+        );
+        return defaults;
+    }
+
+    auto parse_completion_response(
+        LspClient& client, LspJsonValue const* result, LspClientPendingRequest const& pending
+    ) -> void {
+        if (pending.path != client.current_path || pending.revision != client.current_revision) {
+            return;
+        }
+
+        StrRef const path = pending.path;
         client.completions.clear();
         LspJsonValue const* items = result;
+        StrRef const doc_text = current_doc_text(client, path);
+        CompletionItemDefaults const defaults =
+            result != nullptr && result->kind == LspJsonKind::OBJECT
+                ? parse_completion_item_defaults(result, doc_text)
+                : CompletionItemDefaults{};
         if (result != nullptr && result->kind == LspJsonKind::OBJECT) {
             items = lsp_json_object_get(result, "items");
         }
@@ -919,39 +982,55 @@ namespace code_editor {
             return;
         }
 
-        StrRef const doc_text = current_doc_text(client, path);
+        ArenaTemp temp = begin_thread_temp_arena();
+        Vec<LspTextEdit> additional_edits = {};
+        BASE_UNUSED(additional_edits.init(4u, temp.arena()->resource()));
         size_t const limit = std::min<size_t>(items->array.size(), 64u);
         for (size_t index = 0u; index < limit; ++index) {
             LspJsonValue const* const item = items->array[index];
             StrRef label = {};
             StrRef detail = {};
             StrRef insert_text = {};
+            StrRef text_edit_text = {};
             if (!json_member_string(item, "label", label)) {
                 continue;
             }
             BASE_UNUSED(json_member_string(item, "detail", detail));
+            bool const has_text_edit_text =
+                json_member_string(item, "textEditText", text_edit_text);
             if (!json_member_string(item, "insertText", insert_text)) {
                 insert_text = label;
             }
 
+            int32_t insert_text_format = defaults.is_snippet ? 2 : 1;
+            BASE_UNUSED(json_member_int(item, "insertTextFormat", insert_text_format));
             LspCompletionItem completion = {
                 .label = copy_result(client, label),
                 .detail = copy_result(client, detail),
                 .insert_text = copy_result(client, insert_text),
+                .is_snippet = insert_text_format == 2,
             };
             LspJsonValue const* const text_edit = lsp_json_object_get(item, "textEdit");
             if (text_edit != nullptr) {
-                LspRange range = {};
                 StrRef new_text = {};
-                if (parse_range(lsp_json_object_get(text_edit, "range"), range)) {
-                    completion.edit_range =
-                        !doc_text.empty() ? lsp_range_utf16_to_byte(doc_text, range) : range;
+                if (parse_completion_edit_range(text_edit, doc_text, completion.edit_range)) {
                     completion.has_edit = true;
                 }
                 if (json_member_string(text_edit, "newText", new_text)) {
                     completion.insert_text = copy_result(client, new_text);
                 }
+            } else if (defaults.has_edit_range) {
+                completion.edit_range = defaults.edit_range;
+                completion.has_edit = true;
+                if (has_text_edit_text) {
+                    completion.insert_text = copy_result(client, text_edit_text);
+                }
             }
+            additional_edits.clear();
+            append_text_edits(
+                client, additional_edits, lsp_json_object_get(item, "additionalTextEdits"), path
+            );
+            completion.additional_edits = copy_edits_to_slice(client, additional_edits);
             BASE_UNUSED(client.completions.push_back(completion));
         }
         client.bridge.completions_generation += 1u;
@@ -1294,7 +1373,7 @@ namespace code_editor {
 
         switch (pending.kind) {
         case LspRequestKind::COMPLETION:
-            parse_completion_response(client, result, pending.path);
+            parse_completion_response(client, result, pending);
             break;
         case LspRequestKind::HOVER:
             parse_hover_response(client, result, pending.path);
@@ -1528,7 +1607,9 @@ namespace code_editor {
             BASE_UNUSED(params.write_string(",\"context\":{\"includeDeclaration\":false}"));
         }
         BASE_UNUSED(params.write_byte('}'));
-        send_request_json(client, kind, request.path, method, params.str(), request.position);
+        send_request_json(
+            client, kind, request.path, method, params.str(), request.position, request.revision
+        );
     }
 
     auto send_rename_request(LspClient& client, LspEditorRequest const& request) -> void {

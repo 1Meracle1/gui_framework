@@ -143,6 +143,229 @@ namespace code_editor {
         };
     }
 
+    struct SnippetBuilder {
+        StringBuffer text = {};
+        LspPosition position = {};
+        LspRange selection = {};
+        LspRange final_selection = {};
+        size_t selection_tabstop = static_cast<size_t>(-1);
+        bool has_selection = false;
+        bool has_final = false;
+    };
+
+    auto snippet_write_byte(SnippetBuilder& builder, char ch) -> void {
+        BASE_UNUSED(builder.text.write_byte(ch));
+        if (ch == '\n') {
+            builder.position.line += 1u;
+            builder.position.column = 0u;
+        } else {
+            builder.position.column += 1u;
+        }
+    }
+
+    [[nodiscard]] auto snippet_parse_number(StrRef text, size_t& index, size_t& out) -> bool {
+        size_t const start = index;
+        out = 0u;
+        while (index < text.size() && is_ascii_digit(text[index])) {
+            out = out * 10u + static_cast<size_t>(text[index] - '0');
+            index += 1u;
+        }
+        return index != start;
+    }
+
+    [[nodiscard]] auto snippet_identifier_char(char ch) -> bool {
+        return is_ascii_alphanumeric(ch) || ch == '_';
+    }
+
+    auto snippet_skip_identifier(StrRef text, size_t& index) -> void {
+        while (index < text.size() && snippet_identifier_char(text[index])) {
+            index += 1u;
+        }
+    }
+
+    auto snippet_record_tabstop(
+        SnippetBuilder& builder, size_t tabstop, LspPosition start, LspPosition end
+    ) -> void {
+        if (tabstop == 0u) {
+            if (!builder.has_final) {
+                builder.final_selection = {start, end};
+                builder.has_final = true;
+            }
+            return;
+        }
+        if (!builder.has_selection || tabstop < builder.selection_tabstop) {
+            builder.selection = {start, end};
+            builder.selection_tabstop = tabstop;
+            builder.has_selection = true;
+        }
+    }
+
+    auto snippet_skip_braced(StrRef text, size_t& index) -> void {
+        size_t depth = 1u;
+        while (index < text.size() && depth != 0u) {
+            if (text[index] == '\\' && index + 1u < text.size()) {
+                index += 2u;
+            } else if (text[index] == '$' && index + 1u < text.size() && text[index + 1u] == '{') {
+                depth += 1u;
+                index += 2u;
+            } else if (text[index] == '}') {
+                depth -= 1u;
+                index += 1u;
+            } else {
+                index += 1u;
+            }
+        }
+    }
+
+    auto snippet_parse_text(SnippetBuilder& builder, StrRef text, size_t& index, char terminator)
+        -> void;
+
+    auto snippet_parse_choice(SnippetBuilder& builder, StrRef text, size_t& index) -> void {
+        bool write = true;
+        while (index < text.size()) {
+            char const ch = text[index];
+            if (ch == '|' && index + 1u < text.size() && text[index + 1u] == '}') {
+                index += 2u;
+                return;
+            }
+            if (ch == '\\' && index + 1u < text.size()) {
+                char const escaped = text[index + 1u];
+                if (escaped == ',' || escaped == '|' || escaped == '\\') {
+                    if (write) {
+                        snippet_write_byte(builder, escaped);
+                    }
+                    index += 2u;
+                    continue;
+                }
+            }
+            if (ch == ',') {
+                write = false;
+            } else if (write) {
+                snippet_write_byte(builder, ch);
+            }
+            index += 1u;
+        }
+    }
+
+    auto snippet_parse_braced(SnippetBuilder& builder, StrRef text, size_t& index) -> void {
+        size_t tabstop = 0u;
+        if (snippet_parse_number(text, index, tabstop)) {
+            LspPosition const start = builder.position;
+            if (index < text.size() && text[index] == '}') {
+                index += 1u;
+                snippet_record_tabstop(builder, tabstop, start, start);
+            } else if (index < text.size() && text[index] == ':') {
+                index += 1u;
+                snippet_parse_text(builder, text, index, '}');
+                LspPosition const end = builder.position;
+                if (index < text.size() && text[index] == '}') {
+                    index += 1u;
+                }
+                snippet_record_tabstop(builder, tabstop, start, end);
+            } else if (index < text.size() && text[index] == '|') {
+                index += 1u;
+                snippet_parse_choice(builder, text, index);
+                snippet_record_tabstop(builder, tabstop, start, builder.position);
+            } else {
+                snippet_skip_braced(text, index);
+                snippet_record_tabstop(builder, tabstop, start, start);
+            }
+            return;
+        }
+
+        if (index < text.size() && snippet_identifier_char(text[index])) {
+            snippet_skip_identifier(text, index);
+            if (index < text.size() && text[index] == ':') {
+                index += 1u;
+                snippet_parse_text(builder, text, index, '}');
+                if (index < text.size() && text[index] == '}') {
+                    index += 1u;
+                }
+            } else {
+                snippet_skip_braced(text, index);
+            }
+            return;
+        }
+
+        snippet_skip_braced(text, index);
+    }
+
+    [[nodiscard]] auto snippet_parse_dollar(SnippetBuilder& builder, StrRef text, size_t& index)
+        -> bool {
+        if (index + 1u >= text.size()) {
+            return false;
+        }
+
+        size_t next = index + 1u;
+        size_t tabstop = 0u;
+        if (snippet_parse_number(text, next, tabstop)) {
+            LspPosition const position = builder.position;
+            snippet_record_tabstop(builder, tabstop, position, position);
+            index = next;
+            return true;
+        }
+
+        if (text[next] == '{') {
+            index = next + 1u;
+            snippet_parse_braced(builder, text, index);
+            return true;
+        }
+
+        if (snippet_identifier_char(text[next])) {
+            index = next;
+            snippet_skip_identifier(text, index);
+            return true;
+        }
+
+        return false;
+    }
+
+    auto snippet_parse_text(SnippetBuilder& builder, StrRef text, size_t& index, char terminator)
+        -> void {
+        while (index < text.size()) {
+            char const ch = text[index];
+            if (terminator != '\0' && ch == terminator) {
+                return;
+            }
+            if (ch == '\\' && index + 1u < text.size()) {
+                char const escaped = text[index + 1u];
+                if (escaped == '$' || escaped == '}' || escaped == '\\') {
+                    snippet_write_byte(builder, escaped);
+                    index += 2u;
+                    continue;
+                }
+            }
+            if (ch == '$' && snippet_parse_dollar(builder, text, index)) {
+                continue;
+            }
+            snippet_write_byte(builder, ch);
+            index += 1u;
+        }
+    }
+
+    [[nodiscard]] auto lsp_expand_snippet(Arena& arena, StrRef snippet) -> LspSnippetExpansion {
+        SnippetBuilder builder = {};
+        BASE_UNUSED(builder.text.init(snippet.size() + 1u, arena.resource()));
+        size_t index = 0u;
+        snippet_parse_text(builder, snippet, index, '\0');
+
+        LspRange selection = {builder.position, builder.position};
+        bool has_selection = false;
+        if (builder.has_selection) {
+            selection = builder.selection;
+            has_selection =
+                !(selection.start.line == selection.end.line &&
+                  selection.start.column == selection.end.column);
+        } else if (builder.has_final) {
+            selection = builder.final_selection;
+        }
+        return {
+            .text = arena_copy_str(arena, builder.text.str()),
+            .selection = selection,
+            .has_selection = has_selection,
+        };
+    }
+
     [[nodiscard]] auto edit_path_matches(LspTextEdit const& edit, StrRef path) -> bool {
         return edit.path.empty() || edit.path == path;
     }

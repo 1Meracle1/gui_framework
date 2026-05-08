@@ -58,6 +58,12 @@ namespace code_editor {
         LspPosition end = {};
     };
 
+    struct LspSnippetExpansion {
+        StrRef text = {};
+        LspRange selection = {};
+        bool has_selection = false;
+    };
+
     struct LspDiagnostic {
         StrRef path = {};
         LspRange range = {};
@@ -67,12 +73,20 @@ namespace code_editor {
         StrRef message = {};
     };
 
+    struct LspTextEdit {
+        StrRef path = {};
+        LspRange range = {};
+        StrRef new_text = {};
+    };
+
     struct LspCompletionItem {
         StrRef label = {};
         StrRef detail = {};
         StrRef insert_text = {};
+        Slice<LspTextEdit> additional_edits = {};
         LspRange edit_range = {};
         bool has_edit = false;
+        bool is_snippet = false;
     };
 
     struct LspLocation {
@@ -84,12 +98,6 @@ namespace code_editor {
         StrRef path = {};
         LspRange range = {};
         StrRef text = {};
-    };
-
-    struct LspTextEdit {
-        StrRef path = {};
-        LspRange range = {};
-        StrRef new_text = {};
     };
 
     struct LspCodeAction {
@@ -173,6 +181,7 @@ namespace code_editor {
     [[nodiscard]] auto lsp_position_byte_to_utf16(StrRef text, LspPosition position) -> LspPosition;
     [[nodiscard]] auto lsp_position_utf16_to_byte(StrRef text, LspPosition position) -> LspPosition;
     [[nodiscard]] auto lsp_range_utf16_to_byte(StrRef text, LspRange range) -> LspRange;
+    [[nodiscard]] auto lsp_expand_snippet(Arena& arena, StrRef snippet) -> LspSnippetExpansion;
 
     [[nodiscard]] auto
     lsp_apply_text_edits(Arena& arena, StrRef text, Slice<LspTextEdit const> edits, StrRef path)

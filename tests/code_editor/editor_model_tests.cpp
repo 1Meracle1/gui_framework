@@ -2280,6 +2280,131 @@ namespace {
         TEST_EXPECT(context, editor.lsp_rename_text_selected);
     }
 
+    TEST_CASE(editor_lsp_completion_expands_snippet_and_selects_first_placeholder) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "fo");
+
+        code_editor::LspCompletionItem completions[] = {
+            {
+                .label = "for",
+                .insert_text = "for (${1:int i = 0}; ${2:i < count}; ${3:++i}) {\n    $0\n}",
+                .edit_range = {.start = {0u, 0u}, .end = {0u, 2u}},
+                .has_edit = true,
+                .is_snippet = true,
+            },
+        };
+        code_editor::LspBridge bridge = {
+            .completions = Slice<code_editor::LspCompletionItem>(completions)
+        };
+        editor.lsp_bridge = &bridge;
+        editor.lsp_popup = code_editor::EditorLspPopupKind::COMPLETION;
+
+        code_editor::accept_lsp_popup(editor);
+
+        TEST_EXPECT(
+            context,
+            code_editor::editor_line_text(code_editor::editor_line(editor, 0u)) ==
+                "for (int i = 0; i < count; ++i) {"
+        );
+        TEST_EXPECT(
+            context, code_editor::editor_line_text(code_editor::editor_line(editor, 1u)) == "    "
+        );
+        TEST_EXPECT(
+            context, code_editor::editor_line_text(code_editor::editor_line(editor, 2u)) == "}"
+        );
+        code_editor::EditorSelectionRange const selection =
+            code_editor::editor_selection_range(editor);
+        TEST_EXPECT(context, selection.active);
+        TEST_EXPECT(context, selection.start_line == 0u);
+        TEST_EXPECT(context, selection.start_column == 5u);
+        TEST_EXPECT(context, selection.end_line == 0u);
+        TEST_EXPECT(context, selection.end_column == 14u);
+    }
+
+    TEST_CASE(editor_lsp_completion_applies_additional_edits_before_snippet_selection) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "int main() {\n    Vec\n}");
+        editor.current_file_path = "C:\\repo\\main.cpp";
+        editor.cursor_line = 1u;
+        editor.cursor_column = 7u;
+        editor.preferred_column = 7u;
+
+        code_editor::LspTextEdit additional_edits[] = {
+            {
+                .path = "C:\\repo\\main.cpp",
+                .range = {.start = {0u, 0u}, .end = {0u, 0u}},
+                .new_text = "#include <vector>\n",
+            },
+        };
+        code_editor::LspCompletionItem completions[] = {
+            {
+                .label = "Vector",
+                .insert_text = "Vector${1:T}",
+                .additional_edits = Slice<code_editor::LspTextEdit>(additional_edits),
+                .edit_range = {.start = {1u, 4u}, .end = {1u, 7u}},
+                .has_edit = true,
+                .is_snippet = true,
+            },
+        };
+        code_editor::LspBridge bridge = {
+            .completions = Slice<code_editor::LspCompletionItem>(completions)
+        };
+        editor.lsp_bridge = &bridge;
+        editor.lsp_popup = code_editor::EditorLspPopupKind::COMPLETION;
+
+        code_editor::accept_lsp_popup(editor);
+
+        TEST_EXPECT(
+            context,
+            code_editor::editor_line_text(code_editor::editor_line(editor, 0u)) ==
+                "#include <vector>"
+        );
+        TEST_EXPECT(
+            context,
+            code_editor::editor_line_text(code_editor::editor_line(editor, 2u)) == "    VectorT"
+        );
+        code_editor::EditorSelectionRange const selection =
+            code_editor::editor_selection_range(editor);
+        TEST_EXPECT(context, selection.active);
+        TEST_EXPECT(context, selection.start_line == 2u);
+        TEST_EXPECT(context, selection.start_column == 10u);
+        TEST_EXPECT(context, selection.end_line == 2u);
+        TEST_EXPECT(context, selection.end_column == 11u);
+    }
+
+    TEST_CASE(editor_insert_mode_typing_identifier_requests_lsp_completion) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "");
+        editor.current_file_name = "main.cpp";
+        editor.current_file_path = "C:\\repo\\main.cpp";
+        editor.set_flag(EditorFlag::INSERT_MODE, true);
+
+        code_editor::LspBridge bridge = {.status = code_editor::LspStatusKind::READY};
+        LspRequestCapture capture = {};
+        editor.lsp_bridge = &bridge;
+        editor.lsp_send_request = capture_lsp_request;
+        editor.lsp_user_data = &capture;
+
+        send_text(editor, "a");
+
+        TEST_EXPECT(
+            context, code_editor::editor_line_text(code_editor::editor_line(editor, 0u)) == "a"
+        );
+        TEST_EXPECT(context, capture.count == 3u);
+        TEST_EXPECT(context, capture.requests[2u].kind == code_editor::LspRequestKind::COMPLETION);
+        TEST_EXPECT(context, capture.requests[2u].position.line == 0u);
+        TEST_EXPECT(context, capture.requests[2u].position.column == 1u);
+    }
+
     TEST_CASE(editor_lsp_document_sync_requests_semantic_tokens) {
         Arena arena = {};
         arena.init();

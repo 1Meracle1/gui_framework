@@ -2159,6 +2159,10 @@ namespace code_editor {
         return event.codepoint == '+' || event.codepoint == '-' || event.codepoint == '=';
     }
 
+    [[nodiscard]] auto lsp_completion_text_trigger(char ch) -> bool {
+        return is_ascii_alphanumeric(ch) || ch == '_' || ch == '.' || ch == '>' || ch == ':';
+    }
+
     [[nodiscard]] auto editor_file_search_text(EditorState const& editor) -> StrRef {
         return StrRef(editor.file_search_text, editor.file_search_text_size);
     }
@@ -4285,6 +4289,51 @@ namespace code_editor {
         return position_offset(editor, lsp_clamped_position(editor, position));
     }
 
+    [[nodiscard]] auto lsp_position_after_text(LspPosition start, StrRef text) -> LspPosition {
+        LspPosition position = start;
+        for (char ch : text) {
+            if (ch == '\n') {
+                position.line += 1u;
+                position.column = 0u;
+            } else {
+                position.column += 1u;
+            }
+        }
+        return position;
+    }
+
+    [[nodiscard]] auto lsp_position_add(LspPosition start, LspPosition relative) -> LspPosition {
+        if (relative.line == 0u) {
+            return {start.line, start.column + relative.column};
+        }
+        return {start.line + relative.line, relative.column};
+    }
+
+    [[nodiscard]] auto
+    lsp_transform_position_after_edit(LspPosition position, LspTextEdit const& edit)
+        -> LspPosition {
+        if (lsp_position_less(position, edit.range.end)) {
+            return position;
+        }
+        LspPosition const end = lsp_position_after_text(edit.range.start, edit.new_text);
+        if (position.line == edit.range.end.line) {
+            return {end.line, end.column + position.column - edit.range.end.column};
+        }
+        return {end.line + position.line - edit.range.end.line, position.column};
+    }
+
+    auto set_lsp_completion_selection(EditorState& editor, LspRange range, bool select) -> void {
+        EditorPosition const start = lsp_clamped_position(editor, range.start);
+        EditorPosition const end = lsp_clamped_position(editor, range.end);
+        editor.selection_anchor_line = start.line;
+        editor.selection_anchor_column = start.column;
+        editor.cursor_line = end.line;
+        editor.cursor_column = end.column;
+        editor.preferred_column = end.column;
+        editor.selection_mode = EditorSelectionMode::NONE;
+        editor.set_flag(EditorFlag::SELECTION_ACTIVE, select && !same_position(start, end));
+    }
+
     [[nodiscard]] auto
     apply_editor_lsp_text_edits(EditorState& editor, Slice<LspTextEdit const> edits) -> bool {
         if (edits.empty() || editor.text.arena == nullptr) {
@@ -4477,6 +4526,16 @@ namespace code_editor {
         }
     }
 
+    struct EditorLspCompletionEdit {
+        LspTextEdit edit = {};
+        bool primary = false;
+    };
+
+    [[nodiscard]] auto
+    completion_edit_path_matches(EditorState const& editor, LspTextEdit const& edit) -> bool {
+        return edit.path.empty() || edit.path == editor.current_file_path;
+    }
+
     auto apply_lsp_completion(EditorState& editor) -> void {
         if (editor.lsp_bridge == nullptr || editor.lsp_bridge->completions.empty()) {
             close_editor_lsp_popup(editor);
@@ -4485,19 +4544,84 @@ namespace code_editor {
         size_t const index =
             std::min(editor.lsp_selected, editor.lsp_bridge->completions.size() - 1u);
         LspCompletionItem const& item = editor.lsp_bridge->completions[index];
-        if (item.has_edit) {
-            LspTextEdit const edit = {
-                .path = editor.current_file_path,
-                .range = item.edit_range,
-                .new_text = !item.insert_text.empty() ? item.insert_text : item.label,
-            };
-            BASE_UNUSED(apply_editor_lsp_text_edits(editor, Slice<LspTextEdit const>(&edit, 1u)));
+
+        ArenaTemp temp = begin_thread_temp_arena();
+        StrRef insert_text = !item.insert_text.empty() ? item.insert_text : item.label;
+        LspSnippetExpansion expansion = {};
+        if (item.is_snippet) {
+            expansion = lsp_expand_snippet(*temp.arena(), insert_text);
+            insert_text = expansion.text;
         } else {
-            save_editor_undo(editor);
-            insert_text(editor, !item.insert_text.empty() ? item.insert_text : item.label);
-            refresh_editor_dirty(editor);
-            sync_shared_panes(editor);
+            LspPosition const end = lsp_position_after_text({}, insert_text);
+            expansion.selection = {end, end};
         }
+
+        EditorSelectionRange const selection = editor_selection_range(editor);
+        LspRange const primary_range =
+            item.has_edit   ? item.edit_range
+            : selection.active
+                ? LspRange{
+                      {selection.start_line, selection.start_column},
+                      {selection.end_line, selection.end_column}
+                  }
+                : LspRange{
+                      {editor.cursor_line, editor.cursor_column},
+                      {editor.cursor_line, editor.cursor_column}
+                  };
+        LspRange target = {
+            lsp_position_add(primary_range.start, expansion.selection.start),
+            lsp_position_add(primary_range.start, expansion.selection.end),
+        };
+
+        Vec<EditorLspCompletionEdit> edits = {};
+        BASE_UNUSED(edits.init(item.additional_edits.size() + 1u, temp.arena()->resource()));
+        for (LspTextEdit const& edit : item.additional_edits) {
+            if (completion_edit_path_matches(editor, edit) && lsp_range_valid(edit.range)) {
+                BASE_UNUSED(edits.push_back({edit, false}));
+            }
+        }
+        BASE_UNUSED(edits.push_back({
+            {
+                .path = editor.current_file_path,
+                .range = primary_range,
+                .new_text = insert_text,
+            },
+            true,
+        }));
+
+        std::sort(edits.begin(), edits.end(), [](auto const& a, auto const& b) {
+            if (a.edit.range.start.line != b.edit.range.start.line) {
+                return a.edit.range.start.line > b.edit.range.start.line;
+            }
+            return a.edit.range.start.column > b.edit.range.start.column;
+        });
+
+        save_editor_undo(editor);
+        bool target_active = false;
+        for (EditorLspCompletionEdit const& completion_edit : edits) {
+            LspTextEdit const& edit = completion_edit.edit;
+            size_t const start = lsp_position_offset(editor, edit.range.start);
+            size_t const end = lsp_position_offset(editor, edit.range.end);
+            if (end < start) {
+                continue;
+            }
+            text_buffer_erase(editor.text, start, end);
+            if (!edit.new_text.empty()) {
+                text_buffer_insert(editor.text, start, edit.new_text);
+            }
+            if (completion_edit.primary) {
+                target_active = true;
+            } else if (target_active) {
+                target.start = lsp_transform_position_after_edit(target.start, edit);
+                target.end = lsp_transform_position_after_edit(target.end, edit);
+            }
+        }
+
+        if (target_active) {
+            set_lsp_completion_selection(editor, target, expansion.has_selection);
+        }
+        refresh_editor_dirty(editor);
+        sync_shared_panes(editor);
         close_editor_lsp_popup(editor);
     }
 
@@ -4551,6 +4675,10 @@ namespace code_editor {
             return true;
         }
         if (event.kind == gui::KeyEventKind::TEXT) {
+            if (editor.lsp_popup == EditorLspPopupKind::COMPLETION) {
+                close_editor_lsp_popup(editor);
+                return false;
+            }
             return true;
         }
         if (event.kind != gui::KeyEventKind::PRESS && event.kind != gui::KeyEventKind::REPEAT) {
@@ -4942,7 +5070,7 @@ namespace code_editor {
                     if (editor.flag(EditorFlag::INSERT_MODE)) {
                         save_editor_undo(editor);
                         insert_char(editor, ch);
-                        if (ch == '.' || ch == '>' || ch == ':') {
+                        if (lsp_completion_text_trigger(ch)) {
                             request_lsp(editor, LspRequestKind::COMPLETION);
                         }
                     } else {
