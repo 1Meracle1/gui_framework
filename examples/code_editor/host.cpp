@@ -138,7 +138,8 @@ namespace code_editor {
                bridge->diagnostics_generation + bridge->completions_generation +
                bridge->hover_generation + bridge->locations_generation +
                bridge->code_actions_generation + bridge->symbols_generation +
-               bridge->text_edits_generation + bridge->semantic_tokens_generation;
+               bridge->text_edits_generation + bridge->semantic_tokens_generation +
+               bridge->folding_ranges_generation;
     }
 
     [[nodiscard]] auto frame_ready(gui::Frame const& frame) -> bool {

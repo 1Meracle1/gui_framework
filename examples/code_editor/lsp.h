@@ -39,6 +39,7 @@ namespace code_editor {
         DOCUMENT_SYMBOL,
         WORKSPACE_SYMBOL,
         SEMANTIC_TOKENS,
+        FOLDING_RANGE,
     };
 
     enum class LspDiagnosticSeverity : uint8_t {
@@ -120,6 +121,11 @@ namespace code_editor {
         SyntaxTokenKind kind = SyntaxTokenKind::TEXT;
     };
 
+    struct LspFoldingRange {
+        size_t start_line = 0u;
+        size_t end_line = 0u;
+    };
+
     struct LspBridge {
         LspStatusKind status = LspStatusKind::OFF;
         StrRef server_name = {};
@@ -131,12 +137,15 @@ namespace code_editor {
         Slice<LspDocumentSymbol> symbols = {};
         Slice<LspTextEdit> text_edits = {};
         Slice<LspSemanticToken> semantic_tokens = {};
+        Slice<LspFoldingRange> folding_ranges = {};
         LspHover hover = {};
         StrRef progress_text = {};
         StrRef semantic_tokens_path = {};
+        StrRef folding_ranges_path = {};
         LspRequestKind locations_kind = LspRequestKind::NONE;
         LspRequestKind symbols_kind = LspRequestKind::NONE;
         uint64_t semantic_tokens_revision = 0u;
+        uint64_t folding_ranges_revision = 0u;
         bool progress_active = false;
         uint64_t status_generation = 0u;
         uint64_t progress_generation = 0u;
@@ -148,6 +157,7 @@ namespace code_editor {
         uint64_t symbols_generation = 0u;
         uint64_t text_edits_generation = 0u;
         uint64_t semantic_tokens_generation = 0u;
+        uint64_t folding_ranges_generation = 0u;
     };
 
     struct LspEditorRequest {

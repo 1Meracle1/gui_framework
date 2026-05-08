@@ -22,6 +22,11 @@ namespace code_editor {
         {"format", "fmt", "Format the current C/C++ file."},
         {"search", "s", "Search the current buffer."},
         {"symbols", "sym", "Open document symbols."},
+        {"fold-toggle", "za", "Toggle the current scope fold."},
+        {"fold-close", "zc", "Fold the current scope."},
+        {"fold-open", "zo", "Open the fold at the current line."},
+        {"fold-close-all", "zM", "Fold all known scopes."},
+        {"fold-open-all", "zR", "Open all folds."},
         {"jumps", "jl", "Open jump list."},
         {"jump-back", "jb", "Jump to previous recorded location."},
         {"jump-forward", "jf", "Jump to next recorded location."},
@@ -62,6 +67,11 @@ namespace code_editor {
     auto set_text_search_text(EditorState& editor, StrRef text) -> void;
     auto jump_list_previous(EditorState& editor) -> void;
     auto jump_list_next(EditorState& editor) -> void;
+    auto close_current_fold(EditorState& editor) -> void;
+    auto open_current_fold(EditorState& editor) -> void;
+    auto toggle_current_fold(EditorState& editor) -> void;
+    auto close_all_folds(EditorState& editor) -> void;
+    auto open_all_folds(EditorState& editor) -> void;
     auto move_filesystem_tree_cursor(EditorState& editor, int32_t direction) -> void;
     [[nodiscard]] auto tree_edit_active(EditorState const& editor) -> bool;
     auto cancel_tree_edit(EditorState& editor) -> void;
@@ -151,6 +161,8 @@ namespace code_editor {
         editor.cursor_column = 0u;
         editor.preferred_column = 0u;
         clear_extra_cursors(editor);
+        editor.folded_ranges.clear();
+        editor.folded_revision = 0u;
         editor.selection_anchor_line = 0u;
         editor.selection_anchor_column = 0u;
         editor.selection_mode = EditorSelectionMode::NONE;
@@ -231,8 +243,13 @@ namespace code_editor {
             pane.extra_cursors.copy_from(editor.extra_cursors, editor.arena->resource());
         DEBUG_ASSERT(cursors_ok);
         (void)cursors_ok;
+        bool const folds_ok =
+            pane.folded_ranges.copy_from(editor.folded_ranges, editor.arena->resource());
+        DEBUG_ASSERT(folds_ok);
+        (void)folds_ok;
         pane.selection_anchor_line = editor.selection_anchor_line;
         pane.selection_anchor_column = editor.selection_anchor_column;
+        pane.folded_revision = editor.folded_revision;
         pane.selection_mode = editor.selection_mode;
         pane.scroll_x = editor.scroll_x;
         pane.scroll_y = editor.scroll_y;
@@ -263,8 +280,13 @@ namespace code_editor {
             editor.extra_cursors.copy_from(pane.extra_cursors, editor.arena->resource());
         DEBUG_ASSERT(cursors_ok);
         (void)cursors_ok;
+        bool const folds_ok =
+            editor.folded_ranges.copy_from(pane.folded_ranges, editor.arena->resource());
+        DEBUG_ASSERT(folds_ok);
+        (void)folds_ok;
         editor.selection_anchor_line = pane.selection_anchor_line;
         editor.selection_anchor_column = pane.selection_anchor_column;
+        editor.folded_revision = pane.folded_revision;
         editor.selection_mode = pane.selection_mode;
         editor.scroll_x = pane.scroll_x;
         editor.scroll_y = pane.scroll_y;
@@ -323,6 +345,9 @@ namespace code_editor {
         bool const cursors_ok = pane->extra_cursors.init(0u, editor.arena->resource());
         DEBUG_ASSERT(cursors_ok);
         (void)cursors_ok;
+        bool const folds_ok = pane->folded_ranges.init(0u, editor.arena->resource());
+        DEBUG_ASSERT(folds_ok);
+        (void)folds_ok;
         bool const views_ok = pane->open_file_views.init(0u, editor.arena->resource());
         DEBUG_ASSERT(views_ok);
         (void)views_ok;
@@ -345,8 +370,13 @@ namespace code_editor {
         pane.cursor_line = editor.cursor_line;
         pane.cursor_column = editor.cursor_column;
         pane.preferred_column = editor.preferred_column;
+        bool const folds_ok =
+            pane.folded_ranges.copy_from(editor.folded_ranges, editor.arena->resource());
+        DEBUG_ASSERT(folds_ok);
+        (void)folds_ok;
         pane.selection_anchor_line = editor.selection_anchor_line;
         pane.selection_anchor_column = editor.selection_anchor_column;
+        pane.folded_revision = editor.folded_revision;
         pane.selection_mode = editor.selection_mode;
         pane.scroll_x = editor.scroll_x;
         pane.scroll_y = editor.scroll_y;
@@ -386,6 +416,10 @@ namespace code_editor {
             bool const cursors_ok = editor.extra_cursors.init(0u, arena.resource());
             DEBUG_ASSERT(cursors_ok);
             (void)cursors_ok;
+
+            bool const folds_ok = editor.folded_ranges.init(0u, arena.resource());
+            DEBUG_ASSERT(folds_ok);
+            (void)folds_ok;
 
             bool const panes_ok = editor.panes.init(0u, arena.resource());
             DEBUG_ASSERT(panes_ok);
@@ -557,6 +591,8 @@ namespace code_editor {
         editor.cursor_column = 0u;
         editor.preferred_column = 0u;
         clear_extra_cursors(editor);
+        editor.folded_ranges.clear();
+        editor.folded_revision = 0u;
         editor.selection_anchor_line = 0u;
         editor.selection_anchor_column = 0u;
         editor.selection_mode = EditorSelectionMode::NONE;
@@ -597,8 +633,13 @@ namespace code_editor {
             view->extra_cursors.copy_from(editor.extra_cursors, editor.arena->resource());
         DEBUG_ASSERT(cursors_ok);
         (void)cursors_ok;
+        bool const folds_ok =
+            view->folded_ranges.copy_from(editor.folded_ranges, editor.arena->resource());
+        DEBUG_ASSERT(folds_ok);
+        (void)folds_ok;
         view->selection_anchor_line = editor.selection_anchor_line;
         view->selection_anchor_column = editor.selection_anchor_column;
+        view->folded_revision = editor.folded_revision;
         view->selection_mode = editor.selection_mode;
         view->scroll_x = editor.scroll_x;
         view->scroll_y = editor.scroll_y;
@@ -627,8 +668,13 @@ namespace code_editor {
             editor.extra_cursors.copy_from(view->extra_cursors, editor.arena->resource());
         DEBUG_ASSERT(cursors_ok);
         (void)cursors_ok;
+        bool const folds_ok =
+            editor.folded_ranges.copy_from(view->folded_ranges, editor.arena->resource());
+        DEBUG_ASSERT(folds_ok);
+        (void)folds_ok;
         editor.selection_anchor_line = view->selection_anchor_line;
         editor.selection_anchor_column = view->selection_anchor_column;
+        editor.folded_revision = view->folded_revision;
         editor.selection_mode = view->selection_mode;
         editor.scroll_x = view->scroll_x;
         editor.scroll_y = view->scroll_y;
@@ -659,6 +705,11 @@ namespace code_editor {
             editor.undo_stack = pane->undo_stack;
             editor.redo_stack = pane->redo_stack;
             editor.file_write_stamp = pane->file_write_stamp;
+            bool const folds_ok =
+                editor.folded_ranges.copy_from(pane->folded_ranges, editor.arena->resource());
+            DEBUG_ASSERT(folds_ok);
+            (void)folds_ok;
+            editor.folded_revision = pane->folded_revision;
             BASE_UNUSED(restore_focused_open_file_view(editor, name, path));
             editor.set_flag(EditorFlag::DIRTY, pane->dirty);
             editor.set_flag(EditorFlag::EXTERNAL_CHANGE_PENDING, pane->external_change_pending);
@@ -1583,6 +1634,311 @@ namespace code_editor {
         return line + 1u < editor_line_count(editor);
     }
 
+    [[nodiscard]] auto fold_range_valid(EditorState const& editor, EditorFoldRange range) -> bool {
+        return range.start_line < range.end_line && range.end_line < editor_line_count(editor);
+    }
+
+    [[nodiscard]] auto folds_active(EditorState const& editor) -> bool {
+        return editor.folded_revision == editor.text.revision && !editor.folded_ranges.empty();
+    }
+
+    [[nodiscard]] auto lsp_folding_ranges(EditorState const& editor)
+        -> Slice<LspFoldingRange const> {
+        if (editor.lsp_bridge == nullptr || editor.lsp_bridge->folding_ranges.empty()) {
+            return {};
+        }
+        if (!editor.lsp_bridge->folding_ranges_path.empty() &&
+            editor.lsp_bridge->folding_ranges_path != editor.current_file_path) {
+            return {};
+        }
+        if (editor.lsp_bridge->folding_ranges_revision != 0u &&
+            editor.lsp_bridge->folding_ranges_revision != editor.text.revision) {
+            return {};
+        }
+        return editor.lsp_bridge->folding_ranges;
+    }
+
+    [[nodiscard]] auto
+    editor_fold_from_lsp(EditorState const& editor, LspFoldingRange range, EditorFoldRange& out)
+        -> bool {
+        size_t const line_count = editor_line_count(editor);
+        out = {
+            .start_line = std::min(range.start_line, line_count - 1u),
+            .end_line = std::min(range.end_line, line_count - 1u),
+        };
+        return fold_range_valid(editor, out);
+    }
+
+    [[nodiscard]] auto fold_contains_line(EditorFoldRange range, size_t line) -> bool {
+        return range.start_line <= line && line <= range.end_line;
+    }
+
+    [[nodiscard]] auto folded_header_for_line(EditorState const& editor, size_t line) -> size_t {
+        if (!folds_active(editor)) {
+            return line;
+        }
+        for (EditorFoldRange const range : editor.folded_ranges) {
+            if (fold_range_valid(editor, range) && range.start_line < line &&
+                line <= range.end_line) {
+                return range.start_line;
+            }
+        }
+        return line;
+    }
+
+    [[nodiscard]] auto editor_line_hidden(EditorState const& editor, size_t line) -> bool {
+        return folded_header_for_line(editor, line) != line;
+    }
+
+    [[nodiscard]] auto editor_line_folded(EditorState const& editor, size_t line) -> bool {
+        if (!folds_active(editor)) {
+            return false;
+        }
+        for (EditorFoldRange const range : editor.folded_ranges) {
+            if (fold_range_valid(editor, range) && range.start_line == line) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    [[nodiscard]] auto
+    fold_range_starting_at_line(EditorState const& editor, size_t line, EditorFoldRange& out)
+        -> bool {
+        if (folds_active(editor)) {
+            for (EditorFoldRange const range : editor.folded_ranges) {
+                if (fold_range_valid(editor, range) && range.start_line == line) {
+                    out = range;
+                    return true;
+                }
+            }
+        }
+        for (LspFoldingRange const range : lsp_folding_ranges(editor)) {
+            EditorFoldRange fold = {};
+            if (editor_fold_from_lsp(editor, range, fold) && fold.start_line == line) {
+                out = fold;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    [[nodiscard]] auto editor_line_foldable(EditorState const& editor, size_t line) -> bool {
+        EditorFoldRange range = {};
+        return !editor_line_hidden(editor, line) &&
+               fold_range_starting_at_line(editor, line, range);
+    }
+
+    [[nodiscard]] auto editor_fold_hidden_line_count(EditorState const& editor, size_t line)
+        -> size_t {
+        EditorFoldRange range = {};
+        if (!fold_range_starting_at_line(editor, line, range) ||
+            !editor_line_folded(editor, line)) {
+            return 0u;
+        }
+        return range.end_line - range.start_line;
+    }
+
+    [[nodiscard]] auto editor_visible_line_count(EditorState const& editor) -> size_t {
+        size_t count = 0u;
+        for (size_t line = 0u; line < editor_line_count(editor); ++line) {
+            if (!editor_line_hidden(editor, line)) {
+                count += 1u;
+            }
+        }
+        return std::max<size_t>(1u, count);
+    }
+
+    [[nodiscard]] auto editor_visible_line_at(EditorState const& editor, size_t index) -> size_t {
+        index = std::min(index, editor_visible_line_count(editor) - 1u);
+        size_t visible = 0u;
+        for (size_t line = 0u; line < editor_line_count(editor); ++line) {
+            if (editor_line_hidden(editor, line)) {
+                continue;
+            }
+            if (visible == index) {
+                return line;
+            }
+            visible += 1u;
+        }
+        return editor_line_count(editor) - 1u;
+    }
+
+    [[nodiscard]] auto editor_visible_line_index(EditorState const& editor, size_t line) -> size_t {
+        line = folded_header_for_line(editor, std::min(line, editor_line_count(editor) - 1u));
+        size_t visible = 0u;
+        for (size_t index = 0u; index < line; ++index) {
+            if (!editor_line_hidden(editor, index)) {
+                visible += 1u;
+            }
+        }
+        return visible;
+    }
+
+    auto sort_folded_ranges(EditorState& editor) -> void {
+        if (editor.folded_ranges.size() < 2u) {
+            return;
+        }
+        std::sort(editor.folded_ranges.begin(), editor.folded_ranges.end(), [](auto lhs, auto rhs) {
+            if (lhs.start_line != rhs.start_line) {
+                return lhs.start_line < rhs.start_line;
+            }
+            return lhs.end_line > rhs.end_line;
+        });
+    }
+
+    auto prepare_folds_for_current_revision(EditorState& editor) -> void {
+        if (editor.folded_revision == editor.text.revision) {
+            return;
+        }
+        editor.folded_ranges.clear();
+        editor.folded_revision = editor.text.revision;
+    }
+
+    auto add_fold_range(EditorState& editor, EditorFoldRange range) -> bool {
+        if (!fold_range_valid(editor, range)) {
+            return false;
+        }
+        prepare_folds_for_current_revision(editor);
+        if (editor_line_hidden(editor, range.start_line)) {
+            return false;
+        }
+        size_t count = 0u;
+        for (size_t index = 0u; index < editor.folded_ranges.size(); ++index) {
+            EditorFoldRange const existing = editor.folded_ranges[index];
+            if (existing.start_line == range.start_line) {
+                return false;
+            }
+            if (existing.start_line > range.start_line && existing.end_line <= range.end_line) {
+                continue;
+            }
+            editor.folded_ranges[count] = existing;
+            count += 1u;
+        }
+        BASE_UNUSED(editor.folded_ranges.resize(count));
+        bool const ok = editor.folded_ranges.push_back(range);
+        DEBUG_ASSERT(ok);
+        (void)ok;
+        sort_folded_ranges(editor);
+        return true;
+    }
+
+    auto remove_fold_at_line(EditorState& editor, size_t line) -> bool {
+        prepare_folds_for_current_revision(editor);
+        line = folded_header_for_line(editor, line);
+        for (size_t index = 0u; index < editor.folded_ranges.size(); ++index) {
+            if (editor.folded_ranges[index].start_line == line) {
+                editor.folded_ranges.ordered_remove(index);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    [[nodiscard]] auto current_fold_range(EditorState const& editor, EditorFoldRange& out) -> bool {
+        if (fold_range_starting_at_line(editor, editor.cursor_line, out) &&
+            editor_line_folded(editor, editor.cursor_line)) {
+            return true;
+        }
+
+        bool found = false;
+        size_t best_size = static_cast<size_t>(-1);
+        for (LspFoldingRange const range : lsp_folding_ranges(editor)) {
+            EditorFoldRange fold = {};
+            if (!editor_fold_from_lsp(editor, range, fold) ||
+                !fold_contains_line(fold, editor.cursor_line)) {
+                continue;
+            }
+            size_t const size = fold.end_line - fold.start_line;
+            if (!found || size < best_size) {
+                out = fold;
+                best_size = size;
+                found = true;
+            }
+        }
+        return found;
+    }
+
+    auto request_folding_ranges(EditorState& editor) -> void {
+        request_lsp(editor, LspRequestKind::FOLDING_RANGE);
+    }
+
+    auto close_current_fold(EditorState& editor) -> void {
+        EditorFoldRange range = {};
+        if (current_fold_range(editor, range)) {
+            clear_extra_cursors(editor);
+            BASE_UNUSED(add_fold_range(editor, range));
+        } else {
+            request_folding_ranges(editor);
+        }
+    }
+
+    auto open_current_fold(EditorState& editor) -> void {
+        BASE_UNUSED(remove_fold_at_line(editor, editor.cursor_line));
+    }
+
+    auto toggle_current_fold(EditorState& editor) -> void {
+        if (editor_line_folded(editor, editor.cursor_line)) {
+            open_current_fold(editor);
+        } else {
+            close_current_fold(editor);
+        }
+    }
+
+    auto close_all_folds(EditorState& editor) -> void {
+        Slice<LspFoldingRange const> const ranges = lsp_folding_ranges(editor);
+        if (ranges.empty()) {
+            request_folding_ranges(editor);
+            return;
+        }
+
+        ArenaTemp temp = begin_thread_temp_arena();
+        EditorFoldRange* const folds = arena_alloc<EditorFoldRange>(*temp.arena(), ranges.size());
+        size_t count = 0u;
+        for (LspFoldingRange const range : ranges) {
+            EditorFoldRange fold = {};
+            if (editor_fold_from_lsp(editor, range, fold)) {
+                folds[count] = fold;
+                count += 1u;
+            }
+        }
+        if (count > 1u) {
+            std::sort(folds, folds + count, [](auto lhs, auto rhs) {
+                if (lhs.start_line != rhs.start_line) {
+                    return lhs.start_line < rhs.start_line;
+                }
+                return lhs.end_line > rhs.end_line;
+            });
+        }
+
+        editor.folded_ranges.clear();
+        editor.folded_revision = editor.text.revision;
+        for (size_t index = 0u; index < count; ++index) {
+            if (!editor_line_hidden(editor, folds[index].start_line)) {
+                BASE_UNUSED(editor.folded_ranges.push_back(folds[index]));
+            }
+        }
+    }
+
+    auto open_all_folds(EditorState& editor) -> void {
+        editor.folded_ranges.clear();
+        editor.folded_revision = editor.text.revision;
+    }
+
+    auto toggle_editor_fold_at_line(EditorState& editor, size_t line) -> void {
+        if (editor_line_folded(editor, line)) {
+            BASE_UNUSED(remove_fold_at_line(editor, line));
+            return;
+        }
+        EditorFoldRange range = {};
+        if (fold_range_starting_at_line(editor, line, range)) {
+            clear_extra_cursors(editor);
+            BASE_UNUSED(add_fold_range(editor, range));
+        } else {
+            request_folding_ranges(editor);
+        }
+    }
+
     struct EditorPosition {
         size_t line = 0u;
         size_t column = 0u;
@@ -1809,13 +2165,16 @@ namespace code_editor {
             move_all_cursors_vertical(editor, delta, select);
             return;
         }
-        size_t line = editor.cursor_line;
+        size_t visible = editor_visible_line_index(editor, editor.cursor_line);
         if (delta < 0) {
             size_t const amount = static_cast<size_t>(-delta);
-            line = amount < line ? line - amount : 0u;
+            visible = amount < visible ? visible - amount : 0u;
         } else {
-            line = std::min(line + static_cast<size_t>(delta), editor_line_count(editor) - 1u);
+            visible = std::min(
+                visible + static_cast<size_t>(delta), editor_visible_line_count(editor) - 1u
+            );
         }
+        size_t const line = editor_visible_line_at(editor, visible);
         EditorPosition position = {
             line, std::min(editor.preferred_column, line_size(editor, line))
         };
@@ -3789,27 +4148,42 @@ namespace code_editor {
             request_lsp(editor, LspRequestKind::DOCUMENT_SYMBOL);
             break;
         case 11u:
-            open_editor_jump_list(editor);
+            toggle_current_fold(editor);
             break;
         case 12u:
-            jump_list_previous(editor);
+            close_current_fold(editor);
             break;
         case 13u:
-            jump_list_next(editor);
+            open_current_fold(editor);
             break;
         case 14u:
-            toggle_raster_policy(editor);
+            close_all_folds(editor);
             break;
         case 15u:
-            open_editor_global_search(editor);
+            open_all_folds(editor);
             break;
         case 16u:
-            set_config_request(editor, EditorConfigRequestKind::OPEN);
+            open_editor_jump_list(editor);
             break;
         case 17u:
-            set_config_request(editor, EditorConfigRequestKind::RELOAD);
+            jump_list_previous(editor);
             break;
         case 18u:
+            jump_list_next(editor);
+            break;
+        case 19u:
+            toggle_raster_policy(editor);
+            break;
+        case 20u:
+            open_editor_global_search(editor);
+            break;
+        case 21u:
+            set_config_request(editor, EditorConfigRequestKind::OPEN);
+            break;
+        case 22u:
+            set_config_request(editor, EditorConfigRequestKind::RELOAD);
+            break;
+        case 23u:
             set_config_request(editor, EditorConfigRequestKind::OVERRIDE, args);
             break;
         default:
@@ -4209,7 +4583,9 @@ namespace code_editor {
         gui::Rect const content = editor_content_rect(rect);
         float const visible_height = std::max(1.0f, content.max.y - content.min.y);
         float const line_height = editor_line_height(editor);
-        float const cursor_center = (static_cast<float>(editor.cursor_line) + 0.5f) * line_height;
+        float const cursor_center =
+            (static_cast<float>(editor_visible_line_index(editor, editor.cursor_line)) + 0.5f) *
+            line_height;
         editor.scroll_y = cursor_center - visible_height * 0.5f;
         clamp_scroll(editor, rect);
     }
@@ -4667,6 +5043,16 @@ namespace code_editor {
             editor.set_flag(EditorFlag::PENDING_Z, false);
             if (ch == 'z') {
                 center_cursor(editor, editor.split_nodes[editor.focused_split].rect);
+            } else if (ch == 'a') {
+                toggle_current_fold(editor);
+            } else if (ch == 'c') {
+                close_current_fold(editor);
+            } else if (ch == 'o') {
+                open_current_fold(editor);
+            } else if (ch == 'M') {
+                close_all_folds(editor);
+            } else if (ch == 'R') {
+                open_all_folds(editor);
             }
             return;
         }
@@ -5077,6 +5463,14 @@ namespace code_editor {
             editor,
             {
                 .kind = LspRequestKind::SEMANTIC_TOKENS,
+                .path = editor.current_file_path,
+                .revision = editor.text.revision,
+            }
+        );
+        send_lsp_request(
+            editor,
+            {
+                .kind = LspRequestKind::FOLDING_RANGE,
                 .path = editor.current_file_path,
                 .revision = editor.text.revision,
             }
@@ -5966,7 +6360,7 @@ namespace code_editor {
         gui::Rect const content = editor_content_rect(rect);
         float const visible_height = std::max(1.0f, content.max.y - content.min.y);
         float const content_height =
-            static_cast<float>(editor_line_count(editor)) * editor_line_height(editor);
+            static_cast<float>(editor_visible_line_count(editor)) * editor_line_height(editor);
         return std::max(0.0f, content_height - visible_height);
     }
 
@@ -5979,7 +6373,8 @@ namespace code_editor {
         gui::Rect const content = editor_content_rect(rect);
         float const visible_height = std::max(1.0f, content.max.y - content.min.y);
         float const line_height = editor_line_height(editor);
-        float const line_top = static_cast<float>(editor.cursor_line) * line_height;
+        float const line_top =
+            static_cast<float>(editor_visible_line_index(editor, editor.cursor_line)) * line_height;
         float const line_bottom = line_top + line_height;
         if (line_top < editor.scroll_y) {
             editor.scroll_y = line_top;
@@ -6012,8 +6407,9 @@ namespace code_editor {
         gui::Rect const content = editor_content_rect(rect);
         float const y = std::max(0.0f, mouse.y - content.min.y + editor.scroll_y);
         float const line_height = editor_line_height(editor);
-        size_t const line =
-            std::min(editor_line_count(editor) - 1u, static_cast<size_t>(y / line_height));
+        size_t const visible_line =
+            std::min(editor_visible_line_count(editor) - 1u, static_cast<size_t>(y / line_height));
+        size_t const line = editor_visible_line_at(editor, visible_line);
         float const text_x = editor_text_x(editor, rect);
         float const column_x = std::max(editor.scroll_x, mouse.x - text_x);
         size_t const column = static_cast<size_t>(column_x / char_width + 0.5f);
@@ -6177,6 +6573,10 @@ namespace code_editor {
         hash = hash_bytes(hash, &extra_cursor_count, sizeof(extra_cursor_count));
         hash =
             hash_bytes(hash, pane.extra_cursors.data(), extra_cursor_count * sizeof(EditorCursor));
+        size_t const folded_count = pane.folded_ranges.size();
+        hash = hash_bytes(hash, &folded_count, sizeof(folded_count));
+        hash = hash_bytes(hash, pane.folded_ranges.data(), folded_count * sizeof(EditorFoldRange));
+        hash = hash_bytes(hash, &pane.folded_revision, sizeof(pane.folded_revision));
         hash = hash_bytes(hash, &pane.selection_anchor_line, sizeof(pane.selection_anchor_line));
         hash =
             hash_bytes(hash, &pane.selection_anchor_column, sizeof(pane.selection_anchor_column));
@@ -6212,6 +6612,11 @@ namespace code_editor {
         hash = hash_bytes(
             hash, editor.extra_cursors.data(), extra_cursor_count * sizeof(EditorCursor)
         );
+        size_t const folded_count = editor.folded_ranges.size();
+        hash = hash_bytes(hash, &folded_count, sizeof(folded_count));
+        hash =
+            hash_bytes(hash, editor.folded_ranges.data(), folded_count * sizeof(EditorFoldRange));
+        hash = hash_bytes(hash, &editor.folded_revision, sizeof(editor.folded_revision));
         hash =
             hash_bytes(hash, &editor.selection_anchor_line, sizeof(editor.selection_anchor_line));
         hash = hash_bytes(
@@ -6296,6 +6701,11 @@ namespace code_editor {
             &editor.lsp_seen_text_edits_generation,
             sizeof(editor.lsp_seen_text_edits_generation)
         );
+        hash = hash_bytes(
+            hash,
+            &editor.lsp_seen_folding_ranges_generation,
+            sizeof(editor.lsp_seen_folding_ranges_generation)
+        );
         hash = hash_bytes(hash, &editor.save_path_error, sizeof(editor.save_path_error));
         size_t const save_path_text_size = cstr_len(editor.save_path_text);
         hash = hash_bytes(hash, &save_path_text_size, sizeof(save_path_text_size));
@@ -6337,6 +6747,12 @@ namespace code_editor {
             hash = hash_bytes(
                 hash, file.extra_cursors.data(), file_extra_cursor_count * sizeof(EditorCursor)
             );
+            size_t const file_folded_count = file.folded_ranges.size();
+            hash = hash_bytes(hash, &file_folded_count, sizeof(file_folded_count));
+            hash = hash_bytes(
+                hash, file.folded_ranges.data(), file_folded_count * sizeof(EditorFoldRange)
+            );
+            hash = hash_bytes(hash, &file.folded_revision, sizeof(file.folded_revision));
             hash =
                 hash_bytes(hash, &file.selection_anchor_line, sizeof(file.selection_anchor_line));
             hash = hash_bytes(

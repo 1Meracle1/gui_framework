@@ -47,6 +47,7 @@ namespace code_editor {
         client.bridge.symbols = client.symbols.slice();
         client.bridge.text_edits = client.text_edits.slice();
         client.bridge.semantic_tokens = client.semantic_tokens.slice();
+        client.bridge.folding_ranges = client.folding_ranges.slice();
     }
 
     auto set_status(LspClient& client, LspStatusKind kind, StrRef text) -> void {
@@ -480,7 +481,8 @@ namespace code_editor {
             "\"itemDefaults\":[\"editRange\",\"insertTextFormat\"]}},\"hover\":{},"
             "\"definition\":{},\"declaration\":{},"
             "\"references\":{},\"rename\":{},\"formatting\":{},\"codeAction\":{},"
-            "\"documentSymbol\":{},\"semanticTokens\":{\"dynamicRegistration\":false,"
+            "\"documentSymbol\":{},\"foldingRange\":{\"dynamicRegistration\":false,"
+            "\"lineFoldingOnly\":true},\"semanticTokens\":{\"dynamicRegistration\":false,"
             "\"requests\":{\"range\":false,\"full\":true},\"tokenTypes\":[\"namespace\","
             "\"type\",\"class\",\"enum\",\"interface\",\"struct\",\"typeParameter\","
             "\"parameter\",\"variable\",\"property\",\"enumMember\",\"event\",\"function\","
@@ -511,6 +513,7 @@ namespace code_editor {
             !client.symbols.init(64u, client.result_arena.resource()) ||
             !client.text_edits.init(64u, client.result_arena.resource()) ||
             !client.semantic_tokens.init(512u, client.result_arena.resource()) ||
+            !client.folding_ranges.init(128u, client.result_arena.resource()) ||
             !client.semantic_token_types.init(32u, client.result_arena.resource())) {
             return false;
         }
@@ -749,9 +752,12 @@ namespace code_editor {
             set_server_name(client, name);
         }
         client.semantic_tokens_supported = false;
-        LspJsonValue const* const provider = lsp_json_object_get(
-            lsp_json_object_get(result, "capabilities"), "semanticTokensProvider"
-        );
+        client.folding_ranges_supported = false;
+        LspJsonValue const* const capabilities = lsp_json_object_get(result, "capabilities");
+        client.folding_ranges_supported =
+            lsp_json_object_get(capabilities, "foldingRangeProvider") != nullptr;
+        LspJsonValue const* const provider =
+            lsp_json_object_get(capabilities, "semanticTokensProvider");
         LspJsonValue const* const token_types =
             lsp_json_object_get(lsp_json_object_get(provider, "legend"), "tokenTypes");
         if (token_types == nullptr || token_types->kind != LspJsonKind::ARRAY) {
@@ -1348,6 +1354,33 @@ namespace code_editor {
         bridge_refresh(client);
     }
 
+    auto parse_folding_ranges_response(
+        LspClient& client, LspJsonValue const* result, LspClientPendingRequest const& pending
+    ) -> void {
+        if (pending.path != client.current_path || pending.revision != client.current_revision) {
+            return;
+        }
+
+        client.folding_ranges.clear();
+        client.bridge.folding_ranges_path = copy_result(client, pending.path);
+        client.bridge.folding_ranges_revision = pending.revision;
+
+        if (result != nullptr && result->kind == LspJsonKind::ARRAY) {
+            for (LspJsonValue const* item : result->array) {
+                size_t start_line = 0u;
+                size_t end_line = 0u;
+                if (!json_member_size(item, "startLine", start_line) ||
+                    !json_member_size(item, "endLine", end_line) || end_line <= start_line) {
+                    continue;
+                }
+                BASE_UNUSED(client.folding_ranges.push_back({start_line, end_line}));
+            }
+        }
+
+        client.bridge.folding_ranges_generation += 1u;
+        bridge_refresh(client);
+    }
+
     auto send_initialized(LspClient& client) -> void {
         send_notification_json(client, "initialized", "{}");
         set_status(
@@ -1396,6 +1429,9 @@ namespace code_editor {
             break;
         case LspRequestKind::SEMANTIC_TOKENS:
             parse_semantic_tokens_response(client, result, pending);
+            break;
+        case LspRequestKind::FOLDING_RANGE:
+            parse_folding_ranges_response(client, result, pending);
             break;
         default:
             break;
@@ -1720,6 +1756,27 @@ namespace code_editor {
         );
     }
 
+    auto send_folding_range_request(LspClient& client, LspEditorRequest const& request) -> void {
+        if (!client.folding_ranges_supported) {
+            return;
+        }
+        ArenaTemp temp = begin_thread_temp_arena();
+        StringBuffer params = {};
+        BASE_UNUSED(params.init(256u, temp.arena()->resource()));
+        BASE_UNUSED(params.write_string("{\"textDocument\":{\"uri\":"));
+        lsp_json_write_escaped_string(params, client.current_uri);
+        BASE_UNUSED(params.write_string("}}"));
+        send_request_json(
+            client,
+            LspRequestKind::FOLDING_RANGE,
+            request.path,
+            "textDocument/foldingRange",
+            params.str(),
+            {},
+            request.revision
+        );
+    }
+
     auto lsp_client_send_editor_request(void* user_data, LspEditorRequest const& request) -> void {
         auto* const client = static_cast<LspClient*>(user_data);
         if (client == nullptr || !client->started) {
@@ -1770,6 +1827,9 @@ namespace code_editor {
             break;
         case LspRequestKind::SEMANTIC_TOKENS:
             send_semantic_tokens_request(*client, request);
+            break;
+        case LspRequestKind::FOLDING_RANGE:
+            send_folding_range_request(*client, request);
             break;
         default:
             break;

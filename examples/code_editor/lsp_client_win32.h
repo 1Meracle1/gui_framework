@@ -67,6 +67,7 @@ namespace code_editor {
         Vec<LspDocumentSymbol> symbols = {};
         Vec<LspTextEdit> text_edits = {};
         Vec<LspSemanticToken> semantic_tokens = {};
+        Vec<LspFoldingRange> folding_ranges = {};
         Vec<StrRef> semantic_token_types = {};
         StrRef root_path = {};
         StrRef compile_commands_dir = {};
@@ -78,6 +79,7 @@ namespace code_editor {
         bool started = false;
         bool initialized = false;
         bool semantic_tokens_supported = false;
+        bool folding_ranges_supported = false;
     };
 
     [[nodiscard]] auto lsp_client_init(LspClient& client) -> bool;

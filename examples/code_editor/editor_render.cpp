@@ -358,8 +358,13 @@ namespace code_editor {
             file->extra_cursors.copy_from(editor.extra_cursors, editor.arena->resource());
         DEBUG_ASSERT(cursors_ok);
         (void)cursors_ok;
+        bool const folds_ok =
+            file->folded_ranges.copy_from(editor.folded_ranges, editor.arena->resource());
+        DEBUG_ASSERT(folds_ok);
+        (void)folds_ok;
         file->selection_anchor_line = editor.selection_anchor_line;
         file->selection_anchor_column = editor.selection_anchor_column;
+        file->folded_revision = editor.folded_revision;
         file->selection_mode = editor.selection_mode;
         file->scroll_x = editor.scroll_x;
         file->scroll_y = editor.scroll_y;
@@ -386,8 +391,13 @@ namespace code_editor {
             editor.extra_cursors.copy_from(file.extra_cursors, editor.arena->resource());
         DEBUG_ASSERT(cursors_ok);
         (void)cursors_ok;
+        bool const folds_ok =
+            editor.folded_ranges.copy_from(file.folded_ranges, editor.arena->resource());
+        DEBUG_ASSERT(folds_ok);
+        (void)folds_ok;
         editor.selection_anchor_line = file.selection_anchor_line;
         editor.selection_anchor_column = file.selection_anchor_column;
+        editor.folded_revision = file.folded_revision;
         editor.selection_mode = file.selection_mode;
         editor.scroll_x = file.scroll_x;
         editor.scroll_y = file.scroll_y;
@@ -512,6 +522,8 @@ namespace code_editor {
         pane.cursor_column = 0u;
         pane.preferred_column = 0u;
         pane.extra_cursors.clear();
+        pane.folded_ranges.clear();
+        pane.folded_revision = 0u;
         pane.selection_anchor_line = 0u;
         pane.selection_anchor_column = 0u;
         pane.selection_mode = EditorSelectionMode::NONE;
@@ -840,6 +852,8 @@ namespace code_editor {
             file.cursor_column = 0u;
             file.preferred_column = 0u;
             file.extra_cursors.clear();
+            file.folded_ranges.clear();
+            file.folded_revision = 0u;
             file.selection_anchor_line = 0u;
             file.selection_anchor_column = 0u;
             file.selection_mode = EditorSelectionMode::NONE;
@@ -1519,6 +1533,24 @@ namespace code_editor {
         bool const middle_dragged = !editor.flag(EditorFlag::SIDEBAR_RESIZING) &&
                                     editor.flag(EditorFlag::MULTI_CURSOR_DRAGGING) &&
                                     input.mouse_down[1u];
+        bool fold_gutter_clicked = false;
+        if (clicked) {
+            gui::Rect const content = editor_content_rect(rect);
+            float const gutter_max_x =
+                content.min.x + editor_scaled_font_size(editor, LINE_NUMBER_WIDTH);
+            float const line_height = editor_line_height(editor);
+            float const y = std::max(0.0f, input.mouse_pos.y - content.min.y + editor.scroll_y);
+            size_t const visible_line = std::min(
+                editor_visible_line_count(editor) - 1u, static_cast<size_t>(y / line_height)
+            );
+            size_t const line = editor_visible_line_at(editor, visible_line);
+            fold_gutter_clicked =
+                input.mouse_pos.x < gutter_max_x && editor_line_foldable(editor, line);
+            if (fold_gutter_clicked) {
+                toggle_editor_fold_at_line(editor, line);
+                editor.set_flag(EditorFlag::MOUSE_SELECTING, false);
+            }
+        }
         if (scrolled) {
             editor.scroll_y -= input.scroll_delta_y;
         }
@@ -1534,7 +1566,7 @@ namespace code_editor {
         } else if (double_clicked) {
             select_word_from_mouse(editor, rect, input.mouse_pos, char_width);
             editor.set_flag(EditorFlag::MOUSE_SELECTING, false);
-        } else if (clicked) {
+        } else if (clicked && !fold_gutter_clicked) {
             update_cursor_from_mouse(
                 editor,
                 rect,
@@ -1554,8 +1586,8 @@ namespace code_editor {
         }
         editor.set_flag(EditorFlag::MOUSE_WAS_DOWN, input.mouse_down[0u]);
         editor.set_flag(EditorFlag::MIDDLE_MOUSE_WAS_DOWN, input.mouse_down[1u]);
-        if (clicked || dragged || middle_clicked || middle_dragged || double_clicked ||
-            triple_clicked || apply_key_reveal) {
+        if ((clicked && !fold_gutter_clicked) || dragged || middle_clicked || middle_dragged ||
+            double_clicked || triple_clicked || apply_key_reveal) {
             reveal_cursor(editor, rect, char_width);
         } else {
             clamp_scroll(editor, rect);
@@ -1568,7 +1600,7 @@ namespace code_editor {
         };
         draw::push_clip_rect(draw_context, clip);
 
-        size_t const line_count = editor_line_count(editor);
+        size_t const line_count = editor_visible_line_count(editor);
         float const line_height = editor_line_height(editor);
         size_t const first_line =
             std::min(line_count - 1u, static_cast<size_t>(editor.scroll_y / line_height));
@@ -1577,11 +1609,14 @@ namespace code_editor {
         float const text_min_x = std::min(text_x + editor.scroll_x, content.max.x);
         draw::Rect const text_clip = {{text_min_x, content.min.y}, {content.max.x, content.max.y}};
         float const line_number_x = content.min.x;
+        float const fold_marker_x =
+            content.min.x + editor_scaled_font_size(editor, LINE_NUMBER_WIDTH - 16.0f);
         EditorSelectionRange const selection = editor_selection_range(editor);
         SyntaxTokenizer const tokenizer = syntax_tokenizer_for_file_name(editor.current_file_name);
         Slice<LspSemanticToken const> const semantic_tokens = semantic_tokens_for_editor(editor);
-        size_t line = first_line;
-        while (line < line_count && y < content.max.y) {
+        size_t visible_line = first_line;
+        while (visible_line < line_count && y < content.max.y) {
+            size_t const line = editor_visible_line_at(editor, visible_line);
             bool const cursor_line = editor_has_cursor_on_line(editor, line);
             if (selection_visible && cursor_line) {
                 draw::draw_rect_filled(
@@ -1607,6 +1642,17 @@ namespace code_editor {
                 fmt::tprintf("%4zu", line + 1u),
                 nullptr
             );
+            if (editor_line_foldable(editor, line)) {
+                number_style.color =
+                    to_draw_color(editor_line_folded(editor, line) ? palette.text : palette.faint);
+                draw::draw_text(
+                    draw_context,
+                    {std::round(fold_marker_x), std::round(y - 2.0f)},
+                    number_style,
+                    editor_line_folded(editor, line) ? "+" : "-",
+                    nullptr
+                );
+            }
 
             draw::push_clip_rect(draw_context, text_clip);
             if (selection_visible) {
@@ -1696,6 +1742,23 @@ namespace code_editor {
                 editor.raster_policy,
                 char_width
             );
+            size_t const hidden_count = editor_fold_hidden_line_count(editor, line);
+            if (hidden_count != 0u) {
+                draw::TextStyle fold_style = {
+                    .font = editor_font,
+                    .size = editor.font_size,
+                    .raster_policy = editor.raster_policy,
+                    .color = to_draw_color(palette.faint),
+                };
+                draw::draw_text(
+                    draw_context,
+                    {std::round(text_x + char_width * static_cast<float>(text_line.size + 1u)),
+                     std::round(y - 2.0f)},
+                    fold_style,
+                    fmt::tprintf("... %zu", hidden_count),
+                    nullptr
+                );
+            }
             draw::pop_clip_rect(draw_context);
             draw_lsp_diagnostics_for_line(
                 draw_context,
@@ -1710,7 +1773,7 @@ namespace code_editor {
                 char_width
             );
             y += line_height;
-            line += 1u;
+            visible_line += 1u;
         }
 
         if (selection_visible && editor.flag(EditorFlag::INSERT_MODE)) {
@@ -1718,7 +1781,7 @@ namespace code_editor {
             draw_editor_insert_cursor(
                 draw_context,
                 palette,
-                editor.cursor_line,
+                editor_visible_line_index(editor, editor.cursor_line),
                 editor.cursor_column,
                 text_x,
                 content.min.y,
@@ -1732,7 +1795,7 @@ namespace code_editor {
                 draw_editor_insert_cursor(
                     draw_context,
                     palette,
-                    cursor.line,
+                    editor_visible_line_index(editor, cursor.line),
                     cursor.column,
                     text_x,
                     content.min.y,
@@ -3271,6 +3334,11 @@ namespace code_editor {
                 );
             }
         }
+        if (editor.lsp_seen_folding_ranges_generation !=
+            editor.lsp_bridge->folding_ranges_generation) {
+            editor.lsp_seen_folding_ranges_generation =
+                editor.lsp_bridge->folding_ranges_generation;
+        }
     }
 
     auto draw_file_search_picker(
@@ -4468,8 +4536,10 @@ namespace code_editor {
         float const x =
             editor_text_x(editor, rect) + char_width * static_cast<float>(editor.cursor_column);
         float const text_min_x = editor_text_x(editor, rect) + editor.scroll_x;
-        float const y =
-            content.min.y + static_cast<float>(editor.cursor_line) * line_height - editor.scroll_y;
+        float const y = content.min.y +
+                        static_cast<float>(editor_visible_line_index(editor, editor.cursor_line)) *
+                            line_height -
+                        editor.scroll_y;
         float const width = editor.flag(EditorFlag::INSERT_MODE) ? 2.0f : char_width;
         return x >= text_min_x && x + width <= content.max.x && y >= content.min.y &&
                y + line_height <= content.max.y;
@@ -4489,7 +4559,9 @@ namespace code_editor {
         float const text_x = editor_text_x(editor, rect);
         float x = text_x + char_width * static_cast<float>(column);
         float const line_top =
-            content.min.y + static_cast<float>(line) * line_height - editor.scroll_y;
+            content.min.y +
+            static_cast<float>(editor_visible_line_index(editor, line)) * line_height -
+            editor.scroll_y;
         float y = line_top + line_height + 3.0f;
         width = std::min(width, std::max(120.0f, content.max.x - content.min.x - 8.0f));
         height = std::min(height, std::max(48.0f, content.max.y - content.min.y - 8.0f));
@@ -4993,7 +5065,10 @@ namespace code_editor {
         );
 
         float const line_top =
-            content.min.y + static_cast<float>(editor.cursor_line) * line_height - editor.scroll_y;
+            content.min.y +
+            static_cast<float>(editor_visible_line_index(editor, editor.cursor_line)) *
+                line_height -
+            editor.scroll_y;
         float y = line_top - height - 4.0f;
         if (y < content.min.y + 4.0f) {
             y = line_top + line_height + 4.0f;

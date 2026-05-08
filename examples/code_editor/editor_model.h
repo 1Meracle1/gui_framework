@@ -57,6 +57,11 @@ namespace code_editor {
         bool full_line = false;
     };
 
+    struct EditorFoldRange {
+        size_t start_line = 0u;
+        size_t end_line = 0u;
+    };
+
     struct EditorCursor {
         size_t line = 0u;
         size_t column = 0u;
@@ -104,8 +109,10 @@ namespace code_editor {
         size_t cursor_column = 0u;
         size_t preferred_column = 0u;
         Vec<EditorCursor> extra_cursors = {};
+        Vec<EditorFoldRange> folded_ranges = {};
         size_t selection_anchor_line = 0u;
         size_t selection_anchor_column = 0u;
+        uint64_t folded_revision = 0u;
         EditorSelectionMode selection_mode = EditorSelectionMode::NONE;
         float scroll_x = 0.0f;
         float scroll_y = 0.0f;
@@ -124,8 +131,10 @@ namespace code_editor {
         size_t cursor_column = 0u;
         size_t preferred_column = 0u;
         Vec<EditorCursor> extra_cursors = {};
+        Vec<EditorFoldRange> folded_ranges = {};
         size_t selection_anchor_line = 0u;
         size_t selection_anchor_column = 0u;
+        uint64_t folded_revision = 0u;
         EditorSelectionMode selection_mode = EditorSelectionMode::NONE;
         float scroll_x = 0.0f;
         float scroll_y = 0.0f;
@@ -211,8 +220,10 @@ namespace code_editor {
         size_t cursor_column = 0u;
         size_t preferred_column = 0u;
         Vec<EditorCursor> extra_cursors = {};
+        Vec<EditorFoldRange> folded_ranges = {};
         size_t selection_anchor_line = 0u;
         size_t selection_anchor_column = 0u;
+        uint64_t folded_revision = 0u;
         EditorSelectionMode selection_mode = EditorSelectionMode::NONE;
         float scroll_x = 0.0f;
         float scroll_y = 0.0f;
@@ -324,8 +335,10 @@ namespace code_editor {
         size_t cursor_column = 0u;
         size_t preferred_column = 0u;
         Vec<EditorCursor> extra_cursors = {};
+        Vec<EditorFoldRange> folded_ranges = {};
         size_t selection_anchor_line = 0u;
         size_t selection_anchor_column = 0u;
+        uint64_t folded_revision = 0u;
         EditorSelectionMode selection_mode = EditorSelectionMode::NONE;
         gui::font_provider::RasterPolicy raster_policy =
             gui::font_provider::RasterPolicy::SHARP_HINTED;
@@ -369,6 +382,7 @@ namespace code_editor {
         uint64_t lsp_seen_code_actions_generation = 0u;
         uint64_t lsp_seen_symbols_generation = 0u;
         uint64_t lsp_seen_text_edits_generation = 0u;
+        uint64_t lsp_seen_folding_ranges_generation = 0u;
         StrRef lsp_synced_path = {};
         LspBridge const* lsp_bridge = nullptr;
         LspSendEditorRequestFn lsp_send_request = nullptr;
@@ -507,5 +521,14 @@ namespace code_editor {
     select_line_from_mouse(EditorState& editor, gui::Rect rect, gui::Vec2 mouse, float char_width)
         -> void;
     [[nodiscard]] auto editor_state_hash(EditorState const& editor) -> uint64_t;
+    [[nodiscard]] auto editor_visible_line_count(EditorState const& editor) -> size_t;
+    [[nodiscard]] auto editor_visible_line_at(EditorState const& editor, size_t index) -> size_t;
+    [[nodiscard]] auto editor_visible_line_index(EditorState const& editor, size_t line) -> size_t;
+    [[nodiscard]] auto editor_line_hidden(EditorState const& editor, size_t line) -> bool;
+    [[nodiscard]] auto editor_line_folded(EditorState const& editor, size_t line) -> bool;
+    [[nodiscard]] auto editor_line_foldable(EditorState const& editor, size_t line) -> bool;
+    [[nodiscard]] auto editor_fold_hidden_line_count(EditorState const& editor, size_t line)
+        -> size_t;
+    auto toggle_editor_fold_at_line(EditorState& editor, size_t line) -> void;
 
 } // namespace code_editor
