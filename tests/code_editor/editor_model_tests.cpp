@@ -2017,6 +2017,60 @@ namespace {
         );
     }
 
+    TEST_CASE(editor_ctrl_slash_toggles_line_comments) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "int a;\n    int b;");
+        editor.cursor_line = 1u;
+        editor.cursor_column = 8u;
+        editor.preferred_column = editor.cursor_column;
+
+        press_key(editor, gui::Key::SLASH, gui::KEY_MOD_CTRL);
+        TEST_EXPECT(
+            context,
+            code_editor::editor_line_text(code_editor::editor_line(editor, 1u)) == "    // int b;"
+        );
+        TEST_EXPECT(context, editor.cursor_column == 11u);
+
+        press_key(editor, gui::Key::SLASH, gui::KEY_MOD_CTRL);
+        TEST_EXPECT(
+            context,
+            code_editor::editor_line_text(code_editor::editor_line(editor, 1u)) == "    int b;"
+        );
+        TEST_EXPECT(context, editor.cursor_column == 8u);
+    }
+
+    TEST_CASE(editor_ctrl_slash_toggles_selected_line_comments) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "int a;\n    int b;");
+
+        select_editor_range(editor, 0u, 0u, 1u, 0u, code_editor::EditorSelectionMode::LINE);
+        press_key(editor, gui::Key::SLASH, gui::KEY_MOD_CTRL);
+        TEST_EXPECT(
+            context,
+            code_editor::editor_line_text(code_editor::editor_line(editor, 0u)) == "// int a;"
+        );
+        TEST_EXPECT(
+            context,
+            code_editor::editor_line_text(code_editor::editor_line(editor, 1u)) == "    // int b;"
+        );
+
+        select_editor_range(editor, 0u, 0u, 1u, 0u, code_editor::EditorSelectionMode::LINE);
+        press_key(editor, gui::Key::SLASH, gui::KEY_MOD_CTRL);
+        TEST_EXPECT(
+            context, code_editor::editor_line_text(code_editor::editor_line(editor, 0u)) == "int a;"
+        );
+        TEST_EXPECT(
+            context,
+            code_editor::editor_line_text(code_editor::editor_line(editor, 1u)) == "    int b;"
+        );
+    }
+
     TEST_CASE(editor_normal_goto_line_home_end) {
         Arena arena = {};
         arena.init();

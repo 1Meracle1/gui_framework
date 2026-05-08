@@ -405,6 +405,9 @@ namespace code_editor {
         case VK_OEM_MINUS:
         case VK_SUBTRACT:
             return gui::Key::MINUS;
+        case VK_OEM_2:
+        case VK_DIVIDE:
+            return gui::Key::SLASH;
         case 'A':
             return gui::Key::A;
         case 'C':

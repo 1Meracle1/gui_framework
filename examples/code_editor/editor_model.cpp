@@ -4391,6 +4391,81 @@ namespace code_editor {
         set_cursor(editor, first, 0u);
     }
 
+    [[nodiscard]] auto line_comment_column(EditorLine line) -> size_t {
+        size_t column = 0u;
+        while (column < line.size && (line.text[column] == ' ' || line.text[column] == '\t')) {
+            column += 1u;
+        }
+        return column;
+    }
+
+    [[nodiscard]] auto line_commented(EditorLine line) -> bool {
+        size_t const column = line_comment_column(line);
+        return column + 1u < line.size && line.text[column] == '/' && line.text[column + 1u] == '/';
+    }
+
+    auto toggle_line_comments(EditorState& editor) -> void {
+        EditorSelectionRange const selection = editor_selection_range(editor);
+        size_t first = editor.cursor_line;
+        size_t last = editor.cursor_line;
+        if (selection.active) {
+            first = selection.start_line;
+            last = selection_last_line(editor, selection);
+        }
+
+        bool uncomment = true;
+        for (size_t line_index = first; line_index <= last; ++line_index) {
+            uncomment = uncomment && line_commented(editor_line(editor, line_index));
+        }
+
+        size_t cursor_column = editor.cursor_column;
+        EditorLine const cursor_line = editor_line(editor, editor.cursor_line);
+        size_t const cursor_comment = line_comment_column(cursor_line);
+        if (uncomment && line_commented(cursor_line)) {
+            size_t end = cursor_comment + 2u;
+            if (end < cursor_line.size && cursor_line.text[end] == ' ') {
+                end += 1u;
+            }
+            if (cursor_column >= end) {
+                cursor_column -= end - cursor_comment;
+            } else if (cursor_column > cursor_comment) {
+                cursor_column = cursor_comment;
+            }
+        } else if (!uncomment && cursor_column >= cursor_comment) {
+            cursor_column += 3u;
+        }
+
+        save_editor_undo(editor);
+        for (size_t line_index = first; line_index <= last; ++line_index) {
+            EditorLine const line = editor_line(editor, line_index);
+            size_t const column = line_comment_column(line);
+            if (uncomment) {
+                if (!line_commented(line)) {
+                    continue;
+                }
+                size_t end = column + 2u;
+                if (end < line.size && line.text[end] == ' ') {
+                    end += 1u;
+                }
+                text_buffer_erase(
+                    editor.text,
+                    position_offset(editor, {line_index, column}),
+                    position_offset(editor, {line_index, end})
+                );
+            } else {
+                text_buffer_insert(
+                    editor.text, position_offset(editor, {line_index, column}), "// "
+                );
+            }
+        }
+
+        if (selection.active) {
+            set_cursor(editor, first, 0u);
+        } else {
+            set_cursor(editor, editor.cursor_line, cursor_column);
+        }
+    }
+
     [[nodiscard]] auto delete_selection(EditorState& editor, EditorClipboard clipboard, bool yank)
         -> bool {
         if (!editor_selection_range(editor).active) {
@@ -4851,6 +4926,11 @@ namespace code_editor {
         return event.kind == gui::KeyEventKind::PRESS && event.key == key &&
                (event.mods & gui::KEY_MOD_CTRL) != 0u &&
                (event.mods & (gui::KEY_MOD_ALT | gui::KEY_MOD_SUPER)) == 0u;
+    }
+
+    [[nodiscard]] auto line_comment_shortcut_key(gui::KeyEvent const& event) -> bool {
+        return event.kind == gui::KeyEventKind::PRESS && event.key == gui::Key::SLASH &&
+               event.mods == gui::KEY_MOD_CTRL;
     }
 
     [[nodiscard]] auto can_backspace(EditorState const& editor) -> bool {
@@ -5674,6 +5754,10 @@ namespace code_editor {
         int32_t multi_cursor_direction = 0;
         if (multi_cursor_key(event, multi_cursor_direction)) {
             add_cursor_line(editor, multi_cursor_direction);
+            return;
+        }
+        if (line_comment_shortcut_key(event)) {
+            toggle_line_comments(editor);
             return;
         }
         if (shortcut_key(event, gui::Key::SPACE)) {

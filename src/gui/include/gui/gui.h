@@ -192,6 +192,7 @@ namespace gui {
         Z,
         PLUS,
         MINUS,
+        SLASH,
         D,
         U,
     };
