@@ -52,6 +52,10 @@ namespace gui::draw {
             gui::render::Pipeline pipeline = {};
             gui::render::Shader text_pixel_shader = {};
             gui::render::Pipeline text_pipeline = {};
+            gui::render::Shader text_lcd_attenuate_pixel_shader = {};
+            gui::render::Pipeline text_lcd_attenuate_pipeline = {};
+            gui::render::Shader text_lcd_add_pixel_shader = {};
+            gui::render::Pipeline text_lcd_add_pipeline = {};
             gui::render::Shader layer_pixel_shader = {};
             gui::render::Pipeline layer_pipeline = {};
             gui::render::Pipeline layer_additive_pipeline = {};
@@ -80,6 +84,7 @@ namespace gui::draw {
             uint32_t first_vertex = 0u;
             uint32_t vertex_count = 0u;
             gui::render::BindGroup bind_group = {};
+            font_provider::RasterFormat format = font_provider::RasterFormat::ALPHA;
         };
 
         struct TextDrawRange {
@@ -148,6 +153,12 @@ namespace gui::draw {
             if (gui::render::pipeline_valid(renderer->text_pipeline)) {
                 gui::render::destroy_pipeline(context, renderer->text_pipeline);
             }
+            if (gui::render::pipeline_valid(renderer->text_lcd_attenuate_pipeline)) {
+                gui::render::destroy_pipeline(context, renderer->text_lcd_attenuate_pipeline);
+            }
+            if (gui::render::pipeline_valid(renderer->text_lcd_add_pipeline)) {
+                gui::render::destroy_pipeline(context, renderer->text_lcd_add_pipeline);
+            }
             if (gui::render::pipeline_valid(renderer->layer_pipeline)) {
                 gui::render::destroy_pipeline(context, renderer->layer_pipeline);
             }
@@ -180,6 +191,12 @@ namespace gui::draw {
             }
             if (gui::render::shader_valid(renderer->text_pixel_shader)) {
                 gui::render::destroy_shader(context, renderer->text_pixel_shader);
+            }
+            if (gui::render::shader_valid(renderer->text_lcd_attenuate_pixel_shader)) {
+                gui::render::destroy_shader(context, renderer->text_lcd_attenuate_pixel_shader);
+            }
+            if (gui::render::shader_valid(renderer->text_lcd_add_pixel_shader)) {
+                gui::render::destroy_shader(context, renderer->text_lcd_add_pixel_shader);
             }
             if (gui::render::shader_valid(renderer->layer_pixel_shader)) {
                 gui::render::destroy_shader(context, renderer->layer_pixel_shader);
@@ -622,10 +639,10 @@ namespace gui::draw {
             uint32_t first_vertex,
             TextAtlasPiece const& piece
         ) -> void {
-            DEBUG_ASSERT(piece.format == font_provider::RasterFormat::ALPHA);
-            if (range.draw_count != 0u) {
+            if (piece.format == font_provider::RasterFormat::ALPHA && range.draw_count != 0u) {
                 TextDraw& last = upload.text_draws[range.first_draw + range.draw_count - 1u];
                 if (last.bind_group.handle == piece.bind_group.handle &&
+                    last.format == piece.format &&
                     last.first_vertex + last.vertex_count == first_vertex) {
                     last.vertex_count += 6u;
                     return;
@@ -638,6 +655,7 @@ namespace gui::draw {
             draw.first_vertex = first_vertex;
             draw.vertex_count = 6u;
             draw.bind_group = piece.bind_group;
+            draw.format = piece.format;
             upload.text_draw_count += 1u;
             range.draw_count += 1u;
         }
@@ -1076,8 +1094,17 @@ namespace gui::draw {
                     gui::render::bind_group(render_context, draw.bind_group);
                     state.bind_group = draw.bind_group;
                 }
-                gui::render::bind_pipeline(render_context, renderer.text_pipeline);
-                submit_text_draw(render_context, target, upload, command, draw);
+                if (draw.format == font_provider::RasterFormat::LCD_RGB) {
+                    gui::render::bind_pipeline(
+                        render_context, renderer.text_lcd_attenuate_pipeline
+                    );
+                    submit_text_draw(render_context, target, upload, command, draw);
+                    gui::render::bind_pipeline(render_context, renderer.text_lcd_add_pipeline);
+                    submit_text_draw(render_context, target, upload, command, draw);
+                } else {
+                    gui::render::bind_pipeline(render_context, renderer.text_pipeline);
+                    submit_text_draw(render_context, target, upload, command, draw);
+                }
             }
         }
 
@@ -1432,7 +1459,8 @@ namespace gui::draw {
             Context draw_context,
             LayerRender const* layer_renders,
             size_t first_command,
-            size_t end_command
+            size_t end_command,
+            bool allow_lcd_text
         ) -> void;
 
         [[nodiscard]] auto render_layer(
@@ -1502,7 +1530,8 @@ namespace gui::draw {
                 draw_context,
                 layer_renders,
                 layer->begin_command_index + 1u,
-                layer->end_command_index
+                layer->end_command_index,
+                false
             );
             gui::render::end_render_pass(render_context);
 
@@ -1582,7 +1611,8 @@ namespace gui::draw {
             Context draw_context,
             LayerRender const* layer_renders,
             size_t first_command,
-            size_t end_command
+            size_t end_command,
+            bool allow_lcd_text
         ) -> void {
             ArenaTemp temp = begin_thread_temp_arena();
             PreparedText prepared_text = {};
@@ -1593,6 +1623,7 @@ namespace gui::draw {
                 draw_context,
                 first_command,
                 end_command,
+                allow_lcd_text,
                 prepared_text
             );
             BASE_UNUSED(text_ready);
@@ -1793,6 +1824,45 @@ float4 ps_main(PSInput input) : SV_Target
 {
     float4 coverage = g_texture.Sample(g_sampler, input.uv);
     return float4(input.color.rgb * coverage.rgb * input.color.a, input.color.a * coverage.a);
+}
+)hlsl";
+
+        constexpr StrRef TEXT_LCD_ATTENUATE_SHADER_SOURCE = R"hlsl(
+Texture2D g_texture : register(t0);
+SamplerState g_sampler : register(s0);
+
+struct PSInput
+{
+    float4 position : SV_POSITION;
+    float2 uv : TEXCOORD0;
+    float4 color : COLOR0;
+};
+
+float4 ps_main(PSInput input) : SV_Target
+{
+    float4 coverage = g_texture.Sample(g_sampler, input.uv);
+    float3 mask = coverage.rgb * input.color.a;
+    return float4(mask, max(max(mask.r, mask.g), mask.b));
+}
+)hlsl";
+
+        constexpr StrRef TEXT_LCD_ADD_SHADER_SOURCE = R"hlsl(
+Texture2D g_texture : register(t0);
+SamplerState g_sampler : register(s0);
+
+struct PSInput
+{
+    float4 position : SV_POSITION;
+    float2 uv : TEXCOORD0;
+    float4 color : COLOR0;
+};
+
+float4 ps_main(PSInput input) : SV_Target
+{
+    float4 coverage = g_texture.Sample(g_sampler, input.uv);
+    float3 mask = coverage.rgb * input.color.a;
+    float3 source = input.color.rgb * coverage.rgb * input.color.a;
+    return float4(source, max(max(mask.r, mask.g), mask.b));
 }
 )hlsl";
 
@@ -2123,6 +2193,44 @@ PSInput vs_main(VSInput input)
 
         result = gui::render::create_pipeline(
             arena, render_context, pipeline_desc, renderer->text_pipeline
+        );
+        if (gui::render::result_failed(result)) {
+            destroy_renderer_resources(render_context, renderer);
+            return result;
+        }
+
+        shader_desc.source = TEXT_LCD_ATTENUATE_SHADER_SOURCE;
+        result = gui::render::create_shader_from_source(
+            arena, render_context, shader_desc, renderer->text_lcd_attenuate_pixel_shader
+        );
+        if (gui::render::result_failed(result)) {
+            destroy_renderer_resources(render_context, renderer);
+            return result;
+        }
+
+        pipeline_desc.pixel_shader = renderer->text_lcd_attenuate_pixel_shader;
+        pipeline_desc.blend_mode = gui::render::BlendMode::DESTINATION_ATTENUATE;
+        result = gui::render::create_pipeline(
+            arena, render_context, pipeline_desc, renderer->text_lcd_attenuate_pipeline
+        );
+        if (gui::render::result_failed(result)) {
+            destroy_renderer_resources(render_context, renderer);
+            return result;
+        }
+
+        shader_desc.source = TEXT_LCD_ADD_SHADER_SOURCE;
+        result = gui::render::create_shader_from_source(
+            arena, render_context, shader_desc, renderer->text_lcd_add_pixel_shader
+        );
+        if (gui::render::result_failed(result)) {
+            destroy_renderer_resources(render_context, renderer);
+            return result;
+        }
+
+        pipeline_desc.pixel_shader = renderer->text_lcd_add_pixel_shader;
+        pipeline_desc.blend_mode = gui::render::BlendMode::ADDITIVE;
+        result = gui::render::create_pipeline(
+            arena, render_context, pipeline_desc, renderer->text_lcd_add_pipeline
         );
         if (gui::render::result_failed(result)) {
             destroy_renderer_resources(render_context, renderer);
@@ -2517,7 +2625,7 @@ PSInput vs_main(VSInput input)
 
         RenderTarget const target = {target_size, {}};
         render_command_range(
-            *impl, render_context, target, draw_context, nullptr, 0u, command_total
+            *impl, render_context, target, draw_context, nullptr, 0u, command_total, false
         );
     }
 
@@ -2566,7 +2674,8 @@ PSInput vs_main(VSInput input)
             draw_context,
             layer_renders,
             0u,
-            command_count(draw_context)
+            command_count(draw_context),
+            true
         );
         gui::render::end_render_pass(render_context);
         destroy_layer_renders(render_context, layer_renders, layer_count);

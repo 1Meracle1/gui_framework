@@ -25,7 +25,7 @@ namespace gui::font_provider::platform::dwrite {
 
         constexpr StrRef DEFAULT_FONT_FAMILY = "Segoe UI";
         constexpr DWRITE_MEASURING_MODE TEXT_MEASURING_MODE = DWRITE_MEASURING_MODE_GDI_NATURAL;
-        constexpr DWRITE_MEASURING_MODE TEXT_BITMAP_MEASURING_MODE = DWRITE_MEASURING_MODE_NATURAL;
+        constexpr DWRITE_MEASURING_MODE TEXT_BITMAP_MEASURING_MODE = TEXT_MEASURING_MODE;
         constexpr DWRITE_RENDERING_MODE SHARP_RENDERING_MODE = DWRITE_RENDERING_MODE_GDI_NATURAL;
         constexpr DWRITE_RENDERING_MODE SMOOTH_RENDERING_MODE =
             DWRITE_RENDERING_MODE_NATURAL_SYMMETRIC;
@@ -33,6 +33,7 @@ namespace gui::font_provider::platform::dwrite {
         constexpr DWRITE_TEXT_ANTIALIAS_MODE TEXT_ANTIALIAS_MODE =
             DWRITE_TEXT_ANTIALIAS_MODE_GRAYSCALE;
         constexpr DWRITE_TEXTURE_TYPE TEXT_ALPHA_BOUNDS_TYPE = DWRITE_TEXTURE_ALIASED_1x1;
+        constexpr DWRITE_TEXTURE_TYPE TEXT_LCD_BOUNDS_TYPE = DWRITE_TEXTURE_CLEARTYPE_3x1;
         constexpr LONG GLYPH_RASTER_PADDING = 1;
         constexpr float TEXT_PADDING = 2.0f;
         constexpr float POINTS_TO_DIPS = 96.0f / 72.0f;
@@ -226,12 +227,13 @@ namespace gui::font_provider::platform::dwrite {
                 return hr;
             }
 
+            FLOAT const gamma = base_params->GetGamma();
             FLOAT const enhanced_contrast = base_params->GetEnhancedContrast();
             release_com(base_params);
 
             IDWriteRenderingParams2* sharp_params = nullptr;
             hr = context->factory2->CreateCustomRenderingParams(
-                1.0f,
+                gamma,
                 enhanced_contrast,
                 enhanced_contrast,
                 0.0f,
@@ -247,9 +249,9 @@ namespace gui::font_provider::platform::dwrite {
 
             IDWriteRenderingParams2* smooth_params = nullptr;
             hr = context->factory2->CreateCustomRenderingParams(
-                1.0f,
-                0.0f,
-                0.0f,
+                gamma,
+                enhanced_contrast,
+                enhanced_contrast,
                 0.0f,
                 DWRITE_PIXEL_GEOMETRY_FLAT,
                 SMOOTH_RENDERING_MODE,
@@ -504,15 +506,25 @@ namespace gui::font_provider::platform::dwrite {
                    static_cast<float>(GLYPH_RASTER_PHASE_COUNT);
         }
 
+        [[nodiscard]] auto raster_policy_smooth(RasterPolicy raster_policy) -> bool {
+            return raster_policy == RasterPolicy::SMOOTH_HINTED ||
+                   raster_policy == RasterPolicy::LCD_SMOOTH_HINTED;
+        }
+
+        [[nodiscard]] auto raster_policy_lcd(RasterPolicy raster_policy) -> bool {
+            return raster_policy == RasterPolicy::LCD_SHARP_HINTED ||
+                   raster_policy == RasterPolicy::LCD_SMOOTH_HINTED;
+        }
+
         [[nodiscard]] auto rendering_mode(RasterPolicy raster_policy) -> DWRITE_RENDERING_MODE {
-            return raster_policy == RasterPolicy::SMOOTH_HINTED ? SMOOTH_RENDERING_MODE
-                                                                : SHARP_RENDERING_MODE;
+            return raster_policy_smooth(raster_policy) ? SMOOTH_RENDERING_MODE
+                                                       : SHARP_RENDERING_MODE;
         }
 
         [[nodiscard]] auto rendering_params(ContextImpl* context, RasterPolicy raster_policy)
             -> IDWriteRenderingParams* {
-            return raster_policy == RasterPolicy::SMOOTH_HINTED ? context->smooth_rendering_params
-                                                                : context->sharp_rendering_params;
+            return raster_policy_smooth(raster_policy) ? context->smooth_rendering_params
+                                                       : context->sharp_rendering_params;
         }
 
         auto inflate_bounds(RECT& bounds) -> void {
@@ -623,6 +635,10 @@ namespace gui::font_provider::platform::dwrite {
             }
         }
 
+        [[nodiscard]] auto max_coverage(uint8_t r, uint8_t g, uint8_t b) -> uint8_t {
+            return std::max(std::max(r, g), b);
+        }
+
         [[nodiscard]] auto codepoint_glyph(FontImpl* impl, uint32_t codepoint) -> uint16_t {
             ASSERT(impl != nullptr);
             ASSERT(impl->font_face != nullptr);
@@ -712,6 +728,96 @@ namespace gui::font_provider::platform::dwrite {
             out_text.size = {bitmap_width, bitmap_height};
         }
 
+        auto raster_glyph_lcd(
+            FontImpl* impl,
+            float size,
+            uint16_t glyph_index,
+            RasterPolicy raster_policy,
+            uint8_t phase_x,
+            uint8_t phase_y,
+            Arena& arena,
+            GlyphRaster& out_raster
+        ) -> void {
+            FLOAT const advance = 0.0f;
+            DWRITE_GLYPH_RUN glyph_run = {};
+            glyph_run.fontFace = impl->font_face;
+            glyph_run.fontEmSize = dwrite_font_size(size);
+            glyph_run.glyphCount = 1u;
+            glyph_run.glyphIndices = &glyph_index;
+            glyph_run.glyphAdvances = &advance;
+
+            IDWriteGlyphRunAnalysis* analysis = nullptr;
+            HRESULT hr = impl->context->factory2->CreateGlyphRunAnalysis(
+                &glyph_run,
+                nullptr,
+                rendering_mode(raster_policy),
+                TEXT_MEASURING_MODE,
+                TEXT_GRID_FIT_MODE,
+                DWRITE_TEXT_ANTIALIAS_MODE_CLEARTYPE,
+                glyph_phase(phase_x),
+                glyph_phase(phase_y),
+                &analysis
+            );
+            ASSERT(SUCCEEDED(hr));
+            ASSERT(analysis != nullptr);
+
+            RECT bounds = {};
+            hr = analysis->GetAlphaTextureBounds(TEXT_LCD_BOUNDS_TYPE, &bounds);
+            ASSERT(SUCCEEDED(hr));
+
+            uint32_t const width =
+                static_cast<uint32_t>(std::max<LONG>(0, bounds.right - bounds.left));
+            uint32_t const height =
+                static_cast<uint32_t>(std::max<LONG>(0, bounds.bottom - bounds.top));
+            if (width == 0u || height == 0u) {
+                out_raster = {};
+                release_com(analysis);
+                return;
+            }
+
+            inflate_bounds(bounds);
+            uint32_t const padded_width =
+                static_cast<uint32_t>(std::max<LONG>(0, bounds.right - bounds.left));
+            uint32_t const padded_height =
+                static_cast<uint32_t>(std::max<LONG>(0, bounds.bottom - bounds.top));
+
+            size_t lcd_size = 0u;
+            ASSERT(checked_pixel_size(padded_width, padded_height, 3u, lcd_size));
+            ASSERT(lcd_size <= static_cast<size_t>(std::numeric_limits<UINT32>::max()));
+            uint8_t* const lcd_pixels = arena_alloc<uint8_t>(arena, lcd_size);
+            hr = analysis->CreateAlphaTexture(
+                TEXT_LCD_BOUNDS_TYPE, &bounds, lcd_pixels, static_cast<UINT32>(lcd_size)
+            );
+            ASSERT(SUCCEEDED(hr));
+
+            size_t rgba_size = 0u;
+            ASSERT(checked_pixel_size(padded_width, padded_height, 4u, rgba_size));
+            uint8_t* const pixels = arena_alloc<uint8_t>(arena, rgba_size);
+            for (uint32_t y = 0u; y < padded_height; ++y) {
+                uint8_t const* const src =
+                    lcd_pixels + (static_cast<size_t>(y) * padded_width * 3u);
+                uint8_t* const dst = pixels + (static_cast<size_t>(y) * padded_width * 4u);
+                for (uint32_t x = 0u; x < padded_width; ++x) {
+                    uint8_t const r = src[x * 3u + 0u];
+                    uint8_t const g = src[x * 3u + 1u];
+                    uint8_t const b = src[x * 3u + 2u];
+                    dst[x * 4u + 0u] = r;
+                    dst[x * 4u + 1u] = g;
+                    dst[x * 4u + 2u] = b;
+                    dst[x * 4u + 3u] = max_coverage(r, g, b);
+                }
+            }
+
+            out_raster = {};
+            out_raster.size = {padded_width, padded_height};
+            out_raster.stride = padded_width * 4u;
+            out_raster.pixels = pixels;
+            out_raster.format = RasterFormat::LCD_RGB;
+            out_raster.offset_x = static_cast<float>(bounds.left);
+            out_raster.offset_y = static_cast<float>(bounds.top);
+            release_com(analysis);
+        }
+
         auto raster_glyph(
             FontImpl* impl,
             float size,
@@ -726,6 +832,13 @@ namespace gui::font_provider::platform::dwrite {
             ASSERT(impl->font_face != nullptr);
             ASSERT(impl->context != nullptr);
             ASSERT(impl->context->factory2 != nullptr);
+
+            if (raster_policy_lcd(raster_policy)) {
+                raster_glyph_lcd(
+                    impl, size, glyph_index, raster_policy, phase_x, phase_y, arena, out_raster
+                );
+                return;
+            }
 
             FLOAT const advance = 0.0f;
             DWRITE_GLYPH_RUN glyph_run = {};

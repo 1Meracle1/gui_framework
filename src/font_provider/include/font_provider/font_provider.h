@@ -64,6 +64,8 @@ namespace gui::font_provider {
     enum class RasterPolicy : uint8_t {
         SHARP_HINTED,
         SMOOTH_HINTED,
+        LCD_SHARP_HINTED,
+        LCD_SMOOTH_HINTED,
     };
 
     struct RasterResult {

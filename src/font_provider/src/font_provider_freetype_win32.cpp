@@ -127,15 +127,19 @@ namespace gui::font_provider::platform::freetype {
             FT_Set_Transform(face, &matrix, &delta);
         }
 
+        [[nodiscard]] auto raster_policy_smooth(RasterPolicy raster_policy) -> bool {
+            return raster_policy == RasterPolicy::SMOOTH_HINTED ||
+                   raster_policy == RasterPolicy::LCD_SMOOTH_HINTED;
+        }
+
         [[nodiscard]] auto ft_load_flags(RasterPolicy raster_policy) -> FT_Int32 {
-            return raster_policy == RasterPolicy::SMOOTH_HINTED
-                       ? FT_LOAD_DEFAULT | FT_LOAD_TARGET_LIGHT
-                       : FT_LOAD_DEFAULT | FT_LOAD_TARGET_NORMAL;
+            return raster_policy_smooth(raster_policy) ? FT_LOAD_DEFAULT | FT_LOAD_TARGET_LIGHT
+                                                       : FT_LOAD_DEFAULT | FT_LOAD_TARGET_NORMAL;
         }
 
         [[nodiscard]] auto ft_render_mode(RasterPolicy raster_policy) -> FT_Render_Mode {
-            return raster_policy == RasterPolicy::SMOOTH_HINTED ? FT_RENDER_MODE_LIGHT
-                                                                : FT_RENDER_MODE_NORMAL;
+            return raster_policy_smooth(raster_policy) ? FT_RENDER_MODE_LIGHT
+                                                       : FT_RENDER_MODE_NORMAL;
         }
 
         [[nodiscard]] auto ceil_u32(float value, uint32_t& out_value) -> bool {
