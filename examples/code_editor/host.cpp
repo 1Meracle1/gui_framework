@@ -1148,15 +1148,44 @@ namespace code_editor {
         }
     }
 
+    [[nodiscard]] auto tracked_path_less(StrRef lhs, StrRef rhs) -> bool {
+        return lhs.compare_ignore_ascii_case(rhs) < 0;
+    }
+
+    [[nodiscard]] auto tracked_paths_contains(Slice<StrRef const> paths, StrRef path) -> bool {
+        size_t begin = 0u;
+        size_t end = paths.size();
+        while (begin < end) {
+            size_t const mid = begin + ((end - begin) / 2u);
+            if (tracked_path_less(paths[mid], path)) {
+                begin = mid + 1u;
+            } else {
+                end = mid;
+            }
+        }
+        return begin < paths.size() && paths[begin].equals_ignore_ascii_case(path);
+    }
+
+    auto mark_file_search_ancestors(Vec<FileTreeEntry>& files, Slice<size_t const> stack) -> void {
+        for (size_t const index : stack) {
+            files[index].file_search_visible = true;
+        }
+    }
+
     auto mark_file_search_tracked_files(StrRef directory, Vec<FileTreeEntry>& files) -> void {
         ArenaTemp temp = begin_thread_temp_arena();
+        Vec<StrRef> tracked_paths = {};
+        if (!tracked_paths.init(256u, temp.arena()->resource())) {
+            return;
+        }
+
         StrRef const command = fmt::tprintf("git -C \"%s\" ls-files --cached 2>nul", directory);
         std::FILE* const pipe = _popen(command.data(), "r");
         if (pipe == nullptr) {
             return;
         }
 
-        set_file_search_visible(files, false);
+        bool ok = true;
         char line[GIT_PATH_LINE_CAPACITY] = {};
         while (std::fgets(line, static_cast<int>(sizeof(line)), pipe) != nullptr) {
             StrRef const path = StrRef(line).trim_end_matches('\n').trim_end_matches('\r');
@@ -1165,15 +1194,42 @@ namespace code_editor {
                     line[index] = '\\';
                 }
             }
-            for (FileTreeEntry& file : files) {
-                if (!file.is_directory && file.relative_path == path) {
-                    file.file_search_visible = true;
-                    break;
-                }
+            if (ok && !tracked_paths.push_back(arena_copy_cstr(*temp.arena(), path))) {
+                ok = false;
             }
         }
-        if (_pclose(pipe) != 0) {
+        if (_pclose(pipe) != 0 || !ok) {
             set_file_search_visible(files, true);
+            return;
+        }
+
+        if (tracked_paths.size() > 1u) {
+            std::sort(tracked_paths.begin(), tracked_paths.end(), tracked_path_less);
+        }
+
+        Vec<size_t> directory_stack = {};
+        if (!directory_stack.init(32u, temp.arena()->resource())) {
+            set_file_search_visible(files, true);
+            return;
+        }
+
+        for (size_t index = 0u; index < files.size(); ++index) {
+            FileTreeEntry& file = files[index];
+            while (directory_stack.size() > file.depth) {
+                BASE_UNUSED(directory_stack.pop());
+            }
+
+            file.file_search_visible =
+                !file.is_directory &&
+                tracked_paths_contains(tracked_paths.slice(), file.relative_path);
+            if (file.is_directory) {
+                if (!directory_stack.push_back(index)) {
+                    set_file_search_visible(files, true);
+                    return;
+                }
+            } else if (file.file_search_visible) {
+                mark_file_search_ancestors(files, directory_stack.slice());
+            }
         }
     }
 
@@ -1344,6 +1400,282 @@ namespace code_editor {
         launch.tree_arena_index = new_index;
     }
 
+    [[nodiscard]] auto tree_file_index_by_path(Slice<FileTreeEntry const> files, StrRef path)
+        -> size_t {
+        for (size_t index = 0u; index < files.size(); ++index) {
+            if (files[index].path.equals_ignore_ascii_case(path)) {
+                return index;
+            }
+        }
+        return files.size();
+    }
+
+    [[nodiscard]] auto tree_file_subtree_end(Slice<FileTreeEntry const> files, size_t index)
+        -> size_t {
+        if (index >= files.size()) {
+            return files.size();
+        }
+        if (!files[index].is_directory) {
+            return index + 1u;
+        }
+
+        size_t end = index + 1u;
+        size_t const depth = files[index].depth;
+        while (end < files.size() && files[end].depth > depth) {
+            end += 1u;
+        }
+        return end;
+    }
+
+    [[nodiscard]] auto tree_file_less(FileTreeEntry const& a, FileTreeEntry const& b) -> bool {
+        if (a.is_directory != b.is_directory) {
+            return a.is_directory;
+        }
+        return a.name.compare_ignore_ascii_case(b.name) < 0;
+    }
+
+    [[nodiscard]] auto tree_file_parent_index(Slice<FileTreeEntry const> files, size_t index)
+        -> size_t {
+        if (index >= files.size() || files[index].depth == 0u) {
+            return files.size();
+        }
+
+        size_t const depth = files[index].depth;
+        for (size_t parent = index; parent > 0u;) {
+            parent -= 1u;
+            if (files[parent].is_directory && files[parent].depth + 1u == depth) {
+                return parent;
+            }
+        }
+        return files.size();
+    }
+
+    [[nodiscard]] auto
+    tree_file_sorted_insert_index(Slice<FileTreeEntry const> files, size_t index, size_t end)
+        -> size_t {
+        size_t const parent = tree_file_parent_index(files, index);
+        size_t const begin = parent < files.size() ? parent + 1u : 0u;
+        size_t const stop =
+            parent < files.size() ? tree_file_subtree_end(files, parent) : files.size();
+        size_t const depth = files[index].depth;
+
+        for (size_t at = begin; at < stop;) {
+            if (at == index) {
+                at = end;
+                continue;
+            }
+            if (files[at].depth != depth) {
+                at += 1u;
+                continue;
+            }
+            if (tree_file_less(files[index], files[at])) {
+                return at;
+            }
+            at = tree_file_subtree_end(files, at);
+        }
+        return stop;
+    }
+
+    [[nodiscard]] auto tree_file_child_insert_index(
+        Slice<FileTreeEntry const> files,
+        FileTreeEntry const& entry,
+        size_t begin,
+        size_t stop,
+        size_t depth
+    ) -> size_t {
+        for (size_t at = begin; at < stop;) {
+            if (files[at].depth != depth) {
+                at += 1u;
+                continue;
+            }
+            if (tree_file_less(entry, files[at])) {
+                return at;
+            }
+            at = tree_file_subtree_end(files, at);
+        }
+        return stop;
+    }
+
+    auto move_tree_file_range(Vec<FileTreeEntry>& files, size_t begin, size_t end, size_t target)
+        -> void {
+        DEBUG_ASSERT(begin <= end && end <= files.size() && target <= files.size());
+        if (target >= begin && target <= end) {
+            return;
+        }
+        if (target < begin) {
+            std::rotate(files.data() + target, files.data() + begin, files.data() + end);
+            return;
+        }
+        std::rotate(files.data() + begin, files.data() + end, files.data() + target);
+    }
+
+    [[nodiscard]] auto
+    insert_tree_file(Vec<FileTreeEntry>& files, size_t index, FileTreeEntry entry) -> bool {
+        size_t const old_size = files.size();
+        if (index > old_size || !files.resize(old_size + 1u)) {
+            return false;
+        }
+        if (index < old_size) {
+            std::memmove(
+                files.data() + index + 1u, files.data() + index, (old_size - index) * sizeof(entry)
+            );
+        }
+        files[index] = entry;
+        return true;
+    }
+
+    auto remove_tree_file_range(Vec<FileTreeEntry>& files, size_t begin, size_t end) -> void {
+        DEBUG_ASSERT(begin <= end && end <= files.size());
+
+        size_t const count = end - begin;
+        if (count == 0u) {
+            return;
+        }
+
+        size_t const trailing_count = files.size() - end;
+        if (trailing_count != 0u) {
+            std::memmove(
+                files.data() + begin, files.data() + end, trailing_count * sizeof(FileTreeEntry)
+            );
+        }
+        BASE_UNUSED(files.resize(files.size() - count));
+    }
+
+    [[nodiscard]] auto tree_path_matches_or_contains(StrRef path, StrRef prefix) -> bool {
+        prefix = path_without_trailing_slash(prefix);
+        if (prefix.empty() || path.size() < prefix.size() ||
+            !path.starts_with_ignore_ascii_case(prefix)) {
+            return false;
+        }
+        return path.size() == prefix.size() || path[prefix.size()] == '\\' ||
+               path[prefix.size()] == '/';
+    }
+
+    [[nodiscard]] auto path_relative_to_root(StrRef root, StrRef path) -> StrRef {
+        root = path_without_trailing_slash(root);
+        path = path_without_trailing_slash(path);
+        if (path.size() <= root.size() || !path.starts_with_ignore_ascii_case(root) ||
+            (path[root.size()] != '\\' && path[root.size()] != '/')) {
+            return {};
+        }
+        return path.substr(root.size() + 1u);
+    }
+
+    [[nodiscard]] auto
+    replace_path_prefix_cstr(Arena& arena, StrRef path, StrRef old_prefix, StrRef new_prefix)
+        -> StrRef {
+        old_prefix = path_without_trailing_slash(old_prefix);
+        new_prefix = path_without_trailing_slash(new_prefix);
+        if (!tree_path_matches_or_contains(path, old_prefix)) {
+            return {};
+        }
+
+        StrRef const suffix =
+            path.size() == old_prefix.size() ? StrRef{} : path.substr(old_prefix.size());
+        char buffer[MAX_PATH * 4] = {};
+        size_t size = 0u;
+        if (!append_buffer(buffer, sizeof(buffer), size, new_prefix) ||
+            !append_buffer(buffer, sizeof(buffer), size, suffix)) {
+            return {};
+        }
+        return arena_copy_cstr(arena, StrRef(buffer, size));
+    }
+
+    [[nodiscard]] auto remove_launch_tree_path(LaunchDesc& launch, StrRef path) -> bool {
+        size_t const index = tree_file_index_by_path(launch.tree_files.slice(), path);
+        if (index >= launch.tree_files.size()) {
+            return false;
+        }
+
+        size_t const end = tree_file_subtree_end(launch.tree_files.slice(), index);
+        remove_tree_file_range(launch.tree_files, index, end);
+        mark_file_search_tracked_files(launch.save_root_path, launch.tree_files);
+        return true;
+    }
+
+    [[nodiscard]] auto insert_launch_tree_path(LaunchDesc& launch, StrRef path, bool directory)
+        -> bool {
+        path = path_without_trailing_slash(path);
+        StrRef const relative_path = path_relative_to_root(launch.save_root_path, path);
+        StrRef const name = path_leaf(path);
+        if (relative_path.empty() || name.empty()) {
+            return false;
+        }
+
+        size_t depth = 0u;
+        size_t begin = 0u;
+        size_t stop = launch.tree_files.size();
+        StrRef const parent_path = path_parent(path);
+        if (!parent_path.equals_ignore_ascii_case(
+                path_without_trailing_slash(launch.save_root_path)
+            )) {
+            size_t const parent = tree_file_index_by_path(launch.tree_files.slice(), parent_path);
+            if (parent >= launch.tree_files.size() || !launch.tree_files[parent].is_directory) {
+                return false;
+            }
+            depth = launch.tree_files[parent].depth + 1u;
+            begin = parent + 1u;
+            stop = tree_file_subtree_end(launch.tree_files.slice(), parent);
+        }
+
+        Arena& arena = launch.tree_arenas[launch.tree_arena_index];
+        FileTreeEntry const entry = {
+            .name = arena_copy_cstr(arena, name),
+            .path = arena_copy_cstr(arena, path),
+            .relative_path = arena_copy_cstr(arena, relative_path),
+            .depth = depth,
+            .is_directory = directory,
+        };
+        size_t const index =
+            tree_file_child_insert_index(launch.tree_files.slice(), entry, begin, stop, depth);
+        if (!insert_tree_file(launch.tree_files, index, entry)) {
+            return false;
+        }
+        mark_file_search_tracked_files(launch.save_root_path, launch.tree_files);
+        return true;
+    }
+
+    [[nodiscard]] auto
+    rename_launch_tree_path(LaunchDesc& launch, StrRef source_path, StrRef target_path) -> bool {
+        size_t const index = tree_file_index_by_path(launch.tree_files.slice(), source_path);
+        if (index >= launch.tree_files.size()) {
+            return false;
+        }
+
+        source_path = path_without_trailing_slash(source_path);
+        target_path = path_without_trailing_slash(target_path);
+        StrRef const target_relative = path_relative_to_root(launch.save_root_path, target_path);
+        StrRef const target_name = path_leaf(target_path);
+        if (target_relative.empty() || target_name.empty()) {
+            return false;
+        }
+
+        Arena& arena = launch.tree_arenas[launch.tree_arena_index];
+        size_t const end = tree_file_subtree_end(launch.tree_files.slice(), index);
+        StrRef const source_relative = launch.tree_files[index].relative_path;
+        for (size_t at = index; at < end; ++at) {
+            FileTreeEntry& file = launch.tree_files[at];
+            file.path = replace_path_prefix_cstr(arena, file.path, source_path, target_path);
+            file.relative_path = replace_path_prefix_cstr(
+                arena, file.relative_path, source_relative, target_relative
+            );
+            if (file.path.empty() || file.relative_path.empty()) {
+                return false;
+            }
+        }
+
+        launch.tree_files[index].name = arena_copy_cstr(arena, target_name);
+        size_t const target = tree_file_sorted_insert_index(launch.tree_files.slice(), index, end);
+        move_tree_file_range(launch.tree_files, index, end, target);
+        mark_file_search_tracked_files(launch.save_root_path, launch.tree_files);
+        return true;
+    }
+
+    auto mark_launch_tree_changed_from_operation(LaunchDesc& launch) -> void {
+        launch.file_change_generation += 1u;
+        launch.file_change_ticks = 0u;
+    }
+
     [[nodiscard]] auto tree_operation_targets_root(LaunchDesc const& launch, StrRef path) -> bool {
         return !launch.save_root_path.empty() &&
                path.equals_ignore_ascii_case(path_without_trailing_slash(launch.save_root_path));
@@ -1358,8 +1690,34 @@ namespace code_editor {
 
     auto refresh_launch_tree_from_operation(LaunchDesc& launch) -> void {
         refresh_launch_tree(launch);
-        launch.file_change_generation += 1u;
-        launch.file_change_ticks = 0u;
+        mark_launch_tree_changed_from_operation(launch);
+    }
+
+    auto remove_launch_tree_path_from_operation(LaunchDesc& launch, StrRef path) -> void {
+        if (remove_launch_tree_path(launch, path)) {
+            mark_launch_tree_changed_from_operation(launch);
+            return;
+        }
+        refresh_launch_tree_from_operation(launch);
+    }
+
+    auto insert_launch_tree_path_from_operation(LaunchDesc& launch, StrRef path, bool directory)
+        -> void {
+        if (insert_launch_tree_path(launch, path, directory)) {
+            mark_launch_tree_changed_from_operation(launch);
+            return;
+        }
+        refresh_launch_tree_from_operation(launch);
+    }
+
+    auto rename_launch_tree_path_from_operation(
+        LaunchDesc& launch, StrRef source_path, StrRef target_path
+    ) -> void {
+        if (rename_launch_tree_path(launch, source_path, target_path)) {
+            mark_launch_tree_changed_from_operation(launch);
+            return;
+        }
+        refresh_launch_tree_from_operation(launch);
     }
 
     [[nodiscard]] auto apply_tree_create(
@@ -1383,7 +1741,7 @@ namespace code_editor {
             true,
             path
         );
-        refresh_launch_tree_from_operation(launch);
+        insert_launch_tree_path_from_operation(launch, path, directory);
         return true;
     }
 
@@ -1409,7 +1767,7 @@ namespace code_editor {
             source_path,
             target_path
         );
-        refresh_launch_tree_from_operation(launch);
+        rename_launch_tree_path_from_operation(launch, source_path, target_path);
         return true;
     }
 
@@ -1435,7 +1793,7 @@ namespace code_editor {
             true,
             path
         );
-        refresh_launch_tree_from_operation(launch);
+        remove_launch_tree_path_from_operation(launch, path);
         return true;
     }
 
@@ -1488,7 +1846,13 @@ namespace code_editor {
             source_path,
             target_path
         );
-        refresh_launch_tree_from_operation(launch);
+        if (update_kind == TreeOperationUpdateKind::RENAME) {
+            rename_launch_tree_path_from_operation(launch, source_path, target_path);
+        } else if (update_kind == TreeOperationUpdateKind::REMOVE) {
+            remove_launch_tree_path_from_operation(launch, source_path);
+        } else {
+            refresh_launch_tree_from_operation(launch);
+        }
         return true;
     }
 
@@ -1541,7 +1905,17 @@ namespace code_editor {
             source_path,
             target_path
         );
-        refresh_launch_tree_from_operation(launch);
+        if (update_kind == TreeOperationUpdateKind::CREATE) {
+            insert_launch_tree_path_from_operation(
+                launch, source_path, entry->kind == TreeOperationKind::CREATE_DIRECTORY
+            );
+        } else if (update_kind == TreeOperationUpdateKind::RENAME) {
+            rename_launch_tree_path_from_operation(launch, source_path, target_path);
+        } else if (update_kind == TreeOperationUpdateKind::REMOVE) {
+            remove_launch_tree_path_from_operation(launch, source_path);
+        } else {
+            refresh_launch_tree_from_operation(launch);
+        }
         return true;
     }
 
@@ -1751,12 +2125,10 @@ namespace code_editor {
 #endif
             uint64_t const tree_operation_generation_before =
                 launch.tree_operation_result.generation;
-            bool const tree_operation_changed = process_tree_operation_request(launch);
+            BASE_UNUSED(process_tree_operation_request(launch));
             if (launch.tree_operation_result.generation != tree_operation_generation_before) {
-                if (tree_operation_changed) {
-                    module_context.tree_root_name = launch.tree_root_name;
-                    module_context.tree_files = launch.tree_files.slice();
-                }
+                module_context.tree_root_name = launch.tree_root_name;
+                module_context.tree_files = launch.tree_files.slice();
                 app_state.redraw_pending = true;
             }
             if (process_launch_file_changes(launch)) {

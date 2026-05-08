@@ -2040,9 +2040,9 @@ namespace code_editor {
                          .height = gui::fill(),
                          .padding = gui::insets(0.0f, 12.0f, 0.0f, 4.0f)},
                     .style = {
-                        .role =
-                            selected || cursor ? gui::StyleRole::AUTO : gui::StyleRole::TEXT_MUTED,
-                        .foreground = selected || cursor ? palette.text : gui::Color{},
+                        .foreground = selected || cursor || file.file_search_visible
+                                          ? palette.text
+                                          : palette.muted,
                         .font_size = editor.font_size,
                     },
                 }
@@ -2059,6 +2059,7 @@ namespace code_editor {
         StrRef text,
         size_t cursor_index,
         size_t guide_count,
+        bool tracked,
         bool cursor_focused,
         bool* open
     ) -> void {
@@ -2121,8 +2122,7 @@ namespace code_editor {
                          .height = gui::fill(),
                          .padding = gui::insets(0.0f, 8.0f, 0.0f, 4.0f)},
                     .style = {
-                        .role = cursor ? gui::StyleRole::AUTO : gui::StyleRole::TEXT_MUTED,
-                        .foreground = cursor ? palette.text : gui::Color{},
+                        .foreground = cursor || tracked ? palette.text : palette.muted,
                         .font_size = editor.font_size,
                     },
                 }
@@ -2208,6 +2208,7 @@ namespace code_editor {
                 entry.name,
                 tree_file_index,
                 guide_count,
+                entry.file_search_visible,
                 cursor_focused,
                 &entry.open
             );
@@ -2255,6 +2256,7 @@ namespace code_editor {
                 editor.tree_root_name,
                 TREE_CURSOR_ROOT,
                 0u,
+                true,
                 false,
                 &tree_open
             );
@@ -2351,6 +2353,7 @@ namespace code_editor {
                 editor.tree_root_name,
                 TREE_CURSOR_ROOT,
                 0u,
+                true,
                 focused,
                 &tree_open
             );
