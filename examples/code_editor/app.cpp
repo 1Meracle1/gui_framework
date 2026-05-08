@@ -984,6 +984,7 @@ namespace code_editor {
             ui,
             runtime->editor,
             runtime->editor_font,
+            runtime->ui_font,
             runtime->icon_font,
             palette,
             static_cast<float>(window_size.width),

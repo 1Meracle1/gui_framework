@@ -29,6 +29,9 @@ namespace code_editor {
 
     inline constexpr float TREE_INDENT_WIDTH = 16.0f;
     inline constexpr float TREE_ARROW_SLOT_WIDTH = 16.0f;
+    inline constexpr float TREE_PANEL_PADDING_X = 10.0f;
+    inline constexpr float TREE_FILE_LABEL_PADDING_X = 12.0f;
+    inline constexpr float TREE_FOLDER_LABEL_PADDING_X = 2.0f;
     inline constexpr float SIDEBAR_RESIZER_WIDTH = 10.0f;
     inline constexpr float EDITOR_SPLIT_GAP = 6.0f;
     inline constexpr float EDITOR_SPLIT_MIN_RATIO = 0.08f;
@@ -2025,6 +2028,26 @@ namespace code_editor {
         return text_buffer_copy(editor.text, thread_temp_arena());
     }
 
+    [[nodiscard]] auto tree_label_padding_x(bool directory) -> float {
+        return directory ? TREE_FOLDER_LABEL_PADDING_X : TREE_FILE_LABEL_PADDING_X;
+    }
+
+    [[nodiscard]] auto tree_row_width(
+        font_cache::Font ui_font,
+        float font_size,
+        StrRef text,
+        size_t guide_count,
+        bool directory,
+        float min_width
+    ) -> float {
+        float const text_width = font_cache::text_advance(ui_font, font_size, text);
+        float const label_padding = tree_label_padding_x(directory);
+        float const width = TREE_INDENT_WIDTH * static_cast<float>(guide_count) +
+                            (directory ? TREE_ARROW_SLOT_WIDTH : 0.0f) + label_padding * 2.0f +
+                            std::ceil(text_width);
+        return std::max(min_width, width);
+    }
+
     struct TreeDraftPlacement {
         size_t after_index = TREE_CURSOR_ROOT;
         size_t guide_count = 0u;
@@ -2058,17 +2081,22 @@ namespace code_editor {
         gui::Frame& ui,
         EditorState& editor,
         Palette const& palette,
+        font_cache::Font ui_font,
         font_cache::Font icon_font,
         size_t guide_count,
         size_t after_index,
         bool directory,
-        bool cursor_focused
+        bool cursor_focused,
+        float row_min_width
     ) -> void {
+        StrRef const text = tree_edit_text(editor, {});
         if (auto row = ui.row(
                 gui::id("tree_draft"),
                 {
                     .layout =
-                        {.width = gui::fill(),
+                        {.width = gui::px(tree_row_width(
+                             ui_font, editor.font_size, text, guide_count, directory, row_min_width
+                         )),
                          .height = gui::px(26.0f),
                          .align_y = gui::Align::STRETCH},
                     .style = {
@@ -2090,7 +2118,7 @@ namespace code_editor {
                         .layout = {
                             .width = gui::px(TREE_ARROW_SLOT_WIDTH),
                             .height = gui::fill(),
-                            .align_x = gui::Align::CENTER,
+                            .align_x = gui::Align::END,
                             .align_y = gui::Align::CENTER,
                         },
                     })) {
@@ -2110,12 +2138,12 @@ namespace code_editor {
             }
             ui.label(
                 tree_draft_label_id(after_index),
-                tree_edit_text(editor, {}),
+                text,
                 {
                     .layout =
                         {.width = gui::fill(),
                          .height = gui::fill(),
-                         .padding = gui::insets(0.0f, directory ? 8.0f : 12.0f, 0.0f, 4.0f)},
+                         .padding = gui::insets(0.0f, tree_label_padding_x(directory))},
                     .style = {.foreground = palette.text, .font_size = editor.font_size},
                 }
             );
@@ -2126,13 +2154,16 @@ namespace code_editor {
         gui::Frame& ui,
         EditorState& editor,
         Palette const& palette,
+        font_cache::Font ui_font,
         FileTreeEntry const& file,
         size_t tree_file_index,
         size_t guide_count,
-        bool cursor_focused
+        bool cursor_focused,
+        float row_min_width
     ) -> void {
         bool const editing =
             editor.tree_edit_mode == TreeEditMode::RENAME && editor.tree_cursor == tree_file_index;
+        StrRef const text = editing ? tree_edit_text(editor, file.name) : file.name;
         bool const selected = editor.current_file_path == file.path;
         bool const cursor = editor.tree_cursor == tree_file_index;
         gui::Color background = selected ? gui::rgb(34, 45, 58) : gui::Color{};
@@ -2151,7 +2182,9 @@ namespace code_editor {
                 {
                     .layout =
                         {
-                            .width = gui::fill(),
+                            .width = gui::px(tree_row_width(
+                                ui_font, editor.font_size, text, guide_count, false, row_min_width
+                            )),
                             .height = gui::px(26.0f),
                             .align_y = gui::Align::STRETCH,
                         },
@@ -2174,12 +2207,12 @@ namespace code_editor {
             }
             ui.label(
                 tree_label_id(file.path),
-                editing ? tree_edit_text(editor, file.name) : file.name,
+                text,
                 {
                     .layout =
                         {.width = gui::fill(),
                          .height = gui::fill(),
-                         .padding = gui::insets(0.0f, 12.0f, 0.0f, 4.0f)},
+                         .padding = gui::insets(0.0f, TREE_FILE_LABEL_PADDING_X)},
                     .style = {
                         .foreground = selected || cursor || file.file_search_visible
                                           ? palette.text
@@ -2195,6 +2228,7 @@ namespace code_editor {
         gui::Frame& ui,
         EditorState& editor,
         Palette const& palette,
+        font_cache::Font ui_font,
         font_cache::Font icon_font,
         StrRef id_text,
         StrRef text,
@@ -2202,10 +2236,12 @@ namespace code_editor {
         size_t guide_count,
         bool tracked,
         bool cursor_focused,
-        bool* open
+        bool* open,
+        float row_min_width
     ) -> void {
         bool const editing =
             editor.tree_edit_mode == TreeEditMode::RENAME && editor.tree_cursor == cursor_index;
+        StrRef const label_text = editing ? tree_edit_text(editor, text) : text;
         bool const cursor = editor.tree_cursor == cursor_index;
         gui::Color background =
             cursor ? gui::color_alpha(palette.cursor, cursor_focused ? 0.28f : 0.16f)
@@ -2218,7 +2254,14 @@ namespace code_editor {
                 {
                     .layout =
                         {
-                            .width = gui::fill(),
+                            .width = gui::px(tree_row_width(
+                                ui_font,
+                                editor.font_size,
+                                label_text,
+                                guide_count,
+                                true,
+                                row_min_width
+                            )),
                             .height = gui::px(26.0f),
                             .align_y = gui::Align::STRETCH,
                         },
@@ -2237,7 +2280,7 @@ namespace code_editor {
                     .layout = {
                         .width = gui::px(TREE_ARROW_SLOT_WIDTH),
                         .height = gui::fill(),
-                        .align_x = gui::Align::CENTER,
+                        .align_x = gui::Align::END,
                         .align_y = gui::Align::CENTER,
                     },
                 })) {
@@ -2256,12 +2299,12 @@ namespace code_editor {
             }
             ui.label(
                 tree_label_id(id_text),
-                editing ? tree_edit_text(editor, text) : text,
+                label_text,
                 {
                     .layout =
                         {.width = gui::fill(),
                          .height = gui::fill(),
-                         .padding = gui::insets(0.0f, 8.0f, 0.0f, 4.0f)},
+                         .padding = gui::insets(0.0f, TREE_FOLDER_LABEL_PADDING_X)},
                     .style = {
                         .foreground = cursor || tracked ? palette.text : palette.muted,
                         .font_size = editor.font_size,
@@ -2333,10 +2376,12 @@ namespace code_editor {
         gui::Frame& ui,
         EditorState& editor,
         Palette const& palette,
+        font_cache::Font ui_font,
         font_cache::Font icon_font,
         size_t tree_file_index,
         FileTreeEntry& entry,
-        bool cursor_focused
+        bool cursor_focused,
+        float row_min_width
     ) -> void {
         size_t const guide_count = entry.depth + 1u;
         if (entry.is_directory) {
@@ -2344,6 +2389,7 @@ namespace code_editor {
                 ui,
                 editor,
                 palette,
+                ui_font,
                 icon_font,
                 entry.path,
                 entry.name,
@@ -2351,11 +2397,20 @@ namespace code_editor {
                 guide_count,
                 entry.file_search_visible,
                 cursor_focused,
-                &entry.open
+                &entry.open,
+                row_min_width
             );
         } else {
             draw_tree_file(
-                ui, editor, palette, entry, tree_file_index, guide_count, cursor_focused
+                ui,
+                editor,
+                palette,
+                ui_font,
+                entry,
+                tree_file_index,
+                guide_count,
+                cursor_focused,
+                row_min_width
             );
         }
     }
@@ -2363,11 +2418,13 @@ namespace code_editor {
     auto draw_sidebar(
         gui::Frame& ui,
         EditorState& editor,
+        font_cache::Font ui_font,
         font_cache::Font icon_font,
         Palette const& palette,
         float client_width
     ) -> void {
         float const width = sidebar_width(editor, client_width);
+        float const row_min_width = std::max(0.0f, width - TREE_PANEL_PADDING_X * 2.0f);
         if (auto sidebar = ui.scroll_panel(
                 gui::id("sidebar"),
                 {
@@ -2392,6 +2449,7 @@ namespace code_editor {
                 ui,
                 editor,
                 palette,
+                ui_font,
                 icon_font,
                 editor.tree_root_name,
                 editor.tree_root_name,
@@ -2399,7 +2457,8 @@ namespace code_editor {
                 0u,
                 true,
                 false,
-                &tree_open
+                &tree_open,
+                row_min_width
             );
             editor.set_flag(EditorFlag::TREE_OPEN, tree_open);
             if (tree_open) {
@@ -2408,11 +2467,13 @@ namespace code_editor {
                         ui,
                         editor,
                         palette,
+                        ui_font,
                         icon_font,
                         draft.guide_count,
                         draft.after_index,
                         draft.directory,
-                        false
+                        false,
+                        row_min_width
                     );
                 }
                 size_t closed_depth = static_cast<size_t>(-1);
@@ -2424,17 +2485,21 @@ namespace code_editor {
                         }
                         closed_depth = static_cast<size_t>(-1);
                     }
-                    draw_tree_entry(ui, editor, palette, icon_font, index, entry, false);
+                    draw_tree_entry(
+                        ui, editor, palette, ui_font, icon_font, index, entry, false, row_min_width
+                    );
                     if (draft.active && draft.after_index == index) {
                         draw_tree_draft(
                             ui,
                             editor,
                             palette,
+                            ui_font,
                             icon_font,
                             draft.guide_count,
                             draft.after_index,
                             draft.directory,
-                            false
+                            false,
+                            row_min_width
                         );
                     }
                     if (entry.is_directory && !entry.open) {
@@ -2448,6 +2513,7 @@ namespace code_editor {
     auto draw_filesystem_panel(
         gui::Frame& ui,
         EditorState& editor,
+        font_cache::Font ui_font,
         font_cache::Font icon_font,
         Palette const& palette,
         size_t split,
@@ -2456,6 +2522,9 @@ namespace code_editor {
         bool selection_visible
     ) -> void {
         bool const focused = selection_visible && split == editor.focused_split;
+        gui::Rect const split_rect = editor.split_nodes[split].rect;
+        float const row_min_width =
+            std::max(0.0f, split_rect.max.x - split_rect.min.x - TREE_PANEL_PADDING_X * 2.0f);
         if (auto sidebar = ui.scroll_panel(
                 editor_surface_id(split),
                 {
@@ -2489,6 +2558,7 @@ namespace code_editor {
                 ui,
                 editor,
                 palette,
+                ui_font,
                 icon_font,
                 editor.tree_root_name,
                 editor.tree_root_name,
@@ -2496,7 +2566,8 @@ namespace code_editor {
                 0u,
                 true,
                 focused,
-                &tree_open
+                &tree_open,
+                row_min_width
             );
             editor.set_flag(EditorFlag::TREE_OPEN, tree_open);
             size_t row_index = 1u;
@@ -2510,11 +2581,13 @@ namespace code_editor {
                         ui,
                         editor,
                         palette,
+                        ui_font,
                         icon_font,
                         draft.guide_count,
                         draft.after_index,
                         draft.directory,
-                        focused
+                        focused,
+                        row_min_width
                     );
                     row_index += 1u;
                 }
@@ -2530,7 +2603,17 @@ namespace code_editor {
                     if (editor.tree_cursor == index) {
                         cursor_row = row_index;
                     }
-                    draw_tree_entry(ui, editor, palette, icon_font, index, entry, focused);
+                    draw_tree_entry(
+                        ui,
+                        editor,
+                        palette,
+                        ui_font,
+                        icon_font,
+                        index,
+                        entry,
+                        focused,
+                        row_min_width
+                    );
                     row_index += 1u;
                     if (draft.active && draft.after_index == index) {
                         if (editor.tree_edit_mode == TreeEditMode::CREATE_FILE ||
@@ -2541,11 +2624,13 @@ namespace code_editor {
                             ui,
                             editor,
                             palette,
+                            ui_font,
                             icon_font,
                             draft.guide_count,
                             draft.after_index,
                             draft.directory,
-                            focused
+                            focused,
+                            row_min_width
                         );
                         row_index += 1u;
                     }
@@ -5705,6 +5790,7 @@ namespace code_editor {
     auto draw_editor_split_ui(
         gui::Frame& ui,
         EditorState& editor,
+        font_cache::Font ui_font,
         font_cache::Font icon_font,
         Palette const& palette,
         gui::InputState const& input,
@@ -5721,7 +5807,7 @@ namespace code_editor {
         if (node.kind == EditorSplitKind::LEAF) {
             if (editor_split_pane_kind(editor, split) == EditorPaneKind::FILESYSTEM) {
                 draw_filesystem_panel(
-                    ui, editor, icon_font, palette, split, width, height, selection_visible
+                    ui, editor, ui_font, icon_font, palette, split, width, height, selection_visible
                 );
                 return;
             }
@@ -5779,6 +5865,7 @@ namespace code_editor {
                 draw_editor_split_ui(
                     ui,
                     editor,
+                    ui_font,
                     icon_font,
                     palette,
                     input,
@@ -5791,6 +5878,7 @@ namespace code_editor {
                 draw_editor_split_ui(
                     ui,
                     editor,
+                    ui_font,
                     icon_font,
                     palette,
                     input,
@@ -5804,6 +5892,7 @@ namespace code_editor {
             draw_editor_split_ui(
                 ui,
                 editor,
+                ui_font,
                 icon_font,
                 palette,
                 input,
@@ -5816,6 +5905,7 @@ namespace code_editor {
             draw_editor_split_ui(
                 ui,
                 editor,
+                ui_font,
                 icon_font,
                 palette,
                 input,
@@ -5831,6 +5921,7 @@ namespace code_editor {
         gui::Frame& ui,
         EditorState& editor,
         font_cache::Font editor_font,
+        font_cache::Font ui_font,
         font_cache::Font icon_font,
         Palette const& palette,
         float client_width,
@@ -5987,6 +6078,7 @@ namespace code_editor {
                 draw_editor_split_ui(
                     ui,
                     editor,
+                    ui_font,
                     icon_font,
                     palette,
                     input,

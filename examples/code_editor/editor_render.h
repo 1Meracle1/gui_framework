@@ -29,6 +29,7 @@ namespace code_editor {
     auto draw_editor_ui(
         gui::Frame& ui,
         EditorState& editor,
+        gui::font_cache::Font editor_font,
         gui::font_cache::Font ui_font,
         gui::font_cache::Font icon_font,
         Palette const& palette,
