@@ -49,6 +49,7 @@ namespace code_editor {
     inline constexpr size_t FILE_SEARCH_PREVIEW_TOKEN_LIMIT = 384u;
     inline constexpr float COMMAND_OVERLAY_HEIGHT = 88.0f;
     inline constexpr float COMMAND_LIST_HEIGHT = 30.0f;
+    inline constexpr size_t STICKY_SCOPE_MAX_LINES = 5u;
     inline constexpr char OVERWRITE_FILE_KEY = 'o';
     inline constexpr char RELOAD_FILE_KEY = 'r';
     inline constexpr char CLOSE_WITHOUT_SAVE_KEY = 'c';
@@ -965,6 +966,192 @@ namespace code_editor {
         return editor.lsp_bridge->semantic_tokens;
     }
 
+    [[nodiscard]] auto sticky_scope_folding_ranges(EditorState const& editor)
+        -> Slice<LspFoldingRange const> {
+        if (editor.lsp_bridge == nullptr || editor.lsp_bridge->folding_ranges.empty()) {
+            return {};
+        }
+        if (!editor.lsp_bridge->folding_ranges_path.empty() &&
+            editor.lsp_bridge->folding_ranges_path != editor.current_file_path) {
+            return {};
+        }
+        if (editor.lsp_bridge->folding_ranges_revision != 0u &&
+            editor.lsp_bridge->folding_ranges_revision != editor.text.revision) {
+            return {};
+        }
+        return editor.lsp_bridge->folding_ranges;
+    }
+
+    auto insert_sticky_scope_line(Slice<size_t> lines, size_t& count, size_t line) -> void {
+        for (size_t index = 0u; index < count; ++index) {
+            if (lines[index] == line) {
+                return;
+            }
+        }
+        if (count == lines.size()) {
+            if (line <= lines[0u]) {
+                return;
+            }
+            for (size_t index = 1u; index < count; ++index) {
+                lines[index - 1u] = lines[index];
+            }
+            count -= 1u;
+        }
+
+        size_t index = count;
+        while (index > 0u && lines[index - 1u] > line) {
+            lines[index] = lines[index - 1u];
+            index -= 1u;
+        }
+        lines[index] = line;
+        count += 1u;
+    }
+
+    [[nodiscard]] auto sticky_scope_max_line_count(gui::Rect content, float line_height) -> size_t {
+        size_t const visible_slots =
+            static_cast<size_t>(std::max(0.0f, content.max.y - content.min.y) / line_height);
+        return visible_slots > 1u ? std::min(STICKY_SCOPE_MAX_LINES, visible_slots - 1u) : 0u;
+    }
+
+    [[nodiscard]] auto collect_sticky_scope_lines(
+        EditorState const& editor, float line_height, gui::Rect content, Slice<size_t> lines
+    ) -> size_t {
+        size_t const max_count =
+            std::min(lines.size(), sticky_scope_max_line_count(content, line_height));
+        if (max_count == 0u) {
+            return 0u;
+        }
+
+        size_t const visible_line_count = editor_visible_line_count(editor);
+        size_t const first_visible_line =
+            std::min(visible_line_count - 1u, static_cast<size_t>(editor.scroll_y / line_height));
+        size_t const first_line = editor_visible_line_at(editor, first_visible_line);
+        float const scroll_offset =
+            editor.scroll_y - static_cast<float>(first_visible_line) * line_height;
+        bool const first_line_clipped = scroll_offset > 0.5f;
+        size_t const source_line_count = editor_line_count(editor);
+
+        size_t count = 0u;
+        for (LspFoldingRange const range : sticky_scope_folding_ranges(editor)) {
+            size_t const start_line = std::min(range.start_line, source_line_count - 1u);
+            size_t const end_line = std::min(range.end_line, source_line_count - 1u);
+            if (start_line >= end_line || first_line > end_line ||
+                (start_line == first_line && !first_line_clipped) || start_line > first_line) {
+                continue;
+            }
+            insert_sticky_scope_line(lines.prefix(max_count), count, start_line);
+        }
+        return count;
+    }
+
+    auto draw_semantic_line(
+        draw::Context context,
+        font_cache::Font font,
+        Slice<LspSemanticToken const> tokens,
+        Palette const& palette,
+        EditorLine const& line,
+        size_t line_index,
+        float x,
+        float y,
+        float font_size,
+        font_provider::RasterPolicy raster_policy,
+        float char_width
+    ) -> void;
+
+    auto draw_sticky_scope_lines(
+        draw::Context context,
+        font_cache::Font font,
+        EditorState const& editor,
+        Palette const& palette,
+        Slice<size_t const> lines,
+        SyntaxTokenizer tokenizer,
+        Slice<LspSemanticToken const> semantic_tokens,
+        gui::Rect content,
+        float text_x,
+        float text_min_x,
+        float line_height,
+        float char_width
+    ) -> void {
+        if (lines.empty()) {
+            return;
+        }
+
+        float const height = line_height * static_cast<float>(lines.size());
+        draw::Rect const panel = {
+            {content.min.x, content.min.y}, {content.max.x, content.min.y + height}
+        };
+        draw::draw_rect_filled(
+            context, panel, to_draw_color(gui::color_alpha(palette.panel, 0.98f)), 0.0f
+        );
+        draw::draw_line(
+            context,
+            {content.min.x, std::round(panel.max.y)},
+            {content.max.x, std::round(panel.max.y)},
+            to_draw_color(palette.border),
+            1.0f
+        );
+
+        float const line_number_x = content.min.x;
+        float const fold_marker_x =
+            content.min.x + editor_scaled_font_size(editor, LINE_NUMBER_WIDTH - 16.0f);
+        draw::Rect const text_clip = {{text_min_x, content.min.y}, {content.max.x, panel.max.y}};
+        for (size_t index = 0u; index < lines.size(); ++index) {
+            size_t const line = lines[index];
+            float const y = content.min.y + line_height * static_cast<float>(index);
+            EditorLine const text_line = editor_line(editor, line);
+            draw::TextStyle number_style = {
+                .font = font,
+                .size = editor.font_size,
+                .raster_policy = editor.raster_policy,
+                .color = to_draw_color(palette.faint),
+            };
+            draw::draw_text(
+                context,
+                {std::round(line_number_x), std::round(y - 2.0f)},
+                number_style,
+                fmt::tprintf("%4zu", line + 1u),
+                nullptr
+            );
+            if (editor_line_foldable(editor, line)) {
+                draw::draw_text(
+                    context,
+                    {std::round(fold_marker_x), std::round(y - 2.0f)},
+                    number_style,
+                    editor_line_folded(editor, line) ? "+" : "-",
+                    nullptr
+                );
+            }
+
+            draw::push_clip_rect(context, text_clip);
+            draw_syntax_line(
+                context,
+                font,
+                tokenizer,
+                palette,
+                text_line,
+                text_x,
+                y - 2.0f,
+                editor.font_size,
+                editor.raster_policy,
+                char_width
+            );
+            draw_semantic_line(
+                context,
+                font,
+                semantic_tokens,
+                palette,
+                text_line,
+                line,
+                text_x,
+                y - 2.0f,
+                editor.font_size,
+                editor.raster_policy,
+                char_width
+            );
+            draw::pop_clip_rect(context);
+        }
+    }
+
     auto draw_semantic_line(
         draw::Context context,
         font_cache::Font font,
@@ -1533,12 +1720,18 @@ namespace code_editor {
         bool const middle_dragged = !editor.flag(EditorFlag::SIDEBAR_RESIZING) &&
                                     editor.flag(EditorFlag::MULTI_CURSOR_DRAGGING) &&
                                     input.mouse_down[1u];
+        gui::Rect const full_content = editor_content_rect(rect);
+        float const line_height = editor_line_height(editor);
+        size_t sticky_scope_lines[STICKY_SCOPE_MAX_LINES] = {};
+        size_t sticky_scope_count =
+            collect_sticky_scope_lines(editor, line_height, full_content, sticky_scope_lines);
+        gui::Rect input_rect = rect;
+        input_rect.min.y += line_height * static_cast<float>(sticky_scope_count);
         bool fold_gutter_clicked = false;
         if (clicked) {
-            gui::Rect const content = editor_content_rect(rect);
+            gui::Rect const content = editor_content_rect(input_rect);
             float const gutter_max_x =
                 content.min.x + editor_scaled_font_size(editor, LINE_NUMBER_WIDTH);
-            float const line_height = editor_line_height(editor);
             float const y = std::max(0.0f, input.mouse_pos.y - content.min.y + editor.scroll_y);
             size_t const visible_line = std::min(
                 editor_visible_line_count(editor) - 1u, static_cast<size_t>(y / line_height)
@@ -1555,28 +1748,28 @@ namespace code_editor {
             editor.scroll_y -= input.scroll_delta_y;
         }
         if (middle_clicked) {
-            begin_multi_cursor_from_mouse(editor, rect, input.mouse_pos, char_width);
+            begin_multi_cursor_from_mouse(editor, input_rect, input.mouse_pos, char_width);
             editor.set_flag(EditorFlag::MULTI_CURSOR_DRAGGING, true);
             editor.set_flag(EditorFlag::MOUSE_SELECTING, false);
         } else if (middle_dragged) {
-            update_multi_cursor_from_mouse(editor, rect, input.mouse_pos, char_width);
+            update_multi_cursor_from_mouse(editor, input_rect, input.mouse_pos, char_width);
         } else if (triple_clicked) {
-            select_line_from_mouse(editor, rect, input.mouse_pos, char_width);
+            select_line_from_mouse(editor, input_rect, input.mouse_pos, char_width);
             editor.set_flag(EditorFlag::MOUSE_SELECTING, false);
         } else if (double_clicked) {
-            select_word_from_mouse(editor, rect, input.mouse_pos, char_width);
+            select_word_from_mouse(editor, input_rect, input.mouse_pos, char_width);
             editor.set_flag(EditorFlag::MOUSE_SELECTING, false);
         } else if (clicked && !fold_gutter_clicked) {
             update_cursor_from_mouse(
                 editor,
-                rect,
+                input_rect,
                 input.mouse_pos,
                 char_width,
                 (input.key_mods & gui::KEY_MOD_SHIFT) != 0u
             );
             editor.set_flag(EditorFlag::MOUSE_SELECTING, true);
         } else if (dragged) {
-            update_cursor_from_mouse(editor, rect, input.mouse_pos, char_width, true);
+            update_cursor_from_mouse(editor, input_rect, input.mouse_pos, char_width, true);
         }
         if (!input.mouse_down[0u]) {
             editor.set_flag(EditorFlag::MOUSE_SELECTING, false);
@@ -1588,20 +1781,30 @@ namespace code_editor {
         editor.set_flag(EditorFlag::MIDDLE_MOUSE_WAS_DOWN, input.mouse_down[1u]);
         if ((clicked && !fold_gutter_clicked) || dragged || middle_clicked || middle_dragged ||
             double_clicked || triple_clicked || apply_key_reveal) {
-            reveal_cursor(editor, rect, char_width);
+            reveal_cursor(editor, input_rect, char_width);
         } else {
-            clamp_scroll(editor, rect);
+            editor.scroll_x = std::max(0.0f, editor.scroll_x);
+            editor.scroll_y = std::max(0.0f, editor.scroll_y);
         }
 
-        gui::Rect const content = editor_content_rect(rect);
+        sticky_scope_count =
+            collect_sticky_scope_lines(editor, line_height, full_content, sticky_scope_lines);
+        gui::Rect body_rect = rect;
+        body_rect.min.y += line_height * static_cast<float>(sticky_scope_count);
+        clamp_scroll(editor, body_rect);
+        sticky_scope_count =
+            collect_sticky_scope_lines(editor, line_height, full_content, sticky_scope_lines);
+        body_rect = rect;
+        body_rect.min.y += line_height * static_cast<float>(sticky_scope_count);
+
+        gui::Rect const content = editor_content_rect(body_rect);
         draw::Rect const clip = {
-            {content.min.x, content.min.y},
-            {content.max.x, content.max.y},
+            {full_content.min.x, full_content.min.y},
+            {full_content.max.x, full_content.max.y},
         };
         draw::push_clip_rect(draw_context, clip);
 
         size_t const line_count = editor_visible_line_count(editor);
-        float const line_height = editor_line_height(editor);
         size_t const first_line =
             std::min(line_count - 1u, static_cast<size_t>(editor.scroll_y / line_height));
         float y = content.min.y - (editor.scroll_y - static_cast<float>(first_line) * line_height);
@@ -1807,6 +2010,21 @@ namespace code_editor {
             }
             draw::pop_clip_rect(draw_context);
         }
+
+        draw_sticky_scope_lines(
+            draw_context,
+            editor_font,
+            editor,
+            palette,
+            Slice<size_t const>(sticky_scope_lines, sticky_scope_count),
+            tokenizer,
+            semantic_tokens,
+            full_content,
+            text_x,
+            text_min_x,
+            line_height,
+            char_width
+        );
 
         draw::pop_clip_rect(draw_context);
         return clicked || middle_clicked || double_clicked || triple_clicked;
