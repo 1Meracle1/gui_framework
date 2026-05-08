@@ -4287,6 +4287,39 @@ namespace code_editor {
         return metrics;
     }
 
+    [[nodiscard]] auto lsp_wrapped_line(
+        font_cache::Font font, float font_size, StrRef line, size_t& offset, float wrap_width
+    ) -> StrRef {
+        size_t end = offset;
+        size_t wrap = StrRef::NPOS;
+        while (end < line.size()) {
+            if (is_ascii_whitespace(line[end])) {
+                wrap = end;
+            }
+            size_t const next = end + 1u;
+            if (font_cache::text_advance(font, font_size, line.substr(offset, next - offset)) >
+                wrap_width) {
+                if (wrap != StrRef::NPOS && wrap > offset) {
+                    StrRef const result = line.substr(offset, wrap - offset);
+                    offset = wrap + 1u;
+                    while (offset < line.size() && is_ascii_whitespace(line[offset])) {
+                        offset += 1u;
+                    }
+                    return result;
+                }
+                if (end > offset) {
+                    StrRef const result = line.substr(offset, end - offset);
+                    offset = end;
+                    return result;
+                }
+            }
+            end = next;
+        }
+        StrRef const result = line.substr(offset);
+        offset = line.size();
+        return result;
+    }
+
     auto draw_lsp_text_lines(
         draw::Context context,
         font_cache::Font font,
@@ -4308,13 +4341,24 @@ namespace code_editor {
         };
         float y = clip.min.y;
         float const line_height = lsp_text_line_height(font, editor.font_size);
+        float const wrap_width = std::max(1.0f, clip.max.x - clip.min.x);
         size_t offset = 0u;
         size_t line_count = 0u;
         while (offset < text.size() && line_count < max_lines) {
             StrRef const line = next_text_line(text, offset);
-            draw::draw_text(context, {clip.min.x, y - 2.0f}, style, line, nullptr);
-            y += line_height;
-            line_count += 1u;
+            if (line.empty()) {
+                y += line_height;
+                line_count += 1u;
+                continue;
+            }
+            size_t line_offset = 0u;
+            while (line_offset < line.size() && line_count < max_lines) {
+                StrRef const wrapped =
+                    lsp_wrapped_line(font, editor.font_size, line, line_offset, wrap_width);
+                draw::draw_text(context, {clip.min.x, y - 2.0f}, style, wrapped, nullptr);
+                y += line_height;
+                line_count += 1u;
+            }
         }
         if (offset < text.size() && y < clip.max.y) {
             style.color = to_draw_color(palette.muted);
@@ -4386,12 +4430,18 @@ namespace code_editor {
         -> size_t {
         size_t count = 0u;
         size_t offset = 0u;
+        wrap_width = std::max(1.0f, wrap_width);
         while (offset < text.size()) {
             StrRef const line = next_text_line(text, offset);
-            float const width = font_cache::text_advance(font, font_size, line);
-            count += std::max<size_t>(
-                1u, static_cast<size_t>(std::ceil(width / std::max(1.0f, wrap_width)))
-            );
+            if (line.empty()) {
+                count += 1u;
+                continue;
+            }
+            size_t line_offset = 0u;
+            while (line_offset < line.size()) {
+                BASE_UNUSED(lsp_wrapped_line(font, font_size, line, line_offset, wrap_width));
+                count += 1u;
+            }
         }
         if (!text.empty() && text[text.size() - 1u] == '\n') {
             count += 1u;
@@ -4541,6 +4591,14 @@ namespace code_editor {
         size_t constexpr MAX_LINES = static_cast<size_t>(-1);
         LspTextMetrics const metrics =
             measure_lsp_text(font, editor.font_size, diagnostic->message, MAX_LINES);
+        gui::Rect const content = editor_content_rect(rect);
+        float const max_width =
+            std::max(120.0f, std::min(720.0f, content.max.x - content.min.x - 8.0f));
+        float const min_width = std::min(240.0f, max_width);
+        float const width = std::clamp(metrics.width + 22.0f, min_width, max_width);
+        float const wrap_width = std::max(1.0f, width - 2.0f * LSP_POPUP_PADDING_X);
+        size_t const lines =
+            lsp_wrapped_line_count(font, editor.font_size, diagnostic->message, wrap_width);
         float const line_height = lsp_text_line_height(font, editor.font_size);
         draw::Rect const panel = lsp_anchor_panel(
             editor,
@@ -4548,8 +4606,8 @@ namespace code_editor {
             char_width,
             editor.cursor_line,
             editor.cursor_column,
-            std::clamp(metrics.width + 22.0f, 240.0f, 720.0f),
-            static_cast<float>(metrics.lines) * line_height + 18.0f
+            width,
+            static_cast<float>(lines) * line_height + 18.0f
         );
         draw_lsp_panel(context, palette, panel);
         draw_lsp_text_lines(context, font, editor, palette, panel, diagnostic->message, MAX_LINES);
