@@ -118,6 +118,7 @@ namespace code_editor {
         uint32_t tree_arena_index = 0u;
         uint64_t file_change_generation = 0u;
         uint64_t file_change_ticks = 0u;
+        bool tree_change_pending = false;
         bool initial_sidebar_visible = false;
     };
 
@@ -270,7 +271,34 @@ namespace code_editor {
         return true;
     }
 
-    [[nodiscard]] auto consume_directory_change(DirectoryWatcher& watcher) -> bool {
+    [[nodiscard]] auto directory_change_affects_tree(uint8_t const* buffer, DWORD bytes) -> bool {
+        if (bytes == 0u) {
+            return true;
+        }
+
+        DWORD offset = 0u;
+        while (offset < bytes) {
+            auto const* info = reinterpret_cast<FILE_NOTIFY_INFORMATION const*>(buffer + offset);
+            switch (info->Action) {
+            case FILE_ACTION_ADDED:
+            case FILE_ACTION_REMOVED:
+            case FILE_ACTION_RENAMED_OLD_NAME:
+            case FILE_ACTION_RENAMED_NEW_NAME:
+                return true;
+            default:
+                break;
+            }
+            if (info->NextEntryOffset == 0u) {
+                break;
+            }
+            offset += info->NextEntryOffset;
+        }
+        return false;
+    }
+
+    [[nodiscard]] auto consume_directory_change(DirectoryWatcher& watcher, bool& tree_changed)
+        -> bool {
+        tree_changed = false;
         if (!watcher_valid(watcher) || !watcher.pending ||
             WaitForSingleObject(watcher.event, 0u) != WAIT_OBJECT_0) {
             return false;
@@ -279,9 +307,11 @@ namespace code_editor {
         DWORD bytes = 0u;
         BOOL const ok = GetOverlappedResult(watcher.directory, &watcher.overlapped, &bytes, FALSE);
         watcher.pending = false;
-        bool const changed = ok || GetLastError() != ERROR_OPERATION_ABORTED;
+        DWORD const error = ok ? ERROR_SUCCESS : GetLastError();
+        tree_changed = ok ? directory_change_affects_tree(watcher.buffer, bytes)
+                          : error != ERROR_OPERATION_ABORTED;
         BASE_UNUSED(start_directory_watch(watcher));
-        return changed;
+        return ok || error != ERROR_OPERATION_ABORTED;
     }
 
     [[nodiscard]] auto close_click(AppState const& state, gui::Vec2 pos, uint64_t ticks) -> bool {
@@ -1703,6 +1733,7 @@ namespace code_editor {
     auto mark_launch_tree_changed_from_operation(LaunchDesc& launch) -> void {
         launch.file_change_generation += 1u;
         launch.file_change_ticks = 0u;
+        launch.tree_change_pending = false;
     }
 
     [[nodiscard]] auto tree_operation_targets_root(LaunchDesc const& launch, StrRef path) -> bool {
@@ -1977,16 +2008,22 @@ namespace code_editor {
 
     [[nodiscard]] auto process_launch_file_changes(LaunchDesc& launch) -> bool {
         uint64_t const ticks = GetTickCount64();
-        if (consume_directory_change(launch.tree_watcher)) {
+        bool tree_changed = false;
+        if (consume_directory_change(launch.tree_watcher, tree_changed)) {
             launch.file_change_ticks = ticks;
+            launch.tree_change_pending = launch.tree_change_pending || tree_changed;
         }
         if (launch.file_change_ticks == 0u ||
             ticks - launch.file_change_ticks < HOT_RELOAD_POLL_MS) {
             return false;
         }
+        tree_changed = launch.tree_change_pending;
         launch.file_change_ticks = 0u;
+        launch.tree_change_pending = false;
         launch.file_change_generation += 1u;
-        refresh_launch_tree(launch);
+        if (tree_changed) {
+            refresh_launch_tree(launch);
+        }
         return true;
     }
 
