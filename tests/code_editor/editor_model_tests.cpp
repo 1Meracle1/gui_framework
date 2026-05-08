@@ -952,6 +952,75 @@ namespace {
         TEST_EXPECT(context, matches[3u].tree_file_index == 3u);
     }
 
+    TEST_CASE(file_search_prefers_top_level_files_before_deeper_matches) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::FileTreeEntry tree[] = {
+            {
+                .name = "README",
+                .path = "C:\\repo\\third_party\\README",
+                .relative_path = "third_party\\README",
+                .depth = 1u,
+            },
+            {
+                .name = "README.md",
+                .path = "C:\\repo\\README.md",
+                .relative_path = "README.md",
+                .depth = 0u,
+            },
+        };
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "");
+        editor.tree_files = Slice<code_editor::FileTreeEntry>(tree);
+        editor.file_search_text_size = StrRef("readme").copy_to(
+            editor.file_search_text, code_editor::FILE_SEARCH_TEXT_CAPACITY
+        );
+        editor.file_search_text[editor.file_search_text_size] = '\0';
+
+        code_editor::FileSearchMatch matches[code_editor::FILE_SEARCH_RESULT_LIMIT] = {};
+        size_t const count = code_editor::collect_file_search_matches(editor, matches);
+
+        TEST_EXPECT(context, count == 2u);
+        TEST_EXPECT(context, matches[0u].tree_file_index == 1u);
+        TEST_EXPECT(context, matches[1u].tree_file_index == 0u);
+    }
+
+    TEST_CASE(file_search_prefers_closer_file_name_before_shallow_loose_match) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::FileTreeEntry tree[] = {
+            {
+                .name = "ui_api_examples.md",
+                .path = "C:\\repo\\docs\\ui_api_examples.md",
+                .relative_path = "docs\\ui_api_examples.md",
+                .depth = 1u,
+            },
+            {
+                .name = "app.cpp",
+                .path = "C:\\repo\\examples\\code_editor\\app.cpp",
+                .relative_path = "examples\\code_editor\\app.cpp",
+                .depth = 2u,
+            },
+        };
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "");
+        editor.tree_files = Slice<code_editor::FileTreeEntry>(tree);
+        editor.file_search_text_size =
+            StrRef("app").copy_to(editor.file_search_text, code_editor::FILE_SEARCH_TEXT_CAPACITY);
+        editor.file_search_text[editor.file_search_text_size] = '\0';
+
+        code_editor::FileSearchMatch matches[code_editor::FILE_SEARCH_RESULT_LIMIT] = {};
+        size_t const count = code_editor::collect_file_search_matches(editor, matches);
+
+        TEST_EXPECT(context, count == 2u);
+        TEST_EXPECT(context, matches[0u].tree_file_index == 1u);
+        TEST_EXPECT(context, matches[1u].tree_file_index == 0u);
+    }
+
     TEST_CASE(file_search_matches_relative_path_prefix_with_slash_insensitive_query) {
         Arena arena = {};
         arena.init();

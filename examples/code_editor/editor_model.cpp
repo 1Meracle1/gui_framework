@@ -3215,6 +3215,11 @@ namespace code_editor {
         return false;
     }
 
+    [[nodiscard]] auto file_search_name_prefix_match(StrRef name, StrRef query) -> bool {
+        return query.size() <= name.size() &&
+               name.prefix(query.size()).equals_ignore_ascii_case(query);
+    }
+
     [[nodiscard]] auto file_search_fuzzy_score(StrRef text, StrRef query, int32_t& out_score)
         -> bool {
         if (query.empty()) {
@@ -3289,7 +3294,7 @@ namespace code_editor {
         StrRef const path = file_search_entry_text(entry);
         StrRef const name = !entry.name.empty() ? entry.name : path;
         bool const path_like = file_search_query_is_path_like(query);
-        if (!query.empty() && name.equals_ignore_ascii_case(query)) {
+        if (!query.empty() && file_search_name_prefix_match(name, query)) {
             match.priority = 0u;
             match.score = 0;
             return true;
@@ -3320,11 +3325,16 @@ namespace code_editor {
         if (lhs.priority != rhs.priority) {
             return lhs.priority < rhs.priority;
         }
+        FileTreeEntry const& lhs_entry = editor.tree_files[lhs.tree_file_index];
+        FileTreeEntry const& rhs_entry = editor.tree_files[rhs.tree_file_index];
+        if (lhs_entry.depth != rhs_entry.depth) {
+            return lhs_entry.depth < rhs_entry.depth;
+        }
         if (lhs.score != rhs.score) {
             return lhs.score < rhs.score;
         }
-        StrRef const lhs_text = file_search_entry_text(editor.tree_files[lhs.tree_file_index]);
-        StrRef const rhs_text = file_search_entry_text(editor.tree_files[rhs.tree_file_index]);
+        StrRef const lhs_text = file_search_entry_text(lhs_entry);
+        StrRef const rhs_text = file_search_entry_text(rhs_entry);
         int const compare = lhs_text.compare_ignore_ascii_case(rhs_text);
         return compare != 0 ? compare < 0 : lhs.tree_file_index < rhs.tree_file_index;
     }
