@@ -62,6 +62,18 @@ namespace code_editor {
         size_t end_line = 0u;
     };
 
+    enum class EditorGitLineChangeKind : uint8_t {
+        ADDED,
+        MODIFIED,
+        REMOVED,
+    };
+
+    struct EditorGitLineChange {
+        size_t line = 0u;
+        EditorGitLineChangeKind kind = EditorGitLineChangeKind::ADDED;
+        bool after_line = false;
+    };
+
     struct EditorCursor {
         size_t line = 0u;
         size_t column = 0u;
@@ -122,6 +134,12 @@ namespace code_editor {
         bool dirty = false;
         bool external_change_pending = false;
         bool file_deleted_on_disk = false;
+        StrRef git_path = {};
+        StrRef git_relative_path = {};
+        StrRef git_head_text = {};
+        Vec<EditorGitLineChange> git_line_changes = {};
+        uint64_t git_line_change_revision = 0u;
+        bool git_head_loaded = false;
     };
 
     struct OpenFileViewState {
@@ -316,6 +334,7 @@ namespace code_editor {
         StrRef scratch_text = {};
         StrRef tree_root_name = {};
         StrRef save_root_path = {};
+        StrRef git_root_path = {};
         StrRef saved_text = {};
         Arena* arena = nullptr;
         Vec<EditorPane*> panes = {};
@@ -409,6 +428,7 @@ namespace code_editor {
         bool jump_list_reveal_selected = false;
         bool global_search_refresh_requested = false;
         bool tree_operation_pending = false;
+        bool git_root_checked = false;
         EditorSavePathError save_path_error = EditorSavePathError::NONE;
         EditorFlags flags = {EditorFlag::TREE_OPEN};
     };
