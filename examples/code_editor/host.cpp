@@ -78,6 +78,11 @@ namespace code_editor {
         bool close_confirmed = false;
     };
 
+    struct RunOptions {
+        StrRef initial_path = {};
+        StrRef automation_dump_frame = {};
+    };
+
     struct DirectoryWatcher {
         HANDLE directory = INVALID_HANDLE_VALUE;
         HANDLE event = nullptr;
@@ -492,6 +497,163 @@ namespace code_editor {
         return file;
     }
 
+#if BASE_DEBUG
+    [[nodiscard]] auto box_kind_name(gui::BoxKind kind) -> char const* {
+        switch (kind) {
+        case gui::BoxKind::ROOT:
+            return "root";
+        case gui::BoxKind::ROW:
+            return "row";
+        case gui::BoxKind::COLUMN:
+            return "column";
+        case gui::BoxKind::OVERLAY:
+            return "overlay";
+        case gui::BoxKind::POPUP:
+            return "popup";
+        case gui::BoxKind::MODAL:
+            return "modal";
+        case gui::BoxKind::LABEL:
+            return "label";
+        case gui::BoxKind::SELECTABLE_LABEL:
+            return "selectable_label";
+        case gui::BoxKind::BUTTON:
+            return "button";
+        case gui::BoxKind::CHECKBOX:
+            return "checkbox";
+        case gui::BoxKind::TOGGLE:
+            return "toggle";
+        case gui::BoxKind::SLIDER_FLOAT:
+            return "slider_float";
+        case gui::BoxKind::SPACER:
+            return "spacer";
+        case gui::BoxKind::SCROLL_PANEL:
+            return "scroll_panel";
+        case gui::BoxKind::LIST:
+            return "list";
+        case gui::BoxKind::INPUT_TEXT:
+            return "input_text";
+        case gui::BoxKind::INPUT_TEXT_MULTILINE:
+            return "input_text_multiline";
+        case gui::BoxKind::TABLE:
+            return "table";
+        case gui::BoxKind::TABLE_ROW:
+            return "table_row";
+        case gui::BoxKind::TABLE_HEADER_ROW:
+            return "table_header_row";
+        case gui::BoxKind::TABLE_CELL:
+            return "table_cell";
+        case gui::BoxKind::TABLE_HEADER_CELL:
+            return "table_header_cell";
+        case gui::BoxKind::TAB_VIEW:
+            return "tab_view";
+        case gui::BoxKind::TAB_BAR:
+            return "tab_bar";
+        case gui::BoxKind::TAB:
+            return "tab";
+        case gui::BoxKind::TAB_BODY:
+            return "tab_body";
+        case gui::BoxKind::IMAGE:
+            return "image";
+        case gui::BoxKind::ICON:
+            return "icon";
+        case gui::BoxKind::TREE_NODE:
+            return "tree_node";
+        case gui::BoxKind::RADIO_BUTTON:
+            return "radio_button";
+        case gui::BoxKind::COUNT:
+            break;
+        }
+        return "unknown";
+    }
+
+    auto write_json_text(std::FILE* file, StrRef text) -> void {
+        std::fputc('"', file);
+        for (char const ch : text) {
+            uint8_t const byte = static_cast<uint8_t>(ch);
+            switch (ch) {
+            case '"':
+                fmt::fprintf(file, "\\\"");
+                break;
+            case '\\':
+                fmt::fprintf(file, "\\\\");
+                break;
+            case '\n':
+                fmt::fprintf(file, "\\n");
+                break;
+            case '\r':
+                fmt::fprintf(file, "\\r");
+                break;
+            case '\t':
+                fmt::fprintf(file, "\\t");
+                break;
+            default:
+                if (byte < 0x20u) {
+                    fmt::fprintf(file, "\\u%04x", static_cast<unsigned>(byte));
+                } else {
+                    std::fputc(ch, file);
+                }
+                break;
+            }
+        }
+        std::fputc('"', file);
+    }
+
+    auto write_json_id(std::FILE* file, gui::Id id) -> void {
+        fmt::fprintf(file, "\"0x%016llx\"", static_cast<unsigned long long>(id.value));
+    }
+
+    auto write_automation_frame_dump(StrRef path, gui::Frame const& frame) -> void {
+        if (path.empty() || frame.box_info_count() == 0u) {
+            return;
+        }
+
+        std::FILE* const file = open_write_file(path);
+        if (file == nullptr) {
+            return;
+        }
+
+        gui::BoxInfo const* const focused = frame.focused_box();
+        fmt::fprintf(file, "{\"box_count\":%zu,\"boxes\":[\n", frame.box_info_count());
+        for (size_t index = 0u; index < frame.box_info_count(); ++index) {
+            gui::BoxInfo const* const box = frame.box_info(index);
+            if (box == nullptr) {
+                continue;
+            }
+            if (index != 0u) {
+                fmt::fprintf(file, ",\n");
+            }
+            fmt::fprintf(file, "{\"index\":%zu,\"id\":", index);
+            write_json_id(file, box->id);
+            fmt::fprintf(file, ",\"parent_id\":");
+            write_json_id(file, box->parent_id);
+            fmt::fprintf(file, ",\"authored_id\":");
+            write_json_id(file, box->authored_id);
+            fmt::fprintf(file, ",\"kind\":\"%s\",\"text\":", box_kind_name(box->kind));
+            write_json_text(file, box->text);
+            fmt::fprintf(file, ",\"debug_name\":");
+            write_json_text(file, box->debug_name);
+            fmt::fprintf(
+                file,
+                ",\"rect\":{\"min_x\":%.3f,\"min_y\":%.3f,\"max_x\":%.3f,\"max_y\":%.3f}",
+                static_cast<double>(box->rect.min.x),
+                static_cast<double>(box->rect.min.y),
+                static_cast<double>(box->rect.max.x),
+                static_cast<double>(box->rect.max.y)
+            );
+            fmt::fprintf(
+                file,
+                ",\"focused\":%s,\"flags\":%u,\"duplicate_id\":%s,\"stable_id\":%s}",
+                focused != nullptr && focused->id.value == box->id.value ? "true" : "false",
+                static_cast<unsigned>(box->flags),
+                box->duplicate_id ? "true" : "false",
+                box->stable_id ? "true" : "false"
+            );
+        }
+        fmt::fprintf(file, "\n]}\n");
+        std::fclose(file);
+    }
+#endif
+
     [[nodiscard]] auto append_buffer(char* buffer, size_t capacity, size_t& size, StrRef text)
         -> bool {
         if (text.size() >= capacity || size > capacity - text.size() - 1u) {
@@ -518,6 +680,46 @@ namespace code_editor {
         for (int32_t shift = 60; shift >= 0; shift -= 4) {
             *out++ = hex_digit(static_cast<uint8_t>((value >> shift) & 0x0fu));
         }
+    }
+
+    [[nodiscard]] auto
+    consume_option_value(int argc, char** argv, int* index, char const* option, StrRef* out_value)
+        -> bool {
+        if (*index + 1 >= argc) {
+            fmt::eprintf("%s requires a value\n", option);
+            return false;
+        }
+        *index += 1;
+        *out_value = StrRef(argv[*index]);
+        return true;
+    }
+
+    [[nodiscard]] auto parse_run_options(int argc, char** argv, RunOptions* out_options) -> bool {
+        for (int index = 1; index < argc; ++index) {
+            char const* const arg = argv[index];
+            if (std::strcmp(arg, "--automation-dump-frame") == 0) {
+                if (!consume_option_value(
+                        argc,
+                        argv,
+                        &index,
+                        "--automation-dump-frame",
+                        &out_options->automation_dump_frame
+                    )) {
+                    return false;
+                }
+            } else if (std::strncmp(arg, "--automation-dump-frame=", 24u) == 0) {
+                out_options->automation_dump_frame = StrRef(arg + 24u);
+            } else if (arg[0] == '-') {
+                fmt::eprintf("usage: %s [--automation-dump-frame <path>] [path]\n", argv[0]);
+                return false;
+            } else if (out_options->initial_path.empty()) {
+                out_options->initial_path = StrRef(arg);
+            } else {
+                fmt::eprintf("usage: %s [--automation-dump-frame <path>] [path]\n", argv[0]);
+                return false;
+            }
+        }
+        return true;
     }
 
     [[nodiscard]] auto window_cache_path(Arena& arena, StrRef key) -> StrRef {
@@ -2031,12 +2233,12 @@ namespace code_editor {
         return true;
     }
 
-    auto run_windowed(StrRef initial_path) -> int {
+    auto run_windowed(RunOptions const& options) -> int {
         Arena app_arena = {};
         app_arena.init();
 
         LaunchDesc launch = {};
-        if (!prepare_launch(app_arena, initial_path, launch)) {
+        if (!prepare_launch(app_arena, options.initial_path, launch)) {
             return 1;
         }
 
@@ -2292,6 +2494,9 @@ namespace code_editor {
             );
             app_state.last_frame = frame_result.frame;
             app_state.mouse_hit_id = frame_result.mouse_hit_id;
+#if BASE_DEBUG
+            write_automation_frame_dump(options.automation_dump_frame, app_state.last_frame);
+#endif
             if (render::result_failed(frame_result.render_result)) {
                 log_render_result("draw::render_commands_to_window", frame_result.render_result);
                 break;
@@ -2348,19 +2553,16 @@ namespace code_editor {
 auto main(int argc, char** argv) -> int {
     base::install_crash_handlers();
 
-    if (argc > 2) {
-        fmt::eprintf("usage: %s [path]\n", argv[0]);
-        shutdown_thread_temp_arenas();
-        return 1;
-    }
-    StrRef const initial_path = argc == 2 ? StrRef(argv[1]) : StrRef();
-
 #if defined(_WIN32)
-    int const result = code_editor::run_windowed(initial_path);
+    code_editor::RunOptions options = {};
+    if (!code_editor::parse_run_options(argc, argv, &options)) {
+        shutdown_thread_temp_arenas();
+        return 2;
+    }
+    int const result = code_editor::run_windowed(options);
 #else
     BASE_UNUSED(argc);
     BASE_UNUSED(argv);
-    BASE_UNUSED(initial_path);
     int const result = code_editor::run_console_fallback();
 #endif
     shutdown_thread_temp_arenas();
