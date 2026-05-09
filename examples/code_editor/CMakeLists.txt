@@ -10,6 +10,8 @@ set(CODE_EDITOR_RELOAD_SOURCES
     editor_render.h
     editor_theme.cpp
     editor_theme.h
+    git.cpp
+    git.h
     lsp.cpp
     lsp.h
     shared.h

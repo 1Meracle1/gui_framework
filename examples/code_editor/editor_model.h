@@ -1,5 +1,6 @@
 #pragma once
 
+#include "git.h"
 #include "shared.h"
 #include "text_buffer.h"
 
@@ -7,6 +8,7 @@
 #include <base/bit_set.h>
 #include <base/memory.h>
 #include <base/str_ref.h>
+#include <base/string_buffer.h>
 #include <base/vec.h>
 #include <cstddef>
 #include <cstdint>
@@ -42,6 +44,7 @@ namespace code_editor {
     inline constexpr size_t SAVE_PATH_TEXT_CAPACITY = 1024u;
     inline constexpr size_t COMMAND_TEXT_CAPACITY = 256u;
     inline constexpr size_t TEXT_SEARCH_TEXT_CAPACITY = 256u;
+    inline constexpr size_t GIT_COMMIT_POPUP_NONE = static_cast<size_t>(-1);
     struct EditorCommand {
         StrRef name = {};
         StrRef alias = {};
@@ -108,11 +111,22 @@ namespace code_editor {
         APP,
     };
 
+    enum class EditorViewKind : uint8_t {
+        TEXT,
+        GIT_DIFF,
+    };
+
+    enum class EditorSidebarTab : uint8_t {
+        FILES,
+        GIT,
+    };
+
     struct OpenFile {
         StrRef name = {};
         StrRef path = {};
         StrRef text = {};
         StrRef saved_text = {};
+        GitDiffDocument git_diff = {};
         EditorUndoEntry* undo_stack = nullptr;
         EditorUndoEntry* redo_stack = nullptr;
         uint64_t file_write_stamp = 0u;
@@ -134,6 +148,8 @@ namespace code_editor {
         bool dirty = false;
         bool external_change_pending = false;
         bool file_deleted_on_disk = false;
+        bool git_diff_side_by_side = true;
+        EditorViewKind view_kind = EditorViewKind::TEXT;
         StrRef git_path = {};
         StrRef git_relative_path = {};
         StrRef git_head_text = {};
@@ -227,6 +243,7 @@ namespace code_editor {
     struct EditorPane {
         EditorPaneKind kind = EditorPaneKind::CODE;
         EditorText text = {};
+        GitDiffDocument git_diff = {};
         StrRef current_file_name = SCRATCH_FILE_NAME;
         StrRef current_file_path = {};
         StrRef scratch_text = {};
@@ -254,6 +271,8 @@ namespace code_editor {
         bool dirty = false;
         bool external_change_pending = false;
         bool file_deleted_on_disk = false;
+        bool git_diff_side_by_side = true;
+        EditorViewKind view_kind = EditorViewKind::TEXT;
         Vec<OpenFileViewState> open_file_views = {};
     };
 
@@ -329,6 +348,7 @@ namespace code_editor {
         }
 
         EditorText text = {};
+        GitDiffDocument git_diff = {};
         StrRef current_file_name = SCRATCH_FILE_NAME;
         StrRef current_file_path = {};
         StrRef scratch_text = {};
@@ -340,6 +360,10 @@ namespace code_editor {
         Vec<EditorPane*> panes = {};
         Vec<EditorSplitNode> split_nodes = {};
         Vec<OpenFile> open_files = {};
+        Vec<GitStatusItem> git_status_items = {};
+        Vec<GitCommit> git_commits = {};
+        Vec<GitCommitFile> git_commit_files = {};
+        Vec<GitBranch> git_branches = {};
         Vec<EditorJump> jumps = {};
         Vec<GlobalSearchResult> global_search_results = {};
         Slice<FileTreeEntry> tree_files = {};
@@ -367,6 +391,7 @@ namespace code_editor {
         float sidebar_width_percent = SIDEBAR_DEFAULT_WIDTH_PERCENT;
         float sidebar_resize_grab_x = 0.0f;
         char file_search_text[FILE_SEARCH_TEXT_CAPACITY] = {};
+        StringBuffer git_commit_text = {};
         char save_path_text[SAVE_PATH_TEXT_CAPACITY] = {};
         char command_text[COMMAND_TEXT_CAPACITY] = {};
         char config_request_text[COMMAND_TEXT_CAPACITY] = {};
@@ -393,6 +418,11 @@ namespace code_editor {
         size_t file_search_open_file = FILE_SEARCH_NO_FILE;
         size_t buffer_search_open_file = FILE_SEARCH_NO_FILE;
         size_t tree_cursor = TREE_CURSOR_ROOT;
+        size_t git_selected = 0u;
+        size_t git_commit_popup = GIT_COMMIT_POPUP_NONE;
+        size_t git_commit_limit = 0u;
+        size_t git_pending_pull_count = 0u;
+        uint64_t git_commit_load_generation = 0u;
         size_t pending_line_number = 0u;
         uint64_t lsp_synced_revision = 0u;
         uint64_t lsp_seen_completions_generation = 0u;
@@ -403,6 +433,8 @@ namespace code_editor {
         uint64_t lsp_seen_text_edits_generation = 0u;
         uint64_t lsp_seen_folding_ranges_generation = 0u;
         StrRef lsp_synced_path = {};
+        StrRef git_status_text = {};
+        StrRef git_current_branch = {};
         LspBridge const* lsp_bridge = nullptr;
         LspSendEditorRequestFn lsp_send_request = nullptr;
         void* lsp_user_data = nullptr;
@@ -412,23 +444,45 @@ namespace code_editor {
         size_t lsp_rename_text_size = 0u;
         uint64_t tree_operation_generation = 0u;
         uint64_t tree_operation_seen_generation = 0u;
+        gui::TextSelection git_branch_selection = {};
+        gui::TextSelection git_commit_popup_selection = {};
         gui::TextSelection lsp_hover_selection = {};
+        gui::Vec2 git_commit_popup_mouse_pos = {};
         EditorLspPopupKind lsp_popup = EditorLspPopupKind::NONE;
         EditorCloseIntent close_intent = EditorCloseIntent::NONE;
         EditorConfigRequestKind config_request = EditorConfigRequestKind::NONE;
         EditorJumpListKind jump_list_kind = EditorJumpListKind::HISTORY;
+        EditorSidebarTab sidebar_tab = EditorSidebarTab::FILES;
         TreeEditMode tree_edit_mode = TreeEditMode::NONE;
+        GitRequest git_request = {};
         bool lsp_rename_text_selected = false;
         bool file_search_mouse_known = false;
         bool file_search_mouse_select = false;
         bool file_search_reveal_selected = false;
         bool tree_cursor_reveal = false;
+        bool git_cursor_reveal = false;
         bool jump_list_mouse_known = false;
         bool jump_list_mouse_select = false;
         bool jump_list_reveal_selected = false;
         bool global_search_refresh_requested = false;
+        bool git_refresh_requested = true;
+        bool git_log_refresh_requested = true;
+        bool git_commit_text_focused = false;
+        bool git_staged_open = true;
+        bool git_changes_open = true;
+        bool git_graph_open = false;
+        bool git_branches_open = false;
+        bool git_commits_more = false;
+        bool git_commits_loading = false;
+        bool git_operation_pending = false;
+        bool git_commit_load_more_requested = false;
+        bool git_commit_popup_keyboard = false;
+        bool git_commit_popup_mouse_known = false;
         bool tree_operation_pending = false;
         bool git_root_checked = false;
+        bool git_diff_side_by_side = true;
+        float git_loading_phase = 0.0f;
+        EditorViewKind view_kind = EditorViewKind::TEXT;
         EditorSavePathError save_path_error = EditorSavePathError::NONE;
         EditorFlags flags = {EditorFlag::TREE_OPEN};
     };
@@ -454,6 +508,9 @@ namespace code_editor {
     auto open_save_path_popup(EditorState& editor) -> void;
     auto close_save_path_popup(EditorState& editor) -> void;
     auto ensure_filesystem_panel(EditorState& editor) -> void;
+    auto open_git_sidebar(EditorState& editor) -> void;
+    auto submit_git_commit(EditorState& editor) -> void;
+    auto set_git_diff_view_text(EditorState& editor) -> void;
     auto set_filesystem_panel_visible(EditorState& editor, bool visible) -> void;
     auto expand_filesystem_tree_to_file(EditorState& editor, size_t tree_file_index) -> void;
     auto select_current_file_in_filesystem_tree(EditorState& editor) -> void;

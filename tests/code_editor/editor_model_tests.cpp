@@ -3531,6 +3531,348 @@ namespace {
         );
     }
 
+    TEST_CASE(git_sidebar_leader_shortcuts_switch_tabs) {
+        Arena arena = {};
+        arena.init();
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "");
+
+        send_text(editor, " g");
+        TEST_EXPECT(context, editor.sidebar_tab == code_editor::EditorSidebarTab::GIT);
+        TEST_EXPECT(context, editor.flag(EditorFlag::SIDEBAR_VISIBLE));
+        TEST_EXPECT(
+            context,
+            code_editor::editor_focused_pane_kind(editor) == code_editor::EditorPaneKind::FILESYSTEM
+        );
+
+        send_text(editor, " g");
+        TEST_EXPECT(context, !editor.flag(EditorFlag::SIDEBAR_VISIBLE));
+        TEST_EXPECT(
+            context,
+            code_editor::editor_focused_pane_kind(editor) == code_editor::EditorPaneKind::CODE
+        );
+
+        send_text(editor, " g");
+        TEST_EXPECT(context, editor.sidebar_tab == code_editor::EditorSidebarTab::GIT);
+        TEST_EXPECT(context, editor.flag(EditorFlag::SIDEBAR_VISIBLE));
+
+        send_text(editor, " e");
+        TEST_EXPECT(context, editor.sidebar_tab == code_editor::EditorSidebarTab::FILES);
+    }
+
+    TEST_CASE(git_sidebar_stage_and_unstage_create_requests) {
+        Arena arena = {};
+        arena.init();
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "");
+        code_editor::open_git_sidebar(editor);
+        editor.git_refresh_requested = false;
+
+        TEST_EXPECT(
+            context,
+            editor.git_status_items.push_back({
+                .path = arena_copy_cstr(arena, "unstaged.cpp"),
+                .status = code_editor::GitFileStatus::MODIFIED,
+                .scope = code_editor::GitStatusScope::UNSTAGED,
+            })
+        );
+        TEST_EXPECT(
+            context,
+            editor.git_status_items.push_back({
+                .path = arena_copy_cstr(arena, "staged.cpp"),
+                .status = code_editor::GitFileStatus::ADDED,
+                .scope = code_editor::GitStatusScope::STAGED,
+            })
+        );
+
+        editor.git_selected = 3u;
+        send_text(editor, "s");
+        TEST_EXPECT(context, editor.git_request.kind == code_editor::GitRequestKind::STAGE);
+        TEST_EXPECT(context, editor.git_request.path == "unstaged.cpp");
+
+        editor.git_request = {};
+        editor.git_selected = 1u;
+        send_text(editor, "u");
+        TEST_EXPECT(context, editor.git_request.kind == code_editor::GitRequestKind::UNSTAGE);
+        TEST_EXPECT(context, editor.git_request.path == "staged.cpp");
+    }
+
+    TEST_CASE(git_sidebar_changes_header_collapses_with_keyboard) {
+        Arena arena = {};
+        arena.init();
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "");
+        code_editor::open_git_sidebar(editor);
+        editor.git_refresh_requested = false;
+
+        TEST_EXPECT(
+            context,
+            editor.git_status_items.push_back({
+                .path = arena_copy_cstr(arena, "changed.cpp"),
+                .status = code_editor::GitFileStatus::MODIFIED,
+                .scope = code_editor::GitStatusScope::UNSTAGED,
+            })
+        );
+
+        editor.git_selected = 0u;
+        press_key(editor, gui::Key::LEFT);
+        TEST_EXPECT(context, !editor.git_changes_open);
+
+        send_text(editor, "j");
+        TEST_EXPECT(context, editor.git_selected == 1u);
+        send_text(editor, "k");
+        TEST_EXPECT(context, editor.git_selected == 0u);
+
+        press_key(editor, gui::Key::RIGHT);
+        TEST_EXPECT(context, editor.git_changes_open);
+
+        send_text(editor, "j");
+        TEST_EXPECT(context, editor.git_selected == 1u);
+        send_text(editor, "s");
+        TEST_EXPECT(context, editor.git_request.kind == code_editor::GitRequestKind::STAGE);
+        TEST_EXPECT(context, editor.git_request.path == "changed.cpp");
+    }
+
+    TEST_CASE(git_sidebar_graph_header_is_collapsed_by_default) {
+        Arena arena = {};
+        arena.init();
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "");
+        code_editor::open_git_sidebar(editor);
+        editor.git_refresh_requested = false;
+
+        TEST_EXPECT(
+            context,
+            editor.git_commits.push_back({
+                .oid = arena_copy_cstr(arena, "abcdef"),
+                .short_oid = arena_copy_cstr(arena, "abcdef"),
+                .summary = arena_copy_cstr(arena, "commit"),
+            })
+        );
+
+        TEST_EXPECT(context, !editor.git_graph_open);
+        editor.git_selected = 1u;
+        send_text(editor, "j");
+        TEST_EXPECT(context, editor.git_selected == 1u);
+
+        press_key(editor, gui::Key::RIGHT);
+        TEST_EXPECT(context, editor.git_graph_open);
+
+        send_text(editor, "j");
+        TEST_EXPECT(context, editor.git_selected == 2u);
+        press_key(editor, gui::Key::ENTER);
+        TEST_EXPECT(context, editor.git_commits[0u].open);
+    }
+
+    TEST_CASE(git_sidebar_shift_k_opens_commit_popup) {
+        Arena arena = {};
+        arena.init();
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "");
+        code_editor::open_git_sidebar(editor);
+        editor.git_refresh_requested = false;
+        editor.git_graph_open = true;
+
+        TEST_EXPECT(
+            context,
+            editor.git_commits.push_back({
+                .oid = arena_copy_cstr(arena, "abcdef"),
+                .short_oid = arena_copy_cstr(arena, "abcdef"),
+                .summary = arena_copy_cstr(arena, "commit"),
+            })
+        );
+
+        editor.git_selected = 2u;
+        send_text(editor, "K", gui::KEY_MOD_SHIFT);
+        TEST_EXPECT(context, editor.git_commit_popup == 0u);
+
+        send_text(editor, "k");
+        TEST_EXPECT(context, editor.git_commit_popup == code_editor::GIT_COMMIT_POPUP_NONE);
+    }
+
+    TEST_CASE(git_sidebar_requests_more_commits_at_loaded_tail) {
+        Arena arena = {};
+        arena.init();
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "");
+        code_editor::open_git_sidebar(editor);
+        editor.git_refresh_requested = false;
+        editor.git_graph_open = true;
+        editor.git_commits_more = true;
+
+        TEST_EXPECT(
+            context,
+            editor.git_commits.push_back({
+                .oid = arena_copy_cstr(arena, "aaaa"),
+                .short_oid = arena_copy_cstr(arena, "aaaa"),
+                .summary = arena_copy_cstr(arena, "first"),
+            })
+        );
+        TEST_EXPECT(
+            context,
+            editor.git_commits.push_back({
+                .oid = arena_copy_cstr(arena, "bbbb"),
+                .short_oid = arena_copy_cstr(arena, "bbbb"),
+                .summary = arena_copy_cstr(arena, "second"),
+            })
+        );
+
+        editor.git_selected = 2u;
+        send_text(editor, "j");
+        TEST_EXPECT(context, editor.git_selected == 3u);
+        TEST_EXPECT(context, editor.git_commit_load_more_requested);
+    }
+
+    TEST_CASE(git_sidebar_ctrl_d_u_moves_by_half_focused_split) {
+        Arena arena = {};
+        arena.init();
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "");
+        code_editor::open_git_sidebar(editor);
+        editor.git_refresh_requested = false;
+        editor.git_graph_open = true;
+        code_editor::set_editor_split_rect(
+            editor, editor.focused_split, {{0.0f, 0.0f}, {120.0f, 236.0f}}
+        );
+
+        for (size_t index = 0u; index < 10u; ++index) {
+            TEST_EXPECT(
+                context,
+                editor.git_commits.push_back({
+                    .oid = arena_copy_cstr(arena, "aaaa"),
+                    .short_oid = arena_copy_cstr(arena, "aaaa"),
+                    .summary = arena_copy_cstr(arena, "commit"),
+                })
+            );
+        }
+
+        editor.git_selected = 2u;
+        press_key(editor, gui::Key::D, gui::KEY_MOD_CTRL);
+        TEST_EXPECT(context, editor.git_selected == 6u);
+
+        press_key(editor, gui::Key::D, gui::KEY_MOD_CTRL);
+        TEST_EXPECT(context, editor.git_selected == 10u);
+
+        press_key(editor, gui::Key::U, gui::KEY_MOD_CTRL);
+        TEST_EXPECT(context, editor.git_selected == 6u);
+
+        press_key(editor, gui::Key::U, gui::KEY_MOD_CTRL);
+        TEST_EXPECT(context, editor.git_selected == 2u);
+    }
+
+    TEST_CASE(git_commit_validates_staged_changes_and_message) {
+        Arena arena = {};
+        arena.init();
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "");
+        code_editor::open_git_sidebar(editor);
+        editor.git_refresh_requested = false;
+
+        code_editor::submit_git_commit(editor);
+        TEST_EXPECT(context, editor.git_status_text == "Stage changes before committing.");
+
+        TEST_EXPECT(
+            context,
+            editor.git_status_items.push_back({
+                .path = arena_copy_cstr(arena, "file.cpp"),
+                .status = code_editor::GitFileStatus::ADDED,
+                .scope = code_editor::GitStatusScope::STAGED,
+            })
+        );
+
+        editor.git_status_text = {};
+        code_editor::submit_git_commit(editor);
+        TEST_EXPECT(context, editor.git_status_text == "Commit message required.");
+
+        editor.git_status_text = {};
+        TEST_EXPECT(context, editor.git_commit_text.write_string(" \t\r\n") == 4u);
+        code_editor::submit_git_commit(editor);
+        TEST_EXPECT(context, editor.git_status_text == "Commit message required.");
+
+        editor.git_commit_text.reset();
+        TEST_EXPECT(context, editor.git_commit_text.write_string("add file\nbody") == 13u);
+        code_editor::submit_git_commit(editor);
+        TEST_EXPECT(context, editor.git_request.kind == code_editor::GitRequestKind::COMMIT);
+        TEST_EXPECT(context, editor.git_request.message == "add file\nbody");
+    }
+
+    TEST_CASE(git_diff_tabs_ignore_editing_commands) {
+        Arena arena = {};
+        arena.init();
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "abc");
+        editor.view_kind = code_editor::EditorViewKind::GIT_DIFF;
+        editor.set_flag(EditorFlag::INSERT_MODE, true);
+
+        send_text(editor, "x");
+        TEST_EXPECT(
+            context, code_editor::editor_line_text(code_editor::editor_line(editor, 0u)) == "abc"
+        );
+
+        editor.set_flag(EditorFlag::INSERT_MODE, false);
+        press_key(editor, gui::Key::DELETE_KEY);
+        TEST_EXPECT(
+            context, code_editor::editor_line_text(code_editor::editor_line(editor, 0u)) == "abc"
+        );
+    }
+
+    TEST_CASE(git_diff_tabs_support_row_boundary_navigation) {
+        Arena arena = {};
+        arena.init();
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "first\nsecond row");
+        editor.view_kind = code_editor::EditorViewKind::GIT_DIFF;
+        editor.cursor_line = 1u;
+        editor.cursor_column = 4u;
+
+        send_text(editor, "0");
+        TEST_EXPECT(context, editor.cursor_column == 0u);
+
+        send_text(editor, "$", gui::KEY_MOD_SHIFT);
+        TEST_EXPECT(context, editor.cursor_column == code_editor::editor_line(editor, 1u).size);
+
+        editor.cursor_column = 4u;
+        press_key(editor, gui::Key::HOME);
+        TEST_EXPECT(context, editor.cursor_column == 0u);
+
+        press_key(editor, gui::Key::END);
+        TEST_EXPECT(context, editor.cursor_column == code_editor::editor_line(editor, 1u).size);
+    }
+
+    TEST_CASE(git_diff_tabs_support_read_only_normal_motions) {
+        Arena arena = {};
+        arena.init();
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "one two_three + four\nlast row\nthird");
+        editor.view_kind = code_editor::EditorViewKind::GIT_DIFF;
+
+        send_text(editor, "w");
+        TEST_EXPECT(context, editor.cursor_column == 4u);
+        send_text(editor, "e");
+        TEST_EXPECT(context, editor.cursor_column == 12u);
+        send_text(editor, "b");
+        TEST_EXPECT(context, editor.cursor_column == 4u);
+        send_text(editor, "W");
+        TEST_EXPECT(context, editor.cursor_column == 14u);
+        send_text(editor, "E");
+        TEST_EXPECT(context, editor.cursor_column == 19u);
+        send_text(editor, "B");
+        TEST_EXPECT(context, editor.cursor_column == 16u);
+
+        send_text(editor, "G");
+        TEST_EXPECT(context, editor.cursor_line == 2u);
+        TEST_EXPECT(context, editor.cursor_column == 0u);
+
+        send_text(editor, "gg");
+        TEST_EXPECT(context, editor.cursor_line == 0u);
+        TEST_EXPECT(context, editor.cursor_column == 0u);
+
+        send_text(editor, "3");
+        TEST_EXPECT(context, !editor.flag(EditorFlag::PENDING_LINE_NUMBER_ACTIVE));
+        send_text(editor, "G");
+        TEST_EXPECT(context, editor.cursor_line == 2u);
+    }
+
 } // namespace
 
 TEST_MAIN()

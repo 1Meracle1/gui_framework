@@ -3,6 +3,7 @@ build/
 .vs/
 .vscode/
 out/
+_codex_artifacts/
 
 CMakeUserPresets.json
 Testing/

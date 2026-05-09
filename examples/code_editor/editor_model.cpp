@@ -10,6 +10,7 @@ namespace code_editor {
     inline constexpr size_t INVALID_INDEX = static_cast<size_t>(-1);
     inline constexpr float FILESYSTEM_PANEL_PADDING_Y = 14.0f;
     inline constexpr float FILESYSTEM_TREE_ROW_HEIGHT = 26.0f;
+    inline constexpr float GIT_GRAPH_ROW_HEIGHT = 24.0f;
     inline constexpr EditorCommand EDITOR_COMMANDS[] = {
         {"write", "w", "Save the current file."},
         {"quit", "q", "Close the focused split."},
@@ -229,6 +230,7 @@ namespace code_editor {
 
     auto move_editor_to_pane(EditorState& editor, EditorPane& pane) -> void {
         take_text(pane.text, editor.text);
+        pane.git_diff = editor.git_diff;
         pane.current_file_name = editor.current_file_name;
         pane.current_file_path = editor.current_file_path;
         pane.scratch_text = editor.scratch_text;
@@ -262,10 +264,13 @@ namespace code_editor {
         pane.dirty = editor.flag(EditorFlag::DIRTY);
         pane.external_change_pending = editor.flag(EditorFlag::EXTERNAL_CHANGE_PENDING);
         pane.file_deleted_on_disk = editor.flag(EditorFlag::FILE_DELETED_ON_DISK);
+        pane.git_diff_side_by_side = editor.git_diff_side_by_side;
+        pane.view_kind = editor.view_kind;
     }
 
     auto move_pane_to_editor(EditorState& editor, EditorPane& pane) -> void {
         take_text(editor.text, pane.text);
+        editor.git_diff = pane.git_diff;
         editor.current_file_name = pane.current_file_name;
         editor.current_file_path = pane.current_file_path;
         editor.scratch_text = pane.scratch_text;
@@ -299,6 +304,8 @@ namespace code_editor {
         editor.set_flag(EditorFlag::DIRTY, pane.dirty);
         editor.set_flag(EditorFlag::EXTERNAL_CHANGE_PENDING, pane.external_change_pending);
         editor.set_flag(EditorFlag::FILE_DELETED_ON_DISK, pane.file_deleted_on_disk);
+        editor.git_diff_side_by_side = pane.git_diff_side_by_side;
+        editor.view_kind = pane.view_kind;
     }
 
     [[nodiscard]] auto pane_for_split(EditorState& editor, size_t split) -> EditorPane* {
@@ -360,6 +367,7 @@ namespace code_editor {
     auto clone_active_to_pane(EditorState& editor, EditorPane& pane) -> void {
         pane.kind = focused_pane_kind(editor);
         clone_text(editor.text, pane.text, *editor.arena);
+        pane.git_diff = editor.git_diff;
         pane.current_file_name = editor.current_file_name;
         pane.current_file_path = editor.current_file_path;
         pane.scratch_text = editor.scratch_text;
@@ -387,6 +395,8 @@ namespace code_editor {
         pane.dirty = editor.flag(EditorFlag::DIRTY);
         pane.external_change_pending = editor.flag(EditorFlag::EXTERNAL_CHANGE_PENDING);
         pane.file_deleted_on_disk = editor.flag(EditorFlag::FILE_DELETED_ON_DISK);
+        pane.git_diff_side_by_side = editor.git_diff_side_by_side;
+        pane.view_kind = editor.view_kind;
     }
 
     auto init_split_tree(EditorState& editor) -> void {
@@ -432,6 +442,26 @@ namespace code_editor {
             bool const open_ok = editor.open_files.init(0u, arena.resource());
             DEBUG_ASSERT(open_ok);
             (void)open_ok;
+
+            bool const git_status_ok = editor.git_status_items.init(0u, arena.resource());
+            DEBUG_ASSERT(git_status_ok);
+            (void)git_status_ok;
+
+            bool const git_commits_ok = editor.git_commits.init(0u, arena.resource());
+            DEBUG_ASSERT(git_commits_ok);
+            (void)git_commits_ok;
+
+            bool const git_commit_files_ok = editor.git_commit_files.init(0u, arena.resource());
+            DEBUG_ASSERT(git_commit_files_ok);
+            (void)git_commit_files_ok;
+
+            bool const git_branches_ok = editor.git_branches.init(0u, arena.resource());
+            DEBUG_ASSERT(git_branches_ok);
+            (void)git_branches_ok;
+
+            bool const git_commit_text_ok = editor.git_commit_text.init(0u, arena.resource());
+            DEBUG_ASSERT(git_commit_text_ok);
+            (void)git_commit_text_ok;
 
             bool const jumps_ok = editor.jumps.init(0u, arena.resource());
             DEBUG_ASSERT(jumps_ok);
@@ -698,6 +728,7 @@ namespace code_editor {
             }
 
             clone_text(pane->text, editor.text, *editor.arena);
+            editor.git_diff = pane->git_diff;
             editor.current_file_name = pane->current_file_name;
             editor.current_file_path = pane->current_file_path;
             editor.scratch_text = pane->scratch_text;
@@ -714,6 +745,8 @@ namespace code_editor {
             editor.set_flag(EditorFlag::DIRTY, pane->dirty);
             editor.set_flag(EditorFlag::EXTERNAL_CHANGE_PENDING, pane->external_change_pending);
             editor.set_flag(EditorFlag::FILE_DELETED_ON_DISK, pane->file_deleted_on_disk);
+            editor.git_diff_side_by_side = pane->git_diff_side_by_side;
+            editor.view_kind = pane->view_kind;
             clamp_cursor(editor);
             remember_open_file(editor, editor.current_file_name, editor.current_file_path);
             return true;
@@ -999,11 +1032,416 @@ namespace code_editor {
         }
     }
 
+    auto open_files_sidebar(EditorState& editor) -> void {
+        if (filesystem_panel_visible(editor) && editor.sidebar_tab == EditorSidebarTab::FILES) {
+            close_filesystem_panels(editor);
+            return;
+        }
+        editor.sidebar_tab = EditorSidebarTab::FILES;
+        ensure_filesystem_panel(editor);
+    }
+
+    auto open_git_sidebar(EditorState& editor) -> void {
+        if (filesystem_panel_visible(editor) && editor.sidebar_tab == EditorSidebarTab::GIT) {
+            close_filesystem_panels(editor);
+            return;
+        }
+        editor.sidebar_tab = EditorSidebarTab::GIT;
+        editor.git_refresh_requested = true;
+        ensure_filesystem_panel(editor);
+        size_t const split =
+            find_leaf_by_kind(editor, editor.root_split, EditorPaneKind::FILESYSTEM);
+        if (split != INVALID_INDEX) {
+            focus_editor_split(editor, split);
+        }
+    }
+
     auto set_filesystem_panel_visible(EditorState& editor, bool visible) -> void {
         if (visible) {
             ensure_filesystem_panel(editor);
         } else {
             close_filesystem_panels(editor);
+        }
+    }
+
+    enum class GitVisibleRowKind : uint8_t {
+        NONE,
+        STAGED_HEADER,
+        CHANGES_HEADER,
+        GRAPH_HEADER,
+        STATUS,
+        COMMIT,
+        COMMIT_FILE,
+    };
+
+    struct GitVisibleRow {
+        GitVisibleRowKind kind = GitVisibleRowKind::NONE;
+        size_t index = 0u;
+    };
+
+    [[nodiscard]] auto git_commit_file_matches(GitCommitFile const& file, GitCommit const& commit)
+        -> bool {
+        return file.commit_oid == commit.oid;
+    }
+
+    [[nodiscard]] auto git_model_status_scope_count(EditorState const& editor, GitStatusScope scope)
+        -> size_t {
+        size_t count = 0u;
+        for (GitStatusItem const& item : editor.git_status_items) {
+            if (item.scope == scope) {
+                count += 1u;
+            }
+        }
+        return count;
+    }
+
+    [[nodiscard]] auto git_model_status_change_count(EditorState const& editor) -> size_t {
+        return git_model_status_scope_count(editor, GitStatusScope::UNSTAGED) +
+               git_model_status_scope_count(editor, GitStatusScope::UNTRACKED);
+    }
+
+    [[nodiscard]] auto git_visible_row_count(EditorState const& editor) -> size_t {
+        size_t count = 1u;
+        size_t const staged_count = git_model_status_scope_count(editor, GitStatusScope::STAGED);
+        if (staged_count != 0u) {
+            count += 1u;
+            if (editor.git_staged_open) {
+                count += staged_count;
+            }
+        }
+        size_t const change_count = git_model_status_change_count(editor);
+        if (change_count != 0u || editor.git_status_items.empty()) {
+            count += 1u;
+            if (editor.git_changes_open) {
+                count += change_count;
+            }
+        }
+        if (!editor.git_graph_open) {
+            return count;
+        }
+        count += editor.git_commits.size();
+        for (GitCommit const& commit : editor.git_commits) {
+            if (!commit.open) {
+                continue;
+            }
+            for (GitCommitFile const& file : editor.git_commit_files) {
+                if (git_commit_file_matches(file, commit)) {
+                    count += 1u;
+                }
+            }
+        }
+        return count;
+    }
+
+    [[nodiscard]] auto git_visible_status_row(
+        EditorState const& editor, size_t target, size_t& row, GitStatusScope scope
+    ) -> GitVisibleRow {
+        for (size_t index = 0u; index < editor.git_status_items.size(); ++index) {
+            if (editor.git_status_items[index].scope != scope) {
+                continue;
+            }
+            if (row == target) {
+                return {GitVisibleRowKind::STATUS, index};
+            }
+            row += 1u;
+        }
+        return {};
+    }
+
+    [[nodiscard]] auto git_visible_row(EditorState const& editor, size_t target) -> GitVisibleRow {
+        size_t row = 0u;
+        size_t const staged_count = git_model_status_scope_count(editor, GitStatusScope::STAGED);
+        if (staged_count != 0u) {
+            if (row == target) {
+                return {GitVisibleRowKind::STAGED_HEADER, 0u};
+            }
+            row += 1u;
+            if (editor.git_staged_open) {
+                GitVisibleRow const result =
+                    git_visible_status_row(editor, target, row, GitStatusScope::STAGED);
+                if (result.kind != GitVisibleRowKind::NONE) {
+                    return result;
+                }
+            }
+        }
+        size_t const change_count = git_model_status_change_count(editor);
+        if (change_count != 0u || editor.git_status_items.empty()) {
+            if (row == target) {
+                return {GitVisibleRowKind::CHANGES_HEADER, 0u};
+            }
+            row += 1u;
+            if (editor.git_changes_open) {
+                GitVisibleRow result =
+                    git_visible_status_row(editor, target, row, GitStatusScope::UNSTAGED);
+                if (result.kind != GitVisibleRowKind::NONE) {
+                    return result;
+                }
+                result = git_visible_status_row(editor, target, row, GitStatusScope::UNTRACKED);
+                if (result.kind != GitVisibleRowKind::NONE) {
+                    return result;
+                }
+            }
+        }
+        if (row == target) {
+            return {GitVisibleRowKind::GRAPH_HEADER, 0u};
+        }
+        row += 1u;
+        if (!editor.git_graph_open) {
+            return {};
+        }
+        for (size_t commit_index = 0u; commit_index < editor.git_commits.size(); ++commit_index) {
+            GitCommit const& commit = editor.git_commits[commit_index];
+            if (row == target) {
+                return {GitVisibleRowKind::COMMIT, commit_index};
+            }
+            row += 1u;
+            if (!commit.open) {
+                continue;
+            }
+            for (size_t file_index = 0u; file_index < editor.git_commit_files.size();
+                 ++file_index) {
+                if (!git_commit_file_matches(editor.git_commit_files[file_index], commit)) {
+                    continue;
+                }
+                if (row == target) {
+                    return {GitVisibleRowKind::COMMIT_FILE, file_index};
+                }
+                row += 1u;
+            }
+        }
+        return {};
+    }
+
+    auto clamp_git_selection(EditorState& editor) -> void {
+        size_t const count = git_visible_row_count(editor);
+        if (count == 0u) {
+            editor.git_selected = 0u;
+        } else if (editor.git_selected >= count) {
+            editor.git_selected = count - 1u;
+        }
+        if (editor.git_commit_popup >= editor.git_commits.size()) {
+            editor.git_commit_popup = GIT_COMMIT_POPUP_NONE;
+        }
+    }
+
+    auto open_git_commit_popup(EditorState& editor) -> void {
+        clamp_git_selection(editor);
+        GitVisibleRow const row = git_visible_row(editor, editor.git_selected);
+        editor.git_commit_popup =
+            row.kind == GitVisibleRowKind::COMMIT ? row.index : GIT_COMMIT_POPUP_NONE;
+        editor.git_commit_popup_selection = {};
+        editor.git_commit_popup_keyboard = editor.git_commit_popup != GIT_COMMIT_POPUP_NONE;
+        editor.git_commit_popup_mouse_known = false;
+    }
+
+    auto close_git_commit_popup(EditorState& editor) -> void {
+        editor.git_commit_popup = GIT_COMMIT_POPUP_NONE;
+        editor.git_commit_popup_selection = {};
+        editor.git_commit_popup_keyboard = false;
+        editor.git_commit_popup_mouse_known = false;
+    }
+
+    auto request_more_git_commits_if_needed(EditorState& editor) -> void {
+        if (!editor.git_graph_open || !editor.git_commits_more || editor.git_commits_loading ||
+            editor.git_commits.empty()) {
+            return;
+        }
+        GitVisibleRow const row = git_visible_row(editor, editor.git_selected);
+        GitCommit const& last_commit = editor.git_commits[editor.git_commits.size() - 1u];
+        bool const selected_last_commit =
+            row.kind == GitVisibleRowKind::COMMIT && row.index + 1u == editor.git_commits.size();
+        bool selected_last_commit_file = false;
+        if (row.kind == GitVisibleRowKind::COMMIT_FILE) {
+            selected_last_commit_file =
+                editor.git_commit_files[row.index].commit_oid == last_commit.oid;
+        }
+        if (selected_last_commit || selected_last_commit_file) {
+            editor.git_commit_load_more_requested = true;
+        }
+    }
+
+    auto move_git_selection(EditorState& editor, int32_t direction) -> void {
+        size_t const count = git_visible_row_count(editor);
+        if (count == 0u) {
+            editor.git_selected = 0u;
+            return;
+        }
+        if (direction > 0) {
+            editor.git_selected =
+                std::min(editor.git_selected + static_cast<size_t>(direction), count - 1u);
+        } else {
+            size_t const delta = static_cast<size_t>(-direction);
+            editor.git_selected = delta > editor.git_selected ? 0u : editor.git_selected - delta;
+        }
+        close_git_commit_popup(editor);
+        editor.git_cursor_reveal = true;
+        request_more_git_commits_if_needed(editor);
+    }
+
+    [[nodiscard]] auto git_staged_change_count(EditorState const& editor) -> size_t {
+        return git_model_status_scope_count(editor, GitStatusScope::STAGED);
+    }
+
+    auto set_git_request(EditorState& editor, GitRequest request) -> void {
+        if (editor.arena == nullptr) {
+            return;
+        }
+        if (!request.path.empty()) {
+            request.path = arena_copy_cstr(*editor.arena, request.path);
+        }
+        if (!request.old_path.empty()) {
+            request.old_path = arena_copy_cstr(*editor.arena, request.old_path);
+        }
+        if (!request.commit_oid.empty()) {
+            request.commit_oid = arena_copy_cstr(*editor.arena, request.commit_oid);
+        }
+        if (!request.message.empty()) {
+            request.message = arena_copy_cstr(*editor.arena, request.message);
+        }
+        if (!request.branch.empty()) {
+            request.branch = arena_copy_cstr(*editor.arena, request.branch);
+        }
+        editor.git_request = request;
+    }
+
+    auto submit_git_commit(EditorState& editor) -> void {
+        if (git_staged_change_count(editor) == 0u) {
+            editor.git_status_text = "Stage changes before committing.";
+            return;
+        }
+        StrRef const message = editor.git_commit_text.str().trim();
+        if (message.empty()) {
+            editor.git_status_text = "Commit message required.";
+            return;
+        }
+        set_git_request(editor, {.kind = GitRequestKind::COMMIT, .message = message});
+        editor.git_commit_text.reset();
+    }
+
+    auto set_git_diff_view_text(EditorState& editor) -> void {
+        if (editor.arena == nullptr || editor.text.arena == nullptr) {
+            return;
+        }
+        StrRef const text = git_render_diff_document(
+            *editor.text.arena, editor.git_diff, editor.git_diff_side_by_side
+        );
+        set_editor_text(editor, text);
+        editor.saved_text = text;
+        editor.view_kind = EditorViewKind::GIT_DIFF;
+        editor.set_flag(EditorFlag::DIRTY, false);
+        editor.set_flag(EditorFlag::INSERT_MODE, false);
+    }
+
+    auto activate_git_selection(EditorState& editor) -> void {
+        close_git_commit_popup(editor);
+        clamp_git_selection(editor);
+        GitVisibleRow const row = git_visible_row(editor, editor.git_selected);
+        if (row.kind == GitVisibleRowKind::STAGED_HEADER) {
+            editor.git_staged_open = !editor.git_staged_open;
+        } else if (row.kind == GitVisibleRowKind::CHANGES_HEADER) {
+            editor.git_changes_open = !editor.git_changes_open;
+        } else if (row.kind == GitVisibleRowKind::GRAPH_HEADER) {
+            editor.git_graph_open = !editor.git_graph_open;
+        } else if (row.kind == GitVisibleRowKind::STATUS) {
+            GitStatusItem const& item = editor.git_status_items[row.index];
+            set_git_request(
+                editor,
+                {
+                    .kind = GitRequestKind::OPEN_STATUS_DIFF,
+                    .scope = item.scope,
+                    .path = item.path,
+                    .old_path = item.old_path,
+                }
+            );
+        } else if (row.kind == GitVisibleRowKind::COMMIT) {
+            editor.git_commits[row.index].open = !editor.git_commits[row.index].open;
+        } else if (row.kind == GitVisibleRowKind::COMMIT_FILE) {
+            GitCommitFile const& file = editor.git_commit_files[row.index];
+            set_git_request(
+                editor,
+                {
+                    .kind = GitRequestKind::OPEN_COMMIT_DIFF,
+                    .path = file.path,
+                    .old_path = file.old_path,
+                    .commit_oid = file.commit_oid,
+                }
+            );
+        }
+    }
+
+    auto handle_git_normal_char(EditorState& editor, char ch) -> void {
+        clamp_git_selection(editor);
+        if (ch != 'K') {
+            close_git_commit_popup(editor);
+        }
+        switch (ch) {
+        case ' ':
+            editor.set_flag(EditorFlag::PENDING_LEADER, true);
+            break;
+        case 'j':
+            move_git_selection(editor, 1);
+            break;
+        case 'k':
+            move_git_selection(editor, -1);
+            break;
+        case 'g':
+            editor.git_selected = 0u;
+            editor.git_cursor_reveal = true;
+            break;
+        case 'G':
+            editor.git_selected =
+                git_visible_row_count(editor) == 0u ? 0u : git_visible_row_count(editor) - 1u;
+            editor.git_cursor_reveal = true;
+            request_more_git_commits_if_needed(editor);
+            break;
+        case 'K':
+            open_git_commit_popup(editor);
+            break;
+        case 'l':
+        case '\r':
+            activate_git_selection(editor);
+            break;
+        case 'h': {
+            GitVisibleRow const row = git_visible_row(editor, editor.git_selected);
+            if (row.kind == GitVisibleRowKind::STAGED_HEADER) {
+                editor.git_staged_open = false;
+            } else if (row.kind == GitVisibleRowKind::CHANGES_HEADER) {
+                editor.git_changes_open = false;
+            } else if (row.kind == GitVisibleRowKind::GRAPH_HEADER) {
+                editor.git_graph_open = false;
+            } else if (row.kind == GitVisibleRowKind::COMMIT) {
+                editor.git_commits[row.index].open = false;
+            }
+        } break;
+        case 'r':
+            editor.git_refresh_requested = true;
+            editor.git_log_refresh_requested = true;
+            break;
+        case 's': {
+            GitVisibleRow const row = git_visible_row(editor, editor.git_selected);
+            if (row.kind != GitVisibleRowKind::STATUS) {
+                break;
+            }
+            GitStatusItem const& item = editor.git_status_items[row.index];
+            if (item.scope == GitStatusScope::UNSTAGED || item.scope == GitStatusScope::UNTRACKED) {
+                set_git_request(editor, {.kind = GitRequestKind::STAGE, .path = item.path});
+            }
+        } break;
+        case 'u': {
+            GitVisibleRow const row = git_visible_row(editor, editor.git_selected);
+            if (row.kind != GitVisibleRowKind::STATUS) {
+                break;
+            }
+            GitStatusItem const& item = editor.git_status_items[row.index];
+            if (item.scope == GitStatusScope::STAGED) {
+                set_git_request(editor, {.kind = GitRequestKind::UNSTAGE, .path = item.path});
+            }
+        } break;
+        case 'p':
+            set_git_request(editor, {.kind = GitRequestKind::PUSH});
+            break;
+        default:
+            break;
         }
     }
 
@@ -1555,6 +1993,9 @@ namespace code_editor {
 
     auto open_scratch_file(EditorState& editor) -> void {
         set_editor_text(editor, editor.scratch_text);
+        editor.git_diff = {};
+        editor.git_diff_side_by_side = true;
+        editor.view_kind = EditorViewKind::TEXT;
         editor.current_file_name = SCRATCH_FILE_NAME;
         editor.current_file_path = {};
         editor.file_write_stamp = 0u;
@@ -1617,6 +2058,9 @@ namespace code_editor {
 
     auto request_editor_save(EditorState& editor) -> void {
         if (focused_pane_kind(editor) != EditorPaneKind::CODE) {
+            return;
+        }
+        if (editor.view_kind == EditorViewKind::GIT_DIFF) {
             return;
         }
         if (editor.current_file_path.empty()) {
@@ -2222,6 +2666,17 @@ namespace code_editor {
         for (size_t index = 0u; index < rows; ++index) {
             move_filesystem_tree_cursor(editor, direction);
         }
+    }
+
+    auto move_git_half_split(EditorState& editor, int32_t direction) -> void {
+        gui::Rect const rect = split_valid(editor, editor.focused_split)
+                                   ? editor.split_nodes[editor.focused_split].rect
+                                   : gui::Rect{};
+        float const visible_height =
+            std::max(1.0f, rect.max.y - rect.min.y - FILESYSTEM_PANEL_PADDING_Y * 2.0f);
+        size_t const rows =
+            std::max<size_t>(1u, static_cast<size_t>(visible_height / GIT_GRAPH_ROW_HEIGHT * 0.5f));
+        move_git_selection(editor, static_cast<int32_t>(rows) * direction);
     }
 
     struct EditorCursorEdit {
@@ -4785,6 +5240,14 @@ namespace code_editor {
         return column;
     }
 
+    auto move_current_line_start(EditorState& editor, bool select) -> void {
+        move_cursor_to(editor, {editor.cursor_line, 0u}, select);
+    }
+
+    auto move_current_line_end(EditorState& editor, bool select) -> void {
+        move_cursor_to(editor, {editor.cursor_line, line_size(editor, editor.cursor_line)}, select);
+    }
+
     [[nodiscard]] auto line_commented(EditorLine line) -> bool {
         size_t const column = line_comment_column(line);
         return column + 1u < line.size && line.text[column] == '/' && line.text[column + 1u] == '/';
@@ -4958,7 +5421,9 @@ namespace code_editor {
             }
             editor.set_flag(EditorFlag::PENDING_LEADER, false);
             if (ch == 'e') {
-                toggle_filesystem_panel(editor);
+                open_files_sidebar(editor);
+            } else if (ch == 'g') {
+                open_git_sidebar(editor);
             } else if (ch == 'f') {
                 open_file_search(editor);
             } else if (ch == 'b') {
@@ -5001,7 +5466,11 @@ namespace code_editor {
             editor.set_flag(EditorFlag::PENDING_R, false);
             editor.set_flag(EditorFlag::PENDING_Z, false);
             if (!alt) {
-                handle_filesystem_normal_char(editor, ch);
+                if (editor.sidebar_tab == EditorSidebarTab::GIT) {
+                    handle_git_normal_char(editor, ch);
+                } else {
+                    handle_filesystem_normal_char(editor, ch);
+                }
             }
             return;
         }
@@ -5037,6 +5506,13 @@ namespace code_editor {
         }
         if (editor.flag(EditorFlag::PENDING_G)) {
             editor.set_flag(EditorFlag::PENDING_G, false);
+            if (editor.view_kind == EditorViewKind::GIT_DIFF) {
+                if (ch == 'g') {
+                    clear_extra_cursors(editor);
+                    move_cursor_to(editor, {0u, 0u}, visual_selecting(editor));
+                }
+                return;
+            }
             if (ch == 'g') {
                 clear_extra_cursors(editor);
                 move_cursor_to(editor, {0u, 0u}, visual_selecting(editor));
@@ -5051,6 +5527,12 @@ namespace code_editor {
         }
         if (editor.flag(EditorFlag::PENDING_Z)) {
             editor.set_flag(EditorFlag::PENDING_Z, false);
+            if (editor.view_kind == EditorViewKind::GIT_DIFF) {
+                if (ch == 'z') {
+                    center_cursor(editor, editor.split_nodes[editor.focused_split].rect);
+                }
+                return;
+            }
             if (ch == 'z') {
                 center_cursor(editor, editor.split_nodes[editor.focused_split].rect);
             } else if (ch == 'a') {
@@ -5063,6 +5545,94 @@ namespace code_editor {
                 close_all_folds(editor);
             } else if (ch == 'R') {
                 open_all_folds(editor);
+            }
+            return;
+        }
+
+        if (focused_pane_kind(editor) == EditorPaneKind::CODE &&
+            editor.view_kind == EditorViewKind::GIT_DIFF) {
+            bool const select = visual_selecting(editor);
+            switch (ch) {
+            case ':':
+                open_command_line(editor);
+                break;
+            case ',':
+                clear_extra_cursors(editor);
+                clear_selection(editor);
+                break;
+            case '/':
+                open_text_search(editor);
+                break;
+            case ' ':
+                editor.set_flag(EditorFlag::PENDING_LEADER, true);
+                break;
+            case 'h':
+                move_left(editor, select);
+                break;
+            case 'j':
+                move_vertical(editor, 1, select);
+                break;
+            case 'k':
+                move_vertical(editor, -1, select);
+                break;
+            case 'l':
+                move_right(editor, select);
+                break;
+            case '0':
+                move_current_line_start(editor, select);
+                break;
+            case '$':
+                move_current_line_end(editor, select);
+                break;
+            case 'w':
+                move_word_right(editor, select);
+                break;
+            case 'b':
+                move_word_left(editor, select);
+                break;
+            case 'e':
+                move_word_end(editor, select);
+                break;
+            case 'W':
+                move_big_word_right(editor, select);
+                break;
+            case 'B':
+                move_big_word_left(editor, select);
+                break;
+            case 'E':
+                move_big_word_end(editor, select);
+                break;
+            case 'g':
+                editor.set_flag(EditorFlag::PENDING_G, true);
+                break;
+            case 'G':
+                clear_extra_cursors(editor);
+                move_cursor_to(editor, {editor_line_count(editor) - 1u, 0u}, select);
+                break;
+            case 'z':
+                editor.set_flag(EditorFlag::PENDING_Z, true);
+                break;
+            case 'v':
+                set_visual_mode(editor, EditorSelectionMode::CHARACTER);
+                break;
+            case 'V':
+                set_visual_mode(editor, EditorSelectionMode::LINE);
+                break;
+            case 'y':
+                copy_selection_to_clipboard(editor, clipboard);
+                break;
+            case 'n':
+                repeat_text_search(editor, false);
+                break;
+            case 'N':
+                repeat_text_search(editor, true);
+                break;
+            case 'u':
+                editor.git_diff_side_by_side = !editor.git_diff_side_by_side;
+                set_git_diff_view_text(editor);
+                break;
+            default:
+                break;
             }
             return;
         }
@@ -5410,8 +5980,9 @@ namespace code_editor {
     }
 
     [[nodiscard]] auto editor_lsp_file(EditorState const& editor) -> bool {
-        return !editor.current_file_path.empty() && (lsp_cpp_file_name(editor.current_file_name) ||
-                                                     lsp_cpp_file_name(editor.current_file_path));
+        return editor.view_kind != EditorViewKind::GIT_DIFF && !editor.current_file_path.empty() &&
+               (lsp_cpp_file_name(editor.current_file_name) ||
+                lsp_cpp_file_name(editor.current_file_path));
     }
 
     auto send_lsp_request(EditorState& editor, LspEditorRequest const& request) -> void {
@@ -6068,6 +6639,54 @@ namespace code_editor {
         if (focused_pane_kind(editor) == EditorPaneKind::FILESYSTEM) {
             bool const ctrl = (event.mods & gui::KEY_MOD_CTRL) != 0u &&
                               (event.mods & (gui::KEY_MOD_ALT | gui::KEY_MOD_SUPER)) == 0u;
+            if (editor.sidebar_tab == EditorSidebarTab::GIT) {
+                if (event.key == gui::Key::ENTER) {
+                    activate_git_selection(editor);
+                    return;
+                }
+                if (event.key == gui::Key::SPACE) {
+                    close_git_commit_popup(editor);
+                    editor.set_flag(EditorFlag::PENDING_LEADER, true);
+                    return;
+                }
+                switch (event.key) {
+                case gui::Key::UP:
+                    move_git_selection(editor, -1);
+                    return;
+                case gui::Key::DOWN:
+                    move_git_selection(editor, 1);
+                    return;
+                case gui::Key::D:
+                    if (ctrl) {
+                        move_git_half_split(editor, 1);
+                    }
+                    return;
+                case gui::Key::U:
+                    if (ctrl) {
+                        move_git_half_split(editor, -1);
+                    }
+                    return;
+                case gui::Key::LEFT: {
+                    close_git_commit_popup(editor);
+                    GitVisibleRow const row = git_visible_row(editor, editor.git_selected);
+                    if (row.kind == GitVisibleRowKind::STAGED_HEADER) {
+                        editor.git_staged_open = false;
+                    } else if (row.kind == GitVisibleRowKind::CHANGES_HEADER) {
+                        editor.git_changes_open = false;
+                    } else if (row.kind == GitVisibleRowKind::GRAPH_HEADER) {
+                        editor.git_graph_open = false;
+                    } else if (row.kind == GitVisibleRowKind::COMMIT) {
+                        editor.git_commits[row.index].open = false;
+                    }
+                    return;
+                }
+                case gui::Key::RIGHT:
+                    activate_git_selection(editor);
+                    return;
+                default:
+                    return;
+                }
+            }
             if (tree_edit_active(editor)) {
                 if (ctrl && event.key == gui::Key::Z) {
                     if ((event.mods & gui::KEY_MOD_SHIFT) != 0u) {
@@ -6207,6 +6826,16 @@ namespace code_editor {
             return;
         }
 
+        if (editor.view_kind == EditorViewKind::GIT_DIFF) {
+            if (handle_navigation_key(editor, event)) {
+                return;
+            }
+            if (event.key == gui::Key::SPACE) {
+                editor.set_flag(EditorFlag::PENDING_LEADER, true);
+            }
+            return;
+        }
+
         if (editor.flag(EditorFlag::INSERT_MODE)) {
             if (handle_navigation_key(editor, event)) {
                 return;
@@ -6290,7 +6919,9 @@ namespace code_editor {
         if (editor.flag(EditorFlag::SAVE_PATH_OPEN)) {
             return;
         }
-
+        if (editor.sidebar_tab == EditorSidebarTab::GIT && editor.git_commit_text_focused) {
+            return;
+        }
         for (size_t index = 0u; index < input.key_event_count; ++index) {
             gui::KeyEvent const& event = input.key_events[index];
             if (handle_lsp_popup_event(editor, event)) {
@@ -6319,6 +6950,12 @@ namespace code_editor {
                 }
                 if (event.codepoint >= 32u && event.codepoint <= 126u) {
                     char const ch = static_cast<char>(event.codepoint);
+                    if (editor.view_kind == EditorViewKind::GIT_DIFF) {
+                        if (!editor.flag(EditorFlag::INSERT_MODE)) {
+                            handle_normal_char(editor, ch, event.mods, clipboard);
+                        }
+                        continue;
+                    }
                     if (editor.flag(EditorFlag::INSERT_MODE)) {
                         save_editor_undo(editor);
                         insert_char(editor, ch);
@@ -6609,6 +7246,8 @@ namespace code_editor {
         hash =
             hash_bytes(hash, &pane.external_change_pending, sizeof(pane.external_change_pending));
         hash = hash_bytes(hash, &pane.file_deleted_on_disk, sizeof(pane.file_deleted_on_disk));
+        hash = hash_bytes(hash, &pane.git_diff_side_by_side, sizeof(pane.git_diff_side_by_side));
+        hash = hash_bytes(hash, &pane.view_kind, sizeof(pane.view_kind));
         return hash;
     }
 
@@ -6638,6 +7277,9 @@ namespace code_editor {
             hash_bytes(hash, flag_words.data(), flag_words.size() * sizeof(EditorFlags::WordType));
         hash = hash_bytes(hash, &editor.font_size, sizeof(editor.font_size));
         hash = hash_bytes(hash, &editor.raster_policy, sizeof(editor.raster_policy));
+        hash = hash_bytes(hash, &editor.view_kind, sizeof(editor.view_kind));
+        hash =
+            hash_bytes(hash, &editor.git_diff_side_by_side, sizeof(editor.git_diff_side_by_side));
         hash = hash_bytes(hash, &editor.scroll_x, sizeof(editor.scroll_x));
         hash = hash_bytes(hash, &editor.scroll_y, sizeof(editor.scroll_y));
         hash =
@@ -6652,6 +7294,47 @@ namespace code_editor {
             hash, &editor.buffer_search_open_file, sizeof(editor.buffer_search_open_file)
         );
         hash = hash_bytes(hash, &editor.tree_cursor, sizeof(editor.tree_cursor));
+        hash = hash_bytes(hash, &editor.sidebar_tab, sizeof(editor.sidebar_tab));
+        hash = hash_bytes(hash, &editor.git_selected, sizeof(editor.git_selected));
+        hash = hash_bytes(hash, &editor.git_commit_popup, sizeof(editor.git_commit_popup));
+        hash = hash_bytes(hash, &editor.git_staged_open, sizeof(editor.git_staged_open));
+        hash = hash_bytes(hash, &editor.git_changes_open, sizeof(editor.git_changes_open));
+        hash = hash_bytes(hash, &editor.git_graph_open, sizeof(editor.git_graph_open));
+        hash = hash_bytes(hash, &editor.git_branches_open, sizeof(editor.git_branches_open));
+        hash =
+            hash_bytes(hash, &editor.git_pending_pull_count, sizeof(editor.git_pending_pull_count));
+        hash = hash_bytes(hash, &editor.git_cursor_reveal, sizeof(editor.git_cursor_reveal));
+        hash = hash_bytes(hash, &editor.git_commits_more, sizeof(editor.git_commits_more));
+        hash = hash_bytes(hash, &editor.git_commits_loading, sizeof(editor.git_commits_loading));
+        hash =
+            hash_bytes(hash, &editor.git_operation_pending, sizeof(editor.git_operation_pending));
+        hash = hash_bytes(
+            hash,
+            &editor.git_commit_load_more_requested,
+            sizeof(editor.git_commit_load_more_requested)
+        );
+        hash = hash_bytes(
+            hash, &editor.git_commit_text_focused, sizeof(editor.git_commit_text_focused)
+        );
+        size_t const git_status_count = editor.git_status_items.size();
+        hash = hash_bytes(hash, &git_status_count, sizeof(git_status_count));
+        size_t const git_commit_count = editor.git_commits.size();
+        hash = hash_bytes(hash, &git_commit_count, sizeof(git_commit_count));
+        size_t const git_commit_file_count = editor.git_commit_files.size();
+        hash = hash_bytes(hash, &git_commit_file_count, sizeof(git_commit_file_count));
+        size_t const git_branch_count = editor.git_branches.size();
+        hash = hash_bytes(hash, &git_branch_count, sizeof(git_branch_count));
+        for (GitBranch const& branch : editor.git_branches) {
+            size_t const branch_size = branch.name.size();
+            hash = hash_bytes(hash, &branch_size, sizeof(branch_size));
+            hash = hash_bytes(hash, branch.name.data(), branch.name.size());
+        }
+        size_t const git_current_branch_size = editor.git_current_branch.size();
+        hash = hash_bytes(hash, &git_current_branch_size, sizeof(git_current_branch_size));
+        hash = hash_bytes(hash, editor.git_current_branch.data(), editor.git_current_branch.size());
+        size_t const git_status_text_size = editor.git_status_text.size();
+        hash = hash_bytes(hash, &git_status_text_size, sizeof(git_status_text_size));
+        hash = hash_bytes(hash, editor.git_status_text.data(), editor.git_status_text.size());
         hash = hash_bytes(hash, &editor.tree_edit_mode, sizeof(editor.tree_edit_mode));
         hash =
             hash_bytes(hash, &editor.tree_operation_pending, sizeof(editor.tree_operation_pending));
@@ -6679,6 +7362,16 @@ namespace code_editor {
         hash = hash_bytes(hash, &editor.lsp_popup, sizeof(editor.lsp_popup));
         hash = hash_bytes(hash, &editor.close_intent, sizeof(editor.close_intent));
         hash = hash_bytes(hash, &editor.lsp_selected, sizeof(editor.lsp_selected));
+        hash = hash_bytes(hash, &editor.git_branch_selection, sizeof(editor.git_branch_selection));
+        hash = hash_bytes(
+            hash, &editor.git_commit_popup_selection, sizeof(editor.git_commit_popup_selection)
+        );
+        hash = hash_bytes(
+            hash, &editor.git_commit_popup_keyboard, sizeof(editor.git_commit_popup_keyboard)
+        );
+        hash = hash_bytes(
+            hash, &editor.git_commit_popup_mouse_known, sizeof(editor.git_commit_popup_mouse_known)
+        );
         hash = hash_bytes(hash, &editor.lsp_hover_selection, sizeof(editor.lsp_hover_selection));
         hash = hash_bytes(hash, &editor.lsp_rename_text_size, sizeof(editor.lsp_rename_text_size));
         hash = hash_bytes(hash, editor.lsp_rename_text, editor.lsp_rename_text_size);
@@ -6779,6 +7472,9 @@ namespace code_editor {
                 hash, &file.external_change_pending, sizeof(file.external_change_pending)
             );
             hash = hash_bytes(hash, &file.file_deleted_on_disk, sizeof(file.file_deleted_on_disk));
+            hash =
+                hash_bytes(hash, &file.git_diff_side_by_side, sizeof(file.git_diff_side_by_side));
+            hash = hash_bytes(hash, &file.view_kind, sizeof(file.view_kind));
         }
         size_t const jump_count = editor.jumps.size();
         hash = hash_bytes(hash, &jump_count, sizeof(jump_count));

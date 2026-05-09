@@ -13,6 +13,7 @@ namespace code_editor {
     [[nodiscard]] auto editor_path_exists(StrRef path) -> bool;
     [[nodiscard]] auto editor_write_text_file(StrRef path, StrRef text) -> bool;
     [[nodiscard]] auto editor_open_path(EditorState& editor, StrRef path) -> bool;
+    auto open_git_diff(EditorState& editor, StrRef title, StrRef patch) -> void;
     auto sync_tree_operation_result(EditorState& editor) -> void;
     auto update_open_file_changes(EditorState& editor) -> void;
     auto draw_editor_surface(
@@ -32,6 +33,7 @@ namespace code_editor {
         gui::font_cache::Font editor_font,
         gui::font_cache::Font ui_font,
         gui::font_cache::Font icon_font,
+        gui::font_cache::Font branch_icon_font,
         Palette const& palette,
         float client_width,
         float client_height,

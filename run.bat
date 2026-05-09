@@ -52,9 +52,20 @@ shift
 goto collect_run_args
 
 :append_run_arg
+set "RUN_ARG=%~1"
+set "RUN_ESCAPED=%RUN_ARG%"
+:append_trailing_backslash_escape
+if not "%RUN_ARG:~-1%"=="\" goto run_arg_escaped
+set "RUN_ESCAPED=%RUN_ESCAPED%\"
+set "RUN_ARG=%RUN_ARG:~0,-1%"
+goto append_trailing_backslash_escape
+
+:run_arg_escaped
 if defined RUN_ARGS (
-    set "RUN_ARGS=%RUN_ARGS% "%~1""
+    set "RUN_ARGS=%RUN_ARGS% "%RUN_ESCAPED%""
 ) else (
-    set "RUN_ARGS="%~1""
+    set "RUN_ARGS="%RUN_ESCAPED%""
 )
+set "RUN_ARG="
+set "RUN_ESCAPED="
 exit /b 0

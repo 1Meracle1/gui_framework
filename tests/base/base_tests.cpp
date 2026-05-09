@@ -8,6 +8,7 @@
 #include <base/memory.h>
 #include <base/slice.h>
 #include <base/small_array.h>
+#include <base/spsc_queue.h>
 #include <base/stable_hash_map.h>
 #include <base/str_ref.h>
 #include <base/strconv.h>
@@ -87,6 +88,7 @@ namespace {
     static_assert(std::is_trivially_copyable_v<XarArray<int, 2u>>);
     static_assert(std::is_trivially_copyable_v<HashMap<int, int>>);
     static_assert(std::is_trivially_copyable_v<StableHashMap<int, int>>);
+    static_assert(std::is_trivially_copyable_v<SpscQueue<int>>);
     static_assert(std::is_trivially_copyable_v<StringBuffer>);
 
     auto expect_file_text(test::Context* context, std::FILE* file, StrRef expected) -> bool {
@@ -235,6 +237,33 @@ namespace {
         TEST_EXPECT(context, values[1] == 20);
         TEST_EXPECT(context, values[2] == 30);
         TEST_EXPECT(context, arena.used_size() != 0u);
+    }
+
+    TEST_CASE(spsc_queue_pushes_and_pops_in_ring_order) {
+        Arena arena = {};
+        arena.init();
+        SpscQueue<int> queue = {};
+        TEST_EXPECT(context, queue.init(3u, arena.resource()));
+
+        TEST_EXPECT(context, queue.empty());
+        TEST_EXPECT(context, queue.push(1));
+        TEST_EXPECT(context, queue.push(2));
+        TEST_EXPECT(context, queue.push(3));
+        TEST_EXPECT(context, queue.full());
+        TEST_EXPECT(context, !queue.push(4));
+
+        int value = 0;
+        TEST_EXPECT(context, queue.pop(value));
+        TEST_EXPECT(context, value == 1);
+        TEST_EXPECT(context, queue.push(4));
+        TEST_EXPECT(context, queue.pop(value));
+        TEST_EXPECT(context, value == 2);
+        TEST_EXPECT(context, queue.pop(value));
+        TEST_EXPECT(context, value == 3);
+        TEST_EXPECT(context, queue.pop(value));
+        TEST_EXPECT(context, value == 4);
+        TEST_EXPECT(context, queue.empty());
+        TEST_EXPECT(context, !queue.pop(value));
     }
 
     TEST_CASE(arena_temp_scope_rolls_back_to_marker) {

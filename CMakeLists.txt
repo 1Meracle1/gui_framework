@@ -178,6 +178,7 @@ if(BUILD_TESTS)
 
     add_executable(code_editor_model_tests
         tests/code_editor/editor_model_tests.cpp
+        examples/code_editor/git.cpp
         examples/code_editor/editor_model.cpp
         examples/code_editor/lsp.cpp
         examples/code_editor/text_buffer.cpp
@@ -185,8 +186,23 @@ if(BUILD_TESTS)
     target_include_directories(code_editor_model_tests PRIVATE
         "${PROJECT_SOURCE_DIR}/examples/code_editor"
     )
-    target_link_libraries(code_editor_model_tests PRIVATE gui::gui encoding::encoding gui_test)
+    target_link_libraries(code_editor_model_tests PRIVATE
+        base::base
+        gui::gui
+        encoding::encoding
+        gui_test
+    )
     cpp_configure_target(code_editor_model_tests)
+
+    add_executable(code_editor_git_tests
+        tests/code_editor/git_tests.cpp
+        examples/code_editor/git.cpp
+    )
+    target_include_directories(code_editor_git_tests PRIVATE
+        "${PROJECT_SOURCE_DIR}/examples/code_editor"
+    )
+    target_link_libraries(code_editor_git_tests PRIVATE base::base gui_test)
+    cpp_configure_target(code_editor_git_tests)
 
     add_executable(code_editor_syntax_tests
         tests/code_editor/syntax_tests.cpp
@@ -216,6 +232,7 @@ if(BUILD_TESTS)
     add_test(NAME font_cache_tests COMMAND font_cache_tests)
     add_test(NAME draw_tests COMMAND draw_tests)
     add_test(NAME code_editor_model_tests COMMAND code_editor_model_tests)
+    add_test(NAME code_editor_git_tests COMMAND code_editor_git_tests)
     add_test(NAME code_editor_syntax_tests COMMAND code_editor_syntax_tests)
     add_test(NAME code_editor_lsp_tests COMMAND code_editor_lsp_tests)
     if(WIN32)

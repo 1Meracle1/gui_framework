@@ -233,6 +233,8 @@ namespace gui {
     };
 
     struct Signal {
+        Id id = {};
+        Rect rect = {};
         bool hovered = false;
         bool hover_entered = false;
         bool hover_exited = false;
@@ -245,6 +247,14 @@ namespace gui {
         bool clicked_left = false;
         bool activated = false;
         bool changed = false;
+    };
+
+    struct PopupAboveDesc {
+        Signal source = {};
+        BoxDesc box = {};
+        float offset_x = 0.0f;
+        float gap = 0.0f;
+        bool open = false;
     };
 
     struct TextSelection {
@@ -794,6 +804,7 @@ namespace gui {
         [[nodiscard]] auto overlay(Id id, BoxDesc const& desc = {}) -> Scope;
         [[nodiscard]] auto popup(Id id, BoxDesc const& desc = {}) -> Scope;
         [[nodiscard]] auto hover_popup(Id id, Signal source, BoxDesc const& desc = {}) -> Scope;
+        [[nodiscard]] auto popup_above(Id id, PopupAboveDesc const& desc) -> Scope;
         [[nodiscard]] auto modal(Id id, BoxDesc const& desc = {}) -> Scope;
         [[nodiscard]] auto scroll_panel(Id id, BoxDesc const& desc = {}) -> Scope;
         [[nodiscard]] auto table(BoxDesc const& desc = {}) -> TableScope;

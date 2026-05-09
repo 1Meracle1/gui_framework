@@ -13,13 +13,17 @@
 #include "editor_model.h"
 #include "editor_render.h"
 #include "editor_theme.h"
+#include "git.h"
 
 #include <algorithm>
+#include <atomic>
 #include <base/config.h>
 #include <base/fmt.h>
 #include <base/memory.h>
 #include <base/slice.h>
+#include <base/spsc_queue.h>
 #include <base/unicode.h>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #if defined(_WIN32)
@@ -27,6 +31,10 @@
 #include <font_cache/font_cache.h>
 #include <font_provider/font_provider.h>
 #include <render/render.h>
+#endif
+
+#ifndef CODE_EDITOR_SOURCE_DIR
+#define CODE_EDITOR_SOURCE_DIR "."
 #endif
 
 namespace code_editor {
@@ -53,6 +61,70 @@ namespace code_editor {
     constexpr float CONFIG_ERROR_MESSAGE_LINE_HEIGHT_SCALE = 1.45f;
     constexpr float CONFIG_ERROR_MESSAGE_MIN_HEIGHT = 24.0f;
     constexpr float CONFIG_ERROR_EXCERPT_PADDING = 20.0f;
+    constexpr size_t GIT_WORK_QUEUE_CAPACITY = 8u;
+
+    enum class GitWorkKind : uint8_t {
+        NONE,
+        REFRESH,
+        COMMIT_PAGE,
+        COMMIT_FILES,
+        STAGE,
+        STAGE_ALL,
+        UNSTAGE,
+        UNSTAGE_ALL,
+        COMMIT,
+        PUSH,
+        PULL,
+        FETCH,
+        CHECKOUT_BRANCH,
+        OPEN_STATUS_DIFF,
+        OPEN_COMMIT_DIFF,
+    };
+
+    struct GitWorkRequest {
+        GitWorkKind kind = GitWorkKind::NONE;
+        uint64_t generation = 0u;
+        size_t offset = 0u;
+        size_t count = 0u;
+        size_t limit = 0u;
+        GitStatusScope scope = GitStatusScope::UNSTAGED;
+        StrRef save_root = {};
+        StrRef root = {};
+        StrRef path = {};
+        StrRef commit_oid = {};
+        StrRef message_text = {};
+        StrRef branch = {};
+    };
+
+    struct GitWorkResult {
+        GitWorkKind kind = GitWorkKind::NONE;
+        uint64_t generation = 0u;
+        size_t offset = 0u;
+        size_t count = 0u;
+        size_t limit = 0u;
+        size_t pending_pull_count = 0u;
+        GitStatusScope scope = GitStatusScope::UNSTAGED;
+        StrRef root = {};
+        StrRef current_branch = {};
+        StrRef path = {};
+        StrRef commit_oid = {};
+        StrRef patch = {};
+        StrRef message = {};
+        Vec<GitStatusItem> status_items = {};
+        Vec<GitCommit> commits = {};
+        Vec<GitCommitFile> commit_files = {};
+        Vec<GitBranch> branches = {};
+        bool ok = false;
+        bool log_loaded = false;
+    };
+
+    struct GitWorker {
+        SpscQueue<GitWorkRequest> requests = {};
+        SpscQueue<GitWorkResult> results = {};
+        Arena result_arena = {};
+        HANDLE thread = nullptr;
+        std::atomic<bool> stop_requested = false;
+    };
 
     struct RuntimeConfigState {
         EditorConfig base = {};
@@ -72,6 +144,7 @@ namespace code_editor {
         font_cache::Font ui_font = {};
         font_cache::Font editor_font = {};
         font_cache::Font icon_font = {};
+        font_cache::Font branch_icon_font = {};
         draw::Context draw_context = {};
         draw::Renderer draw_renderer = {};
         gui::Context ui_context = {};
@@ -88,6 +161,7 @@ namespace code_editor {
         uint64_t file_change_generation = 0u;
         float char_width = 8.0f;
         RuntimeConfigState config = {};
+        GitWorker git_worker = {};
     };
 
     static auto log_render_result(char const* operation, render::Result result) -> void {
@@ -158,6 +232,582 @@ namespace code_editor {
             std::memcpy(buffer, text.data(), size);
         }
         buffer[size] = '\0';
+    }
+
+    [[nodiscard]] auto
+    git_work_root(Arena& arena, GitWorkRequest const& request, StrRef& root, StrRef& message)
+        -> bool {
+        if (!request.root.empty()) {
+            root = request.root;
+            message = {};
+            return true;
+        }
+        if (request.save_root.empty()) {
+            message = "Not a Git repository.";
+            return false;
+        }
+        return git_discover_root(arena, request.save_root, root, message);
+    }
+
+    [[nodiscard]] auto init_git_result_vecs(Arena& arena, GitWorkResult& result) -> bool {
+        return result.status_items.init(0u, arena.resource()) &&
+               result.commits.init(0u, arena.resource()) &&
+               result.commit_files.init(0u, arena.resource()) &&
+               result.branches.init(0u, arena.resource());
+    }
+
+    [[nodiscard]] auto execute_git_work(Arena& arena, GitWorkRequest const& request)
+        -> GitWorkResult {
+        GitWorkResult result = {
+            .kind = request.kind,
+            .generation = request.generation,
+            .offset = request.offset,
+            .count = request.count,
+            .limit = request.limit,
+            .scope = request.scope,
+            .path = request.path,
+            .commit_oid = request.commit_oid,
+        };
+        BASE_UNUSED(init_git_result_vecs(arena, result));
+
+        StrRef root = {};
+        StrRef message = {};
+        if (!git_work_root(arena, request, root, message)) {
+            result.root = root;
+            result.message = message;
+            return result;
+        }
+        result.root = root;
+
+        switch (request.kind) {
+        case GitWorkKind::REFRESH:
+            result.ok =
+                git_load_branches(arena, root, result.branches, result.current_branch, message) &&
+                git_load_status(arena, root, result.status_items, message) &&
+                git_load_pending_pull_count(arena, root, result.pending_pull_count, message);
+            result.log_loaded = result.ok && request.count != 0u;
+            if (result.log_loaded) {
+                result.ok =
+                    git_load_commits(arena, root, 0u, request.count, result.commits, message);
+            }
+            break;
+        case GitWorkKind::COMMIT_PAGE:
+            result.ok = git_load_commits(
+                arena, root, request.offset, request.count + 1u, result.commits, message
+            );
+            break;
+        case GitWorkKind::COMMIT_FILES:
+            result.ok = git_load_commit_files(
+                arena, root, request.commit_oid, result.commit_files, message
+            );
+            break;
+        case GitWorkKind::STAGE:
+            result.ok = git_stage_path(arena, root, request.path, message);
+            break;
+        case GitWorkKind::STAGE_ALL:
+            result.ok = git_stage_all(arena, root, message);
+            break;
+        case GitWorkKind::UNSTAGE:
+            result.ok = git_unstage_path(arena, root, request.path, message);
+            break;
+        case GitWorkKind::UNSTAGE_ALL:
+            result.ok = git_unstage_all(arena, root, message);
+            break;
+        case GitWorkKind::COMMIT:
+            result.ok = git_commit(arena, root, request.message_text, message);
+            break;
+        case GitWorkKind::PUSH:
+            result.ok = git_push(arena, root, message);
+            break;
+        case GitWorkKind::PULL:
+            result.ok = git_pull(arena, root, message);
+            break;
+        case GitWorkKind::FETCH:
+            result.ok = git_fetch(arena, root, message);
+            break;
+        case GitWorkKind::CHECKOUT_BRANCH:
+            result.ok = git_checkout_branch(arena, root, request.branch, message);
+            break;
+        case GitWorkKind::OPEN_STATUS_DIFF:
+            result.ok =
+                git_status_patch(arena, root, request.scope, request.path, result.patch, message);
+            break;
+        case GitWorkKind::OPEN_COMMIT_DIFF:
+            result.ok = git_commit_patch(
+                arena, root, request.commit_oid, request.path, result.patch, message
+            );
+            break;
+        case GitWorkKind::NONE:
+        default:
+            break;
+        }
+        result.message = message;
+        return result;
+    }
+
+    auto WINAPI git_worker_thread(void* user_data) -> DWORD {
+        auto* const worker = static_cast<GitWorker*>(user_data);
+        init_thread_temp_arenas();
+        while (!worker->stop_requested.load(std::memory_order_acquire)) {
+            GitWorkRequest request = {};
+            if (!worker->requests.pop(request)) {
+                Sleep(1u);
+                continue;
+            }
+
+            GitWorkResult const result = execute_git_work(worker->result_arena, request);
+            while (!worker->stop_requested.load(std::memory_order_acquire) &&
+                   !worker->results.push(result)) {
+                Sleep(1u);
+            }
+            reset_thread_temp_arenas();
+        }
+        shutdown_thread_temp_arenas();
+        return 0u;
+    }
+
+    [[nodiscard]] auto create_git_worker(Arena& arena, GitWorker& worker) -> bool {
+        worker.stop_requested.store(false, std::memory_order_relaxed);
+        if (!worker.requests.init(GIT_WORK_QUEUE_CAPACITY, arena.resource()) ||
+            !worker.results.init(GIT_WORK_QUEUE_CAPACITY, arena.resource())) {
+            return false;
+        }
+        worker.result_arena.init();
+        worker.thread = CreateThread(nullptr, 0u, git_worker_thread, &worker, 0u, nullptr);
+        return worker.thread != nullptr;
+    }
+
+    auto destroy_git_worker(GitWorker& worker) -> void {
+        worker.stop_requested.store(true, std::memory_order_release);
+        if (worker.thread != nullptr) {
+            WaitForSingleObject(worker.thread, INFINITE);
+            CloseHandle(worker.thread);
+            worker.thread = nullptr;
+        }
+        worker.result_arena.destroy();
+        worker.requests = {};
+        worker.results = {};
+    }
+
+    auto set_git_status_text(EditorState& editor, StrRef text) -> void {
+        if (editor.arena == nullptr || text.empty()) {
+            editor.git_status_text = {};
+            return;
+        }
+        editor.git_status_text = arena_copy_cstr(*editor.arena, text);
+    }
+
+    [[nodiscard]] auto copy_git_status_item(Arena& arena, GitStatusItem const& item)
+        -> GitStatusItem {
+        return {
+            .path = arena_copy_cstr(arena, item.path),
+            .old_path = item.old_path.empty() ? StrRef() : arena_copy_cstr(arena, item.old_path),
+            .status = item.status,
+            .scope = item.scope,
+        };
+    }
+
+    [[nodiscard]] auto copy_git_commit(Arena& arena, GitCommit const& commit) -> GitCommit {
+        GitCommit result = {
+            .oid = arena_copy_cstr(arena, commit.oid),
+            .short_oid = arena_copy_cstr(arena, commit.short_oid),
+            .refs = arena_copy_cstr(arena, commit.refs),
+            .summary = arena_copy_cstr(arena, commit.summary),
+            .author = arena_copy_cstr(arena, commit.author),
+            .relative_date = arena_copy_cstr(arena, commit.relative_date),
+            .author_date = arena_copy_cstr(arena, commit.author_date),
+            .body = arena_copy_cstr(arena, commit.body),
+            .changed_file_count = commit.changed_file_count,
+            .insertion_count = commit.insertion_count,
+            .deletion_count = commit.deletion_count,
+            .parent_count = commit.parent_count,
+            .incoming = commit.incoming,
+            .open = commit.open,
+        };
+        for (size_t index = 0u; index < commit.parent_count; ++index) {
+            result.parents[index] = arena_copy_cstr(arena, commit.parents[index]);
+        }
+        return result;
+    }
+
+    [[nodiscard]] auto copy_git_commit_file(Arena& arena, GitCommitFile const& file)
+        -> GitCommitFile {
+        return {
+            .commit_oid = arena_copy_cstr(arena, file.commit_oid),
+            .path = arena_copy_cstr(arena, file.path),
+            .old_path = file.old_path.empty() ? StrRef() : arena_copy_cstr(arena, file.old_path),
+            .status = file.status,
+        };
+    }
+
+    [[nodiscard]] auto copy_git_branch(Arena& arena, GitBranch const& branch) -> GitBranch {
+        return {.name = arena_copy_cstr(arena, branch.name)};
+    }
+
+    auto copy_git_status_items(EditorState& editor, Vec<GitStatusItem> const& items) -> void {
+        editor.git_status_items.clear();
+        for (GitStatusItem const& item : items) {
+            BASE_UNUSED(
+                editor.git_status_items.push_back(copy_git_status_item(*editor.arena, item))
+            );
+        }
+    }
+
+    auto copy_git_branches(EditorState& editor, Vec<GitBranch> const& branches) -> void {
+        editor.git_branches.clear();
+        for (GitBranch const& branch : branches) {
+            BASE_UNUSED(editor.git_branches.push_back(copy_git_branch(*editor.arena, branch)));
+        }
+    }
+
+    auto copy_git_commits(EditorState& editor, Vec<GitCommit> const& commits) -> void {
+        editor.git_commits.clear();
+        editor.git_commit_popup = GIT_COMMIT_POPUP_NONE;
+        editor.git_commit_popup_selection = {};
+        editor.git_commit_popup_keyboard = false;
+        editor.git_commit_popup_mouse_known = false;
+        for (GitCommit const& commit : commits) {
+            BASE_UNUSED(editor.git_commits.push_back(copy_git_commit(*editor.arena, commit)));
+        }
+        layout_git_commit_graph(editor.git_commits);
+    }
+
+    [[nodiscard]] auto git_commit_files_loaded(EditorState const& editor, StrRef oid) -> bool {
+        for (GitCommitFile const& file : editor.git_commit_files) {
+            if (file.commit_oid == oid) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    auto trim_git_commit_sentinel(EditorState& editor, size_t git_log_limit) -> void {
+        editor.git_commits_more = editor.git_commits.size() > git_log_limit;
+        if (editor.git_commits_more) {
+            BASE_UNUSED(editor.git_commits.pop_safe());
+        }
+    }
+
+    auto apply_git_root_result(EditorState& editor, GitWorkResult const& result) -> void {
+        editor.git_root_checked = true;
+        editor.git_root_path =
+            !result.root.empty() ? arena_copy_cstr(*editor.arena, result.root) : StrRef();
+    }
+
+    auto apply_git_refresh_result(EditorState& editor, GitWorkResult const& result) -> void {
+        editor.git_operation_pending = false;
+        if (editor.arena == nullptr) {
+            return;
+        }
+        apply_git_root_result(editor, result);
+        if (!result.ok) {
+            set_git_status_text(
+                editor, result.message.empty() ? "Git refresh failed." : result.message
+            );
+            return;
+        }
+
+        copy_git_branches(editor, result.branches);
+        copy_git_status_items(editor, result.status_items);
+        editor.git_current_branch = arena_copy_cstr(*editor.arena, result.current_branch);
+        editor.git_pending_pull_count = result.pending_pull_count;
+        if (result.log_loaded) {
+            copy_git_commits(editor, result.commits);
+            editor.git_commit_files.clear();
+            trim_git_commit_sentinel(editor, result.limit);
+            editor.git_commit_limit = result.limit;
+        }
+        set_git_status_text(editor, {});
+    }
+
+    auto append_git_commit_page(EditorState& editor, GitWorkResult const& result) -> void {
+        if (editor.arena == nullptr || result.generation != editor.git_commit_load_generation) {
+            return;
+        }
+        editor.git_commits_loading = false;
+        if (result.offset != editor.git_commits.size()) {
+            return;
+        }
+        if (!result.ok) {
+            set_git_status_text(editor, result.message);
+            return;
+        }
+
+        size_t const append_count = std::min(result.commits.size(), result.count);
+        for (size_t index = 0u; index < append_count; ++index) {
+            BASE_UNUSED(
+                editor.git_commits.push_back(copy_git_commit(*editor.arena, result.commits[index]))
+            );
+        }
+        layout_git_commit_graph(editor.git_commits);
+        editor.git_commits_more = result.commits.size() > result.count;
+        editor.git_commit_limit = std::max(editor.git_commit_limit, editor.git_commits.size());
+        set_git_status_text(editor, {});
+    }
+
+    auto append_git_commit_files(EditorState& editor, GitWorkResult const& result) -> void {
+        editor.git_operation_pending = false;
+        if (editor.arena == nullptr) {
+            return;
+        }
+        apply_git_root_result(editor, result);
+        if (!result.ok) {
+            set_git_status_text(editor, result.message);
+            return;
+        }
+        if (!git_commit_files_loaded(editor, result.commit_oid)) {
+            for (GitCommitFile const& file : result.commit_files) {
+                BASE_UNUSED(
+                    editor.git_commit_files.push_back(copy_git_commit_file(*editor.arena, file))
+                );
+            }
+        }
+        set_git_status_text(editor, {});
+    }
+
+    auto apply_git_action_result(EditorState& editor, GitWorkResult const& result) -> void {
+        editor.git_operation_pending = false;
+        if (editor.arena == nullptr) {
+            return;
+        }
+        apply_git_root_result(editor, result);
+        if (!result.ok) {
+            set_git_status_text(editor, result.message);
+            return;
+        }
+
+        if (result.kind == GitWorkKind::OPEN_STATUS_DIFF) {
+            StrRef const title =
+                fmt::tprintf("%s %s", git_status_scope_label(result.scope), result.path);
+            open_git_diff(editor, title, result.patch);
+            set_git_status_text(editor, {});
+            return;
+        }
+        if (result.kind == GitWorkKind::OPEN_COMMIT_DIFF) {
+            StrRef const title = fmt::tprintf("%s %s", result.commit_oid, result.path);
+            open_git_diff(editor, title, result.patch);
+            set_git_status_text(editor, {});
+            return;
+        }
+
+        if (result.kind == GitWorkKind::CHECKOUT_BRANCH) {
+            editor.git_branches_open = false;
+        }
+        set_git_status_text(editor, result.message);
+        editor.git_refresh_requested = true;
+        if (result.kind == GitWorkKind::COMMIT || result.kind == GitWorkKind::PULL ||
+            result.kind == GitWorkKind::CHECKOUT_BRANCH) {
+            editor.git_log_refresh_requested = true;
+        }
+    }
+
+    auto sync_git_worker_results(Runtime& runtime) -> void {
+        GitWorkResult result = {};
+        while (runtime.git_worker.results.pop(result)) {
+            switch (result.kind) {
+            case GitWorkKind::REFRESH:
+                apply_git_refresh_result(runtime.editor, result);
+                break;
+            case GitWorkKind::COMMIT_PAGE:
+                append_git_commit_page(runtime.editor, result);
+                break;
+            case GitWorkKind::COMMIT_FILES:
+                append_git_commit_files(runtime.editor, result);
+                break;
+            default:
+                apply_git_action_result(runtime.editor, result);
+                break;
+            }
+        }
+    }
+
+    [[nodiscard]] auto git_work_kind_from_request(GitRequestKind kind) -> GitWorkKind {
+        switch (kind) {
+        case GitRequestKind::STAGE:
+            return GitWorkKind::STAGE;
+        case GitRequestKind::STAGE_ALL:
+            return GitWorkKind::STAGE_ALL;
+        case GitRequestKind::UNSTAGE:
+            return GitWorkKind::UNSTAGE;
+        case GitRequestKind::UNSTAGE_ALL:
+            return GitWorkKind::UNSTAGE_ALL;
+        case GitRequestKind::COMMIT:
+            return GitWorkKind::COMMIT;
+        case GitRequestKind::PUSH:
+            return GitWorkKind::PUSH;
+        case GitRequestKind::PULL:
+            return GitWorkKind::PULL;
+        case GitRequestKind::FETCH:
+            return GitWorkKind::FETCH;
+        case GitRequestKind::CHECKOUT_BRANCH:
+            return GitWorkKind::CHECKOUT_BRANCH;
+        case GitRequestKind::OPEN_STATUS_DIFF:
+            return GitWorkKind::OPEN_STATUS_DIFF;
+        case GitRequestKind::OPEN_COMMIT_DIFF:
+            return GitWorkKind::OPEN_COMMIT_DIFF;
+        case GitRequestKind::NONE:
+        case GitRequestKind::REFRESH:
+        default:
+            return GitWorkKind::NONE;
+        }
+    }
+
+    auto fill_git_root_request(EditorState const& editor, GitWorkRequest& request) -> void {
+        request.save_root = editor.save_root_path;
+        request.root = editor.git_root_path;
+    }
+
+    [[nodiscard]] auto git_root_ready(EditorState const& editor) -> bool {
+        return editor.git_root_checked && !editor.git_root_path.empty();
+    }
+
+    [[nodiscard]] auto
+    submit_git_operation(Runtime& runtime, GitWorkRequest const& request, StrRef status_text)
+        -> bool {
+        if (!runtime.git_worker.requests.push(request)) {
+            set_git_status_text(runtime.editor, "Git worker queue is full.");
+            return false;
+        }
+        runtime.editor.git_operation_pending = true;
+        set_git_status_text(runtime.editor, status_text);
+        return true;
+    }
+
+    [[nodiscard]] auto submit_git_action_request(Runtime& runtime) -> bool {
+        EditorState& editor = runtime.editor;
+        if (editor.git_operation_pending || editor.git_request.kind == GitRequestKind::NONE) {
+            return false;
+        }
+        GitRequest const request = editor.git_request;
+        if (request.kind == GitRequestKind::REFRESH) {
+            editor.git_request = {};
+            editor.git_refresh_requested = true;
+            editor.git_log_refresh_requested = true;
+            return false;
+        }
+
+        GitWorkRequest work = {
+            .kind = git_work_kind_from_request(request.kind),
+            .scope = request.scope,
+            .path = request.path,
+            .commit_oid = request.commit_oid,
+            .message_text = request.message,
+            .branch = request.branch,
+        };
+        fill_git_root_request(editor, work);
+        StrRef const status =
+            work.kind == GitWorkKind::OPEN_STATUS_DIFF || work.kind == GitWorkKind::OPEN_COMMIT_DIFF
+                ? StrRef("Loading Git diff...")
+                : StrRef("Running Git...");
+        if (!submit_git_operation(runtime, work, status)) {
+            return false;
+        }
+        editor.git_request = {};
+        return true;
+    }
+
+    [[nodiscard]] auto git_log_limit_for_window_height(uint32_t height) -> size_t {
+        size_t const rows = static_cast<size_t>(std::ceil(static_cast<float>(height) / 24.0f));
+        return std::max(GIT_LOG_MIN_LIMIT, rows);
+    }
+
+    [[nodiscard]] auto submit_git_refresh_request(Runtime& runtime, uint32_t window_height)
+        -> bool {
+        EditorState& editor = runtime.editor;
+        if (editor.git_operation_pending) {
+            return false;
+        }
+        bool const git_sidebar_open =
+            editor.flag(EditorFlag::SIDEBAR_VISIBLE) && editor.sidebar_tab == EditorSidebarTab::GIT;
+        if (!git_sidebar_open) {
+            return false;
+        }
+        bool const load_log = editor.git_graph_open && editor.git_log_refresh_requested;
+        if (!editor.git_refresh_requested && !load_log) {
+            return false;
+        }
+
+        size_t const git_log_limit = git_log_limit_for_window_height(window_height);
+        editor.git_refresh_requested = false;
+        editor.git_log_refresh_requested = false;
+        editor.git_status_items.clear();
+        editor.git_branches.clear();
+        if (load_log) {
+            editor.git_commits.clear();
+            editor.git_commit_files.clear();
+            editor.git_commit_load_generation += 1u;
+            editor.git_commit_load_more_requested = false;
+            editor.git_commits_loading = false;
+            editor.git_commits_more = false;
+        }
+
+        GitWorkRequest request = {
+            .kind = GitWorkKind::REFRESH,
+            .generation = editor.git_commit_load_generation,
+            .count = load_log ? git_log_limit + 1u : 0u,
+            .limit = git_log_limit,
+        };
+        fill_git_root_request(editor, request);
+        return submit_git_operation(runtime, request, "Loading Git...");
+    }
+
+    [[nodiscard]] auto submit_git_commit_files_request(Runtime& runtime) -> bool {
+        EditorState& editor = runtime.editor;
+        if (editor.git_operation_pending || !editor.git_graph_open || !git_root_ready(editor)) {
+            return false;
+        }
+        for (GitCommit const& commit : editor.git_commits) {
+            if (!commit.open || git_commit_files_loaded(editor, commit.oid)) {
+                continue;
+            }
+            GitWorkRequest request = {
+                .kind = GitWorkKind::COMMIT_FILES,
+                .commit_oid = commit.oid,
+            };
+            fill_git_root_request(editor, request);
+            return submit_git_operation(runtime, request, "Loading commit files...");
+        }
+        return false;
+    }
+
+    [[nodiscard]] auto submit_git_commit_page_request(Runtime& runtime) -> bool {
+        EditorState& editor = runtime.editor;
+        if (!editor.git_commit_load_more_requested || editor.git_operation_pending) {
+            return false;
+        }
+        editor.git_commit_load_more_requested = false;
+        if (!editor.git_graph_open || !editor.git_commits_more || editor.git_commits_loading ||
+            !git_root_ready(editor)) {
+            return false;
+        }
+
+        GitWorkRequest request = {
+            .kind = GitWorkKind::COMMIT_PAGE,
+            .generation = editor.git_commit_load_generation + 1u,
+            .offset = editor.git_commits.size(),
+            .count = GIT_LOG_PAGE_SIZE,
+        };
+        fill_git_root_request(editor, request);
+        if (!runtime.git_worker.requests.push(request)) {
+            set_git_status_text(editor, "Git worker queue is full.");
+            return false;
+        }
+        editor.git_commit_load_generation = request.generation;
+        editor.git_commits_loading = true;
+        return true;
+    }
+
+    auto submit_git_worker_requests(Runtime& runtime, uint32_t window_height) -> void {
+        if (submit_git_action_request(runtime)) {
+            return;
+        }
+        if (submit_git_refresh_request(runtime, window_height)) {
+            return;
+        }
+        if (submit_git_commit_files_request(runtime)) {
+            return;
+        }
+        BASE_UNUSED(submit_git_commit_page_request(runtime));
     }
 
     [[nodiscard]] auto runtime_config_path(char const* buffer) -> StrRef {
@@ -798,6 +1448,7 @@ namespace code_editor {
         if (runtime == nullptr) {
             return;
         }
+        destroy_git_worker(runtime->git_worker);
         if (gui::context_valid(runtime->ui_context)) {
             gui::destroy_context(runtime->ui_context);
         }
@@ -816,6 +1467,7 @@ namespace code_editor {
         runtime->ui_font = {};
         runtime->editor_font = {};
         runtime->icon_font = {};
+        runtime->branch_icon_font = {};
     }
 
     [[nodiscard]] auto
@@ -847,6 +1499,14 @@ namespace code_editor {
         }
         if (!font_cache::font_valid(runtime->icon_font)) {
             runtime->icon_font = runtime->ui_font;
+        }
+        font_cache::open_font_file(
+            runtime->cache,
+            CODE_EDITOR_SOURCE_DIR "/third_party/codicons/codicon.ttf",
+            runtime->branch_icon_font
+        );
+        if (!font_cache::font_valid(runtime->branch_icon_font)) {
+            runtime->branch_icon_font = runtime->icon_font;
         }
         Slice<uint8_t const> const source_code_pro = embedded_source_code_pro_font();
         if (!source_code_pro.empty()) {
@@ -920,6 +1580,9 @@ namespace code_editor {
             },
             runtime->ui_context
         );
+        if (!create_git_worker(arena, runtime->git_worker)) {
+            return false;
+        }
         touch_open_file(
             runtime->editor, runtime->editor.current_file_name, runtime->editor.current_file_path
         );
@@ -933,6 +1596,7 @@ namespace code_editor {
         float delta_time,
         bool files_changed
     ) -> gui::Frame {
+        sync_git_worker_results(*runtime);
         reload_runtime_config(*runtime, false);
         sync_tree_operation_result(runtime->editor);
         if (files_changed) {
@@ -958,6 +1622,13 @@ namespace code_editor {
                 }
             );
             update_editor_lsp_document(runtime->editor);
+        }
+        submit_git_worker_requests(*runtime, window_size.height);
+        if (runtime->editor.git_commits_loading) {
+            runtime->editor.git_loading_phase += delta_time * 3.0f;
+            while (runtime->editor.git_loading_phase >= 1.0f) {
+                runtime->editor.git_loading_phase -= 1.0f;
+            }
         }
         handle_runtime_config_request(*runtime);
         runtime->char_width = std::max(
@@ -986,6 +1657,7 @@ namespace code_editor {
             runtime->editor_font,
             runtime->ui_font,
             runtime->icon_font,
+            runtime->branch_icon_font,
             palette,
             static_cast<float>(window_size.width),
             static_cast<float>(window_size.height),
@@ -1128,7 +1800,8 @@ namespace code_editor {
         );
         frame_result.draw_counts = draw_command_counts(module->runtime.draw_context);
         frame_result.redraw_pending =
-            frame_result.frame.redraw_requested() ||
+            frame_result.frame.redraw_requested() || module->runtime.editor.git_commits_loading ||
+            module->runtime.editor.git_operation_pending ||
             editor_state_hash(module->runtime.editor) != state_hash_before;
         reset_thread_temp_arenas();
         return frame_result;

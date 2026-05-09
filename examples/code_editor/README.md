@@ -177,6 +177,7 @@ folded lines. Clicking that marker toggles the fold for that line.
 | Key | Action |
 | --- | --- |
 | `Space e` | Toggle the filesystem sidebar. |
+| `Space g` | Toggle the Git sidebar. |
 | `Space f` | Open the indexed file picker. |
 | `Space b` | Open the open-buffer picker. |
 | `Space d` | Open current-file diagnostics. |
@@ -264,6 +265,52 @@ references, symbols, code actions, and global-search result pickers.
 | `config-open` | `co` | Open the active config file, preferring the local override before the global config. |
 | `config-reload` | `cr` | Reload global and local config files and reapply session overrides. |
 | `set` | `cfg` | Apply a session config override, for example `set editor.font-size=14`. |
+
+## Git Sidebar
+
+These keys apply while the Git sidebar has focus. `Enter`, `Right`, and `l`
+toggle group rows and commit rows; on changed-file rows they open the diff in
+the focused code pane.
+
+| Key | Action |
+| --- | --- |
+| `Up`, `k` | Move to the previous visible Git row. |
+| `Down`, `j` | Move to the next visible Git row. |
+| `Left`, `h` | Collapse the selected Git group or commit row. |
+| `Right`, `l`, `Enter` | Toggle the selected group or commit row, or open the selected file diff. |
+| `g` | Move to the first visible Git row. |
+| `G` | Move to the last visible Git row. |
+| `K` | Show commit details for the selected graph commit. |
+| `s` | Stage the selected unstaged or untracked file. |
+| `u` | Unstage the selected staged file. |
+| `r` | Refresh status and commit data. |
+| `p` | Request `git push`. |
+| `Space` | Start the normal leader prefix, so sidebar focus still supports `Space g`, `Space e`, and the other leader commands. |
+
+## Git Diff View
+
+Git diff buffers are read-only. Editing commands such as insert, delete,
+change, paste, replace, indentation, and LSP actions are ignored.
+
+| Key | Action |
+| --- | --- |
+| `Left`, `Right`, `h`, `l` | Move one character left or right. |
+| `Up`, `Down`, `k`, `j` | Move one visible line up or down. |
+| `Home`, `0` | Move to the start of the current diff row. |
+| `End`, `$` | Move to the end of the current diff row. |
+| `Ctrl+Left`, `Ctrl+Right`, `w`, `b`, `e` | Move by normal word boundaries. |
+| `W`, `B`, `E` | Move by big-word boundaries. |
+| `Ctrl+Home`, `g g` | Move to the start of the diff. |
+| `Ctrl+End`, `G` | Move to the last diff row. Number prefixes such as `42 G` are not used in diff view. |
+| `z z` | Center the cursor row in the focused split. |
+| `v`, `V` | Toggle character-wise or line-wise visual selection. Motions extend the selection. |
+| `y` | Copy the active selection. |
+| `,` | Clear selection and extra cursors. |
+| `/` | Open current-diff search. |
+| `n`, `N` | Jump to the next or previous search match. |
+| `:` | Open the command line. |
+| `Space` | Start the normal leader prefix. |
+| `u` | Toggle between inline and side-by-side diff text layouts. |
 
 ## Filesystem Sidebar
 

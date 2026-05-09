@@ -1,5 +1,6 @@
 #include "editor_render.h"
 
+#include "git.h"
 #include "syntax.h"
 
 #if defined(_WIN32)
@@ -63,6 +64,28 @@ namespace code_editor {
 #endif
     inline constexpr char TREE_ARROW_OPEN[] = "\xEE\x9C\x8D";
     inline constexpr char TREE_ARROW_CLOSED[] = "\xEE\x9D\xAC";
+    inline constexpr char GIT_BRANCH_ICON[] = "\xEE\xA9\xA8";
+    inline constexpr char GIT_REFRESH_ICON[] = "\xEE\x9C\xAC";
+    inline constexpr char GIT_FETCH_ICON[] = "\xE2\x86\x93";
+    inline constexpr float GIT_PANEL_PADDING_Y = 6.0f;
+    inline constexpr float GIT_BRANCH_LIST_TOP = 30.0f;
+    inline constexpr float GIT_BRANCH_ROW_HEIGHT = 24.0f;
+    inline constexpr float GIT_ROW_HEIGHT = 24.0f;
+    inline constexpr float GIT_GRAPH_LANE_WIDTH = 8.0f;
+    inline constexpr float GIT_GRAPH_MIN_WIDTH = 22.0f;
+    inline constexpr float GIT_GRAPH_MAX_WIDTH = 138.0f;
+    inline constexpr float GIT_GRAPH_NODE_RADIUS = 3.2f;
+    inline constexpr float GIT_GRAPH_LINE_THICKNESS = 1.6f;
+    inline constexpr size_t GIT_GRAPH_OVERSCAN_ROWS = 48u;
+    inline constexpr size_t GIT_PANEL_FIXED_SCROLL_ROWS = 5u;
+    inline constexpr float GIT_CURSOR_REVEAL_MARGIN = GIT_ROW_HEIGHT;
+    inline constexpr float GIT_COMMIT_POPUP_MIN_WIDTH = 420.0f;
+    inline constexpr float GIT_COMMIT_POPUP_MAX_WIDTH = 560.0f;
+    inline constexpr size_t GIT_COMMIT_POPUP_MAX_BODY_LINES = 8u;
+    inline constexpr StrRef GIT_GRAPH_BOX_DEBUG_NAME = "git_commit_graph";
+    inline constexpr float GIT_BRANCH_ROW_PADDING_X = 7.0f;
+    inline constexpr float GIT_BRANCH_ROW_GAP = 2.0f;
+    inline constexpr float GIT_BRANCH_LIST_PADDING = 3.0f;
 
     [[nodiscard]] auto sidebar_width(EditorState const& editor, float client_width) -> float {
         float const width = std::clamp(
@@ -246,19 +269,6 @@ namespace code_editor {
         return ok;
     }
 
-    [[nodiscard]] auto read_process_first_line(Arena& arena, StrRef command) -> StrRef {
-        ArenaTemp temp = begin_thread_temp_arena();
-        StrRef output = {};
-        if (!read_process_output(*temp.arena(), command, output)) {
-            return {};
-        }
-
-        size_t const newline = output.find('\n');
-        StrRef line = newline == StrRef::NPOS ? output : output.prefix(newline);
-        line = line.trim_end_matches('\r');
-        return line.empty() ? StrRef() : arena_copy_cstr(arena, line);
-    }
-
     [[nodiscard]] auto read_tree_file_text(Arena& arena, StrRef path, StrRef& out_text) -> bool {
         std::FILE* const file = open_tree_read_file(path);
         if (file == nullptr) {
@@ -390,40 +400,8 @@ namespace code_editor {
         return nullptr;
     }
 
-    [[nodiscard]] auto copy_git_root_path(Arena& arena, StrRef path) -> StrRef {
-        path = render_path_without_trailing_slash(path);
-        if (path.empty()) {
-            return {};
-        }
-
-        char* const text = arena_alloc<char>(arena, path.size() + 1u);
-        for (size_t index = 0u; index < path.size(); ++index) {
-            char ch = path[index];
-#if defined(_WIN32)
-            ch = ch == '/' ? '\\' : ch;
-#endif
-            text[index] = ch;
-        }
-        text[path.size()] = '\0';
-        return StrRef(text, path.size());
-    }
-
     [[nodiscard]] auto ensure_git_root(EditorState& editor) -> bool {
-        if (editor.git_root_checked) {
-            return !editor.git_root_path.empty();
-        }
-
-        editor.git_root_checked = true;
-        if (editor.arena == nullptr || editor.save_root_path.empty()) {
-            return false;
-        }
-
-        StrRef const command = fmt::tprintf(
-            "git -C \"%s\" rev-parse --show-toplevel %s", editor.save_root_path, GIT_STDERR_REDIRECT
-        );
-        StrRef const root = read_process_first_line(*editor.arena, command);
-        editor.git_root_path = copy_git_root_path(*editor.arena, root);
-        return !editor.git_root_path.empty();
+        return editor.git_root_checked && !editor.git_root_path.empty();
     }
 
     [[nodiscard]] auto git_relative_path(Arena& arena, StrRef root, StrRef path) -> StrRef {
@@ -647,8 +625,8 @@ namespace code_editor {
 
     [[nodiscard]] auto current_git_line_changes(EditorState& editor)
         -> Slice<EditorGitLineChange const> {
-        if (editor.current_file_path.empty() || editor.arena == nullptr ||
-            !ensure_git_root(editor)) {
+        if (editor.view_kind == EditorViewKind::GIT_DIFF || editor.current_file_path.empty() ||
+            editor.arena == nullptr || !ensure_git_root(editor)) {
             return {};
         }
 
@@ -697,6 +675,7 @@ namespace code_editor {
         }
         file->text = text_buffer_copy(editor.text, *editor.text.arena);
         file->saved_text = editor.saved_text;
+        file->git_diff = editor.git_diff;
         file->undo_stack = editor.undo_stack;
         file->redo_stack = editor.redo_stack;
         file->file_write_stamp = editor.file_write_stamp;
@@ -723,10 +702,13 @@ namespace code_editor {
         file->dirty = editor.flag(EditorFlag::DIRTY);
         file->external_change_pending = editor.flag(EditorFlag::EXTERNAL_CHANGE_PENDING);
         file->file_deleted_on_disk = editor.flag(EditorFlag::FILE_DELETED_ON_DISK);
+        file->git_diff_side_by_side = editor.git_diff_side_by_side;
+        file->view_kind = editor.view_kind;
     }
 
     auto load_open_file_buffer(EditorState& editor, OpenFile const& file) -> void {
         set_editor_text(editor, file.text);
+        editor.git_diff = file.git_diff;
         editor.current_file_name = file.name;
         editor.current_file_path = file.path;
         editor.saved_text = file.saved_text;
@@ -755,6 +737,8 @@ namespace code_editor {
         editor.set_flag(EditorFlag::DIRTY, file.dirty);
         editor.set_flag(EditorFlag::EXTERNAL_CHANGE_PENDING, file.external_change_pending);
         editor.set_flag(EditorFlag::FILE_DELETED_ON_DISK, file.file_deleted_on_disk);
+        editor.git_diff_side_by_side = file.git_diff_side_by_side;
+        editor.view_kind = file.view_kind;
         BASE_UNUSED(restore_focused_open_file_view(editor, file.name, file.path));
         remember_open_file(editor, file.name, file.path);
     }
@@ -797,6 +781,9 @@ namespace code_editor {
             return false;
         }
         set_editor_text(editor, text);
+        editor.git_diff = {};
+        editor.git_diff_side_by_side = true;
+        editor.view_kind = EditorViewKind::TEXT;
         editor.current_file_name = arena_copy_cstr(*editor.arena, name);
         editor.current_file_path = arena_copy_cstr(*editor.arena, path);
         editor.file_write_stamp = file_write_stamp(path);
@@ -857,8 +844,100 @@ namespace code_editor {
         editor.current_file_path = {};
         editor.file_write_stamp = 0u;
         set_editor_text(editor, {});
+        editor.git_diff = {};
+        editor.git_diff_side_by_side = true;
+        editor.view_kind = EditorViewKind::TEXT;
         touch_open_file(editor, editor.current_file_name, {});
         store_current_open_file(editor);
+    }
+
+    [[nodiscard]] auto git_log_limit_for_height(float sidebar_content_height) -> size_t {
+        float const height = std::max(0.0f, sidebar_content_height);
+        size_t const rows = static_cast<size_t>(std::ceil(height / GIT_ROW_HEIGHT));
+        return std::max(GIT_LOG_MIN_LIMIT, rows);
+    }
+
+    auto request_more_git_commits_for_scroll(EditorState& editor, gui::ScrollState scroll) -> void {
+        if (!scroll.valid || scroll.max_y <= 0.0f || !editor.git_graph_open ||
+            !editor.git_commits_more || editor.git_commits_loading || editor.git_commits.empty()) {
+            return;
+        }
+        if (scroll.max_y - scroll.y <= GIT_ROW_HEIGHT * 2.0f) {
+            editor.git_commit_load_more_requested = true;
+        }
+    }
+
+    [[nodiscard]] auto git_clean_status_row_visible(EditorState const& editor) -> bool {
+        return editor.git_status_items.empty() && editor.git_changes_open &&
+               !editor.git_operation_pending;
+    }
+
+    [[nodiscard]] auto git_clean_status_row_before(EditorState const& editor, size_t row) -> bool {
+        return git_clean_status_row_visible(editor) && row > 0u;
+    }
+
+    [[nodiscard]] auto git_scroll_target_y(EditorState const& editor) -> float {
+        size_t row = GIT_PANEL_FIXED_SCROLL_ROWS + editor.git_selected;
+        if (git_clean_status_row_before(editor, editor.git_selected)) {
+            row += 1u;
+        }
+        return static_cast<float>(row) * GIT_ROW_HEIGHT;
+    }
+
+    auto reveal_git_cursor(
+        gui::Frame& ui, EditorState& editor, gui::Id scroll_id, gui::ScrollState scroll
+    ) -> void {
+        if (!editor.git_cursor_reveal) {
+            return;
+        }
+        float const row_min_y = git_scroll_target_y(editor);
+        float const row_max_y = row_min_y + GIT_ROW_HEIGHT;
+        float const viewport_height =
+            std::max(GIT_ROW_HEIGHT, scroll.viewport_height - GIT_PANEL_PADDING_Y * 2.0f);
+        if (!scroll.valid) {
+            ui.set_scroll_y(scroll_id, row_min_y - GIT_CURSOR_REVEAL_MARGIN);
+        } else if (row_min_y < scroll.y + GIT_CURSOR_REVEAL_MARGIN) {
+            ui.set_scroll_y(scroll_id, row_min_y - GIT_CURSOR_REVEAL_MARGIN);
+        } else if (row_max_y > scroll.y + viewport_height - GIT_CURSOR_REVEAL_MARGIN) {
+            ui.set_scroll_y(scroll_id, row_max_y + GIT_CURSOR_REVEAL_MARGIN - viewport_height);
+        }
+        editor.git_cursor_reveal = false;
+    }
+
+    [[nodiscard]] auto git_diff_virtual_path(Arena& arena, StrRef title) -> StrRef {
+        StringBuffer path = {};
+        BASE_UNUSED(path.init(title.size() + 16u, arena.resource()));
+        BASE_UNUSED(path.write_string("gitdiff:"));
+        for (char ch : title) {
+            BASE_UNUSED(path.write_byte(ch == '\\' || ch == '/' ? '_' : ch));
+        }
+        BASE_UNUSED(path.write_string(".diff"));
+        return arena_copy_cstr(arena, path.str());
+    }
+
+    auto open_git_diff(EditorState& editor, StrRef title, StrRef patch) -> void {
+        if (editor.arena == nullptr || editor.text.arena == nullptr) {
+            return;
+        }
+        GitDiffDocument doc = {};
+        if (!parse_git_patch(*editor.arena, title, patch, doc)) {
+            editor.git_status_text = "Failed to parse git diff.";
+            return;
+        }
+
+        focus_code_split_for_open(editor);
+        store_current_open_file(editor);
+        editor.current_file_name = arena_copy_cstr(*editor.arena, title);
+        editor.current_file_path = git_diff_virtual_path(*editor.arena, title);
+        editor.git_diff = doc;
+        editor.git_diff_side_by_side = false;
+        set_git_diff_view_text(editor);
+        editor.file_write_stamp = 0u;
+        editor.set_flag(EditorFlag::EXTERNAL_CHANGE_PENDING, false);
+        editor.set_flag(EditorFlag::FILE_DELETED_ON_DISK, false);
+        remember_open_file(editor, editor.current_file_name, editor.current_file_path);
+        store_current_open_file(editor);
+        touch_open_file(editor, editor.current_file_name, editor.current_file_path);
     }
 
     auto reset_pane_text(EditorPane& pane, StrRef text, uint64_t stamp) -> void {
@@ -887,6 +966,9 @@ namespace code_editor {
         pane.dirty = false;
         pane.external_change_pending = false;
         pane.file_deleted_on_disk = false;
+        pane.git_diff = {};
+        pane.git_diff_side_by_side = true;
+        pane.view_kind = EditorViewKind::TEXT;
     }
 
     auto sync_current_file_to_matching_panes(EditorState& editor) -> void {
@@ -906,6 +988,7 @@ namespace code_editor {
                 continue;
             }
             text_buffer_clone(editor.text, pane->text, *editor.arena);
+            pane->git_diff = editor.git_diff;
             pane->scratch_text = editor.scratch_text;
             pane->saved_text = editor.saved_text;
             pane->undo_stack = editor.undo_stack;
@@ -914,11 +997,14 @@ namespace code_editor {
             pane->dirty = editor.flag(EditorFlag::DIRTY);
             pane->external_change_pending = editor.flag(EditorFlag::EXTERNAL_CHANGE_PENDING);
             pane->file_deleted_on_disk = editor.flag(EditorFlag::FILE_DELETED_ON_DISK);
+            pane->git_diff_side_by_side = editor.git_diff_side_by_side;
+            pane->view_kind = editor.view_kind;
         }
     }
 
     [[nodiscard]] auto reload_current_file_from_disk(EditorState& editor) -> bool {
-        if (editor.current_file_path.empty() || editor.text.arena == nullptr) {
+        if (editor.view_kind == EditorViewKind::GIT_DIFF || editor.current_file_path.empty() ||
+            editor.text.arena == nullptr) {
             return false;
         }
         StrRef text = {};
@@ -927,6 +1013,9 @@ namespace code_editor {
         }
         uint64_t const stamp = file_write_stamp(editor.current_file_path);
         set_editor_text(editor, text);
+        editor.git_diff = {};
+        editor.git_diff_side_by_side = true;
+        editor.view_kind = EditorViewKind::TEXT;
         editor.file_write_stamp = stamp;
         editor.set_flag(EditorFlag::FILE_DELETED_ON_DISK, false);
         sync_current_file_to_matching_panes(editor);
@@ -935,7 +1024,8 @@ namespace code_editor {
     }
 
     [[nodiscard]] auto overwrite_current_file_to_disk(EditorState& editor) -> bool {
-        if (editor.current_file_path.empty() || editor.text.arena == nullptr) {
+        if (editor.view_kind == EditorViewKind::GIT_DIFF || editor.current_file_path.empty() ||
+            editor.text.arena == nullptr) {
             return false;
         }
         StrRef const text = text_buffer_copy(editor.text, *editor.text.arena);
@@ -977,7 +1067,8 @@ namespace code_editor {
     }
 
     [[nodiscard]] auto save_current_file_as(EditorState& editor, StrRef path) -> bool {
-        if (path.empty() || editor.text.arena == nullptr || editor.arena == nullptr) {
+        if (editor.view_kind == EditorViewKind::GIT_DIFF || path.empty() ||
+            editor.text.arena == nullptr || editor.arena == nullptr) {
             return false;
         }
 
@@ -996,6 +1087,9 @@ namespace code_editor {
 
         editor.current_file_name = saved_name;
         editor.current_file_path = saved_path;
+        editor.git_diff = {};
+        editor.git_diff_side_by_side = true;
+        editor.view_kind = EditorViewKind::TEXT;
         uint64_t const stamp = file_write_stamp(editor.current_file_path);
         editor.file_write_stamp = stamp != 0u ? stamp : editor.file_write_stamp;
         mark_editor_saved(editor);
@@ -1304,9 +1398,183 @@ namespace code_editor {
         }
     }
 
+    [[nodiscard]] auto diff_line_marker(StrRef line, bool side_by_side) -> char {
+        if (side_by_side) {
+            return line.size() > 6u ? line[6u] : '\0';
+        }
+        return line.empty() ? '\0' : line[0u];
+    }
+
+    [[nodiscard]] auto diff_marker_color(Palette const& palette, char marker) -> gui::Color {
+        switch (marker) {
+        case '+':
+            return palette.mode_insert;
+        case '-':
+            return palette.preprocessor;
+        case '~':
+            return palette.string;
+        default:
+            return {};
+        }
+    }
+
+    [[nodiscard]] auto git_diff_unified_code_start(StrRef line) -> size_t {
+        if (line.size() < 14u || (line[0u] != ' ' && line[0u] != '+' && line[0u] != '-') ||
+            line[6u] != ' ' || line[12u] != ' ' || line[13u] != ' ') {
+            return 0u;
+        }
+        return 14u;
+    }
+
+    auto draw_git_diff_line_background(
+        draw::Context context,
+        EditorState const& editor,
+        Palette const& palette,
+        EditorLine line,
+        gui::Rect content,
+        float y,
+        float line_height
+    ) -> void {
+        if (editor.view_kind != EditorViewKind::GIT_DIFF) {
+            return;
+        }
+        StrRef const text = text_buffer_line_text(line);
+        gui::Color color =
+            diff_marker_color(palette, diff_line_marker(text, editor.git_diff_side_by_side));
+        if (color.a < 0.0f && (text.starts_with("@@") || text.starts_with("diff --git"))) {
+            color = palette.cursor;
+        }
+        if (color.a < 0.0f) {
+            return;
+        }
+        draw::draw_rect_filled(
+            context,
+            {{content.min.x, y}, {content.max.x, y + line_height}},
+            to_draw_color(gui::color_alpha(color, 0.12f)),
+            0.0f
+        );
+    }
+
+    auto draw_git_diff_span_rects(
+        draw::Context context,
+        Slice<GitInlineSpan const> spans,
+        size_t prefix,
+        float text_x,
+        float y,
+        float line_height,
+        float char_width,
+        gui::Color color
+    ) -> void {
+        for (GitInlineSpan const& span : spans) {
+            float const min_x = text_x + char_width * static_cast<float>(prefix + span.offset);
+            float const max_x = min_x + char_width * static_cast<float>(span.size);
+            draw::draw_rect_filled(
+                context,
+                {{min_x, y + 2.0f}, {max_x, y + line_height - 2.0f}},
+                to_draw_color(gui::color_alpha(color, 0.28f)),
+                0.0f
+            );
+        }
+    }
+
+    auto draw_git_diff_inline_spans(
+        draw::Context context,
+        EditorState const& editor,
+        Palette const& palette,
+        size_t line,
+        float text_x,
+        float y,
+        float line_height,
+        float char_width
+    ) -> void {
+        if (editor.view_kind != EditorViewKind::GIT_DIFF || !editor.git_diff_side_by_side ||
+            line < 2u) {
+            return;
+        }
+        size_t const row_index = line - 2u;
+        if (row_index >= editor.git_diff.rows.size()) {
+            return;
+        }
+        GitDiffRow const& row = editor.git_diff.rows[row_index];
+        if (row.kind != GitDiffRowKind::MODIFIED) {
+            return;
+        }
+        size_t constexpr side_prefix = 8u;
+        size_t const right_prefix = side_prefix + row.left_text.size() + 3u + side_prefix;
+        draw_git_diff_span_rects(
+            context,
+            row.left_spans.slice(),
+            side_prefix,
+            text_x,
+            y,
+            line_height,
+            char_width,
+            palette.preprocessor
+        );
+        draw_git_diff_span_rects(
+            context,
+            row.right_spans.slice(),
+            right_prefix,
+            text_x,
+            y,
+            line_height,
+            char_width,
+            palette.mode_insert
+        );
+    }
+
+    auto draw_git_diff_line(
+        draw::Context context,
+        font_cache::Font font,
+        SyntaxTokenizer tokenizer,
+        Palette const& palette,
+        EditorLine const& line,
+        float x,
+        float y,
+        float font_size,
+        font_provider::RasterPolicy raster_policy,
+        float char_width,
+        bool side_by_side
+    ) -> void {
+        StrRef const text = editor_line_text(line);
+        size_t const code_start = side_by_side ? 0u : git_diff_unified_code_start(text);
+        if (code_start == 0u) {
+            draw::TextStyle style = {
+                .font = font,
+                .size = font_size,
+                .raster_policy = raster_policy,
+                .color = to_draw_color(text.starts_with("@@") ? palette.muted : palette.text),
+            };
+            draw::draw_text(context, {std::round(x), std::round(y)}, style, text, nullptr);
+            return;
+        }
+
+        draw::TextStyle prefix_style = {
+            .font = font,
+            .size = font_size,
+            .raster_policy = raster_policy,
+            .color = to_draw_color(palette.faint),
+        };
+        draw_token(context, prefix_style, line, 0u, code_start, x, y, char_width);
+
+        EditorLine code_line = {line.text + code_start, line.size - code_start};
+        draw_syntax_line(
+            context,
+            font,
+            tokenizer,
+            palette,
+            code_line,
+            x + char_width * static_cast<float>(code_start),
+            y,
+            font_size,
+            raster_policy,
+            char_width
+        );
+    }
+
     [[nodiscard]] auto semantic_tokens_for_editor(EditorState const& editor)
         -> Slice<LspSemanticToken const> {
-        if (editor.lsp_bridge == nullptr ||
+        if (editor.view_kind == EditorViewKind::GIT_DIFF || editor.lsp_bridge == nullptr ||
             editor.lsp_bridge->semantic_tokens_path != editor.current_file_path ||
             editor.lsp_bridge->semantic_tokens_revision != editor.text.revision) {
             return {};
@@ -1842,7 +2110,7 @@ namespace code_editor {
     }
 
     [[nodiscard]] auto lsp_diagnostic_at_cursor(EditorState const& editor) -> LspDiagnostic const* {
-        if (editor.lsp_bridge == nullptr) {
+        if (editor.view_kind == EditorViewKind::GIT_DIFF || editor.lsp_bridge == nullptr) {
             return nullptr;
         }
         LspPosition const cursor = {editor.cursor_line, editor.cursor_column};
@@ -1867,7 +2135,7 @@ namespace code_editor {
         float line_height,
         float char_width
     ) -> void {
-        if (editor.lsp_bridge == nullptr) {
+        if (editor.view_kind == EditorViewKind::GIT_DIFF || editor.lsp_bridge == nullptr) {
             return;
         }
         for (LspDiagnostic const& diagnostic : editor.lsp_bridge->diagnostics) {
@@ -2290,7 +2558,11 @@ namespace code_editor {
         size_t visible_line = first_line;
         while (visible_line < line_count && y < content.max.y) {
             size_t const line = editor_visible_line_at(editor, visible_line);
+            EditorLine const& text_line = editor_line(editor, line);
             bool const cursor_line = editor_has_cursor_on_line(editor, line);
+            draw_git_diff_line_background(
+                draw_context, editor, palette, text_line, content, y, line_height
+            );
             if (selection_visible && cursor_line) {
                 draw::draw_rect_filled(
                     draw_context,
@@ -2303,31 +2575,34 @@ namespace code_editor {
                 draw_context, palette, git_line_changes, line, git_marker_x, y, line_height
             );
 
-            EditorLine const& text_line = editor_line(editor, line);
-            draw::TextStyle number_style = {
-                .font = editor_font,
-                .size = editor.font_size,
-                .raster_policy = editor.raster_policy,
-                .color =
-                    to_draw_color(selection_visible && cursor_line ? palette.text : palette.faint),
-            };
-            draw::draw_text(
-                draw_context,
-                {std::round(line_number_x), std::round(y - 2.0f)},
-                number_style,
-                fmt::tprintf("%4zu", line + 1u),
-                nullptr
-            );
-            if (editor_line_foldable(editor, line)) {
-                number_style.color =
-                    to_draw_color(editor_line_folded(editor, line) ? palette.text : palette.faint);
+            if (editor.view_kind != EditorViewKind::GIT_DIFF) {
+                draw::TextStyle number_style = {
+                    .font = editor_font,
+                    .size = editor.font_size,
+                    .raster_policy = editor.raster_policy,
+                    .color = to_draw_color(
+                        selection_visible && cursor_line ? palette.text : palette.faint
+                    ),
+                };
                 draw::draw_text(
                     draw_context,
-                    {std::round(fold_marker_x), std::round(y - 2.0f)},
+                    {std::round(line_number_x), std::round(y - 2.0f)},
                     number_style,
-                    editor_line_folded(editor, line) ? "+" : "-",
+                    fmt::tprintf("%4zu", line + 1u),
                     nullptr
                 );
+                if (editor_line_foldable(editor, line)) {
+                    number_style.color = to_draw_color(
+                        editor_line_folded(editor, line) ? palette.text : palette.faint
+                    );
+                    draw::draw_text(
+                        draw_context,
+                        {std::round(fold_marker_x), std::round(y - 2.0f)},
+                        number_style,
+                        editor_line_folded(editor, line) ? "+" : "-",
+                        nullptr
+                    );
+                }
             }
 
             draw::push_clip_rect(draw_context, text_clip);
@@ -2393,18 +2668,37 @@ namespace code_editor {
                     }
                 }
             }
-            draw_syntax_line(
-                draw_context,
-                editor_font,
-                tokenizer,
-                palette,
-                text_line,
-                text_x,
-                y - 2.0f,
-                editor.font_size,
-                editor.raster_policy,
-                char_width
+            draw_git_diff_inline_spans(
+                draw_context, editor, palette, line, text_x, y, line_height, char_width
             );
+            if (editor.view_kind == EditorViewKind::GIT_DIFF) {
+                draw_git_diff_line(
+                    draw_context,
+                    editor_font,
+                    tokenizer,
+                    palette,
+                    text_line,
+                    text_x,
+                    y - 2.0f,
+                    editor.font_size,
+                    editor.raster_policy,
+                    char_width,
+                    editor.git_diff_side_by_side
+                );
+            } else {
+                draw_syntax_line(
+                    draw_context,
+                    editor_font,
+                    tokenizer,
+                    palette,
+                    text_line,
+                    text_x,
+                    y - 2.0f,
+                    editor.font_size,
+                    editor.raster_policy,
+                    char_width
+                );
+            }
             draw_semantic_line(
                 draw_context,
                 editor_font,
@@ -2710,6 +3004,205 @@ namespace code_editor {
         return popup != nullptr && point_in_rect(popup->rect, input.mouse_pos);
     }
 
+    [[nodiscard]] auto git_commit_graph_id(size_t commit_index) -> gui::Id {
+        return gui::id("git_commit_graph", static_cast<uint64_t>(commit_index));
+    }
+
+    [[nodiscard]] auto to_draw_rect(gui::Rect rect) -> draw::Rect {
+        return {{rect.min.x, rect.min.y}, {rect.max.x, rect.max.y}};
+    }
+
+    [[nodiscard]] auto git_graph_lane_count(EditorState const& editor) -> size_t {
+        size_t count = 1u;
+        for (GitCommit const& commit : editor.git_commits) {
+            count = std::max(count, static_cast<size_t>(commit.graph_lane_count));
+        }
+        return std::min(count, GIT_GRAPH_MAX_LANES);
+    }
+
+    [[nodiscard]] auto git_graph_width(EditorState const& editor, float row_width) -> float {
+        float const width = GIT_GRAPH_MIN_WIDTH +
+                            GIT_GRAPH_LANE_WIDTH * static_cast<float>(git_graph_lane_count(editor));
+        float const max_width = row_width > 0.0f ? std::min(GIT_GRAPH_MAX_WIDTH, row_width * 0.42f)
+                                                 : GIT_GRAPH_MAX_WIDTH;
+        return std::max(GIT_GRAPH_MIN_WIDTH, std::min(width, max_width));
+    }
+
+    struct GitGraphVirtualRange {
+        size_t first = 0u;
+        size_t end = 0u;
+    };
+
+    [[nodiscard]] auto git_graph_virtual_range(
+        EditorState const& editor,
+        gui::ScrollState scroll,
+        size_t graph_start_row,
+        float sidebar_content_height
+    ) -> GitGraphVirtualRange {
+        float const y = scroll.valid ? scroll.y : 0.0f;
+        float const viewport =
+            scroll.valid
+                ? std::max(GIT_ROW_HEIGHT, scroll.viewport_height - GIT_PANEL_PADDING_Y * 2.0f)
+                : sidebar_content_height;
+        float const row = GIT_ROW_HEIGHT;
+        size_t const top = y <= row * static_cast<float>(GIT_GRAPH_OVERSCAN_ROWS)
+                               ? 0u
+                               : static_cast<size_t>(y / row) - GIT_GRAPH_OVERSCAN_ROWS;
+        size_t const bottom = static_cast<size_t>(std::ceil((y + std::max(viewport, row)) / row)) +
+                              GIT_GRAPH_OVERSCAN_ROWS;
+        size_t const clean_row = git_clean_status_row_visible(editor) ? 1u : 0u;
+        size_t const graph_start = graph_start_row + GIT_PANEL_FIXED_SCROLL_ROWS + clean_row;
+        GitGraphVirtualRange range = {};
+        range.first = top > graph_start ? top - graph_start : 0u;
+        range.end = bottom > graph_start ? bottom - graph_start : GIT_GRAPH_OVERSCAN_ROWS;
+        range.end = std::max(range.first, range.end);
+        return range;
+    }
+
+    auto draw_git_graph_spacer(gui::Frame& ui, float row_width, size_t rows) -> void {
+        if (rows == 0u) {
+            return;
+        }
+        ui.spacer({
+            .layout = {
+                .width = row_width > 0.0f ? gui::px(row_width) : gui::fill(),
+                .height = gui::px(GIT_ROW_HEIGHT * static_cast<float>(rows)),
+            },
+        });
+    }
+
+    [[nodiscard]] auto git_any_commit_open(EditorState const& editor) -> bool {
+        for (GitCommit const& commit : editor.git_commits) {
+            if (commit.open) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    [[nodiscard]] auto git_graph_lane_color(Palette const& palette, size_t lane) -> gui::Color {
+        switch (lane % 8u) {
+        case 0u:
+            return palette.cursor;
+        case 1u:
+            return palette.type;
+        case 2u:
+            return palette.number;
+        case 3u:
+            return palette.preprocessor;
+        case 4u:
+            return palette.string;
+        case 5u:
+            return palette.keyword;
+        case 6u:
+            return palette.mode_insert;
+        default:
+            return palette.function;
+        }
+    }
+
+    [[nodiscard]] auto git_graph_lane_x(gui::Rect rect, size_t lane, size_t lane_count) -> float {
+        float const width = std::max(1.0f, rect.max.x - rect.min.x - 8.0f);
+        float const step =
+            lane_count > 1u
+                ? std::min(GIT_GRAPH_LANE_WIDTH, width / static_cast<float>(lane_count - 1u))
+                : GIT_GRAPH_LANE_WIDTH;
+        return rect.min.x + 4.0f + step * static_cast<float>(lane);
+    }
+
+    [[nodiscard]] auto git_graph_rect_visible(gui::Rect rect, gui::Rect clip) -> bool {
+        return rect.min.x < clip.max.x && rect.max.x > clip.min.x && rect.min.y < clip.max.y &&
+               rect.max.y > clip.min.y;
+    }
+
+    auto draw_git_graph_segment(
+        draw::Context context,
+        Palette const& palette,
+        gui::Rect rect,
+        size_t lane_count,
+        GitGraphSegment const& segment
+    ) -> void {
+        float const y0 = rect.min.y;
+        float const yc = (rect.min.y + rect.max.y) * 0.5f;
+        float const y1 = rect.max.y;
+        float const x0 = git_graph_lane_x(rect, segment.from_lane, lane_count);
+        float const x1 = git_graph_lane_x(rect, segment.to_lane, lane_count);
+        draw::Vec2 from = {x0, y0};
+        draw::Vec2 to = {x1, y1};
+        if (segment.kind == GitGraphSegmentKind::TOP_TO_COMMIT) {
+            to = {x0, yc};
+        } else if (segment.kind == GitGraphSegmentKind::COMMIT_TO_BOTTOM) {
+            from = {x0, yc};
+        }
+        gui::Color const color = git_graph_lane_color(palette, segment.to_lane);
+        draw::draw_line(
+            context,
+            from,
+            to,
+            to_draw_color(gui::color_alpha(color, 0.82f)),
+            GIT_GRAPH_LINE_THICKNESS
+        );
+    }
+
+    auto draw_git_graph_overlay(
+        draw::Context context,
+        gui::Frame const& ui,
+        EditorState const& editor,
+        Palette const& palette
+    ) -> void {
+        if (!editor.flag(EditorFlag::SIDEBAR_VISIBLE) ||
+            editor.sidebar_tab != EditorSidebarTab::GIT || !editor.git_graph_open) {
+            return;
+        }
+        size_t const lane_count = git_graph_lane_count(editor);
+        gui::Rect clip = {};
+        size_t commit_index = 0u;
+        for (size_t box_index = 0u; box_index < ui.box_info_count(); ++box_index) {
+            gui::BoxInfo const* const box = ui.box_info(box_index);
+            if (box == nullptr) {
+                continue;
+            }
+            if (box->kind == gui::BoxKind::SCROLL_PANEL &&
+                box->debug_name == "filesystem_surface") {
+                clip = box->rect;
+                continue;
+            }
+            if (box->kind != gui::BoxKind::LABEL || box->debug_name != GIT_GRAPH_BOX_DEBUG_NAME) {
+                continue;
+            }
+            while (commit_index < editor.git_commits.size() &&
+                   box->authored_id.value != git_commit_graph_id(commit_index).value) {
+                commit_index += 1u;
+            }
+            if (commit_index >= editor.git_commits.size()) {
+                break;
+            }
+            if (!git_graph_rect_visible(box->rect, clip)) {
+                commit_index += 1u;
+                continue;
+            }
+            draw::push_clip_rect(context, to_draw_rect(clip));
+            GitCommit const& commit = editor.git_commits[commit_index];
+            for (size_t segment = 0u; segment < commit.graph_segment_count; ++segment) {
+                draw_git_graph_segment(
+                    context, palette, box->rect, lane_count, commit.graph_segments[segment]
+                );
+            }
+            gui::Color const node_color =
+                commit.incoming ? palette.number : git_graph_lane_color(palette, commit.graph_lane);
+            draw::draw_circle_filled(
+                context,
+                {git_graph_lane_x(box->rect, commit.graph_lane, lane_count),
+                 (box->rect.min.y + box->rect.max.y) * 0.5f},
+                GIT_GRAPH_NODE_RADIUS,
+                to_draw_color(node_color),
+                16
+            );
+            draw::pop_clip_rect(context);
+            commit_index += 1u;
+        }
+    }
+
     auto draw_tree_edit_cursor(
         draw::Context context,
         gui::Frame const& ui,
@@ -2730,6 +3223,7 @@ namespace code_editor {
         bool selection_visible
     ) -> void {
         draw_deleted_open_file_tab_marks(draw_context, ui, editor, palette);
+        draw_git_graph_overlay(draw_context, ui, editor, palette);
         size_t const initial_focus = editor.focused_split;
         size_t target_focus = initial_focus;
         draw_editor_split_surface(
@@ -3264,21 +3758,1694 @@ namespace code_editor {
         }
     }
 
+    [[nodiscard]] auto git_status_display_label(GitFileStatus status) -> StrRef {
+        if (status == GitFileStatus::UNTRACKED) {
+            return "U";
+        }
+        return git_file_status_label(status);
+    }
+
+    [[nodiscard]] auto git_status_color(Palette const& palette, GitFileStatus status)
+        -> gui::Color {
+        switch (status) {
+        case GitFileStatus::ADDED:
+        case GitFileStatus::UNTRACKED:
+            return palette.mode_insert;
+        case GitFileStatus::DELETED:
+        case GitFileStatus::UNMERGED:
+            return palette.preprocessor;
+        case GitFileStatus::RENAMED:
+        case GitFileStatus::TYPE_CHANGED:
+            return palette.number;
+        case GitFileStatus::MODIFIED:
+        default:
+            return palette.string;
+        }
+    }
+
+    [[nodiscard]] auto git_parent_label(StrRef path) -> StrRef {
+        StrRef const parent = render_path_parent(path);
+        return parent == "." ? StrRef() : parent;
+    }
+
+    [[nodiscard]] auto git_commit_ref_label(GitCommit const& commit) -> StrRef {
+        StrRef first = {};
+        for (StrRef ref : commit.refs.split(",")) {
+            StrRef label = ref.trim();
+            if (label.starts_with("HEAD -> ")) {
+                label = label.drop_prefix(8u).trim();
+            }
+            if (label.empty() || label == "HEAD") {
+                continue;
+            }
+            if (first.empty()) {
+                first = label;
+            }
+            if (commit.incoming && label.contains('/')) {
+                return label;
+            }
+        }
+        return first;
+    }
+
+    auto draw_git_panel_header(
+        gui::Frame& ui,
+        EditorState& editor,
+        Palette const& palette,
+        font_cache::Font icon_font,
+        font_cache::Font branch_icon_font,
+        float row_width
+    ) -> void {
+        if (auto header = ui.column(
+                gui::id("git_panel_header"),
+                {
+                    .layout = {
+                        .width = gui::fill(),
+                        .height = gui::children(),
+                        .gap = 6.0f,
+                    },
+                }
+            )) {
+            BASE_UNUSED(header);
+            gui::BoxDesc const control_desc = {
+                .layout = {.width = gui::px(24.0f), .height = gui::px(24.0f)},
+                .style = {
+                    .foreground = palette.text,
+                    .border = palette.border,
+                    .border_thickness = 1.0f,
+                    .radius = 4.0f,
+                    .font_size = editor.font_size,
+                },
+            };
+            gui::BoxDesc refresh_desc = control_desc;
+            refresh_desc.style.font = icon_font;
+            refresh_desc.style.font_size = editor_scaled_font_size(editor, 11.0f);
+            StrRef const branch =
+                editor.git_current_branch.empty() ? StrRef("HEAD") : editor.git_current_branch;
+            if (auto branch_row = ui.row(
+                    gui::id("git_branch_row"),
+                    {
+                        .layout = {
+                            .width = row_width > 0.0f ? gui::px(row_width) : gui::fill(),
+                            .height = gui::px(GIT_ROW_HEIGHT),
+                            .gap = 6.0f,
+                            .align_y = gui::Align::CENTER,
+                        },
+                    }
+                )) {
+                BASE_UNUSED(branch_row);
+                if (auto branch_label = ui.row(
+                        gui::id("git_branch_label_frame"),
+                        {
+                            .layout =
+                                {
+                                    .width = gui::fill(),
+                                    .height = gui::fill(),
+                                    .padding = gui::insets(0.0f, 7.0f),
+                                    .gap = 5.0f,
+                                    .align_y = gui::Align::CENTER,
+                                    .clip = true,
+                                },
+                            .style = {
+                                .background = palette.panel_raised,
+                                .radius = 4.0f,
+                            },
+                        }
+                    )) {
+                    BASE_UNUSED(branch_label);
+                    ui.label(
+                        gui::id("git_branch_icon"),
+                        GIT_BRANCH_ICON,
+                        {
+                            .layout = {.width = gui::px(16.0f), .height = gui::fill()},
+                            .style = {
+                                .foreground = palette.text,
+                                .font = branch_icon_font,
+                                .font_size = editor_scaled_font_size(editor, 12.5f),
+                            },
+                        }
+                    );
+                    ui.selectable_label(
+                        gui::id("git_branch_label"),
+                        branch,
+                        &editor.git_branch_selection,
+                        {
+                            .layout =
+                                {
+                                    .width = gui::fill(),
+                                    .height = gui::fill(),
+                                    .clip = true,
+                                },
+                            .style = {.foreground = palette.text, .font_size = editor.font_size},
+                        }
+                    );
+                }
+                gui::BoxDesc dropdown_desc = control_desc;
+                dropdown_desc.style.font = icon_font;
+                dropdown_desc.style.font_size = editor_scaled_font_size(editor, 9.5f);
+                if (ui.button(gui::id("git_branch_dropdown"), TREE_ARROW_OPEN, dropdown_desc)
+                        .activated) {
+                    editor.git_branches_open = !editor.git_branches_open;
+                }
+            }
+            if (auto actions = ui.row(
+                    gui::id("git_panel_actions"),
+                    {
+                        .layout = {
+                            .width = row_width > 0.0f ? gui::px(row_width) : gui::fill(),
+                            .height = gui::px(24.0f),
+                            .gap = 6.0f,
+                        },
+                    }
+                )) {
+                BASE_UNUSED(actions);
+                refresh_desc.layout.width = gui::fill();
+                if (ui.button(gui::id("git_refresh"), GIT_REFRESH_ICON, refresh_desc).activated) {
+                    editor.git_request = {.kind = GitRequestKind::REFRESH};
+                }
+                gui::BoxDesc fetch_desc = control_desc;
+                fetch_desc.layout.width = gui::fill();
+                if (ui.button(gui::id("git_fetch"), GIT_FETCH_ICON, fetch_desc).activated) {
+                    editor.git_request = {.kind = GitRequestKind::FETCH};
+                }
+            }
+        }
+    }
+
+    auto draw_git_branch_list(
+        gui::Frame& ui, EditorState& editor, Palette const& palette, float sidebar_content_height
+    ) -> void {
+        if (!editor.git_branches_open) {
+            return;
+        }
+        size_t const row_count = std::max(editor.git_branches.size(), static_cast<size_t>(1u));
+        float const content_height = GIT_BRANCH_ROW_HEIGHT * static_cast<float>(row_count) +
+                                     GIT_BRANCH_ROW_GAP * static_cast<float>(row_count - 1u);
+        float const max_height = std::max(
+            GIT_BRANCH_ROW_HEIGHT,
+            sidebar_content_height - GIT_BRANCH_LIST_TOP - GIT_BRANCH_LIST_PADDING * 2.0f
+        );
+        float const list_height = std::min(content_height, max_height);
+        if (auto list = ui.popup(
+                gui::id("git_branch_list"),
+                {
+                    .layout =
+                        {
+                            .width = gui::fill(),
+                            .height = gui::children(),
+                            .margin = gui::insets(GIT_BRANCH_LIST_TOP, 0.0f, 0.0f, 0.0f),
+                            .padding = gui::insets(GIT_BRANCH_LIST_PADDING),
+                        },
+                    .style = {
+                        .background = palette.panel_raised,
+                        .border = palette.border,
+                        .border_thickness = 1.0f,
+                        .radius = 4.0f,
+                    },
+                }
+            )) {
+            if (auto scroller = ui.scroll_panel(
+                    gui::id("git_branch_list_scroll"),
+                    {
+                        .layout = {
+                            .width = gui::fill(),
+                            .height = gui::px(list_height),
+                            .gap = GIT_BRANCH_ROW_GAP,
+                        },
+                    }
+                )) {
+                if (editor.git_branches.empty()) {
+                    ui.label(
+                        "No branches",
+                        {
+                            .layout =
+                                {
+                                    .width = gui::fill(),
+                                    .height = gui::px(24.0f),
+                                    .padding = gui::insets(0.0f, 7.0f),
+                                },
+                            .style = {.foreground = palette.muted, .font_size = editor.font_size},
+                        }
+                    );
+                    return;
+                }
+                for (size_t index = 0u; index < editor.git_branches.size(); ++index) {
+                    GitBranch const& branch = editor.git_branches[index];
+                    bool const current = branch.name == editor.git_current_branch;
+                    if (auto row = ui.row(
+                            gui::id("git_branch_row", index),
+                            {
+                                .layout =
+                                    {
+                                        .width = gui::fill(),
+                                        .height = gui::children(),
+                                        .min_height = gui::px(GIT_BRANCH_ROW_HEIGHT),
+                                        .padding = gui::insets(0.0f, GIT_BRANCH_ROW_PADDING_X),
+                                        .align_y = gui::Align::CENTER,
+                                    },
+                                .style = {
+                                    .background = current ? gui::color_alpha(palette.cursor, 0.22f)
+                                                          : gui::Color{},
+                                    .border = current ? gui::color_alpha(palette.cursor, 0.6f)
+                                                      : gui::Color{},
+                                    .border_thickness = current ? 1.0f : 0.0f,
+                                    .radius = current ? 4.0f : -1.0f,
+                                },
+                            }
+                        )) {
+                        ui.label(
+                            branch.name,
+                            {
+                                .layout =
+                                    {
+                                        .width = gui::fill(),
+                                        .height = gui::text(),
+                                        .clip = true,
+                                        .word_wrap = true,
+                                    },
+                                .style = {
+                                    .foreground = palette.text, .font_size = editor.font_size
+                                },
+                            }
+                        );
+                        if (row.signal().clicked_left) {
+                            editor.git_branches_open = false;
+                            if (!current) {
+                                editor.git_request = {
+                                    .kind = GitRequestKind::CHECKOUT_BRANCH,
+                                    .branch = branch.name,
+                                };
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    [[nodiscard]] auto git_commit_ready(EditorState const& editor) -> bool {
+        if (editor.git_commit_text.str().trim().empty()) {
+            return false;
+        }
+        for (GitStatusItem const& item : editor.git_status_items) {
+            if (item.scope == GitStatusScope::STAGED) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    auto draw_git_commit_controls(gui::Frame& ui, EditorState& editor, Palette const& palette)
+        -> void {
+        gui::Signal input = {};
+        if (auto input_box = ui.overlay(
+                gui::id("git_inline_commit_box"),
+                {
+                    .layout =
+                        {
+                            .width = gui::fill(),
+                            .height = gui::children(),
+                            .min_height = gui::px(30.0f),
+                            .max_height = gui::px(96.0f),
+                        },
+                    .style = {
+                        .background = palette.panel_raised,
+                        .border = palette.border,
+                        .border_thickness = 1.0f,
+                        .radius = 4.0f,
+                    },
+                }
+            )) {
+            BASE_UNUSED(input_box);
+            if (editor.git_commit_text.empty()) {
+                ui.label(
+                    gui::id("git_inline_commit_placeholder"),
+                    "Message",
+                    {
+                        .layout =
+                            {
+                                .width = gui::fill(),
+                                .height = gui::fill(),
+                                .padding = gui::insets(0.0f, 8.0f),
+                            },
+                        .style = {.foreground = palette.muted, .font_size = editor.font_size},
+                    }
+                );
+            }
+            input = ui.input_text_multiline(
+                gui::id("git_inline_commit_input"),
+                "",
+                &editor.git_commit_text,
+                {
+                    .box = {
+                        .layout =
+                            {
+                                .width = gui::fill(),
+                                .height = gui::text(),
+                                .min_height = gui::px(30.0f),
+                                .max_height = gui::px(96.0f),
+                                .padding = gui::insets(4.0f, 8.0f),
+                            },
+                        .style = {
+                            .background = gui::rgba(0, 0, 0, 0),
+                            .foreground = palette.text,
+                            .border = gui::rgba(0, 0, 0, 0),
+                            .border_thickness = 0.0f,
+                            .radius = 0.0f,
+                            .font_size = editor.font_size,
+                        },
+                    },
+                }
+            );
+        }
+        if (input.changed) {
+            editor.git_status_text = {};
+        }
+        editor.git_commit_text_focused = input.focused;
+        bool const sync_pending = editor.git_pending_pull_count != 0u;
+        bool const commit_enabled = git_commit_ready(editor);
+        if (input.activated && sync_pending) {
+            editor.git_request = {.kind = GitRequestKind::PULL};
+        } else if (input.activated && commit_enabled) {
+            submit_git_commit(editor);
+        }
+
+        bool const button_enabled = sync_pending ? !editor.git_operation_pending : commit_enabled;
+        gui::BoxDesc const button_desc = {
+            .layout =
+                {
+                    .width = gui::fill(),
+                    .height = gui::px(28.0f),
+                    .padding = gui::insets(0.0f, 10.0f),
+                },
+            .style =
+                {
+                    .background = button_enabled ? palette.cursor : palette.panel,
+                    .foreground = button_enabled ? palette.text : palette.faint,
+                    .border = button_enabled ? palette.cursor : palette.border,
+                    .border_thickness = 1.0f,
+                    .radius = 4.0f,
+                    .font_size = editor.font_size,
+                },
+            .flags = button_enabled ? gui::BOX_FLAG_NONE : gui::BOX_FLAG_DISABLED,
+        };
+        StrRef const button_text =
+            sync_pending ? fmt::tprintf("Sync Changes (%zu)", editor.git_pending_pull_count)
+                         : StrRef("Commit");
+        if (ui.button(gui::id("git_inline_commit"), button_text, button_desc).activated) {
+            if (sync_pending) {
+                editor.git_request = {.kind = GitRequestKind::PULL};
+                return;
+            }
+            submit_git_commit(editor);
+        }
+    }
+
+    [[nodiscard]] auto git_status_stageable(GitStatusItem const& item) -> bool {
+        return item.scope == GitStatusScope::UNSTAGED || item.scope == GitStatusScope::UNTRACKED;
+    }
+
+    auto draw_git_changes_header(
+        gui::Frame& ui,
+        EditorState& editor,
+        Palette const& palette,
+        font_cache::Font icon_font,
+        StrRef title,
+        size_t count,
+        GitRequestKind action,
+        size_t row_index,
+        bool open,
+        float row_width,
+        bool focused
+    ) -> bool {
+        bool const selected = editor.git_selected == row_index;
+        if (auto header = ui.row(
+                gui::id(title),
+                {
+                    .layout =
+                        {
+                            .width = row_width > 0.0f ? gui::px(row_width) : gui::fill(),
+                            .height = gui::px(24.0f),
+                            .padding = gui::insets(0.0f, 6.0f, 0.0f, 0.0f),
+                            .gap = 4.0f,
+                            .align_y = gui::Align::CENTER,
+                        },
+                    .style = {
+                        .background =
+                            selected ? gui::color_alpha(palette.cursor, focused ? 0.28f : 0.16f)
+                                     : gui::Color{},
+                        .border = selected ? (focused ? palette.cursor
+                                                      : gui::color_alpha(palette.cursor, 0.6f))
+                                           : gui::Color{},
+                        .border_thickness = selected ? 1.0f : 0.0f,
+                        .radius = selected ? 4.0f : -1.0f,
+                    },
+                }
+            )) {
+            ui.label(
+                open ? TREE_ARROW_OPEN : TREE_ARROW_CLOSED,
+                {
+                    .layout = {.width = gui::px(TREE_ARROW_SLOT_WIDTH), .height = gui::fill()},
+                    .style = {
+                        .foreground = palette.muted,
+                        .font = icon_font,
+                        .font_size = editor_scaled_font_size(editor, 9.5f),
+                    },
+                }
+            );
+            ui.label(
+                title,
+                {
+                    .layout = {.width = gui::fill(), .height = gui::fill(), .clip = true},
+                    .style = {.foreground = palette.text, .font_size = editor.font_size},
+                }
+            );
+            bool action_activated = false;
+            if (count != 0u) {
+                gui::BoxDesc const button_desc = {
+                    .layout = {.width = gui::px(20.0f), .height = gui::px(20.0f)},
+                    .style = {
+                        .background = palette.panel,
+                        .foreground = palette.text,
+                        .border = palette.border,
+                        .border_thickness = 1.0f,
+                        .radius = 4.0f,
+                        .font_size = editor.font_size,
+                    },
+                };
+                StrRef const button_text = action == GitRequestKind::STAGE_ALL ? "+" : "-";
+                if (ui.button(
+                          gui::id(gui::id("git_status_group_action"), title),
+                          button_text,
+                          button_desc
+                    )
+                        .activated) {
+                    action_activated = true;
+                    editor.git_request = {.kind = action};
+                }
+            }
+            gui::Signal const signal = header.signal();
+            if (signal.clicked_left && !action_activated) {
+                editor.git_selected = row_index;
+            }
+            return signal.clicked_left && !action_activated;
+        }
+        return false;
+    }
+
+    auto draw_git_label(
+        gui::Frame& ui,
+        EditorState const& editor,
+        Palette const& palette,
+        StrRef text,
+        gui::Color color,
+        float indent = 0.0f
+    ) -> void {
+        ui.label(
+            text,
+            {
+                .layout =
+                    {
+                        .width = gui::fill(),
+                        .height = gui::px(GIT_ROW_HEIGHT),
+                        .padding = gui::insets(0.0f, 6.0f + indent),
+                    },
+                .style = {.foreground = color, .font_size = editor.font_size},
+            }
+        );
+        BASE_UNUSED(palette);
+    }
+
+    auto draw_git_row_frame(
+        gui::Frame& ui,
+        EditorState& editor,
+        Palette const& palette,
+        size_t row_index,
+        float row_width,
+        float indent,
+        bool focused,
+        gui::Color highlight = {}
+    ) -> gui::Scope {
+        bool const selected = editor.git_selected == row_index;
+        bool const highlighted = highlight.a >= 0.0f;
+        return ui.row(
+            gui::id("git_row", row_index),
+            {
+                .layout =
+                    {
+                        .width = row_width > 0.0f ? gui::px(row_width) : gui::fill(),
+                        .height = gui::px(GIT_ROW_HEIGHT),
+                        .padding = gui::insets(0.0f, 6.0f + indent),
+                        .gap = 4.0f,
+                        .align_y = gui::Align::CENTER,
+                    },
+                .style = {
+                    .background = selected
+                                      ? gui::color_alpha(palette.cursor, focused ? 0.28f : 0.16f)
+                                  : highlighted ? gui::color_alpha(highlight, 0.14f)
+                                                : gui::Color{},
+                    .border = selected      ? (focused ? palette.cursor
+                                                       : gui::color_alpha(palette.cursor, 0.6f))
+                              : highlighted ? gui::color_alpha(highlight, 0.55f)
+                                            : gui::Color{},
+                    .border_thickness = selected || highlighted ? 1.0f : 0.0f,
+                    .radius = selected || highlighted ? 4.0f : -1.0f,
+                },
+            }
+        );
+    }
+
+    [[nodiscard]] auto git_commit_popup_header(GitCommit const& commit) -> StrRef {
+        if (commit.author.empty()) {
+            return commit.short_oid;
+        }
+        if (commit.relative_date.empty()) {
+            return commit.author;
+        }
+        if (commit.author_date.empty()) {
+            return fmt::tprintf("%s, %s", commit.author, commit.relative_date);
+        }
+        return fmt::tprintf("%s, %s (%s)", commit.author, commit.relative_date, commit.author_date);
+    }
+
+    [[nodiscard]] auto git_commit_popup_width(float row_width) -> float {
+        return std::clamp(
+            row_width + 120.0f, GIT_COMMIT_POPUP_MIN_WIDTH, GIT_COMMIT_POPUP_MAX_WIDTH
+        );
+    }
+
+    [[nodiscard]] auto git_commit_popup_stats_tail(GitCommit const& commit) -> bool {
+        return commit.insertion_count != 0u || commit.deletion_count != 0u;
+    }
+
+    auto append_git_commit_popup_stats(StringBuffer& text, GitCommit const& commit) -> void {
+        if (commit.changed_file_count == 0u) {
+            return;
+        }
+        BASE_UNUSED(text.write_string(
+            fmt::tprintf(
+                "%zu file%s changed",
+                commit.changed_file_count,
+                commit.changed_file_count == 1u ? "" : "s"
+            )
+        ));
+        if (git_commit_popup_stats_tail(commit)) {
+            BASE_UNUSED(text.write_byte(','));
+        }
+        if (commit.insertion_count != 0u) {
+            BASE_UNUSED(text.write_string(
+                fmt::tprintf(
+                    " %zu insertion%s(+)",
+                    commit.insertion_count,
+                    commit.insertion_count == 1u ? "" : "s"
+                )
+            ));
+            if (commit.deletion_count != 0u) {
+                BASE_UNUSED(text.write_byte(','));
+            }
+        }
+        if (commit.deletion_count != 0u) {
+            BASE_UNUSED(text.write_string(
+                fmt::tprintf(
+                    " %zu deletion%s(-)",
+                    commit.deletion_count,
+                    commit.deletion_count == 1u ? "" : "s"
+                )
+            ));
+        }
+    }
+
+    [[nodiscard]] auto git_commit_conflicts_header(StrRef line) -> bool {
+        return line.trim() == "# Conflicts:";
+    }
+
+    [[nodiscard]] auto git_commit_conflict_line(StrRef line) -> StrRef {
+        line = line.trim_end_matches('\r');
+        if (line == "#") {
+            return {};
+        }
+        if (line.starts_with("#\t")) {
+            return line.substr(2u).trim();
+        }
+        if (line.starts_with("# ")) {
+            return line.substr(2u).trim();
+        }
+        return {};
+    }
+
+    auto append_git_commit_popup_line(StringBuffer& text, StrRef line) -> void {
+        if (!text.empty()) {
+            BASE_UNUSED(text.write_byte('\n'));
+        }
+        BASE_UNUSED(text.write_string(line));
+    }
+
+    auto append_git_commit_popup_message(StringBuffer& text, GitCommit const& commit) -> void {
+        append_git_commit_popup_line(text, commit.summary);
+
+        size_t offset = 0u;
+        size_t line_count = 0u;
+        bool conflicts = false;
+        while (offset < commit.body.size() && line_count < GIT_COMMIT_POPUP_MAX_BODY_LINES) {
+            StrRef const line = next_text_line(commit.body, offset);
+            if (git_commit_conflicts_header(line)) {
+                append_git_commit_popup_line(text, "Conflicts:");
+                conflicts = true;
+                line_count += 1u;
+                continue;
+            }
+            if (conflicts) {
+                StrRef const conflict = git_commit_conflict_line(line);
+                if (conflict.empty()) {
+                    continue;
+                }
+                append_git_commit_popup_line(text, conflict);
+                line_count += 1u;
+                continue;
+            }
+            append_git_commit_popup_line(text, line);
+            line_count += 1u;
+        }
+        if (offset < commit.body.size()) {
+            BASE_UNUSED(text.write_string("\n..."));
+        }
+    }
+
+    [[nodiscard]] auto git_commit_popup_text(Arena& arena, GitCommit const& commit) -> StrRef {
+        StringBuffer text = {};
+        BASE_UNUSED(text.init(512u + commit.body.size() + commit.refs.size(), arena.resource()));
+        BASE_UNUSED(text.write_string(git_commit_popup_header(commit)));
+        append_git_commit_popup_message(text, commit);
+        if (commit.changed_file_count != 0u) {
+            BASE_UNUSED(text.write_byte('\n'));
+            append_git_commit_popup_stats(text, commit);
+        }
+
+        BASE_UNUSED(text.write_byte('\n'));
+        BASE_UNUSED(text.write_string(commit.short_oid));
+        if (!commit.refs.empty()) {
+            BASE_UNUSED(text.write_byte(' '));
+            BASE_UNUSED(text.write_string(commit.refs));
+        }
+        return text.str();
+    }
+
+    auto draw_git_commit_popup_label(
+        gui::Frame& ui, gui::Id id, StrRef text, gui::Color color, float font_size, bool bold
+    ) -> void {
+        if (text.empty()) {
+            return;
+        }
+        gui::BoxDesc const label_desc = {
+            .layout = {.width = gui::fill(), .height = gui::text(), .word_wrap = true},
+            .style = {.foreground = color, .font_size = font_size},
+        };
+        if (!bold) {
+            ui.label(id, text, label_desc);
+            return;
+        }
+        if (auto overlay =
+                ui.overlay(id, {.layout = {.width = gui::fill(), .height = gui::children()}})) {
+            BASE_UNUSED(overlay);
+            ui.label(gui::id("bold_base"), text, label_desc);
+            gui::BoxDesc offset_desc = label_desc;
+            offset_desc.layout.margin.left = 0.45f;
+            ui.label(gui::id("bold_offset"), text, offset_desc);
+        }
+    }
+
+    auto draw_git_commit_popup_header_line(
+        gui::Frame& ui, EditorState const& editor, Palette const& palette, GitCommit const& commit
+    ) -> void {
+        if (auto overlay = ui.overlay(
+                gui::id("git_commit_popup_header"),
+                {.layout = {.width = gui::fill(), .height = gui::children()}}
+            )) {
+            BASE_UNUSED(overlay);
+            draw_git_commit_popup_label(
+                ui,
+                gui::id("git_commit_popup_header_text"),
+                git_commit_popup_header(commit),
+                commit.author.empty() ? palette.text : palette.muted,
+                editor.font_size,
+                false
+            );
+            if (!commit.author.empty()) {
+                ui.label(
+                    gui::id("git_commit_popup_author"),
+                    commit.author,
+                    {
+                        .layout = {.width = gui::text(), .height = gui::text()},
+                        .style = {.foreground = palette.cursor, .font_size = editor.font_size},
+                    }
+                );
+            }
+        }
+    }
+
+    auto draw_git_commit_popup_stats(
+        gui::Frame& ui, EditorState const& editor, Palette const& palette, GitCommit const& commit
+    ) -> void {
+        if (commit.changed_file_count == 0u) {
+            return;
+        }
+        Arena& arena = thread_temp_arena();
+        StringBuffer text = {};
+        BASE_UNUSED(text.init(128u, arena.resource()));
+        append_git_commit_popup_stats(text, commit);
+        if (auto overlay = ui.overlay(
+                gui::id("git_commit_popup_stats"),
+                {.layout = {.width = gui::fill(), .height = gui::children()}}
+            )) {
+            BASE_UNUSED(overlay);
+            draw_git_commit_popup_label(
+                ui,
+                gui::id("git_commit_popup_stats_text"),
+                text.str(),
+                palette.text,
+                editor.font_size,
+                false
+            );
+            if (auto row = ui.row(
+                    gui::id("git_commit_popup_stats_color"),
+                    {.layout = {.width = gui::fill(), .height = gui::children()}}
+                )) {
+                BASE_UNUSED(row);
+                StrRef const files = fmt::tprintf(
+                    "%zu file%s changed%s",
+                    commit.changed_file_count,
+                    commit.changed_file_count == 1u ? "" : "s",
+                    git_commit_popup_stats_tail(commit) ? "," : ""
+                );
+                ui.label(
+                    gui::id("git_commit_popup_stats_files"),
+                    files,
+                    {
+                        .layout = {.width = gui::text(), .height = gui::text()},
+                        .style = {.foreground = palette.text, .font_size = editor.font_size},
+                    }
+                );
+                if (commit.insertion_count != 0u) {
+                    StrRef const insertions = fmt::tprintf(
+                        " %zu insertion%s(+)%s",
+                        commit.insertion_count,
+                        commit.insertion_count == 1u ? "" : "s",
+                        commit.deletion_count != 0u ? "," : ""
+                    );
+                    ui.label(
+                        gui::id("git_commit_popup_stats_insertions"),
+                        insertions,
+                        {
+                            .layout = {.width = gui::text(), .height = gui::text()},
+                            .style = {
+                                .foreground = palette.mode_insert, .font_size = editor.font_size
+                            },
+                        }
+                    );
+                }
+                if (commit.deletion_count != 0u) {
+                    StrRef const deletions = fmt::tprintf(
+                        " %zu deletion%s(-)",
+                        commit.deletion_count,
+                        commit.deletion_count == 1u ? "" : "s"
+                    );
+                    ui.label(
+                        gui::id("git_commit_popup_stats_deletions"),
+                        deletions,
+                        {
+                            .layout = {.width = gui::text(), .height = gui::text()},
+                            .style = {
+                                .foreground = palette.preprocessor, .font_size = editor.font_size
+                            },
+                        }
+                    );
+                }
+            }
+        }
+    }
+
+    [[nodiscard]] auto git_commit_popup_footer_text(GitCommit const& commit) -> StrRef {
+        if (commit.refs.empty()) {
+            return commit.short_oid;
+        }
+        return fmt::tprintf("%s %s", commit.short_oid, commit.refs);
+    }
+
+    auto draw_git_commit_popup_footer(
+        gui::Frame& ui, EditorState const& editor, Palette const& palette, GitCommit const& commit
+    ) -> void {
+        if (auto overlay = ui.overlay(
+                gui::id("git_commit_popup_footer"),
+                {.layout = {.width = gui::fill(), .height = gui::children()}}
+            )) {
+            BASE_UNUSED(overlay);
+            draw_git_commit_popup_label(
+                ui,
+                gui::id("git_commit_popup_footer_text"),
+                git_commit_popup_footer_text(commit),
+                palette.text,
+                editor.font_size,
+                false
+            );
+            ui.label(
+                gui::id("git_commit_popup_footer_oid"),
+                commit.short_oid,
+                {
+                    .layout = {.width = gui::text(), .height = gui::text()},
+                    .style = {.foreground = palette.cursor, .font_size = editor.font_size},
+                }
+            );
+        }
+    }
+
+    auto draw_git_commit_popup_message(
+        gui::Frame& ui, EditorState const& editor, Palette const& palette, GitCommit const& commit
+    ) -> void {
+        Arena& arena = thread_temp_arena();
+        StringBuffer normal = {};
+        BASE_UNUSED(normal.init(256u + commit.body.size(), arena.resource()));
+        append_git_commit_popup_line(normal, commit.summary);
+        size_t part_index = 0u;
+
+        auto flush_normal = [&]() -> void {
+            if (normal.empty()) {
+                return;
+            }
+            draw_git_commit_popup_label(
+                ui,
+                gui::id("git_commit_popup_message", part_index),
+                normal.str(),
+                palette.text,
+                editor.font_size,
+                false
+            );
+            part_index += 1u;
+            normal.reset();
+        };
+
+        size_t offset = 0u;
+        size_t line_count = 0u;
+        bool conflicts = false;
+        while (offset < commit.body.size() && line_count < GIT_COMMIT_POPUP_MAX_BODY_LINES) {
+            StrRef const line = next_text_line(commit.body, offset);
+            if (git_commit_conflicts_header(line)) {
+                flush_normal();
+                draw_git_commit_popup_label(
+                    ui,
+                    gui::id("git_commit_popup_conflicts_header"),
+                    "Conflicts:",
+                    palette.text,
+                    editor.font_size,
+                    true
+                );
+                conflicts = true;
+                line_count += 1u;
+                continue;
+            }
+            if (conflicts) {
+                StrRef const conflict = git_commit_conflict_line(line);
+                if (conflict.empty()) {
+                    continue;
+                }
+                draw_git_commit_popup_label(
+                    ui,
+                    gui::id("git_commit_popup_conflict_path", line_count),
+                    conflict,
+                    palette.text,
+                    editor.font_size,
+                    true
+                );
+                line_count += 1u;
+                continue;
+            }
+            append_git_commit_popup_line(normal, line);
+            line_count += 1u;
+        }
+        if (offset < commit.body.size()) {
+            append_git_commit_popup_line(normal, "...");
+        }
+        flush_normal();
+    }
+
+    [[nodiscard]] auto draw_git_commit_popup_body(
+        gui::Frame& ui,
+        EditorState& editor,
+        Palette const& palette,
+        GitCommit const& commit,
+        float popup_width
+    ) -> gui::Signal {
+        Arena& arena = thread_temp_arena();
+        StrRef const text = git_commit_popup_text(arena, commit);
+        float const text_width = std::max(0.0f, popup_width - 16.0f);
+        if (auto body = ui.overlay(
+                gui::id("git_commit_popup_body"),
+                {.layout = {.width = gui::fill(), .height = gui::children()}}
+            )) {
+            BASE_UNUSED(body);
+            gui::Signal const text_signal = ui.selectable_label(
+                gui::id("git_commit_popup_text"),
+                text,
+                &editor.git_commit_popup_selection,
+                {
+                    .layout =
+                        {
+                            .width = gui::px(text_width),
+                            .height = gui::text(),
+                            .show_scrollbars = false,
+                            .word_wrap = true,
+                        },
+                    .style = {
+                        .foreground = gui::color_alpha(palette.text, 0.0f),
+                        .font_size = editor.font_size,
+                    },
+                }
+            );
+            if (auto visible = ui.column(
+                    gui::id("git_commit_popup_visible"),
+                    {.layout = {.width = gui::fill(), .height = gui::children()}}
+                )) {
+                BASE_UNUSED(visible);
+                draw_git_commit_popup_header_line(ui, editor, palette, commit);
+                draw_git_commit_popup_message(ui, editor, palette, commit);
+                draw_git_commit_popup_stats(ui, editor, palette, commit);
+                draw_git_commit_popup_footer(ui, editor, palette, commit);
+            }
+            return text_signal;
+        }
+        return {};
+    }
+
+    [[nodiscard]] auto draw_git_commit_popup(
+        gui::Frame& ui,
+        EditorState& editor,
+        Palette const& palette,
+        GitCommit const& commit,
+        size_t commit_index,
+        gui::Signal row_signal,
+        float row_width,
+        float graph_width,
+        bool open
+    ) -> bool {
+        float const popup_width = git_commit_popup_width(row_width);
+        gui::BoxDesc const desc = {
+            .layout =
+                {
+                    .width = gui::px(popup_width),
+                    .height = gui::children(),
+                    .padding = gui::insets(8.0f),
+                    .gap = 6.0f,
+                },
+            .style =
+                {
+                    .background = palette.panel_raised,
+                    .border = palette.border,
+                    .border_thickness = 1.0f,
+                    .radius = 5.0f,
+                },
+            .debug_name = "git_commit_popup",
+        };
+        gui::Scope popup = ui.popup_above(
+            gui::id("git_commit_popup", commit_index),
+            {
+                .source = row_signal,
+                .box = desc,
+                .offset_x = graph_width + 10.0f,
+                .gap = 2.0f,
+                .open = open,
+            }
+        );
+        if (!popup) {
+            return false;
+        }
+        gui::Signal const popup_signal = popup.signal();
+        gui::Signal const text_signal =
+            draw_git_commit_popup_body(ui, editor, palette, commit, popup_width);
+        return popup_signal.hovered || text_signal.hovered || text_signal.active;
+    }
+
+    [[nodiscard]] auto git_commit_popup_mouse_moved(EditorState const& editor, gui::Vec2 mouse)
+        -> bool {
+        return mouse.x != editor.git_commit_popup_mouse_pos.x ||
+               mouse.y != editor.git_commit_popup_mouse_pos.y;
+    }
+
+    auto update_git_commit_popup_lifetime(
+        EditorState& editor,
+        size_t commit_index,
+        bool source_hovered,
+        bool popup_hovered,
+        gui::InputState const& input
+    ) -> void {
+        if (editor.git_commit_popup != commit_index) {
+            return;
+        }
+        if (source_hovered || popup_hovered) {
+            editor.git_commit_popup_keyboard = false;
+            editor.git_commit_popup_mouse_known = false;
+            return;
+        }
+        if (!editor.git_commit_popup_keyboard) {
+            editor.git_commit_popup = GIT_COMMIT_POPUP_NONE;
+            editor.git_commit_popup_selection = {};
+            editor.git_commit_popup_mouse_known = false;
+            return;
+        }
+        if (!editor.git_commit_popup_mouse_known) {
+            editor.git_commit_popup_mouse_pos = input.mouse_pos;
+            editor.git_commit_popup_mouse_known = true;
+            return;
+        }
+        if (git_commit_popup_mouse_moved(editor, input.mouse_pos)) {
+            editor.git_commit_popup = GIT_COMMIT_POPUP_NONE;
+            editor.git_commit_popup_selection = {};
+            editor.git_commit_popup_keyboard = false;
+            editor.git_commit_popup_mouse_known = false;
+        }
+    }
+
+    struct GitStatusRowSignal {
+        gui::Signal row = {};
+        bool stage = false;
+        bool unstage = false;
+    };
+
+    auto draw_git_status_row(
+        gui::Frame& ui,
+        EditorState& editor,
+        Palette const& palette,
+        GitStatusItem const& item,
+        size_t row_index,
+        float row_width,
+        bool focused
+    ) -> GitStatusRowSignal {
+        if (auto row =
+                draw_git_row_frame(ui, editor, palette, row_index, row_width, 0.0f, focused)) {
+            gui::Signal const signal = row.signal();
+            if (signal.clicked_left) {
+                editor.git_selected = row_index;
+            }
+            GitStatusRowSignal result = {.row = signal};
+            float constexpr child_indent = 10.0f;
+            StrRef const status = git_status_display_label(item.status);
+            gui::Color const status_color = git_status_color(palette, item.status);
+            StrRef const parent = git_parent_label(item.path);
+            bool const has_stage_button =
+                git_status_stageable(item) || item.scope == GitStatusScope::STAGED;
+            float const button_width = has_stage_button ? 20.0f : 0.0f;
+            float const gap_count = has_stage_button ? 4.0f : 3.0f;
+            float const name_max_width = std::max(
+                0.0f, row_width - child_indent - 12.0f - 18.0f - button_width - 4.0f * gap_count
+            );
+            ui.spacer({.layout = {.width = gui::px(child_indent), .height = gui::px(1.0f)}});
+            ui.label(
+                gui::id("git_status_left", row_index),
+                status,
+                {
+                    .layout = {.width = gui::px(18.0f), .height = gui::fill()},
+                    .style = {.foreground = status_color, .font_size = editor.font_size},
+                }
+            );
+            ui.label(
+                gui::id("git_status_name", row_index),
+                render_path_leaf(item.path),
+                {
+                    .layout =
+                        {
+                            .width = gui::text(),
+                            .height = gui::fill(),
+                            .max_width = gui::px(name_max_width),
+                            .clip = true,
+                        },
+                    .style = {.foreground = palette.text, .font_size = editor.font_size},
+                }
+            );
+            if (!parent.empty()) {
+                ui.label(
+                    gui::id("git_status_parent", row_index),
+                    parent,
+                    {
+                        .layout = {.width = gui::fill(), .height = gui::fill(), .clip = true},
+                        .style = {.foreground = palette.muted, .font_size = editor.font_size},
+                    }
+                );
+            } else {
+                ui.spacer({.layout = {.width = gui::fill(), .height = gui::px(1.0f)}});
+            }
+            if (has_stage_button) {
+                gui::BoxDesc const button_desc = {
+                    .layout = {.width = gui::px(20.0f), .height = gui::px(20.0f)},
+                    .style = {
+                        .background = palette.panel,
+                        .foreground = palette.text,
+                        .border = palette.border,
+                        .border_thickness = 1.0f,
+                        .radius = 4.0f,
+                        .font_size = editor.font_size,
+                    },
+                };
+                bool const stage = item.scope != GitStatusScope::STAGED;
+                bool const activated =
+                    ui.button(
+                          gui::id("git_status_stage", row_index), stage ? "+" : "-", button_desc
+                    )
+                        .activated;
+                result.stage = activated && stage;
+                result.unstage = activated && !stage;
+            }
+            return result;
+        }
+        return {};
+    }
+
+    auto draw_git_commit_row(
+        gui::Frame& ui,
+        EditorState& editor,
+        Palette const& palette,
+        GitCommit& commit,
+        size_t commit_index,
+        size_t row_index,
+        float row_width,
+        float graph_width,
+        bool focused,
+        gui::InputState const& input
+    ) -> gui::Signal {
+        gui::Color const graph_color = commit.incoming ? palette.number : palette.cursor;
+        gui::Signal signal = {};
+        {
+            auto row = draw_git_row_frame(
+                ui,
+                editor,
+                palette,
+                row_index,
+                row_width,
+                0.0f,
+                focused,
+                commit.incoming ? graph_color : gui::Color{}
+            );
+            if (!row) {
+                return {};
+            }
+            signal = row.signal();
+            if (signal.clicked_left) {
+                editor.git_selected = row_index;
+                editor.git_commit_popup = GIT_COMMIT_POPUP_NONE;
+                editor.git_commit_popup_selection = {};
+                editor.git_commit_popup_keyboard = false;
+                editor.git_commit_popup_mouse_known = false;
+            }
+            if (signal.hovered && editor.git_commit_popup != commit_index) {
+                editor.git_commit_popup = commit_index;
+                editor.git_commit_popup_selection = {};
+                editor.git_commit_popup_keyboard = false;
+                editor.git_commit_popup_mouse_known = false;
+            }
+            ui.label(
+                git_commit_graph_id(commit_index),
+                "",
+                {
+                    .layout =
+                        {
+                            .width = gui::px(graph_width),
+                            .height = gui::fill(),
+                        },
+                    .style = {.foreground = graph_color, .font_size = editor.font_size},
+                    .debug_name = GIT_GRAPH_BOX_DEBUG_NAME,
+                }
+            );
+            ui.label(
+                gui::id("git_commit_summary", row_index),
+                commit.summary,
+                {
+                    .layout = {.width = gui::fill(), .height = gui::fill(), .clip = true},
+                    .style = {.foreground = palette.text, .font_size = editor.font_size},
+                }
+            );
+            StrRef const ref_label = git_commit_ref_label(commit);
+            if (!ref_label.empty()) {
+                ui.label(
+                    gui::id("git_commit_ref", row_index),
+                    ref_label,
+                    {
+                        .layout =
+                            {
+                                .width = gui::px(92.0f),
+                                .height = gui::px(18.0f),
+                                .padding = gui::insets(0.0f, 5.0f),
+                                .clip = true,
+                            },
+                        .style = {
+                            .background = gui::color_alpha(graph_color, 0.18f),
+                            .foreground = graph_color,
+                            .border = gui::color_alpha(graph_color, 0.72f),
+                            .border_thickness = 1.0f,
+                            .radius = 4.0f,
+                            .font_size = editor_scaled_font_size(editor, 11.0f),
+                        },
+                    }
+                );
+            }
+            ui.label(
+                gui::id("git_commit_oid", row_index),
+                commit.short_oid,
+                {
+                    .layout = {.width = gui::px(58.0f), .height = gui::fill(), .clip = true},
+                    .style = {.foreground = palette.muted, .font_size = editor.font_size},
+                }
+            );
+        }
+        bool const open_popup = editor.git_commit_popup == commit_index;
+        if (open_popup || editor.git_commit_popup == GIT_COMMIT_POPUP_NONE) {
+            bool const popup_hovered = draw_git_commit_popup(
+                ui,
+                editor,
+                palette,
+                commit,
+                commit_index,
+                signal,
+                row_width,
+                graph_width,
+                open_popup
+            );
+            if (open_popup) {
+                update_git_commit_popup_lifetime(
+                    editor, commit_index, signal.hovered, popup_hovered, input
+                );
+            }
+        }
+        return signal;
+    }
+
+    auto draw_git_commit_file_row(
+        gui::Frame& ui,
+        EditorState& editor,
+        Palette const& palette,
+        GitCommitFile const& file,
+        size_t row_index,
+        float row_width,
+        bool focused
+    ) -> gui::Signal {
+        if (auto row =
+                draw_git_row_frame(ui, editor, palette, row_index, row_width, 18.0f, focused)) {
+            gui::Signal const signal = row.signal();
+            if (signal.clicked_left) {
+                editor.git_selected = row_index;
+            }
+            StrRef const status = git_status_display_label(file.status);
+            gui::Color const status_color = git_status_color(palette, file.status);
+            ui.label(
+                gui::id("git_commit_file_status", row_index),
+                status,
+                {
+                    .layout = {.width = gui::px(18.0f), .height = gui::fill()},
+                    .style = {.foreground = status_color, .font_size = editor.font_size},
+                }
+            );
+            ui.label(
+                gui::id("git_commit_file_path", row_index),
+                file.path,
+                {
+                    .layout = {.width = gui::fill(), .height = gui::fill(), .clip = true},
+                    .style = {.foreground = palette.muted, .font_size = editor.font_size},
+                }
+            );
+            return signal;
+        }
+        return {};
+    }
+
+    auto draw_closed_git_commit_graph(
+        gui::Frame& ui,
+        EditorState& editor,
+        Palette const& palette,
+        size_t& row_index,
+        float row_width,
+        float graph_width,
+        bool focused,
+        GitGraphVirtualRange range,
+        gui::InputState const& input
+    ) -> void {
+        size_t const commit_count = editor.git_commits.size();
+        size_t const first = std::min(range.first, commit_count);
+        size_t const end = std::min(range.end, commit_count);
+        draw_git_graph_spacer(ui, row_width, first);
+        row_index += first;
+        for (size_t commit_index = first; commit_index < end; ++commit_index) {
+            GitCommit& commit = editor.git_commits[commit_index];
+            gui::Signal const signal = draw_git_commit_row(
+                ui,
+                editor,
+                palette,
+                commit,
+                commit_index,
+                row_index,
+                row_width,
+                graph_width,
+                focused,
+                input
+            );
+            if (signal.clicked_left) {
+                commit.open = true;
+            }
+            row_index += 1u;
+        }
+        draw_git_graph_spacer(ui, row_width, commit_count - end);
+        row_index += commit_count - end;
+    }
+
+    auto draw_open_git_commit_graph(
+        gui::Frame& ui,
+        EditorState& editor,
+        Palette const& palette,
+        size_t& row_index,
+        float row_width,
+        float graph_width,
+        bool focused,
+        GitGraphVirtualRange range,
+        gui::InputState const& input
+    ) -> void {
+        size_t graph_row = 0u;
+        size_t skipped_rows = 0u;
+        for (size_t commit_index = 0u; commit_index < editor.git_commits.size(); ++commit_index) {
+            GitCommit& commit = editor.git_commits[commit_index];
+            bool const commit_visible = graph_row >= range.first && graph_row < range.end;
+            if (commit_visible) {
+                draw_git_graph_spacer(ui, row_width, skipped_rows);
+                skipped_rows = 0u;
+                gui::Signal const signal = draw_git_commit_row(
+                    ui,
+                    editor,
+                    palette,
+                    commit,
+                    commit_index,
+                    row_index,
+                    row_width,
+                    graph_width,
+                    focused,
+                    input
+                );
+                if (signal.clicked_left) {
+                    commit.open = false;
+                }
+            } else {
+                skipped_rows += 1u;
+            }
+            row_index += 1u;
+            graph_row += 1u;
+            if (!commit.open) {
+                continue;
+            }
+            for (GitCommitFile const& file : editor.git_commit_files) {
+                if (file.commit_oid != commit.oid) {
+                    continue;
+                }
+                bool const file_visible = graph_row >= range.first && graph_row < range.end;
+                if (file_visible) {
+                    draw_git_graph_spacer(ui, row_width, skipped_rows);
+                    skipped_rows = 0u;
+                    gui::Signal const file_signal = draw_git_commit_file_row(
+                        ui, editor, palette, file, row_index, row_width, focused
+                    );
+                    if (file_signal.clicked_left) {
+                        editor.git_request = {
+                            .kind = GitRequestKind::OPEN_COMMIT_DIFF,
+                            .path = file.path,
+                            .old_path = file.old_path,
+                            .commit_oid = file.commit_oid,
+                        };
+                    }
+                } else {
+                    skipped_rows += 1u;
+                }
+                row_index += 1u;
+                graph_row += 1u;
+            }
+        }
+        draw_git_graph_spacer(ui, row_width, skipped_rows);
+    }
+
+    [[nodiscard]] auto git_loading_alpha(float phase, size_t index) -> float {
+        float offset = phase - static_cast<float>(index) * 0.18f;
+        if (offset < 0.0f) {
+            offset += 1.0f;
+        }
+        float const pulse = offset < 0.5f ? offset * 2.0f : (1.0f - offset) * 2.0f;
+        return 0.24f + pulse * 0.62f;
+    }
+
+    auto draw_git_loading_row(
+        gui::Frame& ui, EditorState const& editor, Palette const& palette, float row_width
+    ) -> void {
+        if (auto row = ui.row(
+                gui::id("git_loading_row"),
+                {
+                    .layout = {
+                        .width = row_width > 0.0f ? gui::px(row_width) : gui::fill(),
+                        .height = gui::px(GIT_ROW_HEIGHT),
+                        .padding = gui::insets(0.0f, 6.0f),
+                        .gap = 6.0f,
+                        .align_y = gui::Align::CENTER,
+                    },
+                }
+            )) {
+            BASE_UNUSED(row);
+            ui.label(
+                "Loading commits",
+                {
+                    .layout = {.width = gui::text(), .height = gui::fill()},
+                    .style = {.foreground = palette.muted, .font_size = editor.font_size},
+                }
+            );
+            for (size_t index = 0u; index < 3u; ++index) {
+                ui.spacer({
+                    .layout = {.width = gui::px(5.0f), .height = gui::px(5.0f)},
+                    .style = {
+                        .background = gui::color_alpha(
+                            palette.cursor, git_loading_alpha(editor.git_loading_phase, index)
+                        ),
+                        .radius = 2.5f,
+                    },
+                });
+            }
+            ui.spacer({.layout = {.width = gui::fill(), .height = gui::px(1.0f)}});
+        }
+    }
+
+    [[nodiscard]] auto git_status_scope_count(EditorState const& editor, GitStatusScope scope)
+        -> size_t {
+        size_t count = 0u;
+        for (GitStatusItem const& item : editor.git_status_items) {
+            if (item.scope == scope) {
+                count += 1u;
+            }
+        }
+        return count;
+    }
+
+    [[nodiscard]] auto git_status_change_count(EditorState const& editor) -> size_t {
+        return git_status_scope_count(editor, GitStatusScope::UNSTAGED) +
+               git_status_scope_count(editor, GitStatusScope::UNTRACKED);
+    }
+
+    auto draw_git_status_items(
+        gui::Frame& ui,
+        EditorState& editor,
+        Palette const& palette,
+        GitStatusScope scope,
+        size_t& row_index,
+        float row_width,
+        bool focused
+    ) -> void {
+        for (size_t index = 0u; index < editor.git_status_items.size(); ++index) {
+            GitStatusItem const& item = editor.git_status_items[index];
+            if (item.scope != scope) {
+                continue;
+            }
+            GitStatusRowSignal const signal =
+                draw_git_status_row(ui, editor, palette, item, row_index, row_width, focused);
+            if (signal.stage) {
+                editor.git_request = {
+                    .kind = GitRequestKind::STAGE,
+                    .path = item.path,
+                };
+            } else if (signal.unstage) {
+                editor.git_request = {
+                    .kind = GitRequestKind::UNSTAGE,
+                    .path = item.path,
+                };
+            } else if (signal.row.clicked_left) {
+                editor.git_request = {
+                    .kind = GitRequestKind::OPEN_STATUS_DIFF,
+                    .scope = item.scope,
+                    .path = item.path,
+                    .old_path = item.old_path,
+                };
+            }
+            row_index += 1u;
+        }
+    }
+
+    auto draw_git_panel_content(
+        gui::Frame& ui,
+        EditorState& editor,
+        Palette const& palette,
+        font_cache::Font icon_font,
+        font_cache::Font branch_icon_font,
+        float row_width,
+        float sidebar_content_height,
+        gui::ScrollState scroll,
+        bool focused,
+        gui::InputState const& input
+    ) -> void {
+        size_t const git_log_limit = git_log_limit_for_height(sidebar_content_height);
+        if (editor.git_graph_open && editor.git_commit_limit < git_log_limit) {
+            editor.git_log_refresh_requested = true;
+        }
+
+        size_t row_index = 0u;
+        draw_git_panel_header(ui, editor, palette, icon_font, branch_icon_font, row_width);
+        draw_git_branch_list(ui, editor, palette, sidebar_content_height);
+        ui.spacer({.layout = {.width = gui::fill(), .height = gui::px(8.0f)}});
+        draw_git_commit_controls(ui, editor, palette);
+        if (editor.git_status_items.empty()) {
+            if (draw_git_changes_header(
+                    ui,
+                    editor,
+                    palette,
+                    icon_font,
+                    "Changes",
+                    0u,
+                    GitRequestKind::STAGE_ALL,
+                    row_index,
+                    editor.git_changes_open,
+                    row_width,
+                    focused
+                )) {
+                editor.git_changes_open = !editor.git_changes_open;
+            }
+            row_index += 1u;
+            if (editor.git_changes_open && !editor.git_operation_pending) {
+                draw_git_label(ui, editor, palette, "Working tree clean", palette.muted, 8.0f);
+            }
+        } else {
+            size_t const staged_count = git_status_scope_count(editor, GitStatusScope::STAGED);
+            if (staged_count != 0u) {
+                if (draw_git_changes_header(
+                        ui,
+                        editor,
+                        palette,
+                        icon_font,
+                        "Staged Changes",
+                        staged_count,
+                        GitRequestKind::UNSTAGE_ALL,
+                        row_index,
+                        editor.git_staged_open,
+                        row_width,
+                        focused
+                    )) {
+                    editor.git_staged_open = !editor.git_staged_open;
+                }
+                row_index += 1u;
+                if (editor.git_staged_open) {
+                    draw_git_status_items(
+                        ui, editor, palette, GitStatusScope::STAGED, row_index, row_width, focused
+                    );
+                }
+            }
+            size_t const change_count = git_status_change_count(editor);
+            if (change_count != 0u) {
+                if (draw_git_changes_header(
+                        ui,
+                        editor,
+                        palette,
+                        icon_font,
+                        "Changes",
+                        change_count,
+                        GitRequestKind::STAGE_ALL,
+                        row_index,
+                        editor.git_changes_open,
+                        row_width,
+                        focused
+                    )) {
+                    editor.git_changes_open = !editor.git_changes_open;
+                }
+                row_index += 1u;
+                if (editor.git_changes_open) {
+                    draw_git_status_items(
+                        ui, editor, palette, GitStatusScope::UNSTAGED, row_index, row_width, focused
+                    );
+                    draw_git_status_items(
+                        ui,
+                        editor,
+                        palette,
+                        GitStatusScope::UNTRACKED,
+                        row_index,
+                        row_width,
+                        focused
+                    );
+                }
+            }
+        }
+
+        if (draw_git_changes_header(
+                ui,
+                editor,
+                palette,
+                icon_font,
+                "Graph",
+                0u,
+                GitRequestKind::NONE,
+                row_index,
+                editor.git_graph_open,
+                row_width,
+                focused
+            )) {
+            editor.git_graph_open = !editor.git_graph_open;
+        }
+        row_index += 1u;
+        if (editor.git_graph_open) {
+            float const graph_width = git_graph_width(editor, row_width);
+            GitGraphVirtualRange const range =
+                git_graph_virtual_range(editor, scroll, row_index, sidebar_content_height);
+            if (git_any_commit_open(editor)) {
+                draw_open_git_commit_graph(
+                    ui, editor, palette, row_index, row_width, graph_width, focused, range, input
+                );
+            } else {
+                draw_closed_git_commit_graph(
+                    ui, editor, palette, row_index, row_width, graph_width, focused, range, input
+                );
+            }
+        }
+        if (editor.git_commits_loading) {
+            draw_git_loading_row(ui, editor, palette, row_width);
+        }
+
+        if (!editor.git_status_text.empty()) {
+            draw_git_label(ui, editor, palette, editor.git_status_text, palette.preprocessor);
+        }
+    }
+
     auto draw_filesystem_panel(
         gui::Frame& ui,
         EditorState& editor,
         font_cache::Font ui_font,
         font_cache::Font icon_font,
+        font_cache::Font branch_icon_font,
         Palette const& palette,
         size_t split,
         gui::Size width,
         gui::Size height,
-        bool selection_visible
+        bool selection_visible,
+        gui::InputState const& input
     ) -> void {
         bool const focused = selection_visible && split == editor.focused_split;
+        bool const git_tab = editor.sidebar_tab == EditorSidebarTab::GIT;
+        float const panel_padding_y = git_tab ? GIT_PANEL_PADDING_Y : 14.0f;
         gui::Rect const split_rect = editor.split_nodes[split].rect;
         float const row_min_width =
             std::max(0.0f, split_rect.max.x - split_rect.min.x - TREE_PANEL_PADDING_X * 2.0f);
+        float const sidebar_content_height =
+            std::max(0.0f, split_rect.max.y - split_rect.min.y - panel_padding_y * 2.0f);
         if (auto sidebar = ui.scroll_panel(
                 editor_surface_id(split),
                 {
@@ -3286,7 +5453,7 @@ namespace code_editor {
                         {
                             .width = width,
                             .height = height,
-                            .padding = gui::insets(14.0f, 10.0f),
+                            .padding = gui::insets(panel_padding_y, 10.0f),
                             .align_x = gui::Align::STRETCH,
                         },
                     .style =
@@ -3301,6 +5468,25 @@ namespace code_editor {
             )) {
             if (sidebar.signal().pressed_left) {
                 focus_editor_split(editor, split);
+            }
+            if (git_tab) {
+                gui::Id const surface_id = editor_surface_id(split);
+                gui::ScrollState const scroll = ui.scroll_state(surface_id);
+                draw_git_panel_content(
+                    ui,
+                    editor,
+                    palette,
+                    icon_font,
+                    branch_icon_font,
+                    row_min_width,
+                    sidebar_content_height,
+                    scroll,
+                    focused,
+                    input
+                );
+                request_more_git_commits_for_scroll(editor, scroll);
+                reveal_git_cursor(ui, editor, surface_id, scroll);
+                return;
             }
             if (editor.tree_root_name.empty()) {
                 return;
@@ -6558,6 +8744,7 @@ namespace code_editor {
         EditorState& editor,
         font_cache::Font ui_font,
         font_cache::Font icon_font,
+        font_cache::Font branch_icon_font,
         Palette const& palette,
         gui::InputState const& input,
         size_t split,
@@ -6573,7 +8760,17 @@ namespace code_editor {
         if (node.kind == EditorSplitKind::LEAF) {
             if (editor_split_pane_kind(editor, split) == EditorPaneKind::FILESYSTEM) {
                 draw_filesystem_panel(
-                    ui, editor, ui_font, icon_font, palette, split, width, height, selection_visible
+                    ui,
+                    editor,
+                    ui_font,
+                    icon_font,
+                    branch_icon_font,
+                    palette,
+                    split,
+                    width,
+                    height,
+                    selection_visible,
+                    input
                 );
                 return;
             }
@@ -6633,6 +8830,7 @@ namespace code_editor {
                     editor,
                     ui_font,
                     icon_font,
+                    branch_icon_font,
                     palette,
                     input,
                     node.first,
@@ -6646,6 +8844,7 @@ namespace code_editor {
                     editor,
                     ui_font,
                     icon_font,
+                    branch_icon_font,
                     palette,
                     input,
                     node.second,
@@ -6660,6 +8859,7 @@ namespace code_editor {
                 editor,
                 ui_font,
                 icon_font,
+                branch_icon_font,
                 palette,
                 input,
                 node.first,
@@ -6673,6 +8873,7 @@ namespace code_editor {
                 editor,
                 ui_font,
                 icon_font,
+                branch_icon_font,
                 palette,
                 input,
                 node.second,
@@ -6689,6 +8890,7 @@ namespace code_editor {
         font_cache::Font editor_font,
         font_cache::Font ui_font,
         font_cache::Font icon_font,
+        font_cache::Font branch_icon_font,
         Palette const& palette,
         float client_width,
         float client_height,
@@ -6846,6 +9048,7 @@ namespace code_editor {
                     editor,
                     ui_font,
                     icon_font,
+                    branch_icon_font,
                     palette,
                     input,
                     editor.root_split,

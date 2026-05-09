@@ -79,6 +79,65 @@ namespace {
         }
     }
 
+    auto add_scroll_child(test::Context* context, gui::Frame& ui, gui::Id id_value) -> void {
+        auto child = ui.scroll_panel(
+            id_value, {.layout = {.width = gui::px(90.0f), .height = gui::px(40.0f)}}
+        );
+        TEST_EXPECT(context, child);
+        for (size_t index = 0u; index < 5u; ++index) {
+            ui.spacer({.layout = {.width = gui::fill(), .height = gui::px(20.0f)}});
+        }
+    }
+
+    auto add_nested_scroll_panels(
+        test::Context* context, gui::Frame& ui, gui::Id parent_id, gui::Id child_id, bool popup
+    ) -> void {
+        auto parent = ui.scroll_panel(
+            parent_id, {.layout = {.width = gui::px(100.0f), .height = gui::px(80.0f)}}
+        );
+        TEST_EXPECT(context, parent);
+        if (popup) {
+            if (auto popup_scope = ui.popup(
+                    gui::id("nested_popup"),
+                    {.layout = {.width = gui::px(90.0f), .height = gui::children()}}
+                )) {
+                BASE_UNUSED(popup_scope);
+                add_scroll_child(context, ui, child_id);
+            }
+        } else {
+            add_scroll_child(context, ui, child_id);
+        }
+        for (size_t index = 0u; index < 8u; ++index) {
+            ui.spacer({.layout = {.width = gui::fill(), .height = gui::px(20.0f)}});
+        }
+    }
+
+    auto add_wrapped_scroll_panel(test::Context* context, gui::Frame& ui, gui::Id id_value)
+        -> void {
+        auto panel = ui.scroll_panel(
+            id_value, {.layout = {.width = gui::px(80.0f), .height = gui::px(60.0f)}}
+        );
+        TEST_EXPECT(context, panel);
+        for (size_t index = 0u; index < 12u; ++index) {
+            if (auto row = ui.row(
+                    gui::id("wrapped_row", index),
+                    {
+                        .layout = {
+                            .width = gui::fill(),
+                            .height = gui::children(),
+                            .min_height = gui::px(24.0f),
+                        },
+                    }
+                )) {
+                BASE_UNUSED(row);
+                ui.label(
+                    "feature/long_wrapped_branch_name_segment_for_scroll_range",
+                    {.layout = {.width = gui::fill(), .height = gui::text(), .word_wrap = true}}
+                );
+            }
+        }
+    }
+
     auto box_center(gui::BoxInfo const* box) -> gui::Vec2 {
         if (box == nullptr) {
             return {};
@@ -2115,6 +2174,257 @@ namespace {
         gui::destroy_context(gui_context);
     }
 
+    TEST_CASE(popup_above_stays_open_while_crossing_gap_to_popup) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::Id const source_id = gui::id("source");
+        gui::Id const popup_id = gui::id("popup_above");
+        auto add_ui = [&](gui::Frame& frame) -> void {
+            frame.spacer({.layout = {.width = gui::fill(), .height = gui::px(30.0f)}});
+            gui::Signal const source = frame.button(
+                source_id, "Commit", {.layout = {.width = gui::px(80.0f), .height = gui::px(20.0f)}}
+            );
+            if (auto popup = frame.popup_above(
+                    popup_id,
+                    {
+                        .source = source,
+                        .box = {.layout = {.width = gui::px(80.0f), .height = gui::px(16.0f)}},
+                        .gap = 4.0f,
+                        .open = source.hovered,
+                    }
+                )) {
+                frame.label("Details", {.layout = {.width = gui::fill(), .height = gui::fill()}});
+            }
+        };
+
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {120.0f, 70.0f}});
+        add_ui(ui);
+        gui::end_frame(ui);
+        TEST_EXPECT(context, ui.find_box(popup_id, gui::BoxKind::POPUP) == nullptr);
+
+        gui::InputState input = {};
+        input.mouse_pos = {5.0f, 35.0f};
+        ui = gui::begin_frame(gui_context, {.size = {120.0f, 70.0f}, .input = input});
+        add_ui(ui);
+        gui::end_frame(ui);
+
+        gui::BoxInfo const* source = ui.find_box(source_id, gui::BoxKind::BUTTON);
+        gui::BoxInfo const* popup = ui.find_box(popup_id, gui::BoxKind::POPUP);
+        TEST_EXPECT(context, source != nullptr && popup != nullptr);
+        if (source != nullptr && popup != nullptr) {
+            input.mouse_pos = {
+                (popup->rect.min.x + popup->rect.max.x) * 0.5f, source->rect.min.y - 2.0f
+            };
+            ui = gui::begin_frame(gui_context, {.size = {120.0f, 70.0f}, .input = input});
+            add_ui(ui);
+            gui::end_frame(ui);
+            TEST_EXPECT(context, ui.find_box(popup_id, gui::BoxKind::POPUP) != nullptr);
+        }
+
+        input.mouse_pos = {110.0f, 65.0f};
+        ui = gui::begin_frame(gui_context, {.size = {120.0f, 70.0f}, .input = input});
+        add_ui(ui);
+        gui::end_frame(ui);
+        TEST_EXPECT(context, ui.find_box(popup_id, gui::BoxKind::POPUP) == nullptr);
+
+        gui::destroy_context(gui_context);
+    }
+
+    TEST_CASE(popup_above_anchors_above_source_and_scrolls_wrapped_content) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::Id const source_id = gui::id("source");
+        gui::Id const popup_id = gui::id("popup_above");
+        gui::Id const label_id = gui::id("popup_text");
+        gui::TextSelection selection = {};
+        auto add_ui = [&](gui::Frame& frame) -> void {
+            frame.spacer({.layout = {.width = gui::px(120.0f), .height = gui::px(30.0f)}});
+            gui::Signal const source = frame.button(
+                source_id, "Commit", {.layout = {.width = gui::px(80.0f), .height = gui::px(20.0f)}}
+            );
+            if (auto popup = frame.popup_above(
+                    popup_id,
+                    {
+                        .source = source,
+                        .box =
+                            {
+                                .layout =
+                                    {
+                                        .width = gui::px(80.0f),
+                                        .height = gui::children(),
+                                        .padding = gui::insets(2.0f),
+                                    },
+                            },
+                        .open = source.hovered,
+                    }
+                )) {
+                frame.selectable_label(
+                    label_id,
+                    "A wrapped commit message with enough words to require several lines "
+                    "inside a narrow popup.",
+                    &selection,
+                    {.layout = {.width = gui::fill(), .height = gui::text(), .word_wrap = true}}
+                );
+            }
+        };
+
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {120.0f, 80.0f}});
+        add_ui(ui);
+        gui::end_frame(ui);
+        TEST_EXPECT(context, ui.find_box(popup_id, gui::BoxKind::POPUP) == nullptr);
+
+        gui::InputState input = {};
+        input.mouse_pos = {5.0f, 35.0f};
+        ui = gui::begin_frame(gui_context, {.size = {120.0f, 80.0f}, .input = input});
+        add_ui(ui);
+        gui::end_frame(ui);
+
+        gui::BoxInfo const* source = ui.find_box(source_id, gui::BoxKind::BUTTON);
+        gui::BoxInfo const* popup = ui.find_box(popup_id, gui::BoxKind::POPUP);
+        gui::ScrollState const scroll = ui.scroll_state(popup_id);
+        TEST_EXPECT(context, source != nullptr && popup != nullptr);
+        if (source != nullptr && popup != nullptr) {
+            TEST_EXPECT(context, popup->rect.max.y <= source->rect.min.y);
+            TEST_EXPECT(context, popup->rect.min.y >= 0.0f);
+            TEST_EXPECT(context, popup->rect.max.y - popup->rect.min.y <= 30.0f);
+        }
+        TEST_EXPECT(context, scroll.valid);
+        TEST_EXPECT(context, scroll.max_y > 0.0f);
+        TEST_EXPECT(context, scroll.content_height > scroll.viewport_height);
+
+        if (popup != nullptr) {
+            float const popup_height = popup->rect.max.y - popup->rect.min.y;
+            input.mouse_pos = {
+                (popup->rect.min.x + popup->rect.max.x) * 0.5f,
+                (popup->rect.min.y + popup->rect.max.y) * 0.5f
+            };
+            input.scroll_delta_y = -20.0f;
+            ui = gui::begin_frame(gui_context, {.size = {120.0f, 80.0f}, .input = input});
+            add_ui(ui);
+            gui::end_frame(ui);
+            gui::ScrollState const wheel_scroll = ui.scroll_state(popup_id);
+            gui::BoxInfo const* wheel_popup = ui.find_box(popup_id, gui::BoxKind::POPUP);
+            TEST_EXPECT(context, wheel_scroll.y > 0.0f);
+            TEST_EXPECT(context, wheel_popup != nullptr);
+            if (wheel_popup != nullptr) {
+                TEST_EXPECT(
+                    context, wheel_popup->rect.max.y - wheel_popup->rect.min.y == popup_height
+                );
+            }
+            input.scroll_delta_y = 0.0f;
+
+            input.mouse_pos = {
+                popup->rect.max.x - 3.0f, (popup->rect.min.y + popup->rect.max.y) * 0.5f
+            };
+            input.mouse_down[0u] = true;
+            ui = gui::begin_frame(gui_context, {.size = {120.0f, 80.0f}, .input = input});
+            add_ui(ui);
+            gui::end_frame(ui);
+            TEST_EXPECT(context, ui.find_box(popup_id, gui::BoxKind::POPUP) != nullptr);
+
+            input.mouse_pos = {popup->rect.max.x - 3.0f, popup->rect.max.y - 3.0f};
+            ui = gui::begin_frame(gui_context, {.size = {120.0f, 80.0f}, .input = input});
+            add_ui(ui);
+            gui::end_frame(ui);
+            TEST_EXPECT(context, ui.find_box(popup_id, gui::BoxKind::POPUP) != nullptr);
+            gui::ScrollState const drag_scroll = ui.scroll_state(popup_id);
+            TEST_EXPECT(context, drag_scroll.y > 0.0f);
+
+            input.mouse_down[0u] = false;
+            ui = gui::begin_frame(gui_context, {.size = {120.0f, 80.0f}, .input = input});
+            add_ui(ui);
+            gui::end_frame(ui);
+            gui::ScrollState const release_scroll = ui.scroll_state(popup_id);
+            TEST_EXPECT(context, release_scroll.y == drag_scroll.y);
+
+            ui = gui::begin_frame(gui_context, {.size = {120.0f, 80.0f}, .input = input});
+            ui.set_scroll_y(popup_id, scroll.max_y);
+            add_ui(ui);
+            gui::end_frame(ui);
+
+            gui::BoxInfo const* scrolled_popup = ui.find_box(popup_id, gui::BoxKind::POPUP);
+            TEST_EXPECT(context, scrolled_popup != nullptr);
+            if (scrolled_popup != nullptr) {
+                TEST_EXPECT(
+                    context, scrolled_popup->rect.max.y - scrolled_popup->rect.min.y == popup_height
+                );
+            }
+        }
+
+        input.mouse_pos = {110.0f, 70.0f};
+        ui = gui::begin_frame(gui_context, {.size = {120.0f, 80.0f}, .input = input});
+        add_ui(ui);
+        gui::end_frame(ui);
+        TEST_EXPECT(context, ui.find_box(popup_id, gui::BoxKind::POPUP) == nullptr);
+
+        gui::destroy_context(gui_context);
+    }
+
+    TEST_CASE(popup_above_uses_current_source_rect_after_scroll) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::Id const panel_id = gui::id("panel");
+        gui::Id const source_id = gui::id("source");
+        gui::Id const popup_id = gui::id("popup_above");
+        auto add_ui = [&](gui::Frame& frame, bool scroll) -> void {
+            if (scroll) {
+                frame.set_scroll_y(panel_id, 20.0f);
+            }
+            if (auto panel = frame.scroll_panel(
+                    panel_id, {.layout = {.width = gui::fill(), .height = gui::px(60.0f)}}
+                )) {
+                frame.spacer({.layout = {.width = gui::fill(), .height = gui::px(40.0f)}});
+                gui::Signal const source = frame.button(
+                    source_id,
+                    "Commit",
+                    {.layout = {.width = gui::px(80.0f), .height = gui::px(20.0f)}}
+                );
+                if (auto popup = frame.popup_above(
+                        popup_id,
+                        {
+                            .source = source,
+                            .box = {.layout = {.width = gui::px(40.0f), .height = gui::children()}},
+                            .open = source.hovered,
+                        }
+                    )) {
+                    frame.spacer({.layout = {.width = gui::fill(), .height = gui::px(50.0f)}});
+                }
+                frame.spacer({.layout = {.width = gui::fill(), .height = gui::px(80.0f)}});
+            }
+        };
+
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {120.0f, 80.0f}});
+        add_ui(ui, false);
+        gui::end_frame(ui);
+
+        gui::InputState input = {};
+        input.mouse_pos = {5.0f, 45.0f};
+        ui = gui::begin_frame(gui_context, {.size = {120.0f, 80.0f}, .input = input});
+        add_ui(ui, true);
+        gui::end_frame(ui);
+
+        gui::BoxInfo const* source = ui.find_box(source_id, gui::BoxKind::BUTTON);
+        gui::BoxInfo const* popup = ui.find_box(popup_id, gui::BoxKind::POPUP);
+        TEST_EXPECT(context, source != nullptr && popup != nullptr);
+        if (source != nullptr && popup != nullptr) {
+            TEST_EXPECT(context, popup->rect.max.y <= source->rect.min.y);
+        }
+
+        gui::destroy_context(gui_context);
+    }
+
     TEST_CASE(modal_fills_root_and_blocks_later_normal_hits) {
         Arena arena = {};
         arena.init();
@@ -2193,7 +2503,7 @@ namespace {
 
         gui::BoxInfo const* first = ui.box_info(2u);
         if (first != nullptr) {
-            expect_rect(context, first->rect, {{0.0f, -22.0f}, {100.0f, -2.0f}});
+            expect_rect(context, first->rect, {{0.0f, -22.0f}, {90.0f, -2.0f}});
         }
 
         ui = gui::begin_frame(gui_context, {.size = {100.0f, 50.0f}});
@@ -2256,7 +2566,7 @@ namespace {
         gui::BoxInfo const* const third = ui.box_info(4u);
         TEST_EXPECT(context, third != nullptr);
         if (third != nullptr) {
-            expect_rect(context, third->rect, {{0.0f, 10.0f}, {100.0f, 30.0f}});
+            expect_rect(context, third->rect, {{0.0f, 10.0f}, {90.0f, 30.0f}});
         }
 
         gui::destroy_context(gui_context);
@@ -2331,6 +2641,117 @@ namespace {
         gui::destroy_context(gui_context);
     }
 
+    TEST_CASE(scroll_panel_reserves_vertical_scrollbar_gutter_for_children) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::Id const panel_id = gui::id("panel");
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {100.0f, 50.0f}});
+        {
+            auto panel = ui.scroll_panel(
+                panel_id, {.layout = {.width = gui::px(100.0f), .height = gui::px(30.0f)}}
+            );
+            TEST_EXPECT(context, panel);
+            for (size_t index = 0u; index < 3u; ++index) {
+                ui.spacer({.layout = {.width = gui::fill(), .height = gui::px(20.0f)}});
+            }
+        }
+        gui::end_frame(ui);
+
+        gui::BoxInfo const* first = ui.box_info(2u);
+        TEST_EXPECT(context, first != nullptr);
+        if (first != nullptr) {
+            expect_rect(context, first->rect, {{0.0f, 0.0f}, {90.0f, 20.0f}});
+        }
+
+        gui::destroy_context(gui_context);
+    }
+
+    TEST_CASE(scroll_panel_padding_counts_toward_scrollbar_gutter) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::Id const panel_id = gui::id("panel");
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {100.0f, 50.0f}});
+        {
+            auto panel = ui.scroll_panel(
+                panel_id,
+                {.layout = {
+                     .width = gui::px(100.0f),
+                     .height = gui::px(30.0f),
+                     .padding = gui::insets(0.0f, 10.0f, 0.0f, 0.0f),
+                 }}
+            );
+            TEST_EXPECT(context, panel);
+            for (size_t index = 0u; index < 3u; ++index) {
+                ui.spacer({.layout = {.width = gui::fill(), .height = gui::px(20.0f)}});
+            }
+        }
+        gui::end_frame(ui);
+
+        gui::BoxInfo const* first = ui.box_info(2u);
+        TEST_EXPECT(context, first != nullptr);
+        if (first != nullptr) {
+            expect_rect(context, first->rect, {{0.0f, 0.0f}, {90.0f, 20.0f}});
+        }
+
+        gui::destroy_context(gui_context);
+    }
+
+    TEST_CASE(scroll_panel_constrains_wrapped_label_inside_fill_row) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::Id const panel_id = gui::id("panel");
+        gui::Id const row_id = gui::id("row");
+        gui::Id const label_id = gui::id("label");
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {100.0f, 50.0f}});
+        {
+            auto panel = ui.scroll_panel(
+                panel_id, {.layout = {.width = gui::px(40.0f), .height = gui::px(30.0f)}}
+            );
+            TEST_EXPECT(context, panel);
+            if (auto row = ui.row(
+                    row_id,
+                    {
+                        .layout = {
+                            .width = gui::fill(),
+                            .height = gui::children(),
+                            .align_y = gui::Align::CENTER,
+                        },
+                    }
+                )) {
+                BASE_UNUSED(row);
+                ui.label(
+                    label_id,
+                    "abcdefghijkl",
+                    {.layout = {.width = gui::fill(), .height = gui::text(), .word_wrap = true}}
+                );
+            }
+        }
+        gui::end_frame(ui);
+
+        gui::BoxInfo const* row = ui.find_box(row_id, gui::BoxKind::ROW);
+        gui::BoxInfo const* label = ui.find_box(label_id, gui::BoxKind::LABEL);
+        TEST_EXPECT(context, row != nullptr);
+        TEST_EXPECT(context, label != nullptr);
+        if (row != nullptr && label != nullptr) {
+            expect_rect(context, row->rect, {{0.0f, 0.0f}, {30.0f, 80.0f}});
+            expect_rect(context, label->rect, {{0.0f, 0.0f}, {30.0f, 80.0f}});
+        }
+
+        gui::destroy_context(gui_context);
+    }
+
     TEST_CASE(scroll_panel_can_hide_scrollbars_without_disabling_scroll) {
         Arena arena = {};
         arena.init();
@@ -2373,6 +2794,93 @@ namespace {
         TEST_EXPECT(context, gui::draw::styled_rect_command_count(draw_context) == 0u);
 
         gui::draw::destroy_context(draw_context);
+        gui::destroy_context(gui_context);
+    }
+
+    TEST_CASE(scroll_panel_wheel_targets_nested_child_panel) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::Id const parent_id = gui::id("parent");
+        gui::Id const child_id = gui::id("child");
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {120.0f, 100.0f}});
+        add_nested_scroll_panels(context, ui, parent_id, child_id, false);
+        gui::end_frame(ui);
+
+        gui::InputState input = {};
+        input.mouse_pos = {10.0f, 20.0f};
+        input.scroll_delta_y = -12.0f;
+        ui = gui::begin_frame(gui_context, {.size = {120.0f, 100.0f}, .input = input});
+        add_nested_scroll_panels(context, ui, parent_id, child_id, false);
+        gui::end_frame(ui);
+
+        gui::ScrollState const parent_state = ui.scroll_state(parent_id);
+        gui::ScrollState const child_state = ui.scroll_state(child_id);
+        TEST_EXPECT(context, parent_state.valid);
+        TEST_EXPECT(context, child_state.valid);
+        TEST_EXPECT(context, parent_state.y == 0.0f);
+        TEST_EXPECT(context, child_state.y == 12.0f);
+
+        gui::destroy_context(gui_context);
+    }
+
+    TEST_CASE(scroll_panel_wheel_targets_popup_child_panel_over_scroll_parent) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::Id const parent_id = gui::id("parent");
+        gui::Id const child_id = gui::id("child");
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {120.0f, 100.0f}});
+        add_nested_scroll_panels(context, ui, parent_id, child_id, true);
+        gui::end_frame(ui);
+
+        gui::InputState input = {};
+        input.mouse_pos = {10.0f, 20.0f};
+        input.scroll_delta_y = -12.0f;
+        ui = gui::begin_frame(gui_context, {.size = {120.0f, 100.0f}, .input = input});
+        add_nested_scroll_panels(context, ui, parent_id, child_id, true);
+        gui::end_frame(ui);
+
+        gui::ScrollState const parent_state = ui.scroll_state(parent_id);
+        gui::ScrollState const child_state = ui.scroll_state(child_id);
+        TEST_EXPECT(context, parent_state.valid);
+        TEST_EXPECT(context, child_state.valid);
+        TEST_EXPECT(context, parent_state.y == 0.0f);
+        TEST_EXPECT(context, child_state.y == 12.0f);
+
+        gui::destroy_context(gui_context);
+    }
+
+    TEST_CASE(scroll_panel_wheel_uses_laid_out_wrapped_content_height) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::Id const panel_id = gui::id("panel");
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {100.0f, 80.0f}});
+        add_wrapped_scroll_panel(context, ui, panel_id);
+        gui::end_frame(ui);
+
+        gui::InputState input = {};
+        input.mouse_pos = {10.0f, 20.0f};
+        input.scroll_delta_y = -10000.0f;
+        ui = gui::begin_frame(gui_context, {.size = {100.0f, 80.0f}, .input = input});
+        add_wrapped_scroll_panel(context, ui, panel_id);
+        gui::end_frame(ui);
+
+        gui::ScrollState const state = ui.scroll_state(panel_id);
+        TEST_EXPECT(context, state.valid);
+        TEST_EXPECT(context, state.max_y > 300.0f);
+        TEST_EXPECT(context, state.y > state.max_y - 1.0f);
+
         gui::destroy_context(gui_context);
     }
 
@@ -2675,6 +3183,127 @@ namespace {
         TEST_EXPECT(context, !signal.active);
         gui::end_frame(ui);
 
+        gui::destroy_context(gui_context);
+    }
+
+    TEST_CASE(scope_signal_reports_mouse_activation_without_keyboard_focus) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::Id const panel_id = gui::id("panel");
+        gui::BoxDesc const desc = {.layout = {.width = gui::px(80.0f), .height = gui::px(20.0f)}};
+
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {100.0f, 40.0f}});
+        {
+            auto panel = ui.row(panel_id, desc);
+            TEST_EXPECT(context, panel);
+            BASE_UNUSED(panel.signal());
+        }
+        gui::end_frame(ui);
+
+        gui::InputState input = {};
+        input.mouse_pos = {5.0f, 5.0f};
+        input.mouse_down[0u] = true;
+        ui = gui::begin_frame(gui_context, {.size = {100.0f, 40.0f}, .input = input});
+        gui::Signal signal = {};
+        {
+            auto panel = ui.row(panel_id, desc);
+            TEST_EXPECT(context, panel);
+            signal = panel.signal();
+        }
+        TEST_EXPECT(context, signal.pressed_left);
+        TEST_EXPECT(context, signal.active);
+        TEST_EXPECT(context, !signal.focused);
+        TEST_EXPECT(context, !signal.focus_gained);
+        gui::end_frame(ui);
+
+        input.mouse_down[0u] = false;
+        ui = gui::begin_frame(gui_context, {.size = {100.0f, 40.0f}, .input = input});
+        {
+            auto panel = ui.row(panel_id, desc);
+            TEST_EXPECT(context, panel);
+            signal = panel.signal();
+        }
+        TEST_EXPECT(context, signal.clicked_left);
+        TEST_EXPECT(context, signal.activated);
+        TEST_EXPECT(context, !signal.focused);
+        gui::end_frame(ui);
+
+        gui::KeyEvent const events[] = {{.key = gui::Key::SPACE}};
+        input = {};
+        input.key_events = events;
+        input.key_event_count = 1u;
+        ui = gui::begin_frame(gui_context, {.size = {100.0f, 40.0f}, .input = input});
+        {
+            auto panel = ui.row(panel_id, desc);
+            TEST_EXPECT(context, panel);
+            signal = panel.signal();
+        }
+        TEST_EXPECT(context, !signal.activated);
+        TEST_EXPECT(context, !signal.focused);
+        gui::end_frame(ui);
+
+        gui::destroy_context(gui_context);
+    }
+
+    TEST_CASE(scope_signal_panel_does_not_render_press_overlay) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::draw::Context draw_context = {};
+        gui::draw::create_context(arena, {}, draw_context);
+
+        gui::Id const panel_id = gui::id("panel");
+        gui::BoxDesc const desc = {
+            .layout = {.width = gui::px(80.0f), .height = gui::px(20.0f)},
+            .style = {
+                .background = gui::rgb(80, 90, 100),
+                .foreground = gui::rgb(10, 20, 30),
+                .radius = 3.0f,
+            },
+        };
+
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {100.0f, 40.0f}});
+        {
+            auto panel = ui.row(panel_id, desc);
+            TEST_EXPECT(context, panel);
+            BASE_UNUSED(panel.signal());
+        }
+        gui::end_frame(ui);
+
+        gui::InputState input = {};
+        input.mouse_pos = {5.0f, 5.0f};
+        input.mouse_down[0u] = true;
+        ui = gui::begin_frame(gui_context, {.size = {100.0f, 40.0f}, .input = input});
+        gui::Signal signal = {};
+        {
+            auto panel = ui.row(panel_id, desc);
+            TEST_EXPECT(context, panel);
+            signal = panel.signal();
+        }
+        gui::end_frame(ui);
+
+        TEST_EXPECT(context, signal.active);
+
+        gui::draw::begin_frame(draw_context);
+        gui::render_frame(ui, draw_context);
+
+        TEST_EXPECT(context, gui::draw::styled_rect_command_count(draw_context) == 1u);
+        gui::draw::StyledRectCommand const* command =
+            gui::draw::styled_rect_command(draw_context, 0u);
+        TEST_EXPECT(context, command != nullptr);
+        if (command != nullptr) {
+            TEST_EXPECT(context, command->style.fill_color.r == (80.0f / 255.0f));
+            TEST_EXPECT(context, command->style.radius == 3.0f);
+        }
+
+        gui::draw::destroy_context(draw_context);
         gui::destroy_context(gui_context);
     }
 
@@ -5213,7 +5842,7 @@ namespace {
 
         selection = {1u, 2u};
         gui::InputState input = {};
-        input.mouse_pos = {70.0f, 35.0f};
+        input.mouse_pos = {65.0f, 35.0f};
         input.mouse_down[0u] = true;
         ui = gui::begin_frame(gui_context, {.size = {100.0f, 60.0f}, .input = input});
         add_label(ui);
@@ -6207,6 +6836,58 @@ namespace {
             TEST_EXPECT(context, command->rect.max.x == 80.0f);
             TEST_EXPECT(context, command->style.radius == 3.0f);
             TEST_EXPECT(context, command->style.fill_color.r == (80.0f / 255.0f));
+        }
+
+        gui::draw::destroy_context(draw_context);
+        gui::destroy_context(gui_context);
+    }
+
+    TEST_CASE(active_interactive_box_renders_press_overlay_for_custom_style) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::draw::Context draw_context = {};
+        gui::draw::create_context(arena, {}, draw_context);
+
+        gui::Id const button_id = gui::id("paint");
+        gui::BoxDesc const desc = {
+            .layout = {.width = gui::px(80.0f), .height = gui::px(20.0f)},
+            .style = {
+                .background = gui::rgb(80, 90, 100),
+                .foreground = gui::rgb(10, 20, 30),
+                .radius = 3.0f,
+            },
+        };
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {100.0f, 40.0f}});
+        ui.button(button_id, "Paint", desc);
+        gui::end_frame(ui);
+
+        gui::InputState input = {};
+        input.mouse_pos = {5.0f, 5.0f};
+        input.mouse_down[0u] = true;
+        ui = gui::begin_frame(gui_context, {.size = {100.0f, 40.0f}, .input = input});
+        gui::Signal const signal = ui.button(button_id, "Paint", desc);
+        gui::end_frame(ui);
+
+        TEST_EXPECT(context, signal.active);
+
+        gui::draw::begin_frame(draw_context);
+        gui::render_frame(ui, draw_context);
+
+        TEST_EXPECT(context, gui::draw::styled_rect_command_count(draw_context) == 2u);
+        gui::draw::StyledRectCommand const* base = gui::draw::styled_rect_command(draw_context, 0u);
+        gui::draw::StyledRectCommand const* overlay =
+            gui::draw::styled_rect_command(draw_context, 1u);
+        TEST_EXPECT(context, base != nullptr && overlay != nullptr);
+        if (base != nullptr && overlay != nullptr) {
+            TEST_EXPECT(context, base->style.fill_color.r == (80.0f / 255.0f));
+            TEST_EXPECT(context, overlay->style.fill_color.r == (10.0f / 255.0f));
+            TEST_EXPECT(context, overlay->style.fill_color.a > 0.07f);
+            TEST_EXPECT(context, overlay->style.fill_color.a < 0.09f);
+            TEST_EXPECT(context, overlay->style.radius == 3.0f);
         }
 
         gui::draw::destroy_context(draw_context);

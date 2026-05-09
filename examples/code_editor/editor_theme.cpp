@@ -45,6 +45,12 @@ namespace code_editor {
             .border_thickness = 1.0f,
             .radius = 6.0f,
         };
+        gui::theme_role(theme, gui::StyleRole::CONTROL).hovered = {
+            .background = palette.control_hovered,
+        };
+        gui::theme_role(theme, gui::StyleRole::CONTROL).active = {
+            .background = palette.control_active,
+        };
         gui::theme_role(theme, gui::StyleRole::TEXT).normal = {.foreground = palette.text};
         gui::theme_role(theme, gui::StyleRole::TEXT_MUTED).normal = {.foreground = palette.muted};
         gui::theme_kind(theme, gui::BoxKind::ROOT).role = gui::StyleRole::CANVAS;

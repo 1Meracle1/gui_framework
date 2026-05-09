@@ -103,6 +103,11 @@ namespace gui {
             float scroll_content_height = 0.0f;
             float scroll_offset_x = 0.0f;
             float scroll_offset_y = 0.0f;
+            Id popup_anchor_id = {};
+            Rect popup_anchor_rect = {};
+            Rect hover_rect = {};
+            float popup_anchor_offset_x = 0.0f;
+            float popup_anchor_gap = 0.0f;
             float widget_value = 0.0f;
             Signal signal = {};
             size_t table_column_span = 1u;
@@ -124,6 +129,8 @@ namespace gui {
             bool table_sort_enabled = false;
             bool table_filter_button = false;
             bool table_filter_enabled = false;
+            bool popup_anchor_above = false;
+            bool hover_rect_valid = false;
             Id authored_id = {};
             BoxIdSource id_source = BoxIdSource::STRUCTURAL;
             bool stable_id = false;
@@ -186,8 +193,11 @@ namespace gui {
             void* clipboard_user_data = nullptr;
             Id previous_hot_id = {};
             Id hot_id = {};
+            Id hot_popup_id = {};
             Id active_id = {};
             Id active_scroll_id = {};
+            Id wheel_scroll_x_id = {};
+            Id wheel_scroll_y_id = {};
             Id focused_id = {};
             Id frame_start_focus_id = {};
             Id focus_request_id = {};
@@ -253,6 +263,12 @@ namespace gui {
         [[nodiscard]] auto boolean_widget(BoxKind kind) -> bool {
             return kind == BoxKind::CHECKBOX || kind == BoxKind::TOGGLE ||
                    kind == BoxKind::RADIO_BUTTON;
+        }
+
+        [[nodiscard]] auto press_overlay_box(BoxKind kind) -> bool {
+            return kind == BoxKind::BUTTON || boolean_widget(kind) ||
+                   kind == BoxKind::SLIDER_FLOAT || kind == BoxKind::TAB ||
+                   kind == BoxKind::TREE_NODE;
         }
 
         [[nodiscard]] auto floating_box(BoxKind kind) -> bool {
@@ -556,6 +572,25 @@ namespace gui {
                    (horizontal && scrollbar_track_valid(h_track) && rect_contains(h_track, point));
         }
 
+        [[nodiscard]] auto
+        popup_scrollbar_hot_id(ContextImpl const* impl, Vec2 point, bool top_layer) -> Id {
+            for (size_t index = impl->box_count; index > 0u; --index) {
+                size_t const box_index = index - 1u;
+                BoxNode const& box = impl->boxes[box_index];
+                if (top_layer_box(impl, box_index) != top_layer || box.kind != BoxKind::POPUP) {
+                    continue;
+                }
+                if (box.scroll_state != nullptr &&
+                    impl->active_scroll_id.value == box.scroll_state->id.value) {
+                    return box.id;
+                }
+                if (scrollbar_hit(impl, box_index, point)) {
+                    return box.id;
+                }
+            }
+            return {};
+        }
+
         [[nodiscard]] auto mouse_over_scrollbar(ContextImpl const* impl, Vec2 point, bool top_layer)
             -> bool {
             for (size_t index = impl->box_count; index > 0u; --index) {
@@ -572,10 +607,51 @@ namespace gui {
             return (impl->frame_desc.input.key_mods & KEY_MOD_SHIFT) != 0u;
         }
 
+        [[nodiscard]] auto wheel_scroll_target(ContextImpl const* impl, Axis axis) -> Id {
+            if (impl->frame_desc.input.scroll_delta_y == 0.0f) {
+                return {};
+            }
+
+            Vec2 const point = impl->frame_desc.input.mouse_pos;
+            for (uint32_t pass = 0u; pass < 2u; ++pass) {
+                bool const top_layer = pass == 0u;
+                for (size_t index = impl->box_count; index > 0u; --index) {
+                    size_t const box_index = index - 1u;
+                    BoxNode const& box = impl->boxes[box_index];
+                    StateEntry const* const state = box.scroll_state;
+                    bool const scrolls_axis =
+                        axis == Axis::X ? box.layout.scroll_x : box.layout.scroll_y;
+                    if (top_layer_box(impl, box_index) != top_layer || !scrolls_axis ||
+                        state == nullptr || !state->scroll_valid ||
+                        !rect_contains(box.rect, point) ||
+                        !hit_passes_clips(impl, box_index, point)) {
+                        continue;
+                    }
+                    float const max_scroll =
+                        axis == Axis::X ? state->scroll_max_x : state->scroll_max_y;
+                    if (max_scroll <= 0.0f) {
+                        continue;
+                    }
+                    return state->id;
+                }
+            }
+            return {};
+        }
+
+        [[nodiscard]] auto
+        wheel_scroll_target_matches(ContextImpl const* impl, StateEntry const* state, Axis axis)
+            -> bool {
+            Id const target = axis == Axis::X ? impl->wheel_scroll_x_id : impl->wheel_scroll_y_id;
+            return target.value == 0u ||
+                   (state != nullptr && (state->last_frame + 1u != impl->frame_index ||
+                                         state->id.value == target.value));
+        }
+
         auto apply_scroll_delta_y(ContextImpl* impl, StateEntry* state, Rect rect, float max_y)
             -> void {
             if (state == nullptr || impl->frame_desc.input.scroll_delta_y == 0.0f ||
                 max_y <= 0.0f || scroll_shift_held(impl) ||
+                !wheel_scroll_target_matches(impl, state, Axis::Y) ||
                 !rect_contains(rect, impl->frame_desc.input.mouse_pos)) {
                 return;
             }
@@ -588,6 +664,7 @@ namespace gui {
         ) -> void {
             if (state == nullptr || impl->frame_desc.input.scroll_delta_y == 0.0f ||
                 (vertical_scroll_available && !scroll_shift_held(impl)) ||
+                !wheel_scroll_target_matches(impl, state, Axis::X) ||
                 !rect_contains(rect, impl->frame_desc.input.mouse_pos)) {
                 return;
             }
@@ -726,6 +803,27 @@ namespace gui {
             }
             if (rect.max.y < rect.min.y) {
                 rect.max.y = rect.min.y;
+            }
+            return rect;
+        }
+
+        [[nodiscard]] auto scrollbar_gutter_size() -> float {
+            return SCROLLBAR_WIDTH + SCROLLBAR_MARGIN * 2.0f;
+        }
+
+        [[nodiscard]] auto layout_content_rect(BoxNode const& box) -> Rect {
+            Rect rect = content_rect(box.rect, box.layout.padding);
+            bool const stack_scroll_box = box.kind == BoxKind::SCROLL_PANEL ||
+                                          (box.kind == BoxKind::POPUP && box.layout.scroll_y);
+            if (stack_scroll_box && vertical_scrollbar_shown(box)) {
+                rect.max.x = std::min(
+                    rect.max.x, std::max(rect.min.x, box.rect.max.x - scrollbar_gutter_size())
+                );
+            }
+            if (stack_scroll_box && horizontal_scrollbar_shown(box)) {
+                rect.max.y = std::min(
+                    rect.max.y, std::max(rect.min.y, box.rect.max.y - scrollbar_gutter_size())
+                );
             }
             return rect;
         }
@@ -1372,6 +1470,10 @@ namespace gui {
             Vec2 const mouse_pos = impl->frame_desc.input.mouse_pos;
             for (uint32_t pass = 0u; pass < 2u; ++pass) {
                 bool const top_layer = pass == 0u;
+                Id const scrollbar_id = popup_scrollbar_hot_id(impl, mouse_pos, top_layer);
+                if (scrollbar_id.value != 0u) {
+                    return scrollbar_id;
+                }
                 if (mouse_over_scrollbar(impl, mouse_pos, top_layer)) {
                     return {};
                 }
@@ -1381,14 +1483,40 @@ namespace gui {
                     if (top_layer_box(impl, box_index) != top_layer) {
                         continue;
                     }
-                    if (box.interactive && !box_disabled(box) && box.state != nullptr &&
-                        box.state->last_frame != 0u && rect_contains(box.state->rect, mouse_pos) &&
+                    if (!box.interactive || box_disabled(box) || box.state == nullptr ||
+                        box.state->last_frame == 0u) {
+                        continue;
+                    }
+                    Rect const hit_rect = box.hover_rect_valid ? box.hover_rect : box.state->rect;
+                    if (rect_contains(hit_rect, mouse_pos) &&
                         hit_passes_clips(impl, box_index, mouse_pos)) {
                         return box.id;
                     }
                 }
             }
             return {};
+        }
+
+        [[nodiscard]] auto hot_popup_ancestor_id(ContextImpl const* impl, Id id_value) -> Id {
+            for (size_t index = 0u; index < impl->box_count; ++index) {
+                if (impl->boxes[index].id.value != id_value.value) {
+                    continue;
+                }
+                for (size_t cursor = index; cursor != INVALID_INDEX;
+                     cursor = impl->boxes[cursor].parent_index) {
+                    if (impl->boxes[cursor].kind == BoxKind::POPUP) {
+                        return impl->boxes[cursor].id;
+                    }
+                }
+                return {};
+            }
+            return {};
+        }
+
+        [[nodiscard]] auto hot_box_is_or_descends_from(ContextImpl const* impl, Id id_value)
+            -> bool {
+            return impl->hot_id.value == id_value.value ||
+                   impl->hot_popup_id.value == id_value.value;
         }
 
         auto add_focus_order(ContextImpl* impl, BoxNode& box) -> void {
@@ -1412,12 +1540,17 @@ namespace gui {
 
         [[nodiscard]] auto make_signal(ContextImpl* impl, BoxNode const& box) -> Signal {
             Signal result = {};
+            result.id = box.id;
             if (box.state == nullptr || box_disabled(box)) {
                 return result;
             }
 
+            result.rect = box.state->rect;
             if (box.state->last_frame != 0u) {
-                bool const hovered = impl->hot_id.value == box.id.value;
+                bool const scrollbar_active =
+                    box.kind == BoxKind::POPUP && box.scroll_state != nullptr &&
+                    impl->active_scroll_id.value == box.scroll_state->id.value;
+                bool const hovered = impl->hot_id.value == box.id.value || scrollbar_active;
                 bool const mouse_down = impl->frame_desc.input.mouse_down[0u];
                 bool const previous_mouse_down = impl->previous_input.mouse_down[0u];
                 bool const was_hovered = impl->previous_hot_id.value == box.id.value &&
@@ -2003,7 +2136,7 @@ namespace gui {
 
         [[nodiscard]] auto
         stack_content_main_size(ContextImpl const* impl, BoxNode const& box, Axis axis) -> float {
-            Rect const content = content_rect(box.rect, box.layout.padding);
+            Rect const content = layout_content_rect(box);
             float const content_cross =
                 axis == Axis::X ? rect_height(content) : rect_width(content);
             float total = 0.0f;
@@ -2051,6 +2184,29 @@ namespace gui {
                 );
             }
             return result;
+        }
+
+        [[nodiscard]] auto
+        stack_content_height_for_width(ContextImpl* impl, BoxNode& box, float width) -> float {
+            Rect const previous = box.rect;
+            box.rect = {{0.0f, 0.0f}, {width, previous.max.y - previous.min.y}};
+            float const height =
+                stack_content_main_size(impl, box, Axis::Y) + inset_height(box.layout.padding);
+            box.rect = previous;
+            return height;
+        }
+
+        [[nodiscard]] auto box_rect(ContextImpl const* impl, Id id_value, Rect fallback) -> Rect {
+            if (id_value.value == 0u) {
+                return fallback;
+            }
+            for (size_t index = 0u; index < impl->box_count; ++index) {
+                BoxNode const& box = impl->boxes[index];
+                if (box.id.value == id_value.value) {
+                    return box.rect;
+                }
+            }
+            return fallback;
         }
 
         [[nodiscard]] auto align_offset(Align align, float available, float size) -> float {
@@ -2139,7 +2295,7 @@ namespace gui {
                 return 0.0f;
             }
 
-            Rect const content = content_rect(box.rect, box.layout.padding);
+            Rect const content = layout_content_rect(box);
             float const viewport_height = std::max(0.0f, rect_height(content));
             size_t item_index = 0u;
             for (size_t child_index = box.first_child; child_index != INVALID_INDEX;
@@ -2193,6 +2349,14 @@ namespace gui {
             clear_scroll_requests(state);
             state->scroll_y = std::clamp(state->scroll_y, 0.0f, max_y);
             return state->scroll_y != previous;
+        }
+
+        auto sync_scroll_offsets(BoxNode& box) -> void {
+            if (box.scroll_state == nullptr) {
+                return;
+            }
+            box.scroll_offset_x = -box.scroll_state->scroll_x;
+            box.scroll_offset_y = -box.scroll_state->scroll_y;
         }
 
         auto update_scroll_metrics(
@@ -2310,7 +2474,7 @@ namespace gui {
                 return;
             }
 
-            Rect const content = content_rect(box.rect, box.layout.padding);
+            Rect const content = layout_content_rect(box);
             if (box.layout.width.kind == SizeKind::AUTO ||
                 box.layout.width.kind == SizeKind::CHILDREN) {
                 float max_x = content.min.x;
@@ -2324,8 +2488,10 @@ namespace gui {
                 box.rect.max.x = std::max(box.rect.min.x, max_x + box.layout.padding.right);
             }
 
-            if (box.layout.height.kind == SizeKind::AUTO ||
-                box.layout.height.kind == SizeKind::CHILDREN) {
+            bool const fit_height = (box.layout.height.kind == SizeKind::AUTO ||
+                                     box.layout.height.kind == SizeKind::CHILDREN) &&
+                                    !(box.kind == BoxKind::POPUP && box.layout.scroll_y);
+            if (fit_height) {
                 float max_y = content.min.y;
                 for (size_t child_index = box.first_child; child_index != INVALID_INDEX;
                      child_index = impl->boxes[child_index].next_sibling) {
@@ -2338,6 +2504,86 @@ namespace gui {
             }
         }
 
+        [[nodiscard]] auto
+        laid_out_stack_content_main_size(ContextImpl const* impl, BoxNode const& box, Axis axis)
+            -> float {
+            Rect const content = layout_content_rect(box);
+            float const scroll_offset = axis == Axis::X ? box.scroll_offset_x : box.scroll_offset_y;
+            float result = 0.0f;
+            for (size_t child_index = box.first_child; child_index != INVALID_INDEX;
+                 child_index = impl->boxes[child_index].next_sibling) {
+                BoxNode const& child = impl->boxes[child_index];
+                if (floating_box(child.kind)) {
+                    continue;
+                }
+                float const end = axis == Axis::X ? child.rect.max.x - content.min.x
+                                                  : child.rect.max.y - content.min.y;
+                result = std::max(result, end - scroll_offset + child_margin_main(child, axis));
+            }
+            return result;
+        }
+
+        [[nodiscard]] auto
+        laid_out_stack_content_cross_size(ContextImpl const* impl, BoxNode const& box, Axis axis)
+            -> float {
+            float result = 0.0f;
+            for (size_t child_index = box.first_child; child_index != INVALID_INDEX;
+                 child_index = impl->boxes[child_index].next_sibling) {
+                BoxNode const& child = impl->boxes[child_index];
+                if (floating_box(child.kind)) {
+                    continue;
+                }
+                float const cross =
+                    axis == Axis::X ? rect_height(child.rect) : rect_width(child.rect);
+                result = std::max(result, cross + child_margin_cross(child, axis));
+            }
+            return result;
+        }
+
+        auto update_laid_out_stack_scroll_metrics(ContextImpl* impl, size_t index) -> bool {
+            BoxNode& box = impl->boxes[index];
+            StateEntry* const state = box.scroll_state;
+            if (state == nullptr) {
+                return false;
+            }
+
+            float const old_x = state->scroll_x;
+            float const old_y = state->scroll_y;
+            bool const old_vertical = vertical_scrollbar_shown(box);
+            bool const old_horizontal = horizontal_scrollbar_shown(box);
+            float const content_height = laid_out_stack_content_main_size(impl, box, Axis::Y) +
+                                         inset_height(box.layout.padding);
+            float const content_width = laid_out_stack_content_cross_size(impl, box, Axis::Y) +
+                                        inset_width(box.layout.padding);
+            update_scroll_metrics(
+                impl,
+                state,
+                box.rect,
+                box.resolved_style.radius,
+                content_height,
+                box.layout.show_scrollbars,
+                false,
+                false
+            );
+            if (box.layout.scroll_x) {
+                update_scroll_x_metrics(
+                    impl,
+                    state,
+                    horizontal_scrollbar_rect(impl, index),
+                    box.resolved_style.radius,
+                    content_width,
+                    box.layout.show_scrollbars,
+                    false,
+                    vertical_scroll_available(impl, index)
+                );
+            } else {
+                clear_scroll_x_metrics(state, box.rect);
+            }
+            return old_x != state->scroll_x || old_y != state->scroll_y ||
+                   old_vertical != vertical_scrollbar_shown(box) ||
+                   old_horizontal != horizontal_scrollbar_shown(box);
+        }
+
         auto layout_node(ContextImpl* impl, size_t index, Rect rect) -> void {
             BoxNode& box = impl->boxes[index];
             box.rect = rect;
@@ -2346,34 +2592,57 @@ namespace gui {
                     stack_content_main_size(impl, box, Axis::Y) + inset_height(box.layout.padding);
                 float const content_width =
                     stack_content_cross_size(impl, box, Axis::Y) + inset_width(box.layout.padding);
+                float const input_content_height =
+                    box.scroll_state != nullptr
+                        ? std::max(content_height, box.scroll_state->scroll_content_height)
+                        : content_height;
+                float const input_content_width =
+                    box.scroll_state != nullptr
+                        ? std::max(content_width, box.scroll_state->scroll_content_width)
+                        : content_width;
                 update_scroll_metrics(
                     impl,
                     box.scroll_state,
                     rect,
                     box.resolved_style.radius,
-                    content_height,
+                    input_content_height,
+                    box.layout.show_scrollbars,
+                    true,
+                    false
+                );
+                if (box.scroll_state != nullptr && box.layout.scroll_x) {
+                    update_scroll_x_metrics(
+                        impl,
+                        box.scroll_state,
+                        horizontal_scrollbar_rect(impl, index),
+                        box.resolved_style.radius,
+                        input_content_width,
+                        box.layout.show_scrollbars,
+                        true,
+                        vertical_scroll_available(impl, index)
+                    );
+                } else {
+                    clear_scroll_x_metrics(box.scroll_state, rect);
+                }
+                sync_scroll_offsets(box);
+            } else if (box.kind == BoxKind::POPUP && box.layout.scroll_y) {
+                float const content_height =
+                    stack_content_main_size(impl, box, Axis::Y) + inset_height(box.layout.padding);
+                float const input_content_height =
+                    box.scroll_state != nullptr
+                        ? std::max(content_height, box.scroll_state->scroll_content_height)
+                        : content_height;
+                update_scroll_metrics(
+                    impl,
+                    box.scroll_state,
+                    rect,
+                    box.resolved_style.radius,
+                    input_content_height,
                     box.layout.show_scrollbars,
                     true,
                     true
                 );
-                if (box.scroll_state != nullptr) {
-                    if (box.layout.scroll_x) {
-                        update_scroll_x_metrics(
-                            impl,
-                            box.scroll_state,
-                            horizontal_scrollbar_rect(impl, index),
-                            box.resolved_style.radius,
-                            content_width,
-                            box.layout.show_scrollbars,
-                            true,
-                            vertical_scroll_available(impl, index)
-                        );
-                    } else {
-                        clear_scroll_x_metrics(box.scroll_state, rect);
-                    }
-                    box.scroll_offset_x = -box.scroll_state->scroll_x;
-                    box.scroll_offset_y = -box.scroll_state->scroll_y;
-                }
+                sync_scroll_offsets(box);
             } else if ((box.kind == BoxKind::SELECTABLE_LABEL ||
                         multiline_input_text_box(box.kind)) &&
                        (box.layout.scroll_x || box.layout.scroll_y)) {
@@ -2438,12 +2707,23 @@ namespace gui {
                        box.kind == BoxKind::ROOT || box.kind == BoxKind::SCROLL_PANEL ||
                        box.kind == BoxKind::LIST) {
                 layout_children(impl, index, Axis::Y);
-                if (box.kind == BoxKind::SCROLL_PANEL && consume_scroll_panel_request(impl, box)) {
-                    box.scroll_offset_x =
-                        box.scroll_state != nullptr ? -box.scroll_state->scroll_x : 0.0f;
-                    box.scroll_offset_y =
-                        box.scroll_state != nullptr ? -box.scroll_state->scroll_y : 0.0f;
-                    layout_children(impl, index, Axis::Y);
+                if (box.kind == BoxKind::SCROLL_PANEL) {
+                    bool relayout = update_laid_out_stack_scroll_metrics(impl, index);
+                    relayout = consume_scroll_panel_request(impl, box) || relayout;
+                    sync_scroll_offsets(box);
+                    if (relayout) {
+                        layout_children(impl, index, Axis::Y);
+                        BASE_UNUSED(update_laid_out_stack_scroll_metrics(impl, index));
+                        sync_scroll_offsets(box);
+                    }
+                } else if (box.kind == BoxKind::POPUP && box.layout.scroll_y) {
+                    bool const relayout = update_laid_out_stack_scroll_metrics(impl, index);
+                    sync_scroll_offsets(box);
+                    if (relayout) {
+                        layout_children(impl, index, Axis::Y);
+                        BASE_UNUSED(update_laid_out_stack_scroll_metrics(impl, index));
+                        sync_scroll_offsets(box);
+                    }
                 }
             } else {
                 layout_overlay(impl, index);
@@ -2454,7 +2734,7 @@ namespace gui {
 
         auto layout_overlay(ContextImpl* impl, size_t index) -> void {
             BoxNode const& box = impl->boxes[index];
-            Rect const content = content_rect(box.rect, box.layout.padding);
+            Rect const content = layout_content_rect(box);
             for (size_t child_index = box.first_child; child_index != INVALID_INDEX;
                  child_index = impl->boxes[child_index].next_sibling) {
                 BoxNode& child = impl->boxes[child_index];
@@ -2493,14 +2773,13 @@ namespace gui {
 
         auto layout_floating_children(ContextImpl* impl, size_t index) -> void {
             BoxNode const& box = impl->boxes[index];
-            Rect const content = content_rect(box.rect, box.layout.padding);
+            Rect const content = layout_content_rect(box);
             for (size_t child_index = box.first_child; child_index != INVALID_INDEX;
                  child_index = impl->boxes[child_index].next_sibling) {
                 BoxNode& child = impl->boxes[child_index];
                 if (!floating_box(child.kind)) {
                     continue;
                 }
-
                 Rect const root_bounds = impl->boxes[0].rect;
                 Rect const bounds = child.kind == BoxKind::MODAL ? root_bounds : content;
                 float const available_x = std::max(
@@ -2524,6 +2803,29 @@ namespace gui {
                 apply_wrapped_text_height(child, child_size);
                 apply_min_max(child, child_size);
 
+                if (child.popup_anchor_above) {
+                    if (child.layout.height.kind != SizeKind::PIXELS) {
+                        child_size.y = stack_content_height_for_width(impl, child, child_size.x);
+                        apply_min_max(child, child_size);
+                    }
+                    Rect const anchor =
+                        box_rect(impl, child.popup_anchor_id, child.popup_anchor_rect);
+                    float const available_above =
+                        std::max(0.0f, anchor.min.y - bounds.min.y - child.popup_anchor_gap);
+                    child_size.y = std::min(child_size.y, available_above);
+                    float x = anchor.min.x + child.popup_anchor_offset_x;
+                    float y = anchor.min.y - child.popup_anchor_gap - child_size.y;
+                    float const max_x =
+                        std::max(root_bounds.min.x, root_bounds.max.x - child_size.x);
+                    x = std::clamp(x, root_bounds.min.x, max_x);
+                    y = std::max(bounds.min.y, y);
+                    layout_node(impl, child_index, {{x, y}, {x + child_size.x, y + child_size.y}});
+                    child.hover_rect = child.rect;
+                    child.hover_rect.max.y = std::max(child.hover_rect.max.y, anchor.min.y);
+                    child.hover_rect_valid = true;
+                    continue;
+                }
+
                 float const base_x = bounds.min.x + child.layout.margin.left +
                                      align_offset(box.layout.align_x, available_x, child_size.x);
                 float const base_y = bounds.min.y + child.layout.margin.top +
@@ -2532,7 +2834,11 @@ namespace gui {
                 float y = base_y;
                 if (child.kind == BoxKind::POPUP && child.state != nullptr) {
                     StateEntry& state = *child.state;
-                    if (child.signal.active && impl->frame_desc.input.mouse_down[0u] &&
+                    bool const scroll_active =
+                        child.scroll_state != nullptr &&
+                        impl->active_scroll_id.value == child.scroll_state->id.value;
+                    if (!scroll_active && child.signal.active &&
+                        impl->frame_desc.input.mouse_down[0u] &&
                         impl->previous_input.mouse_down[0u]) {
                         state.floating_offset_x +=
                             impl->frame_desc.input.mouse_pos.x - impl->previous_input.mouse_pos.x;
@@ -2550,6 +2856,13 @@ namespace gui {
                     y = std::clamp(y, root_bounds.min.y, max_y);
                     state.floating_offset_x = x - base_x;
                     state.floating_offset_y = y - base_y;
+                } else {
+                    float const max_x =
+                        std::max(root_bounds.min.x, root_bounds.max.x - child_size.x);
+                    float const max_y =
+                        std::max(root_bounds.min.y, root_bounds.max.y - child_size.y);
+                    x = std::clamp(x, root_bounds.min.x, max_x);
+                    y = std::clamp(y, root_bounds.min.y, max_y);
                 }
                 layout_node(impl, child_index, {{x, y}, {x + child_size.x, y + child_size.y}});
             }
@@ -2595,7 +2908,7 @@ namespace gui {
             init_table_layout(*arena, impl, index, table);
             build_table_layout(impl, index, table);
 
-            Rect const content = content_rect(box.rect, box.layout.padding);
+            Rect const content = layout_content_rect(box);
             float const gap = box.layout.gap;
             expand_table_axis(table.columns, table.column_count, rect_width(content), gap);
             expand_table_axis(table.rows, table.row_count, rect_height(content), gap);
@@ -2643,7 +2956,7 @@ namespace gui {
 
         auto layout_children(ContextImpl* impl, size_t index, Axis axis) -> void {
             BoxNode& box = impl->boxes[index];
-            Rect const content = content_rect(box.rect, box.layout.padding);
+            Rect const content = layout_content_rect(box);
             float const content_main = axis == Axis::X ? rect_width(content) : rect_height(content);
             float const content_cross =
                 axis == Axis::X ? rect_height(content) : rect_width(content);
@@ -2686,6 +2999,7 @@ namespace gui {
             Align const main_align = axis == Axis::X ? box.layout.align_x : box.layout.align_y;
             float const main_offset =
                 fill_weight > 0.0f ? 0.0f : align_offset(main_align, content_main, run_main);
+            Size const box_cross_size = axis == Axis::X ? box.layout.height : box.layout.width;
             float cursor = (axis == Axis::X ? content.min.x : content.min.y) + main_offset;
             if (axis == Axis::Y) {
                 cursor += box.scroll_offset_y;
@@ -2693,6 +3007,43 @@ namespace gui {
                 cursor += box.scroll_offset_x;
             }
             Align const cross_align = axis == Axis::X ? box.layout.align_y : box.layout.align_x;
+            float layout_content_cross = content_cross;
+            if (box_cross_size.kind == SizeKind::AUTO ||
+                box_cross_size.kind == SizeKind::CHILDREN) {
+                for (size_t child_index = box.first_child; child_index != INVALID_INDEX;
+                     child_index = impl->boxes[child_index].next_sibling) {
+                    BoxNode const& child = impl->boxes[child_index];
+                    if (floating_box(child.kind)) {
+                        continue;
+                    }
+                    Size const main_size =
+                        axis == Axis::X ? child.layout.width : child.layout.height;
+                    Size const cross_size =
+                        axis == Axis::X ? child.layout.height : child.layout.width;
+                    float main = child_axis_size(child, axis);
+                    if (main_size.kind == SizeKind::FILL && fill_weight > 0.0f) {
+                        main = fill_space * (std::max(main_size.value, 0.0f) / fill_weight);
+                    }
+
+                    float cross = axis == Axis::X ? child.measured_size.y : child.measured_size.x;
+                    bool const stretch =
+                        cross_size.kind == SizeKind::FILL || cross_align == Align::STRETCH;
+                    if (cross_size.kind == SizeKind::PIXELS) {
+                        cross = cross_size.value;
+                    } else if (stretch) {
+                        cross =
+                            std::max(0.0f, layout_content_cross - child_margin_cross(child, axis));
+                    }
+
+                    Vec2 child_size = axis == Axis::X ? Vec2{main, cross} : Vec2{cross, main};
+                    apply_wrapped_text_height(child, child_size);
+                    apply_min_max(child, child_size);
+                    float const child_cross = axis == Axis::X ? child_size.y : child_size.x;
+                    layout_content_cross = std::max(
+                        layout_content_cross, child_cross + child_margin_cross(child, axis)
+                    );
+                }
+            }
 
             for (size_t child_index = box.first_child; child_index != INVALID_INDEX;
                  child_index = impl->boxes[child_index].next_sibling) {
@@ -2713,7 +3064,7 @@ namespace gui {
                 if (cross_size.kind == SizeKind::PIXELS) {
                     cross = cross_size.value;
                 } else if (stretch) {
-                    cross = std::max(0.0f, content_cross - child_margin_cross(child, axis));
+                    cross = std::max(0.0f, layout_content_cross - child_margin_cross(child, axis));
                 }
 
                 Vec2 child_size = axis == Axis::X ? Vec2{main, cross} : Vec2{cross, main};
@@ -2721,7 +3072,7 @@ namespace gui {
                 apply_min_max(child, child_size);
                 if (axis == Axis::X) {
                     float const cross_available =
-                        content_cross - child.layout.margin.top - child.layout.margin.bottom;
+                        layout_content_cross - child.layout.margin.top - child.layout.margin.bottom;
                     float const cross_start =
                         content.min.y + child.layout.margin.top +
                         align_offset(cross_align, cross_available, child_size.y);
@@ -2735,7 +3086,7 @@ namespace gui {
                               child.layout.margin.right + box.layout.gap;
                 } else {
                     float const cross_available =
-                        content_cross - child.layout.margin.left - child.layout.margin.right;
+                        layout_content_cross - child.layout.margin.left - child.layout.margin.right;
                     float const cross_start =
                         content.min.x + child.layout.margin.left +
                         align_offset(cross_align, cross_available, child_size.x) +
@@ -5081,7 +5432,8 @@ namespace gui {
             BoxNode const& box = impl->boxes[index];
             bool const clips = box_clips(box);
             bool const clips_cell_content = table_cell_box(box.kind);
-            bool const clips_scroll_content = box.kind == BoxKind::SCROLL_PANEL;
+            bool const clips_scroll_content = box.kind == BoxKind::SCROLL_PANEL ||
+                                              (box.kind == BoxKind::POPUP && box.layout.scroll_y);
             if (clips && !clips_cell_content) {
                 draw::push_clip_rect(draw_context, to_draw_rect(box.rect));
             }
@@ -5109,6 +5461,18 @@ namespace gui {
                     color_visible(box.resolved_style.border) ||
                     color_visible(box.resolved_style.shadow.color)) {
                     draw::draw_rect_styled(draw_context, to_draw_rect(box.rect), style);
+                }
+                if (press_overlay_box(box.kind) && box.interactive && !box_disabled(box) &&
+                    (box.signal.active || box.signal.activated)) {
+                    draw_widget_rect(
+                        draw_context,
+                        box.rect,
+                        color_alpha(box.resolved_style.foreground, 0.08f),
+                        {},
+                        0.0f,
+                        box.resolved_style.radius,
+                        box.resolved_style.opacity
+                    );
                 }
 
                 if (box.kind == BoxKind::IMAGE) {
@@ -5193,9 +5557,9 @@ namespace gui {
             }
 
             if (clips_cell_content || clips_scroll_content) {
-                draw::push_clip_rect(
-                    draw_context, to_draw_rect(content_rect(box.rect, box.layout.padding))
-                );
+                Rect const clip = clips_scroll_content ? layout_content_rect(box)
+                                                       : content_rect(box.rect, box.layout.padding);
+                draw::push_clip_rect(draw_context, to_draw_rect(clip));
             }
 
             for (size_t child = box.first_child; child != INVALID_INDEX;
@@ -5519,10 +5883,9 @@ namespace gui {
         }
         BoxNode& box = impl->boxes[m_box_index];
         box.interactive = true;
-        box.focusable = true;
-        add_focus_order(impl, box);
         box.signal = make_signal(impl, box);
-        return apply_button_activation(impl, box);
+        box.signal.activated = box.signal.clicked_left;
+        return box.signal;
     }
 
     auto Scope::close() -> void {
@@ -6227,10 +6590,34 @@ namespace gui {
         size_t const parent = top_parent_index(impl);
         Id const authored_id = scoped_id(impl, id_value);
         Id const popup_id = explicit_id(impl, parent, BoxKind::POPUP, authored_id);
-        if (!source.hovered && impl->hot_id.value != popup_id.value) {
+        if (!source.hovered && !hot_box_is_or_descends_from(impl, popup_id)) {
             return {};
         }
         return popup(id_value, desc);
+    }
+
+    auto Frame::popup_above(Id id_value, PopupAboveDesc const& desc) -> Scope {
+        ContextImpl* const impl = impl_from_frame(*this);
+        size_t const parent = top_parent_index(impl);
+        Id const authored_id = scoped_id(impl, id_value);
+        Id const popup_id = explicit_id(impl, parent, BoxKind::POPUP, authored_id);
+        if (!desc.open && !desc.source.hovered && !hot_box_is_or_descends_from(impl, popup_id)) {
+            return {};
+        }
+        BoxDesc box_desc = desc.box;
+        box_desc.layout.clip = true;
+        box_desc.layout.scroll_y = true;
+        size_t const index =
+            append_box(impl, BoxKind::POPUP, popup_id, authored_id, {}, box_desc, true, false);
+        BoxNode& box = impl->boxes[index];
+        box.popup_anchor_above = true;
+        box.popup_anchor_id = desc.source.id;
+        box.popup_anchor_rect = desc.source.rect;
+        box.popup_anchor_offset_x = desc.offset_x;
+        box.popup_anchor_gap = desc.gap;
+        set_scroll_state(impl, box, authored_id);
+        push_parent(impl, index);
+        return {this, index};
     }
 
     auto Frame::modal(Id id_value, BoxDesc const& desc) -> Scope {
@@ -7328,7 +7715,10 @@ namespace gui {
         impl->frame_desc = desc;
         impl->frame_start_focus_id = impl->focused_id;
         impl->previous_hot_id = impl->hot_id;
+        impl->wheel_scroll_x_id = wheel_scroll_target(impl, Axis::X);
+        impl->wheel_scroll_y_id = wheel_scroll_target(impl, Axis::Y);
         impl->hot_id = compute_hot_id(impl);
+        impl->hot_popup_id = hot_popup_ancestor_id(impl, impl->hot_id);
         process_focus_keys(impl);
         impl->frame_arena.reset();
         impl->boxes.clear();
