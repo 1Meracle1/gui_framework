@@ -1662,6 +1662,26 @@ namespace code_editor {
         return count;
     }
 
+    [[nodiscard]] auto sticky_scope_hit_line(
+        gui::Rect content,
+        Slice<size_t const> lines,
+        gui::Vec2 mouse,
+        float line_height,
+        size_t& line,
+        size_t& row
+    ) -> bool {
+        float const sticky_height = line_height * static_cast<float>(lines.size());
+        if (lines.empty() || mouse.x < content.min.x - 10.0f || mouse.x >= content.max.x ||
+            mouse.y < content.min.y || mouse.y >= content.min.y + sticky_height) {
+            return false;
+        }
+        row = std::min(
+            lines.size() - 1u, static_cast<size_t>((mouse.y - content.min.y) / line_height)
+        );
+        line = lines[row];
+        return true;
+    }
+
     auto draw_semantic_line(
         draw::Context context,
         font_cache::Font font,
@@ -2465,12 +2485,37 @@ namespace code_editor {
         size_t sticky_scope_lines[STICKY_SCOPE_MAX_LINES] = {};
         size_t sticky_scope_count = 0u;
         gui::Rect input_rect = rect;
+        if (scrolled) {
+            editor.scroll_y -= input.scroll_delta_y;
+        }
+        gui::Rect body_rect = rect;
+        clamp_scroll(editor, body_rect);
+        sticky_scope_count =
+            collect_sticky_scope_lines(editor, line_height, full_content, sticky_scope_lines);
+        size_t sticky_scope_line = 0u;
+        size_t sticky_scope_row = 0u;
+        gui::Rect const input_content = editor_content_rect(input_rect);
+        bool const sticky_scope_clicked =
+            clicked && sticky_scope_hit_line(
+                           input_content,
+                           Slice<size_t const>(sticky_scope_lines, sticky_scope_count),
+                           input.mouse_pos,
+                           line_height,
+                           sticky_scope_line,
+                           sticky_scope_row
+                       );
         bool fold_gutter_clicked = false;
-        if (clicked) {
-            gui::Rect const content = editor_content_rect(input_rect);
+        if (sticky_scope_clicked) {
+            size_t const visible_line = editor_visible_line_index(editor, sticky_scope_line);
+            size_t const first_line =
+                sticky_scope_row < visible_line ? visible_line - sticky_scope_row : 0u;
+            editor.scroll_y = static_cast<float>(first_line) * line_height;
+            editor.set_flag(EditorFlag::MOUSE_SELECTING, false);
+        } else if (clicked) {
             float const gutter_max_x =
-                content.min.x + editor_scaled_font_size(editor, LINE_NUMBER_WIDTH);
-            float const y = std::max(0.0f, input.mouse_pos.y - content.min.y + editor.scroll_y);
+                input_content.min.x + editor_scaled_font_size(editor, LINE_NUMBER_WIDTH);
+            float const y =
+                std::max(0.0f, input.mouse_pos.y - input_content.min.y + editor.scroll_y);
             size_t const visible_line = std::min(
                 editor_visible_line_count(editor) - 1u, static_cast<size_t>(y / line_height)
             );
@@ -2482,10 +2527,7 @@ namespace code_editor {
                 editor.set_flag(EditorFlag::MOUSE_SELECTING, false);
             }
         }
-        if (scrolled) {
-            editor.scroll_y -= input.scroll_delta_y;
-        }
-        if (middle_clicked) {
+        if (middle_clicked && !sticky_scope_clicked) {
             begin_multi_cursor_from_mouse(editor, input_rect, input.mouse_pos, char_width);
             editor.set_flag(EditorFlag::MULTI_CURSOR_DRAGGING, true);
             editor.set_flag(EditorFlag::MOUSE_SELECTING, false);
@@ -2517,17 +2559,15 @@ namespace code_editor {
         }
         editor.set_flag(EditorFlag::MOUSE_WAS_DOWN, input.mouse_down[0u]);
         editor.set_flag(EditorFlag::MIDDLE_MOUSE_WAS_DOWN, input.mouse_down[1u]);
-        if ((clicked && !fold_gutter_clicked) || dragged || middle_clicked || middle_dragged ||
-            double_clicked || triple_clicked || apply_key_reveal) {
+        bool const mouse_edited = (clicked && !fold_gutter_clicked) || dragged || middle_clicked ||
+                                  middle_dragged || double_clicked || triple_clicked;
+        if (!sticky_scope_clicked && (mouse_edited || apply_key_reveal)) {
             reveal_cursor(editor, rect, char_width);
         } else {
             editor.scroll_x = std::max(0.0f, editor.scroll_x);
             editor.scroll_y = std::max(0.0f, editor.scroll_y);
         }
 
-        sticky_scope_count =
-            collect_sticky_scope_lines(editor, line_height, full_content, sticky_scope_lines);
-        gui::Rect body_rect = rect;
         clamp_scroll(editor, body_rect);
         sticky_scope_count =
             collect_sticky_scope_lines(editor, line_height, full_content, sticky_scope_lines);
