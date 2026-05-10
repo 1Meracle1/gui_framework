@@ -322,6 +322,7 @@ These keys apply while the filesystem sidebar has focus.
 
 | Key | Action |
 | --- | --- |
+| `Tab`, `Shift+Tab` | Cycle to the next or previous visible tree entry. |
 | `Up`, `k` | Move to the previous visible tree entry. |
 | `Down`, `j` | Move to the next visible tree entry. |
 | `Left`, `h` | Collapse the current directory. If it is already collapsed, move to the parent. At the root, close the tree. |

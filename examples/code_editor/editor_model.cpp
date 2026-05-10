@@ -1047,6 +1047,8 @@ namespace code_editor {
             return;
         }
         editor.sidebar_tab = EditorSidebarTab::GIT;
+        editor.git_selection_focused = false;
+        editor.git_control_focused = false;
         editor.git_refresh_requested = true;
         ensure_filesystem_panel(editor);
         size_t const split =
@@ -1289,6 +1291,7 @@ namespace code_editor {
             editor.git_selected = delta > editor.git_selected ? 0u : editor.git_selected - delta;
         }
         close_git_commit_popup(editor);
+        editor.git_selection_focused = true;
         editor.git_cursor_reveal = true;
         request_more_git_commits_if_needed(editor);
     }
@@ -1401,11 +1404,13 @@ namespace code_editor {
             break;
         case 'g':
             editor.git_selected = 0u;
+            editor.git_selection_focused = true;
             editor.git_cursor_reveal = true;
             break;
         case 'G':
             editor.git_selected =
                 git_visible_row_count(editor) == 0u ? 0u : git_visible_row_count(editor) - 1u;
+            editor.git_selection_focused = true;
             editor.git_cursor_reveal = true;
             request_more_git_commits_if_needed(editor);
             break;
@@ -4906,6 +4911,17 @@ namespace code_editor {
         set_tree_cursor(editor, TREE_CURSOR_ROOT);
     }
 
+    auto cycle_filesystem_tree_cursor(EditorState& editor, int32_t direction) -> void {
+        clamp_filesystem_tree_cursor(editor);
+        size_t const before = editor.tree_cursor;
+        move_filesystem_tree_cursor(editor, direction);
+        if (editor.tree_cursor == before) {
+            set_tree_cursor(
+                editor, direction > 0 ? TREE_CURSOR_ROOT : last_visible_tree_entry(editor)
+            );
+        }
+    }
+
     auto expand_filesystem_tree_cursor(EditorState& editor) -> void {
         clamp_filesystem_tree_cursor(editor);
         if (editor.tree_cursor == TREE_CURSOR_ROOT) {
@@ -6766,6 +6782,13 @@ namespace code_editor {
                 move_filesystem_half_split(editor, -1);
                 return;
             }
+            if (event.key == gui::Key::TAB &&
+                (event.mods & (gui::KEY_MOD_CTRL | gui::KEY_MOD_ALT | gui::KEY_MOD_SUPER)) == 0u) {
+                cycle_filesystem_tree_cursor(
+                    editor, (event.mods & gui::KEY_MOD_SHIFT) != 0u ? -1 : 1
+                );
+                return;
+            }
             if (event.key == gui::Key::ENTER) {
                 activate_filesystem_tree_cursor(editor);
                 return;
@@ -6941,7 +6964,10 @@ namespace code_editor {
             editor.sidebar_tab == EditorSidebarTab::GIT &&
             (editor.git_commit_text_focused || editor.git_branch_search_focused ||
              editor.git_commit_search_focused || editor.git_action_ref_focused);
-        if (git_text_focused || editor.git_error_visible) {
+        bool const git_control_focused = editor.sidebar_tab == EditorSidebarTab::GIT &&
+                                         focused_pane_kind(editor) == EditorPaneKind::FILESYSTEM &&
+                                         editor.git_control_focused;
+        if (git_text_focused || git_control_focused || editor.git_error_visible) {
             return;
         }
         for (size_t index = 0u; index < input.key_event_count; ++index) {
@@ -7329,6 +7355,9 @@ namespace code_editor {
             hash_bytes(hash, &editor.git_pending_push_count, sizeof(editor.git_pending_push_count));
         hash = hash_bytes(hash, &editor.git_operation_state, sizeof(editor.git_operation_state));
         hash = hash_bytes(hash, &editor.git_error_visible, sizeof(editor.git_error_visible));
+        hash =
+            hash_bytes(hash, &editor.git_selection_focused, sizeof(editor.git_selection_focused));
+        hash = hash_bytes(hash, &editor.git_control_focused, sizeof(editor.git_control_focused));
         hash = hash_bytes(hash, &editor.git_cursor_reveal, sizeof(editor.git_cursor_reveal));
         hash = hash_bytes(hash, &editor.git_commits_more, sizeof(editor.git_commits_more));
         hash = hash_bytes(hash, &editor.git_commits_loading, sizeof(editor.git_commits_loading));

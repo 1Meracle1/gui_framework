@@ -3307,46 +3307,299 @@ namespace {
         gui::destroy_context(gui_context);
     }
 
-    TEST_CASE(tab_focus_moves_through_previous_frame_order) {
+    TEST_CASE(tab_focus_uses_current_frame_order) {
         Arena arena = {};
         arena.init();
 
         gui::Context gui_context = {};
         gui::create_context(arena, {}, gui_context);
 
+        gui::Id const first_id = gui::id("one");
+        gui::Id const stale_id = gui::id("stale");
+        gui::Id const last_id = gui::id("last");
         gui::Frame ui = gui::begin_frame(gui_context, {.size = {120.0f, 60.0f}});
-        ui.button("One", {.layout = {.width = gui::px(50.0f), .height = gui::px(20.0f)}});
-        ui.button("Two", {.layout = {.width = gui::px(50.0f), .height = gui::px(20.0f)}});
-        gui::end_frame(ui);
-
-        gui::InputState input = {};
-        input.mouse_pos = {5.0f, 5.0f};
-        input.mouse_down[0u] = true;
-        ui = gui::begin_frame(gui_context, {.size = {120.0f, 60.0f}, .input = input});
-        ui.button("One", {.layout = {.width = gui::px(50.0f), .height = gui::px(20.0f)}});
-        ui.button("Two", {.layout = {.width = gui::px(50.0f), .height = gui::px(20.0f)}});
-        gui::end_frame(ui);
-
-        input.mouse_down[0u] = false;
-        ui = gui::begin_frame(gui_context, {.size = {120.0f, 60.0f}, .input = input});
-        ui.button("One", {.layout = {.width = gui::px(50.0f), .height = gui::px(20.0f)}});
-        ui.button("Two", {.layout = {.width = gui::px(50.0f), .height = gui::px(20.0f)}});
+        ui.request_focus(first_id);
+        ui.button(first_id, "One", {.layout = {.width = gui::px(50.0f), .height = gui::px(20.0f)}});
+        ui.button(
+            stale_id, "Stale", {.layout = {.width = gui::px(50.0f), .height = gui::px(20.0f)}}
+        );
+        ui.button(last_id, "Last", {.layout = {.width = gui::px(50.0f), .height = gui::px(20.0f)}});
         gui::end_frame(ui);
 
         gui::KeyEvent const events[] = {{.key = gui::Key::TAB}};
-        input = {};
+        gui::InputState input = {};
         input.key_events = events;
         input.key_event_count = 1u;
         ui = gui::begin_frame(gui_context, {.size = {120.0f, 60.0f}, .input = input});
-        gui::Signal const first =
-            ui.button("One", {.layout = {.width = gui::px(50.0f), .height = gui::px(20.0f)}});
-        gui::Signal const second =
-            ui.button("Two", {.layout = {.width = gui::px(50.0f), .height = gui::px(20.0f)}});
+        ui.button(first_id, "One", {.layout = {.width = gui::px(50.0f), .height = gui::px(20.0f)}});
+        ui.button(last_id, "Last", {.layout = {.width = gui::px(50.0f), .height = gui::px(20.0f)}});
         gui::end_frame(ui);
+
+        gui::BoxInfo const* focused = ui.focused_box();
+        TEST_EXPECT(context, focused != nullptr);
+        if (focused != nullptr) {
+            TEST_EXPECT(context, focused->authored_id.value == last_id.value);
+        }
+
+        gui::destroy_context(gui_context);
+    }
+
+    TEST_CASE(tab_focus_signal_updates_during_stable_frame) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::Id const first_id = gui::id("one");
+        gui::Id const second_id = gui::id("two");
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {120.0f, 60.0f}});
+        ui.request_focus(first_id);
+        ui.button(first_id, "One", {.layout = {.width = gui::px(50.0f), .height = gui::px(20.0f)}});
+        ui.button(
+            second_id, "Two", {.layout = {.width = gui::px(50.0f), .height = gui::px(20.0f)}}
+        );
+        gui::end_frame(ui);
+
+        gui::KeyEvent const events[] = {{.key = gui::Key::TAB}};
+        gui::InputState input = {.key_events = events, .key_event_count = 1u};
+        ui = gui::begin_frame(gui_context, {.size = {120.0f, 60.0f}, .input = input});
+        gui::Signal const first = ui.button(
+            first_id, "One", {.layout = {.width = gui::px(50.0f), .height = gui::px(20.0f)}}
+        );
+        gui::Signal const second = ui.button(
+            second_id, "Two", {.layout = {.width = gui::px(50.0f), .height = gui::px(20.0f)}}
+        );
 
         TEST_EXPECT(context, first.focus_lost);
         TEST_EXPECT(context, second.focused);
         TEST_EXPECT(context, second.focus_gained);
+
+        gui::end_frame(ui);
+        gui::destroy_context(gui_context);
+    }
+
+    TEST_CASE(focus_anchor_survives_missing_frame) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::Id const first_id = gui::id("one");
+        gui::Id const second_id = gui::id("two");
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {120.0f, 60.0f}});
+        ui.button(first_id, "One", {.layout = {.width = gui::px(50.0f), .height = gui::px(20.0f)}});
+        ui.request_focus(second_id);
+        ui.button(
+            second_id, "Two", {.layout = {.width = gui::px(50.0f), .height = gui::px(20.0f)}}
+        );
+        gui::end_frame(ui);
+
+        ui = gui::begin_frame(gui_context, {.size = {120.0f, 60.0f}});
+        ui.button(first_id, "One", {.layout = {.width = gui::px(50.0f), .height = gui::px(20.0f)}});
+        gui::end_frame(ui);
+        TEST_EXPECT(context, ui.focused_box() == nullptr);
+
+        ui = gui::begin_frame(gui_context, {.size = {120.0f, 60.0f}});
+        ui.button(first_id, "One", {.layout = {.width = gui::px(50.0f), .height = gui::px(20.0f)}});
+        gui::Signal const second = ui.button(
+            second_id, "Two", {.layout = {.width = gui::px(50.0f), .height = gui::px(20.0f)}}
+        );
+        gui::end_frame(ui);
+
+        TEST_EXPECT(context, second.focused);
+        gui::BoxInfo const* focused = ui.focused_box();
+        TEST_EXPECT(context, focused != nullptr);
+        if (focused != nullptr) {
+            TEST_EXPECT(context, focused->authored_id.value == second_id.value);
+        }
+
+        gui::destroy_context(gui_context);
+    }
+
+    TEST_CASE(shift_tab_focus_moves_backward_through_current_frame_order) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::Id const first_id = gui::id("one");
+        gui::Id const second_id = gui::id("two");
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {120.0f, 60.0f}});
+        ui.button(first_id, "One", {.layout = {.width = gui::px(50.0f), .height = gui::px(20.0f)}});
+        ui.request_focus(second_id);
+        ui.button(
+            second_id, "Two", {.layout = {.width = gui::px(50.0f), .height = gui::px(20.0f)}}
+        );
+        gui::end_frame(ui);
+
+        gui::KeyEvent const events[] = {{.key = gui::Key::TAB}};
+        gui::InputState input = {};
+        input.key_mods = gui::KEY_MOD_SHIFT;
+        input.key_events = events;
+        input.key_event_count = 1u;
+        ui = gui::begin_frame(gui_context, {.size = {120.0f, 60.0f}, .input = input});
+        ui.button(first_id, "One", {.layout = {.width = gui::px(50.0f), .height = gui::px(20.0f)}});
+        ui.button(
+            second_id, "Two", {.layout = {.width = gui::px(50.0f), .height = gui::px(20.0f)}}
+        );
+        gui::end_frame(ui);
+
+        gui::BoxInfo const* focused = ui.focused_box();
+        TEST_EXPECT(context, focused != nullptr);
+        if (focused != nullptr) {
+            TEST_EXPECT(context, focused->authored_id.value == first_id.value);
+        }
+
+        gui::destroy_context(gui_context);
+    }
+
+    TEST_CASE(shift_tab_leaves_multiline_input_without_inserting_tab) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::Id const field_id = gui::id("field");
+        StringBuffer buffer;
+        TEST_EXPECT(context, buffer.init(0u, arena.resource()));
+        TEST_EXPECT(context, buffer.write_string("a") == 1u);
+
+        gui::Id const prev_id = gui::id("prev");
+        gui::Id const next_id = gui::id("next");
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {220.0f, 100.0f}});
+        ui.button(prev_id, "Prev", {.layout = {.width = gui::px(60.0f), .height = gui::px(24.0f)}});
+        ui.request_focus(field_id);
+        ui.input_text_multiline(
+            field_id,
+            "Field",
+            &buffer,
+            {.box = {.layout = {.width = gui::px(140.0f), .height = gui::px(48.0f)}}}
+        );
+        ui.button(next_id, "Next", {.layout = {.width = gui::px(60.0f), .height = gui::px(24.0f)}});
+        gui::end_frame(ui);
+
+        gui::KeyEvent const events[] = {{.key = gui::Key::TAB, .mods = gui::KEY_MOD_SHIFT}};
+        gui::InputState input = {};
+        input.key_events = events;
+        input.key_event_count = 1u;
+
+        ui = gui::begin_frame(gui_context, {.size = {220.0f, 100.0f}, .input = input});
+        ui.button(prev_id, "Prev", {.layout = {.width = gui::px(60.0f), .height = gui::px(24.0f)}});
+        gui::Signal const field = ui.input_text_multiline(
+            field_id,
+            "Field",
+            &buffer,
+            {.box = {.layout = {.width = gui::px(140.0f), .height = gui::px(48.0f)}}}
+        );
+        ui.button(next_id, "Next", {.layout = {.width = gui::px(60.0f), .height = gui::px(24.0f)}});
+        gui::end_frame(ui);
+
+        TEST_EXPECT(context, !field.changed);
+        TEST_EXPECT(context, buffer.str() == StrRef("a"));
+        gui::BoxInfo const* focused = ui.focused_box();
+        TEST_EXPECT(context, focused != nullptr);
+        if (focused != nullptr) {
+            TEST_EXPECT(context, focused->authored_id.value == prev_id.value);
+        }
+
+        gui::destroy_context(gui_context);
+    }
+
+    TEST_CASE(tab_focus_renders_keyboard_focus_ring) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::draw::Context draw_context = {};
+        gui::draw::create_context(arena, {}, draw_context);
+
+        gui::Id const first_id = gui::id("one");
+        gui::Id const second_id = gui::id("two");
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {120.0f, 60.0f}});
+        ui.request_focus(first_id);
+        ui.button(first_id, "One", {.layout = {.width = gui::px(50.0f), .height = gui::px(20.0f)}});
+        ui.button(
+            second_id, "Two", {.layout = {.width = gui::px(50.0f), .height = gui::px(20.0f)}}
+        );
+        gui::end_frame(ui);
+
+        gui::KeyEvent const events[] = {{.key = gui::Key::TAB}};
+        gui::InputState input = {.key_events = events, .key_event_count = 1u};
+        ui = gui::begin_frame(gui_context, {.size = {120.0f, 60.0f}, .input = input});
+        ui.button(first_id, "One", {.layout = {.width = gui::px(50.0f), .height = gui::px(20.0f)}});
+        ui.button(
+            second_id, "Two", {.layout = {.width = gui::px(50.0f), .height = gui::px(20.0f)}}
+        );
+        gui::end_frame(ui);
+
+        gui::draw::begin_frame(draw_context);
+        gui::render_frame(ui, draw_context);
+
+        TEST_EXPECT(context, gui::draw::styled_rect_command_count(draw_context) == 3u);
+        gui::draw::StyledRectCommand const* ring = gui::draw::styled_rect_command(draw_context, 2u);
+        TEST_EXPECT(context, ring != nullptr);
+        if (ring != nullptr) {
+            TEST_EXPECT(context, ring->style.border_thickness == 2.0f);
+            TEST_EXPECT(context, ring->style.border_color.a > 0.0f);
+            TEST_EXPECT(context, ring->style.fill_color.a == 0.0f);
+        }
+
+        gui::draw::destroy_context(draw_context);
+        gui::destroy_context(gui_context);
+    }
+
+    TEST_CASE(tab_focus_can_target_focusable_scope) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::Id const button_id = gui::id("button");
+        gui::Id const row_id = gui::id("row");
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {120.0f, 60.0f}});
+        ui.request_focus(button_id);
+        ui.button(
+            button_id, "One", {.layout = {.width = gui::px(50.0f), .height = gui::px(20.0f)}}
+        );
+        {
+            auto row = ui.row(
+                row_id,
+                {.layout = {.width = gui::px(50.0f), .height = gui::px(20.0f)}, .focusable = true}
+            );
+            TEST_EXPECT(context, row);
+            BASE_UNUSED(row.signal());
+        }
+        gui::end_frame(ui);
+
+        gui::KeyEvent const events[] = {{.key = gui::Key::TAB}};
+        gui::InputState input = {.key_events = events, .key_event_count = 1u};
+        ui = gui::begin_frame(gui_context, {.size = {120.0f, 60.0f}, .input = input});
+        ui.button(
+            button_id, "One", {.layout = {.width = gui::px(50.0f), .height = gui::px(20.0f)}}
+        );
+        {
+            auto row = ui.row(
+                row_id,
+                {.layout = {.width = gui::px(50.0f), .height = gui::px(20.0f)}, .focusable = true}
+            );
+            TEST_EXPECT(context, row);
+            BASE_UNUSED(row.signal());
+        }
+        gui::end_frame(ui);
+
+        gui::BoxInfo const* focused = ui.focused_box();
+        TEST_EXPECT(context, focused != nullptr);
+        if (focused != nullptr) {
+            TEST_EXPECT(context, focused->authored_id.value == row_id.value);
+            TEST_EXPECT(context, focused->kind == gui::BoxKind::ROW);
+        }
 
         gui::destroy_context(gui_context);
     }
@@ -4738,6 +4991,109 @@ namespace {
 
         TEST_EXPECT(context, signal.changed);
         TEST_EXPECT(context, buffer.str() == StrRef("a\t"));
+
+        gui::destroy_context(gui_context);
+    }
+
+    TEST_CASE(input_text_multiline_edit_on_enter_ignores_typing_until_enter) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::Id const field_id = gui::id("field");
+        gui::Id const next_id = gui::id("next");
+        gui::InputTextMultilineDesc const desc = {
+            .box = {.layout = {.width = gui::px(140.0f), .height = gui::px(48.0f)}},
+            .edit_on_enter = true,
+        };
+        StringBuffer buffer;
+        TEST_EXPECT(context, buffer.init(0u, arena.resource()));
+        TEST_EXPECT(context, buffer.write_string("a") == 1u);
+
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {220.0f, 100.0f}});
+        ui.request_focus(field_id);
+        gui::Signal field = ui.input_text_multiline(field_id, "Field", &buffer, desc);
+        gui::Signal next = ui.button(
+            next_id, "Next", {.layout = {.width = gui::px(60.0f), .height = gui::px(24.0f)}}
+        );
+        gui::end_frame(ui);
+
+        TEST_EXPECT(context, field.focused);
+        TEST_EXPECT(context, !next.focused);
+
+        gui::KeyEvent const ignored_text[] = {
+            {.kind = gui::KeyEventKind::TEXT, .codepoint = 'X'},
+        };
+        gui::InputState input = {.key_events = ignored_text, .key_event_count = 1u};
+        ui = gui::begin_frame(gui_context, {.size = {220.0f, 100.0f}, .input = input});
+        field = ui.input_text_multiline(field_id, "Field", &buffer, desc);
+        next = ui.button(
+            next_id, "Next", {.layout = {.width = gui::px(60.0f), .height = gui::px(24.0f)}}
+        );
+        gui::end_frame(ui);
+
+        TEST_EXPECT(context, !field.changed);
+        TEST_EXPECT(context, buffer.str() == StrRef("a"));
+
+        gui::KeyEvent const enter_events[] = {
+            {.key = gui::Key::ENTER},
+            {.kind = gui::KeyEventKind::TEXT, .codepoint = '\r'},
+        };
+        input = {.key_events = enter_events, .key_event_count = 2u};
+        ui = gui::begin_frame(gui_context, {.size = {220.0f, 100.0f}, .input = input});
+        field = ui.input_text_multiline(field_id, "Field", &buffer, desc);
+        next = ui.button(
+            next_id, "Next", {.layout = {.width = gui::px(60.0f), .height = gui::px(24.0f)}}
+        );
+        gui::end_frame(ui);
+
+        TEST_EXPECT(context, field.focused);
+        TEST_EXPECT(context, !field.changed);
+        TEST_EXPECT(context, buffer.str() == StrRef("a"));
+
+        gui::KeyEvent const edit_text[] = {
+            {.kind = gui::KeyEventKind::TEXT, .codepoint = 'X'},
+        };
+        input = {.key_events = edit_text, .key_event_count = 1u};
+        ui = gui::begin_frame(gui_context, {.size = {220.0f, 100.0f}, .input = input});
+        field = ui.input_text_multiline(field_id, "Field", &buffer, desc);
+        next = ui.button(
+            next_id, "Next", {.layout = {.width = gui::px(60.0f), .height = gui::px(24.0f)}}
+        );
+        gui::end_frame(ui);
+
+        TEST_EXPECT(context, field.changed);
+        TEST_EXPECT(context, buffer.str() == StrRef("aX"));
+
+        gui::KeyEvent const escape_events[] = {
+            {.key = gui::Key::ESCAPE},
+            {.kind = gui::KeyEventKind::TEXT, .codepoint = 'Y'},
+        };
+        input = {.key_events = escape_events, .key_event_count = 2u};
+        ui = gui::begin_frame(gui_context, {.size = {220.0f, 100.0f}, .input = input});
+        field = ui.input_text_multiline(field_id, "Field", &buffer, desc);
+        next = ui.button(
+            next_id, "Next", {.layout = {.width = gui::px(60.0f), .height = gui::px(24.0f)}}
+        );
+        gui::end_frame(ui);
+
+        TEST_EXPECT(context, !field.changed);
+        TEST_EXPECT(context, buffer.str() == StrRef("aX"));
+
+        gui::KeyEvent const tab_events[] = {{.key = gui::Key::TAB}};
+        input = {.key_events = tab_events, .key_event_count = 1u};
+        ui = gui::begin_frame(gui_context, {.size = {220.0f, 100.0f}, .input = input});
+        field = ui.input_text_multiline(field_id, "Field", &buffer, desc);
+        next = ui.button(
+            next_id, "Next", {.layout = {.width = gui::px(60.0f), .height = gui::px(24.0f)}}
+        );
+        gui::end_frame(ui);
+
+        TEST_EXPECT(context, !field.focused);
+        TEST_EXPECT(context, next.focused);
+        TEST_EXPECT(context, buffer.str() == StrRef("aX"));
 
         gui::destroy_context(gui_context);
     }

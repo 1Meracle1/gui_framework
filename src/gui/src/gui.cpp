@@ -64,6 +64,7 @@ namespace gui {
             bool scroll_valid = false;
             bool tree_open = false;
             bool tree_open_initialized = false;
+            bool text_edit_active = false;
             bool text_cursor_reveal_requested = false;
             bool text_selection_word_active = false;
         };
@@ -183,6 +184,7 @@ namespace gui {
             XarArray<BoxInfo, BOX_ARRAY_SHIFT> infos;
             XarArray<size_t, BOX_ARRAY_SHIFT> parent_stack;
             XarArray<Id, BOX_ARRAY_SHIFT> focus_order;
+            XarArray<Id, BOX_ARRAY_SHIFT> previous_focus_order;
             StateTable state_table = {};
             size_t box_count = 0u;
             FrameDesc frame_desc = {};
@@ -209,6 +211,11 @@ namespace gui {
             bool building = false;
             bool active_scroll_horizontal = false;
             bool focus_cleared_this_frame = false;
+            bool focus_visible = false;
+            bool focused_id_visible = false;
+            bool frame_start_focus_visible = false;
+            bool focus_key_input = false;
+            bool focus_keys_predicted = false;
             bool redraw_requested = false;
         };
 
@@ -1408,14 +1415,38 @@ namespace gui {
             return false;
         }
 
-        [[nodiscard]] auto tab_reverse(KeyEvent const& event) -> bool {
-            return (event.mods & KEY_MOD_SHIFT) != 0u;
+        [[nodiscard]] auto tab_mods(ContextImpl const* impl, KeyEvent const& event) -> KeyMods {
+            return static_cast<KeyMods>(event.mods | impl->frame_desc.input.key_mods);
         }
 
-        auto move_focus(ContextImpl* impl, bool reverse) -> void {
+        [[nodiscard]] auto tab_reverse(ContextImpl const* impl, KeyEvent const& event) -> bool {
+            return (tab_mods(impl, event) & KEY_MOD_SHIFT) != 0u;
+        }
+
+        [[nodiscard]] auto tab_moves_focus(ContextImpl const* impl, KeyEvent const& event) -> bool {
+            return (tab_mods(impl, event) & (KEY_MOD_CTRL | KEY_MOD_ALT | KEY_MOD_SUPER)) == 0u;
+        }
+
+        [[nodiscard]] auto focus_key_input_present(ContextImpl const* impl) -> bool {
+            InputState const& input = impl->frame_desc.input;
+            if (input.key_events == nullptr) {
+                return false;
+            }
+            for (size_t index = 0u; index < input.key_event_count; ++index) {
+                KeyEvent const& event = input.key_events[index];
+                if (event.key == Key::TAB &&
+                    (event.kind == KeyEventKind::PRESS || event.kind == KeyEventKind::REPEAT) &&
+                    tab_moves_focus(impl, event)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        auto move_focus(ContextImpl* impl, bool reverse) -> bool {
             size_t const focus_order_count = impl->focus_order.size();
             if (focus_order_count == 0u) {
-                return;
+                return false;
             }
 
             size_t current = focus_order_count;
@@ -1434,36 +1465,78 @@ namespace gui {
                 current = (current + 1u) % focus_order_count;
             }
             impl->focused_id = impl->focus_order[current];
+            impl->focus_visible = true;
+            impl->focused_id_visible = true;
+            return true;
         }
 
         [[nodiscard]] auto focused_box_captures_tab(ContextImpl const* impl, KeyEvent const& event)
             -> bool {
-            if ((event.mods & (KEY_MOD_CTRL | KEY_MOD_ALT | KEY_MOD_SUPER)) != 0u) {
+            if ((tab_mods(impl, event) &
+                 (KEY_MOD_SHIFT | KEY_MOD_CTRL | KEY_MOD_ALT | KEY_MOD_SUPER)) != 0u) {
                 return false;
             }
             for (size_t index = 0u; index < impl->box_count; ++index) {
                 BoxNode const& box = impl->boxes[index];
-                if (box.id.value == impl->focused_id.value && multiline_input_text_box(box.kind)) {
+                if (box.id.value == impl->focused_id.value && multiline_input_text_box(box.kind) &&
+                    box.state != nullptr && box.state->text_edit_active) {
                     return true;
                 }
             }
             return false;
         }
 
-        auto process_focus_keys(ContextImpl* impl) -> void {
+        auto process_focus_keys(ContextImpl* impl) -> bool {
             InputState const& input = impl->frame_desc.input;
             if (input.key_events == nullptr) {
-                return;
+                return false;
             }
+            bool handled = false;
             for (size_t index = 0u; index < input.key_event_count; ++index) {
                 KeyEvent const& event = input.key_events[index];
                 if (event.key == Key::TAB &&
                     (event.kind == KeyEventKind::PRESS || event.kind == KeyEventKind::REPEAT)) {
-                    if (!focused_box_captures_tab(impl, event)) {
-                        move_focus(impl, tab_reverse(event));
+                    if (tab_moves_focus(impl, event)) {
+                        if (focused_box_captures_tab(impl, event)) {
+                            handled = true;
+                        } else {
+                            handled |= move_focus(impl, tab_reverse(impl, event));
+                        }
                     }
                 }
             }
+            return handled;
+        }
+
+        [[nodiscard]] auto focus_order_matches_previous(ContextImpl const* impl) -> bool {
+            size_t const count = impl->focus_order.size();
+            if (impl->previous_focus_order.size() != count) {
+                return false;
+            }
+            for (size_t index = 0u; index < count; ++index) {
+                if (impl->previous_focus_order[index].value != impl->focus_order[index].value) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        auto refresh_focus_signals(ContextImpl* impl) -> void {
+            bool focused_id_visible = false;
+            for (size_t index = 0u; index < impl->box_count; ++index) {
+                BoxNode& box = impl->boxes[index];
+                bool const focused = box.focusable && impl->focused_id.value == box.id.value;
+                focused_id_visible |= focused;
+                box.signal.focused = focused;
+                box.signal.focus_gained =
+                    focused && (impl->focus_cleared_this_frame ||
+                                impl->frame_start_focus_id.value != box.id.value ||
+                                !impl->frame_start_focus_visible);
+                box.signal.focus_lost = box.focusable && !focused &&
+                                        impl->frame_start_focus_visible &&
+                                        impl->frame_start_focus_id.value == box.id.value;
+            }
+            impl->focused_id_visible = focused_id_visible;
         }
 
         [[nodiscard]] auto compute_hot_id(ContextImpl const* impl) -> Id {
@@ -1523,6 +1596,8 @@ namespace gui {
             if (box_disabled(box)) {
                 if (impl->focused_id.value == box.id.value) {
                     impl->focused_id = {};
+                    impl->focus_visible = false;
+                    impl->focused_id_visible = false;
                 }
                 return;
             }
@@ -1534,6 +1609,8 @@ namespace gui {
             if (box.authored_id.value != 0u &&
                 box.authored_id.value == impl->focus_request_id.value) {
                 impl->focused_id = box.id;
+                impl->focus_visible = false;
+                impl->focused_id_visible = true;
                 impl->focus_request_id = {};
             }
         }
@@ -1568,6 +1645,8 @@ namespace gui {
                     impl->active_id = box.id;
                     if (box.focusable) {
                         impl->focused_id = box.id;
+                        impl->focus_visible = false;
+                        impl->focused_id_visible = true;
                     }
                 }
                 if (result.released_left) {
@@ -1578,8 +1657,10 @@ namespace gui {
             result.focused = box.focusable && impl->focused_id.value == box.id.value;
             result.focus_gained =
                 result.focused && (impl->focus_cleared_this_frame ||
-                                   impl->frame_start_focus_id.value != box.id.value);
+                                   impl->frame_start_focus_id.value != box.id.value ||
+                                   !impl->frame_start_focus_visible);
             result.focus_lost = box.focusable && !result.focused &&
+                                impl->frame_start_focus_visible &&
                                 impl->frame_start_focus_id.value == box.id.value;
             return result;
         }
@@ -1623,7 +1704,7 @@ namespace gui {
                                                      : BoxIdSource::STRUCTURAL;
             box->stable_id = parent->stable_id && box->id_source == BoxIdSource::EXPLICIT;
             box->interactive = interactive;
-            box->focusable = focusable;
+            box->focusable = focusable || desc.focusable;
             box->state = state_entry(impl, box->id);
 
             for (size_t child = parent->first_child; child != INVALID_INDEX;
@@ -4745,13 +4826,15 @@ namespace gui {
             TextEditBuffer& buffer,
             StrRef tab_text = {},
             bool select_all_on_focus = false,
-            bool ignore_input_on_focus = false
+            bool ignore_input_on_focus = false,
+            bool edit_on_enter = false
         ) -> Signal {
             ASSERT(buffer.data != nullptr || buffer.size == 0u);
 
             Signal signal = box.signal;
             bool const multiline = multiline_input_text_box(box.kind);
             size_t text_size = buffer.size;
+            bool enter_started_edit = false;
             if (box.state != nullptr) {
                 StateEntry& state = *box.state;
                 state.text_cursor = std::min(state.text_cursor, text_size);
@@ -4762,10 +4845,14 @@ namespace gui {
                     selection = {state.text_cursor, state.text_cursor};
                 }
                 if (signal.focus_gained) {
+                    state.text_edit_active = !edit_on_enter;
                     state.text_cursor = text_size;
                     selection = select_all_on_focus ? TextSelection{0u, text_size}
                                                     : TextSelection{text_size, text_size};
                     state.text_selection_word_active = false;
+                }
+                if (signal.focus_lost) {
+                    state.text_edit_active = false;
                 }
                 if (text_selection_outside_click(impl, box)) {
                     selection = {state.text_cursor, state.text_cursor};
@@ -4782,7 +4869,7 @@ namespace gui {
                 selection = pointer_selection;
 
                 bool changed = false;
-                bool reveal_cursor = signal.focus_gained;
+                bool reveal_cursor = signal.focus_gained && state.text_edit_active;
                 size_t skip_text_newlines = 0u;
                 size_t skip_text_tabs = 0u;
                 InputState const& input = impl->frame_desc.input;
@@ -4791,6 +4878,26 @@ namespace gui {
                     bool const writable = !box_read_only(box) && !box_disabled(box);
                     for (size_t index = 0u; index < input.key_event_count; ++index) {
                         KeyEvent const& event = input.key_events[index];
+                        if (edit_on_enter && event.kind == KeyEventKind::PRESS &&
+                            event.key == Key::ENTER && !state.text_edit_active) {
+                            state.text_edit_active = true;
+                            enter_started_edit = true;
+                            reveal_cursor = true;
+                            if (multiline) {
+                                skip_text_newlines += 1u;
+                            }
+                            continue;
+                        }
+                        if (edit_on_enter && event.kind == KeyEventKind::PRESS &&
+                            event.key == Key::ESCAPE && state.text_edit_active) {
+                            state.text_edit_active = false;
+                            selection = {state.text_cursor, state.text_cursor};
+                            state.text_selection_word_active = false;
+                            continue;
+                        }
+                        if (!state.text_edit_active) {
+                            continue;
+                        }
                         reveal_cursor |= event.kind == KeyEventKind::TEXT ||
                                          event.kind == KeyEventKind::PRESS ||
                                          event.kind == KeyEventKind::REPEAT;
@@ -4884,7 +4991,8 @@ namespace gui {
                             continue;
                         }
                         if (multiline && event.key == Key::TAB &&
-                            (event.mods & (KEY_MOD_CTRL | KEY_MOD_ALT | KEY_MOD_SUPER)) == 0u) {
+                            (tab_mods(impl, event) &
+                             (KEY_MOD_SHIFT | KEY_MOD_CTRL | KEY_MOD_ALT | KEY_MOD_SUPER)) == 0u) {
                             if (writable && !tab_text.empty()) {
                                 changed |= replace_text_selection_with_bytes(
                                     impl, state, buffer, selection, tab_text.data(), tab_text.size()
@@ -4984,7 +5092,7 @@ namespace gui {
             }
             signal.activated = !multiline && signal.focused &&
                                !(signal.focus_gained && ignore_input_on_focus) &&
-                               key_pressed(impl, Key::ENTER, false);
+                               !enter_started_edit && key_pressed(impl, Key::ENTER, false);
             box.text = copy_frame_str(impl, text_edit_text(buffer));
             apply_text_selection_owner(impl, box, box.text_selection);
             box.signal = signal;
@@ -5292,7 +5400,8 @@ namespace gui {
                 draw_widget_rect(
                     draw_context, thumb, tokens.text, tokens.canvas, 1.0f, 4.0f, opacity
                 );
-            } else if (input_text_box(box.kind) && box.signal.focused && box.state != nullptr) {
+            } else if (input_text_box(box.kind) && box.signal.focused && box.state != nullptr &&
+                       box.state->text_edit_active) {
                 size_t const cursor = std::min(box.state->text_cursor, box.text.size());
                 Vec2 const pos = text_cursor_position(impl, box, cursor);
                 Rect const caret = {{pos.x, pos.y}, {pos.x + 1.0f, pos.y + text_line_height(box)}};
@@ -5348,6 +5457,24 @@ namespace gui {
                 }
                 line_index += 1u;
             }
+        }
+
+        auto
+        render_focus_ring(ContextImpl const* impl, BoxNode const& box, draw::Context draw_context)
+            -> void {
+            if (!impl->focus_visible || !box.signal.focused || box_disabled(box)) {
+                return;
+            }
+            Color color = impl->theme.tokens.accent;
+            draw_widget_rect(
+                draw_context,
+                inset_rect(box.rect, 1.0f),
+                {},
+                color,
+                2.0f,
+                std::max(0.0f, box.resolved_style.radius - 1.0f),
+                box.resolved_style.opacity
+            );
         }
 
         auto render_scrollbar(ContextImpl const* impl, draw::Context draw_context, size_t index)
@@ -5554,6 +5681,7 @@ namespace gui {
                         }
                     }
                 }
+                render_focus_ring(impl, box, draw_context);
             }
 
             if (clips_cell_content || clips_scroll_content) {
@@ -5815,9 +5943,11 @@ namespace gui {
         bool const infos_initialized = impl->infos.init(arena.resource());
         bool const parent_stack_initialized = impl->parent_stack.init(arena.resource());
         bool const focus_order_initialized = impl->focus_order.init(arena.resource());
+        bool const previous_focus_order_initialized =
+            impl->previous_focus_order.init(arena.resource());
         ASSERT(
             state_table_initialized && boxes_initialized && infos_initialized &&
-            parent_stack_initialized && focus_order_initialized
+            parent_stack_initialized && focus_order_initialized && previous_focus_order_initialized
         );
         impl->frame_arena.init({desc.frame_arena_reserve_size, desc.frame_arena_commit_size});
         impl->theme = desc.theme != nullptr ? *desc.theme : default_theme();
@@ -5830,6 +5960,7 @@ namespace gui {
     auto destroy_context(Context& context) -> void {
         ContextImpl* const impl = impl_from_context(context);
         if (impl != nullptr) {
+            impl->previous_focus_order = {};
             impl->focus_order = {};
             impl->parent_stack = {};
             impl->infos = {};
@@ -7344,7 +7475,13 @@ namespace gui {
         box.stable_id = false;
         TextEditBuffer edit = fixed_text_edit_buffer(buffer, buffer_size);
         return apply_input_text_widget(
-            impl, box, edit, {}, desc.select_all_on_focus, desc.ignore_input_on_focus
+            impl,
+            box,
+            edit,
+            {},
+            desc.select_all_on_focus,
+            desc.ignore_input_on_focus,
+            desc.edit_on_enter
         );
     }
 
@@ -7378,7 +7515,13 @@ namespace gui {
         BASE_UNUSED(label);
         TextEditBuffer edit = fixed_text_edit_buffer(buffer, buffer_size);
         return apply_input_text_widget(
-            impl, impl->boxes[index], edit, {}, desc.select_all_on_focus, desc.ignore_input_on_focus
+            impl,
+            impl->boxes[index],
+            edit,
+            {},
+            desc.select_all_on_focus,
+            desc.ignore_input_on_focus,
+            desc.edit_on_enter
         );
     }
 
@@ -7408,7 +7551,9 @@ namespace gui {
         box.stable_id = false;
         box.scroll_state = box.state;
         TextEditBuffer edit = string_text_edit_buffer(buffer);
-        return apply_input_text_widget(impl, box, edit, desc.tab_text);
+        return apply_input_text_widget(
+            impl, box, edit, desc.tab_text, false, false, desc.edit_on_enter
+        );
     }
 
     auto Frame::input_text_multiline(
@@ -7436,7 +7581,9 @@ namespace gui {
         set_scroll_state(impl, impl->boxes[index], authored_id);
         TextEditBuffer edit = string_text_edit_buffer(buffer);
         BASE_UNUSED(label);
-        return apply_input_text_widget(impl, impl->boxes[index], edit, desc.tab_text);
+        return apply_input_text_widget(
+            impl, impl->boxes[index], edit, desc.tab_text, false, false, desc.edit_on_enter
+        );
     }
 
     auto Frame::list_fixed(Id id_value, ListFixedDesc const& desc) -> ListScope {
@@ -7630,6 +7777,8 @@ namespace gui {
             impl->focused_id = {};
             impl->focus_request_id = {};
             impl->focus_cleared_this_frame = true;
+            impl->focus_visible = false;
+            impl->focused_id_visible = false;
         }
     }
 
@@ -7714,12 +7863,18 @@ namespace gui {
         ASSERT(impl != nullptr);
         impl->frame_desc = desc;
         impl->frame_start_focus_id = impl->focused_id;
+        impl->frame_start_focus_visible = impl->focused_id_visible;
         impl->previous_hot_id = impl->hot_id;
         impl->wheel_scroll_x_id = wheel_scroll_target(impl, Axis::X);
         impl->wheel_scroll_y_id = wheel_scroll_target(impl, Axis::Y);
         impl->hot_id = compute_hot_id(impl);
         impl->hot_popup_id = hot_popup_ancestor_id(impl, impl->hot_id);
-        process_focus_keys(impl);
+        impl->previous_focus_order.clear();
+        for (Id const id_value : impl->focus_order) {
+            ASSERT(impl->previous_focus_order.push_back(id_value));
+        }
+        impl->focus_key_input = focus_key_input_present(impl);
+        impl->focus_keys_predicted = impl->focus_key_input && process_focus_keys(impl);
         impl->frame_arena.reset();
         impl->boxes.clear();
         impl->infos.clear();
@@ -7756,6 +7911,12 @@ namespace gui {
     auto end_frame(Frame& frame) -> void {
         ContextImpl* const impl = impl_from_frame(frame);
         ASSERT(impl != nullptr);
+        if (impl->focus_key_input &&
+            (!impl->focus_keys_predicted || !focus_order_matches_previous(impl))) {
+            impl->focused_id = impl->frame_start_focus_id;
+            BASE_UNUSED(process_focus_keys(impl));
+        }
+        refresh_focus_signals(impl);
         StyleDesc root_style = {};
         root_style.foreground = rgb(255, 255, 255);
         root_style.opacity = 1.0f;
@@ -7765,18 +7926,6 @@ namespace gui {
         BASE_UNUSED(measure_node(impl, 0u));
         layout_node(impl, 0u, {{0.0f, 0.0f}, {impl->frame_desc.size.x, impl->frame_desc.size.y}});
         publish_infos(impl);
-        if (impl->focused_id.value != 0u) {
-            bool focus_found = false;
-            for (size_t index = 0u; index < impl->focus_order.size(); ++index) {
-                if (impl->focus_order[index].value == impl->focused_id.value) {
-                    focus_found = true;
-                    break;
-                }
-            }
-            if (!focus_found) {
-                impl->focused_id = {};
-            }
-        }
         if (!impl->frame_desc.input.mouse_down[0u]) {
             impl->active_id = {};
             impl->active_scroll_id = {};

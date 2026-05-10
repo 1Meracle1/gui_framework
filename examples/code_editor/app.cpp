@@ -1642,6 +1642,12 @@ namespace code_editor {
         };
         runtime->config.effective = runtime->config.base;
         reload_runtime_config(*runtime, true);
+        if (context.initial_sidebar_visible && runtime->editor.flag(EditorFlag::SIDEBAR_VISIBLE)) {
+            size_t const filesystem = runtime->editor.split_nodes[runtime->editor.root_split].first;
+            if (editor_split_pane_kind(runtime->editor, filesystem) == EditorPaneKind::FILESYSTEM) {
+                focus_editor_split(runtime->editor, filesystem);
+            }
+        }
         runtime->char_width = std::max(
             1.0f, font_cache::text_advance(runtime->editor_font, runtime->editor.font_size, "M")
         );

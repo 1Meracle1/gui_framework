@@ -3427,8 +3427,13 @@ namespace code_editor {
             border = cursor_focused ? palette.cursor : gui::color_alpha(palette.cursor, 0.6f);
             border_thickness = 1.0f;
         }
+        gui::Id const row_id = gui::id(file.path);
+        if (cursor && cursor_focused && editor.tree_cursor_reveal &&
+            editor.tree_edit_mode == TreeEditMode::NONE) {
+            ui.request_focus(row_id);
+        }
         if (auto row = ui.row(
-                gui::id(file.path),
+                row_id,
                 {
                     .layout =
                         {
@@ -3438,18 +3443,28 @@ namespace code_editor {
                             .height = gui::px(26.0f),
                             .align_y = gui::Align::STRETCH,
                         },
-                    .style = {
-                        .background = background,
-                        .border = border,
-                        .border_thickness = border_thickness,
-                        .radius = cursor || selected ? 5.0f : -1.0f,
-                    },
+                    .style =
+                        {
+                            .background = background,
+                            .border = border,
+                            .border_thickness = border_thickness,
+                            .radius = cursor || selected ? 5.0f : -1.0f,
+                        },
+                    .focusable = cursor_focused,
                 }
             )) {
             for (size_t index = 0u; index < guide_count; ++index) {
                 draw_tree_guide(ui, palette);
             }
-            if (row.signal().clicked_left && editor.tree_edit_mode == TreeEditMode::NONE) {
+            gui::Signal const signal = row.signal();
+            if (signal.focused && !editor.tree_cursor_reveal &&
+                editor.tree_edit_mode == TreeEditMode::NONE) {
+                if (editor.tree_cursor != tree_file_index) {
+                    editor.tree_cursor = tree_file_index;
+                    editor.tree_cursor_reveal = true;
+                }
+            }
+            if (signal.clicked_left && editor.tree_edit_mode == TreeEditMode::NONE) {
                 editor.tree_cursor = tree_file_index;
                 editor.tree_cursor_reveal = true;
                 focus_code_split_for_open(editor);
@@ -3499,8 +3514,13 @@ namespace code_editor {
         gui::Color border =
             cursor ? (cursor_focused ? palette.cursor : gui::color_alpha(palette.cursor, 0.6f))
                    : gui::Color{};
+        gui::Id const row_id = gui::id(id_text);
+        if (cursor && cursor_focused && editor.tree_cursor_reveal &&
+            editor.tree_edit_mode == TreeEditMode::NONE) {
+            ui.request_focus(row_id);
+        }
         if (auto row = ui.row(
-                gui::id(id_text),
+                row_id,
                 {
                     .layout =
                         {
@@ -3515,12 +3535,14 @@ namespace code_editor {
                             .height = gui::px(26.0f),
                             .align_y = gui::Align::STRETCH,
                         },
-                    .style = {
-                        .background = background,
-                        .border = border,
-                        .border_thickness = cursor ? 1.0f : 0.0f,
-                        .radius = cursor ? 5.0f : -1.0f,
-                    },
+                    .style =
+                        {
+                            .background = background,
+                            .border = border,
+                            .border_thickness = cursor ? 1.0f : 0.0f,
+                            .radius = cursor ? 5.0f : -1.0f,
+                        },
+                    .focusable = cursor_focused,
                 }
             )) {
             for (size_t index = 0u; index < guide_count; ++index) {
@@ -3561,7 +3583,15 @@ namespace code_editor {
                     },
                 }
             );
-            if (open != nullptr && row.signal().clicked_left &&
+            gui::Signal const signal = row.signal();
+            if (signal.focused && !editor.tree_cursor_reveal &&
+                editor.tree_edit_mode == TreeEditMode::NONE) {
+                if (editor.tree_cursor != cursor_index) {
+                    editor.tree_cursor = cursor_index;
+                    editor.tree_cursor_reveal = true;
+                }
+            }
+            if (open != nullptr && signal.clicked_left &&
                 editor.tree_edit_mode == TreeEditMode::NONE) {
                 editor.tree_cursor = cursor_index;
                 editor.tree_cursor_reveal = true;
@@ -3851,7 +3881,7 @@ namespace code_editor {
         StrRef placeholder,
         char* text,
         size_t capacity,
-        EditorState const& editor,
+        EditorState& editor,
         Palette const& palette,
         gui::Size width,
         float height
@@ -3864,7 +3894,6 @@ namespace code_editor {
                         {
                             .width = width,
                             .height = gui::px(height),
-                            .padding = gui::insets(0.0f, 8.0f),
                         },
                     .style = {
                         .background = palette.panel_raised,
@@ -3882,7 +3911,13 @@ namespace code_editor {
                     gui::id(input_id, "placeholder"),
                     placeholder,
                     {
-                        .layout = {.width = gui::fill(), .height = gui::fill(), .clip = true},
+                        .layout =
+                            {
+                                .width = gui::fill(),
+                                .height = gui::fill(),
+                                .padding = gui::insets(0.0f, 8.0f),
+                                .clip = true,
+                            },
                         .style = {.foreground = palette.muted, .font_size = editor.font_size},
                     }
                 );
@@ -3893,27 +3928,36 @@ namespace code_editor {
                 text,
                 capacity,
                 gui::InputTextDesc{
-                    .box = {
-                        .layout =
-                            {
-                                .width = gui::fill(),
-                                .height = gui::fill(),
-                                .padding = gui::insets(0.0f),
-                            },
-                        .style = {
-                            .background = gui::rgba(0, 0, 0, 0),
-                            .foreground = palette.text,
-                            .border = gui::rgba(0, 0, 0, 0),
-                            .border_thickness = 0.0f,
-                            .radius = 0.0f,
-                            .font_size = editor.font_size,
+                    .box =
+                        {
+                            .layout =
+                                {
+                                    .width = gui::fill(),
+                                    .height = gui::fill(),
+                                    .padding = gui::insets(0.0f, 8.0f),
+                                },
+                            .style =
+                                {
+                                    .background = gui::rgba(0, 0, 0, 0),
+                                    .foreground = palette.text,
+                                    .border = gui::rgba(0, 0, 0, 0),
+                                    .border_thickness = 0.0f,
+                                    .radius = 0.0f,
+                                    .font_size = editor.font_size,
+                                },
                         },
-                    },
+                    .edit_on_enter = true,
                 }
             );
+            if (signal.focused) {
+                editor.git_control_focused = true;
+                editor.git_selection_focused = false;
+            }
         }
         return signal;
     }
+
+    auto sync_git_control_focus(EditorState& editor, gui::Signal signal) -> void;
 
     auto draw_git_panel_header(
         gui::Frame& ui,
@@ -3992,7 +4036,7 @@ namespace code_editor {
                             },
                         }
                     );
-                    ui.selectable_label(
+                    gui::Signal const branch_label_signal = ui.selectable_label(
                         gui::id("git_branch_label"),
                         branch,
                         &editor.git_branch_selection,
@@ -4006,12 +4050,15 @@ namespace code_editor {
                             .style = {.foreground = palette.text, .font_size = editor.font_size},
                         }
                     );
+                    sync_git_control_focus(editor, branch_label_signal);
                 }
                 gui::BoxDesc dropdown_desc = control_desc;
                 dropdown_desc.style.font = icon_font;
                 dropdown_desc.style.font_size = editor_scaled_font_size(editor, 9.5f);
-                if (ui.button(gui::id("git_branch_dropdown"), TREE_ARROW_OPEN, dropdown_desc)
-                        .activated) {
+                gui::Signal const dropdown =
+                    ui.button(gui::id("git_branch_dropdown"), TREE_ARROW_OPEN, dropdown_desc);
+                sync_git_control_focus(editor, dropdown);
+                if (dropdown.activated) {
                     editor.git_branches_open = !editor.git_branches_open;
                 }
             }
@@ -4039,27 +4086,37 @@ namespace code_editor {
                 refresh_desc.layout.width = gui::fill();
                 refresh_desc.flags =
                     editor.git_operation_pending ? gui::BOX_FLAG_DISABLED : gui::BOX_FLAG_NONE;
-                if (ui.button(gui::id("git_refresh"), GIT_REFRESH_ICON, refresh_desc).activated) {
+                gui::Signal const refresh =
+                    ui.button(gui::id("git_refresh"), GIT_REFRESH_ICON, refresh_desc);
+                sync_git_control_focus(editor, refresh);
+                if (refresh.activated) {
                     editor.git_request = {.kind = GitRequestKind::REFRESH};
                 }
                 gui::BoxDesc fetch_desc = control_desc;
                 fetch_desc.layout.width = gui::fill();
                 fetch_desc.flags = refresh_desc.flags;
-                if (ui.button(gui::id("git_fetch"), GIT_FETCH_ICON, fetch_desc).activated) {
+                gui::Signal const fetch =
+                    ui.button(gui::id("git_fetch"), GIT_FETCH_ICON, fetch_desc);
+                sync_git_control_focus(editor, fetch);
+                if (fetch.activated) {
                     editor.git_request = {.kind = GitRequestKind::FETCH};
                 }
                 StrRef const pull_text =
                     editor.git_pending_pull_count == 0u
                         ? StrRef("Pull")
                         : fmt::tprintf("Pull %zu", editor.git_pending_pull_count);
-                if (ui.button(gui::id("git_pull"), pull_text, action_desc).activated) {
+                gui::Signal const pull = ui.button(gui::id("git_pull"), pull_text, action_desc);
+                sync_git_control_focus(editor, pull);
+                if (pull.activated) {
                     editor.git_request = {.kind = GitRequestKind::PULL};
                 }
                 StrRef const push_text =
                     editor.git_pending_push_count == 0u
                         ? StrRef("Push")
                         : fmt::tprintf("Push %zu", editor.git_pending_push_count);
-                if (ui.button(gui::id("git_push"), push_text, action_desc).activated) {
+                gui::Signal const push = ui.button(gui::id("git_push"), push_text, action_desc);
+                sync_git_control_focus(editor, push);
+                if (push.activated) {
                     editor.git_request = {.kind = GitRequestKind::PUSH};
                 }
             }
@@ -4267,29 +4324,36 @@ namespace code_editor {
                 "",
                 &editor.git_commit_text,
                 {
-                    .box = {
-                        .layout =
-                            {
-                                .width = gui::fill(),
-                                .height = gui::text(),
-                                .min_height = gui::px(30.0f),
-                                .max_height = gui::px(96.0f),
-                                .padding = gui::insets(4.0f, 8.0f),
-                            },
-                        .style = {
-                            .background = gui::rgba(0, 0, 0, 0),
-                            .foreground = palette.text,
-                            .border = gui::rgba(0, 0, 0, 0),
-                            .border_thickness = 0.0f,
-                            .radius = 0.0f,
-                            .font_size = editor.font_size,
+                    .box =
+                        {
+                            .layout =
+                                {
+                                    .width = gui::fill(),
+                                    .height = gui::text(),
+                                    .min_height = gui::px(30.0f),
+                                    .max_height = gui::px(96.0f),
+                                    .padding = gui::insets(4.0f, 8.0f),
+                                },
+                            .style =
+                                {
+                                    .background = gui::rgba(0, 0, 0, 0),
+                                    .foreground = palette.text,
+                                    .border = gui::rgba(0, 0, 0, 0),
+                                    .border_thickness = 0.0f,
+                                    .radius = 0.0f,
+                                    .font_size = editor.font_size,
+                                },
                         },
-                    },
+                    .edit_on_enter = true,
                 }
             );
         }
         if (input.changed) {
             editor.git_status_text = {};
+        }
+        if (input.focused) {
+            editor.git_control_focused = true;
+            editor.git_selection_focused = false;
         }
         editor.git_commit_text_focused = input.focused;
         bool const sync_pending = editor.git_operation_state == GitOperationState::NONE &&
@@ -4323,7 +4387,10 @@ namespace code_editor {
         StrRef const button_text =
             sync_pending ? fmt::tprintf("Sync Changes (%zu)", editor.git_pending_pull_count)
                          : StrRef("Commit");
-        if (ui.button(gui::id("git_inline_commit"), button_text, button_desc).activated) {
+        gui::Signal const commit_button =
+            ui.button(gui::id("git_inline_commit"), button_text, button_desc);
+        sync_git_control_focus(editor, commit_button);
+        if (commit_button.activated) {
             if (sync_pending) {
                 editor.git_request = {.kind = GitRequestKind::PULL};
                 return;
@@ -4403,15 +4470,25 @@ namespace code_editor {
                     .flags =
                         editor.git_operation_pending ? gui::BOX_FLAG_DISABLED : gui::BOX_FLAG_NONE,
                 };
-                if (editor.git_operation_state == GitOperationState::REBASE &&
-                    ui.button(gui::id("git_rebase_continue"), "Continue", button_desc).activated) {
-                    editor.git_request = {.kind = GitRequestKind::REBASE_CONTINUE};
-                } else if (editor.git_operation_state == GitOperationState::CHERRY_PICK &&
-                           ui.button(gui::id("git_cherry_pick_continue"), "Continue", button_desc)
-                               .activated) {
-                    editor.git_request = {.kind = GitRequestKind::CHERRY_PICK_CONTINUE};
+                if (editor.git_operation_state == GitOperationState::REBASE) {
+                    gui::Signal const continue_button =
+                        ui.button(gui::id("git_rebase_continue"), "Continue", button_desc);
+                    sync_git_control_focus(editor, continue_button);
+                    if (continue_button.activated) {
+                        editor.git_request = {.kind = GitRequestKind::REBASE_CONTINUE};
+                    }
+                } else if (editor.git_operation_state == GitOperationState::CHERRY_PICK) {
+                    gui::Signal const continue_button =
+                        ui.button(gui::id("git_cherry_pick_continue"), "Continue", button_desc);
+                    sync_git_control_focus(editor, continue_button);
+                    if (continue_button.activated) {
+                        editor.git_request = {.kind = GitRequestKind::CHERRY_PICK_CONTINUE};
+                    }
                 }
-                if (ui.button(gui::id("git_operation_abort"), "Abort", button_desc).activated) {
+                gui::Signal const abort =
+                    ui.button(gui::id("git_operation_abort"), "Abort", button_desc);
+                sync_git_control_focus(editor, abort);
+                if (abort.activated) {
                     if (editor.git_operation_state == GitOperationState::MERGE) {
                         editor.git_request = {.kind = GitRequestKind::MERGE_ABORT};
                     } else if (editor.git_operation_state == GitOperationState::REBASE) {
@@ -4451,6 +4528,9 @@ namespace code_editor {
                 26.0f
             );
             editor.git_action_ref_focused = ref_input.focused;
+            if (ref_input.focused) {
+                editor.git_control_focused = true;
+            }
             if (ref_input.changed) {
                 editor.git_action_ref_text_size = cstr_len(editor.git_action_ref_text);
                 editor.git_status_text = {};
@@ -4482,13 +4562,21 @@ namespace code_editor {
                 )) {
                 BASE_UNUSED(row);
                 StrRef const ref = git_action_ref(editor);
-                if (ui.button(gui::id("git_merge_branch"), "Merge", button_desc).activated) {
+                gui::Signal const merge =
+                    ui.button(gui::id("git_merge_branch"), "Merge", button_desc);
+                sync_git_control_focus(editor, merge);
+                if (merge.activated) {
                     editor.git_request = {.kind = GitRequestKind::MERGE_BRANCH, .branch = ref};
                 }
-                if (ui.button(gui::id("git_rebase_branch"), "Rebase", button_desc).activated) {
+                gui::Signal const rebase =
+                    ui.button(gui::id("git_rebase_branch"), "Rebase", button_desc);
+                sync_git_control_focus(editor, rebase);
+                if (rebase.activated) {
                     editor.git_request = {.kind = GitRequestKind::REBASE_BRANCH, .branch = ref};
                 }
-                if (ui.button(gui::id("git_cherry_pick"), "Pick", button_desc).activated) {
+                gui::Signal const pick = ui.button(gui::id("git_cherry_pick"), "Pick", button_desc);
+                sync_git_control_focus(editor, pick);
+                if (pick.activated) {
                     editor.git_request = {.kind = GitRequestKind::CHERRY_PICK, .branch = ref};
                 }
             }
@@ -4497,6 +4585,26 @@ namespace code_editor {
 
     [[nodiscard]] auto git_status_stageable(GitStatusItem const& item) -> bool {
         return item.scope == GitStatusScope::UNSTAGED || item.scope == GitStatusScope::UNTRACKED;
+    }
+
+    [[nodiscard]] auto git_row_id(size_t row_index) -> gui::Id {
+        return gui::id("git_row", row_index);
+    }
+
+    auto sync_git_row_focus(EditorState& editor, gui::Signal signal, size_t row_index) -> void {
+        if (signal.focused) {
+            editor.git_selected = row_index;
+            editor.git_selection_focused = true;
+        } else if (signal.focus_lost && editor.git_selected == row_index) {
+            editor.git_selection_focused = false;
+        }
+    }
+
+    auto sync_git_control_focus(EditorState& editor, gui::Signal signal) -> void {
+        if (signal.focused) {
+            editor.git_control_focused = true;
+            editor.git_selection_focused = false;
+        }
     }
 
     auto draw_git_changes_header(
@@ -4512,9 +4620,14 @@ namespace code_editor {
         float row_width,
         bool focused
     ) -> bool {
-        bool const selected = editor.git_selected == row_index;
+        bool const selected =
+            focused && editor.git_selection_focused && editor.git_selected == row_index;
+        gui::Id const row_id = git_row_id(row_index);
+        if (focused && editor.git_cursor_reveal && editor.git_selected == row_index) {
+            ui.request_focus(row_id);
+        }
         if (auto header = ui.row(
-                gui::id(title),
+                row_id,
                 {
                     .layout =
                         {
@@ -4524,16 +4637,18 @@ namespace code_editor {
                             .gap = 4.0f,
                             .align_y = gui::Align::CENTER,
                         },
-                    .style = {
-                        .background =
-                            selected ? gui::color_alpha(palette.cursor, focused ? 0.28f : 0.16f)
-                                     : gui::Color{},
-                        .border = selected ? (focused ? palette.cursor
-                                                      : gui::color_alpha(palette.cursor, 0.6f))
-                                           : gui::Color{},
-                        .border_thickness = selected ? 1.0f : 0.0f,
-                        .radius = selected ? 4.0f : -1.0f,
-                    },
+                    .style =
+                        {
+                            .background =
+                                selected ? gui::color_alpha(palette.cursor, focused ? 0.28f : 0.16f)
+                                         : gui::Color{},
+                            .border = selected ? (focused ? palette.cursor
+                                                          : gui::color_alpha(palette.cursor, 0.6f))
+                                               : gui::Color{},
+                            .border_thickness = selected ? 1.0f : 0.0f,
+                            .radius = selected ? 4.0f : -1.0f,
+                        },
+                    .focusable = focused,
                 }
             )) {
             ui.label(
@@ -4568,19 +4683,20 @@ namespace code_editor {
                     },
                 };
                 StrRef const button_text = action == GitRequestKind::STAGE_ALL ? "+" : "-";
-                if (ui.button(
-                          gui::id(gui::id("git_status_group_action"), title),
-                          button_text,
-                          button_desc
-                    )
-                        .activated) {
+                gui::Signal const button = ui.button(
+                    gui::id(gui::id("git_status_group_action"), title), button_text, button_desc
+                );
+                sync_git_control_focus(editor, button);
+                if (button.activated) {
                     action_activated = true;
                     editor.git_request = {.kind = action};
                 }
             }
             gui::Signal const signal = header.signal();
+            sync_git_row_focus(editor, signal, row_index);
             if (signal.clicked_left && !action_activated) {
                 editor.git_selected = row_index;
+                editor.git_selection_focused = true;
             }
             return signal.clicked_left && !action_activated;
         }
@@ -4620,10 +4736,15 @@ namespace code_editor {
         bool focused,
         gui::Color highlight = {}
     ) -> gui::Scope {
-        bool const selected = editor.git_selected == row_index;
+        bool const selected =
+            focused && editor.git_selection_focused && editor.git_selected == row_index;
         bool const highlighted = highlight.a >= 0.0f;
+        gui::Id const row_id = git_row_id(row_index);
+        if (focused && editor.git_cursor_reveal && editor.git_selected == row_index) {
+            ui.request_focus(row_id);
+        }
         return ui.row(
-            gui::id("git_row", row_index),
+            row_id,
             {
                 .layout =
                     {
@@ -4633,18 +4754,20 @@ namespace code_editor {
                         .gap = 4.0f,
                         .align_y = gui::Align::CENTER,
                     },
-                .style = {
-                    .background = selected
-                                      ? gui::color_alpha(palette.cursor, focused ? 0.28f : 0.16f)
-                                  : highlighted ? gui::color_alpha(highlight, 0.14f)
+                .style =
+                    {
+                        .background =
+                            selected ? gui::color_alpha(palette.cursor, focused ? 0.28f : 0.16f)
+                            : highlighted ? gui::color_alpha(highlight, 0.14f)
+                                          : gui::Color{},
+                        .border = selected      ? (focused ? palette.cursor
+                                                           : gui::color_alpha(palette.cursor, 0.6f))
+                                  : highlighted ? gui::color_alpha(highlight, 0.55f)
                                                 : gui::Color{},
-                    .border = selected      ? (focused ? palette.cursor
-                                                       : gui::color_alpha(palette.cursor, 0.6f))
-                              : highlighted ? gui::color_alpha(highlight, 0.55f)
-                                            : gui::Color{},
-                    .border_thickness = selected || highlighted ? 1.0f : 0.0f,
-                    .radius = selected || highlighted ? 4.0f : -1.0f,
-                },
+                        .border_thickness = selected || highlighted ? 1.0f : 0.0f,
+                        .radius = selected || highlighted ? 4.0f : -1.0f,
+                    },
+                .focusable = focused,
             }
         );
     }
@@ -5054,6 +5177,7 @@ namespace code_editor {
                     },
                 }
             );
+            sync_git_control_focus(editor, text_signal);
             if (auto visible = ui.column(
                     gui::id("git_commit_popup_visible"),
                     {.layout = {.width = gui::fill(), .height = gui::children()}}
@@ -5175,8 +5299,10 @@ namespace code_editor {
         if (auto row =
                 draw_git_row_frame(ui, editor, palette, row_index, row_width, 0.0f, focused)) {
             gui::Signal const signal = row.signal();
+            sync_git_row_focus(editor, signal, row_index);
             if (signal.clicked_left) {
                 editor.git_selected = row_index;
+                editor.git_selection_focused = true;
             }
             GitStatusRowSignal result = {.row = signal};
             float constexpr child_indent = 10.0f;
@@ -5238,13 +5364,12 @@ namespace code_editor {
                     },
                 };
                 bool const stage = item.scope != GitStatusScope::STAGED;
-                bool const activated =
-                    ui.button(
-                          gui::id("git_status_stage", row_index), stage ? "+" : "-", button_desc
-                    )
-                        .activated;
-                result.stage = activated && stage;
-                result.unstage = activated && !stage;
+                gui::Signal const button = ui.button(
+                    gui::id("git_status_stage", row_index), stage ? "+" : "-", button_desc
+                );
+                sync_git_control_focus(editor, button);
+                result.stage = button.activated && stage;
+                result.unstage = button.activated && !stage;
             }
             return result;
         }
@@ -5280,8 +5405,10 @@ namespace code_editor {
                 return {};
             }
             signal = row.signal();
+            sync_git_row_focus(editor, signal, row_index);
             if (signal.clicked_left) {
                 editor.git_selected = row_index;
+                editor.git_selection_focused = true;
                 editor.git_commit_popup = GIT_COMMIT_POPUP_NONE;
                 editor.git_commit_popup_selection = {};
                 editor.git_commit_popup_keyboard = false;
@@ -5381,8 +5508,10 @@ namespace code_editor {
         if (auto row =
                 draw_git_row_frame(ui, editor, palette, row_index, row_width, 18.0f, focused)) {
             gui::Signal const signal = row.signal();
+            sync_git_row_focus(editor, signal, row_index);
             if (signal.clicked_left) {
                 editor.git_selected = row_index;
+                editor.git_selection_focused = true;
             }
             StrRef const status = git_status_display_label(file.status);
             gui::Color const status_color = git_status_color(palette, file.status);
@@ -5686,6 +5815,7 @@ namespace code_editor {
         editor.git_branch_search_focused = false;
         editor.git_commit_search_focused = false;
         editor.git_action_ref_focused = false;
+        editor.git_control_focused = false;
         size_t row_index = 0u;
         draw_git_panel_header(ui, editor, palette, icon_font, branch_icon_font, row_width);
         draw_git_branch_list(ui, editor, palette, sidebar_content_height);

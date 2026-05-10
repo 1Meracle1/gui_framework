@@ -3028,6 +3028,18 @@ namespace {
         TEST_EXPECT(context, editor.tree_cursor == code_editor::TREE_CURSOR_ROOT);
         TEST_EXPECT(context, code_editor::preferred_code_split_for_open(editor) != filesystem);
 
+        press_key(editor, gui::Key::TAB);
+        TEST_EXPECT(context, editor.tree_cursor == 0u);
+
+        press_key(editor, gui::Key::TAB, gui::KEY_MOD_SHIFT);
+        TEST_EXPECT(context, editor.tree_cursor == code_editor::TREE_CURSOR_ROOT);
+
+        press_key(editor, gui::Key::TAB, gui::KEY_MOD_SHIFT);
+        TEST_EXPECT(context, editor.tree_cursor == 2u);
+
+        press_key(editor, gui::Key::TAB);
+        TEST_EXPECT(context, editor.tree_cursor == code_editor::TREE_CURSOR_ROOT);
+
         send_text(editor, "j");
         TEST_EXPECT(context, editor.tree_cursor == 0u);
 
@@ -3630,6 +3642,39 @@ namespace {
         TEST_EXPECT(context, editor.git_selected == 1u);
         send_text(editor, "s");
         TEST_EXPECT(context, editor.git_request.kind == code_editor::GitRequestKind::STAGE);
+        TEST_EXPECT(context, editor.git_request.path == "changed.cpp");
+    }
+
+    TEST_CASE(git_sidebar_focused_control_does_not_activate_selected_row) {
+        Arena arena = {};
+        arena.init();
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "");
+        code_editor::open_git_sidebar(editor);
+        editor.git_refresh_requested = false;
+
+        TEST_EXPECT(
+            context,
+            editor.git_status_items.push_back({
+                .path = arena_copy_cstr(arena, "changed.cpp"),
+                .status = code_editor::GitFileStatus::MODIFIED,
+                .scope = code_editor::GitStatusScope::UNSTAGED,
+            })
+        );
+
+        editor.git_selected = 1u;
+        editor.git_control_focused = true;
+        press_key(editor, gui::Key::ENTER);
+        TEST_EXPECT(context, editor.git_request.kind == code_editor::GitRequestKind::NONE);
+
+        press_key(editor, gui::Key::SPACE);
+        TEST_EXPECT(context, !editor.flag(EditorFlag::PENDING_LEADER));
+
+        editor.git_control_focused = false;
+        press_key(editor, gui::Key::ENTER);
+        TEST_EXPECT(
+            context, editor.git_request.kind == code_editor::GitRequestKind::OPEN_STATUS_DIFF
+        );
         TEST_EXPECT(context, editor.git_request.path == "changed.cpp");
     }
 

@@ -151,6 +151,7 @@ namespace gui {
         IconDesc icon = {};
         BoxFlags flags = BOX_FLAG_NONE;
         StrRef debug_name = {};
+        bool focusable = false;
     };
 
     struct ImageDesc {
@@ -273,11 +274,13 @@ namespace gui {
         BoxDesc box = {};
         bool select_all_on_focus = false;
         bool ignore_input_on_focus = false;
+        bool edit_on_enter = false;
     };
 
     struct InputTextMultilineDesc {
         BoxDesc box = {};
         StrRef tab_text = "    ";
+        bool edit_on_enter = false;
     };
 
     struct ScrollState {
