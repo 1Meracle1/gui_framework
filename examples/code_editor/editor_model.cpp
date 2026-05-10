@@ -1100,6 +1100,15 @@ namespace code_editor {
                git_model_status_scope_count(editor, GitStatusScope::UNTRACKED);
     }
 
+    [[nodiscard]] auto git_model_commit_search_query(EditorState const& editor) -> StrRef {
+        return StrRef(editor.git_commit_search_text).trim();
+    }
+
+    [[nodiscard]] auto git_model_commit_visible(EditorState const& editor, GitCommit const& commit)
+        -> bool {
+        return git_commit_matches_search(commit, git_model_commit_search_query(editor));
+    }
+
     [[nodiscard]] auto git_visible_row_count(EditorState const& editor) -> size_t {
         size_t count = 1u;
         size_t const staged_count = git_model_status_scope_count(editor, GitStatusScope::STAGED);
@@ -1119,8 +1128,11 @@ namespace code_editor {
         if (!editor.git_graph_open) {
             return count;
         }
-        count += editor.git_commits.size();
         for (GitCommit const& commit : editor.git_commits) {
+            if (!git_model_commit_visible(editor, commit)) {
+                continue;
+            }
+            count += 1u;
             if (!commit.open) {
                 continue;
             }
@@ -1191,6 +1203,9 @@ namespace code_editor {
         }
         for (size_t commit_index = 0u; commit_index < editor.git_commits.size(); ++commit_index) {
             GitCommit const& commit = editor.git_commits[commit_index];
+            if (!git_model_commit_visible(editor, commit)) {
+                continue;
+            }
             if (row == target) {
                 return {GitVisibleRowKind::COMMIT, commit_index};
             }
@@ -1416,6 +1431,9 @@ namespace code_editor {
         case 'r':
             editor.git_refresh_requested = true;
             editor.git_log_refresh_requested = true;
+            break;
+        case 'P':
+            set_git_request(editor, {.kind = GitRequestKind::PULL});
             break;
         case 's': {
             GitVisibleRow const row = git_visible_row(editor, editor.git_selected);
@@ -6919,7 +6937,11 @@ namespace code_editor {
         if (editor.flag(EditorFlag::SAVE_PATH_OPEN)) {
             return;
         }
-        if (editor.sidebar_tab == EditorSidebarTab::GIT && editor.git_commit_text_focused) {
+        bool const git_text_focused =
+            editor.sidebar_tab == EditorSidebarTab::GIT &&
+            (editor.git_commit_text_focused || editor.git_branch_search_focused ||
+             editor.git_commit_search_focused || editor.git_action_ref_focused);
+        if (git_text_focused || editor.git_error_visible) {
             return;
         }
         for (size_t index = 0u; index < input.key_event_count; ++index) {
@@ -7303,6 +7325,10 @@ namespace code_editor {
         hash = hash_bytes(hash, &editor.git_branches_open, sizeof(editor.git_branches_open));
         hash =
             hash_bytes(hash, &editor.git_pending_pull_count, sizeof(editor.git_pending_pull_count));
+        hash =
+            hash_bytes(hash, &editor.git_pending_push_count, sizeof(editor.git_pending_push_count));
+        hash = hash_bytes(hash, &editor.git_operation_state, sizeof(editor.git_operation_state));
+        hash = hash_bytes(hash, &editor.git_error_visible, sizeof(editor.git_error_visible));
         hash = hash_bytes(hash, &editor.git_cursor_reveal, sizeof(editor.git_cursor_reveal));
         hash = hash_bytes(hash, &editor.git_commits_more, sizeof(editor.git_commits_more));
         hash = hash_bytes(hash, &editor.git_commits_loading, sizeof(editor.git_commits_loading));
@@ -7316,6 +7342,21 @@ namespace code_editor {
         hash = hash_bytes(
             hash, &editor.git_commit_text_focused, sizeof(editor.git_commit_text_focused)
         );
+        hash = hash_bytes(
+            hash, &editor.git_branch_search_focused, sizeof(editor.git_branch_search_focused)
+        );
+        hash = hash_bytes(
+            hash, &editor.git_commit_search_focused, sizeof(editor.git_commit_search_focused)
+        );
+        hash =
+            hash_bytes(hash, &editor.git_action_ref_focused, sizeof(editor.git_action_ref_focused));
+        hash = hash_bytes(
+            hash, editor.git_branch_search_text, cstr_len(editor.git_branch_search_text)
+        );
+        hash = hash_bytes(
+            hash, editor.git_commit_search_text, cstr_len(editor.git_commit_search_text)
+        );
+        hash = hash_bytes(hash, editor.git_action_ref_text, cstr_len(editor.git_action_ref_text));
         size_t const git_status_count = editor.git_status_items.size();
         hash = hash_bytes(hash, &git_status_count, sizeof(git_status_count));
         size_t const git_commit_count = editor.git_commits.size();
@@ -7335,6 +7376,9 @@ namespace code_editor {
         size_t const git_status_text_size = editor.git_status_text.size();
         hash = hash_bytes(hash, &git_status_text_size, sizeof(git_status_text_size));
         hash = hash_bytes(hash, editor.git_status_text.data(), editor.git_status_text.size());
+        size_t const git_error_text_size = editor.git_error_text.size();
+        hash = hash_bytes(hash, &git_error_text_size, sizeof(git_error_text_size));
+        hash = hash_bytes(hash, editor.git_error_text.data(), editor.git_error_text.size());
         hash = hash_bytes(hash, &editor.tree_edit_mode, sizeof(editor.tree_edit_mode));
         hash =
             hash_bytes(hash, &editor.tree_operation_pending, sizeof(editor.tree_operation_pending));

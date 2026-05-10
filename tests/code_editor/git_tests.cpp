@@ -101,6 +101,25 @@ namespace {
         TEST_EXPECT(context, branches[1u].name == "feature/git-panel");
     }
 
+    TEST_CASE(git_search_helpers_match_branches_and_commits_case_insensitively) {
+        code_editor::GitBranch const branch = {.name = "feature/Git-Panel"};
+        TEST_EXPECT(context, code_editor::git_branch_matches_search(branch, "git"));
+        TEST_EXPECT(context, code_editor::git_branch_matches_search(branch, "PANEL"));
+        TEST_EXPECT(context, !code_editor::git_branch_matches_search(branch, "missing"));
+
+        code_editor::GitCommit const commit = {
+            .oid = "aaaaaaaaaaaaaaaa",
+            .short_oid = "aaaaaaa",
+            .refs = "origin/main",
+            .summary = "Fix merge prompt",
+            .author = "Hector Landa",
+        };
+        TEST_EXPECT(context, code_editor::git_commit_matches_search(commit, "merge"));
+        TEST_EXPECT(context, code_editor::git_commit_matches_search(commit, "HECTOR"));
+        TEST_EXPECT(context, code_editor::git_commit_matches_search(commit, "origin"));
+        TEST_EXPECT(context, !code_editor::git_commit_matches_search(commit, "missing"));
+    }
+
     TEST_CASE(git_log_parser_trims_record_newlines) {
         Arena arena = {};
         arena.init();

@@ -7,6 +7,7 @@
 #include <charconv>
 #include <cstdio>
 #include <cstring>
+#include <sys/stat.h>
 #if !defined(_WIN32)
 #include <sys/wait.h>
 #endif
@@ -96,6 +97,53 @@ namespace code_editor {
             return run_git(arena, root, "rev-parse --verify --quiet @{upstream}", false).ok;
         }
 
+        [[nodiscard]] auto git_ref_exists(Arena& arena, StrRef root, StrRef ref) -> bool {
+            StrRef const args = fmt::tprintf("rev-parse --verify --quiet %s", ref);
+            return run_git(arena, root, args, false).ok;
+        }
+
+        [[nodiscard]] auto path_is_absolute(StrRef path) -> bool {
+            return path.starts_with('/') || path.starts_with('\\') ||
+                   (path.size() >= 2u && path[1u] == ':');
+        }
+
+        [[nodiscard]] auto joined_git_path(Arena& arena, StrRef root, StrRef path) -> StrRef {
+            if (path_is_absolute(path)) {
+                return path;
+            }
+            StringBuffer result = {};
+            BASE_UNUSED(result.init(root.size() + path.size() + 2u, arena.resource()));
+            BASE_UNUSED(result.write_string(root));
+            if (!root.ends_with('/') && !root.ends_with('\\')) {
+                BASE_UNUSED(result.write_byte('/'));
+            }
+            BASE_UNUSED(result.write_string(path));
+            return result.str();
+        }
+
+        [[nodiscard]] auto filesystem_path_exists(Arena& arena, StrRef path) -> bool {
+#if defined(_WIN32)
+            struct _stat64 data = {};
+            return _stat64(arena_copy_cstr(arena, path).data(), &data) == 0;
+#else
+            struct stat data = {};
+            return stat(arena_copy_cstr(arena, path).data(), &data) == 0;
+#endif
+        }
+
+        [[nodiscard]] auto first_output_line(StrRef text) -> StrRef;
+
+        [[nodiscard]] auto git_path_exists(Arena& arena, StrRef root, StrRef name) -> bool {
+            StrRef const args = fmt::tprintf("rev-parse --git-path %s", name);
+            GitRunResult const result = run_git(arena, root, args, false);
+            if (!result.ok) {
+                return false;
+            }
+            StrRef const path = first_output_line(result.output);
+            return !path.empty() &&
+                   filesystem_path_exists(arena, joined_git_path(arena, root, path));
+        }
+
         [[nodiscard]] auto first_output_line(StrRef text) -> StrRef {
             size_t const newline = text.find('\n');
             StrRef line = newline == StrRef::NPOS ? text : text.prefix(newline);
@@ -159,6 +207,15 @@ namespace code_editor {
                 }
                 line_start = line_end + 1u;
             }
+        }
+
+        [[nodiscard]] auto command_with_ref(Arena& arena, StrRef first, StrRef ref) -> StrRef {
+            StringBuffer command = {};
+            BASE_UNUSED(command.init(first.size() + ref.size() + 8u, arena.resource()));
+            BASE_UNUSED(command.write_string(first));
+            BASE_UNUSED(command.write_byte(' '));
+            write_shell_arg(command, ref);
+            return command.str();
         }
 
         [[nodiscard]] auto status_from_code(char ch) -> GitFileStatus {
@@ -1295,6 +1352,40 @@ namespace code_editor {
         return true;
     }
 
+    auto git_load_pending_push_count(Arena& arena, StrRef root, size_t& count, StrRef& message)
+        -> bool {
+        count = 0u;
+        if (!git_has_upstream(arena, root)) {
+            message = {};
+            return true;
+        }
+        GitRunResult const result =
+            run_git(arena, root, "rev-list --count @{upstream}..HEAD", false);
+        if (!result.ok || !parse_count_line(result.output, count)) {
+            set_message(result.output, "git rev-list failed.", message);
+            return false;
+        }
+        message = {};
+        return true;
+    }
+
+    auto
+    git_load_operation_state(Arena& arena, StrRef root, GitOperationState& state, StrRef& message)
+        -> bool {
+        if (git_path_exists(arena, root, "rebase-merge") ||
+            git_path_exists(arena, root, "rebase-apply")) {
+            state = GitOperationState::REBASE;
+        } else if (git_ref_exists(arena, root, "MERGE_HEAD")) {
+            state = GitOperationState::MERGE;
+        } else if (git_ref_exists(arena, root, "CHERRY_PICK_HEAD")) {
+            state = GitOperationState::CHERRY_PICK;
+        } else {
+            state = GitOperationState::NONE;
+        }
+        message = {};
+        return true;
+    }
+
     auto git_stage_path(Arena& arena, StrRef root, StrRef path, StrRef& message) -> bool {
         GitRunResult const result =
             run_git(arena, root, command_with_path(arena, "add", path), false);
@@ -1337,7 +1428,7 @@ namespace code_editor {
     }
 
     auto git_pull(Arena& arena, StrRef root, StrRef& message) -> bool {
-        GitRunResult const result = run_git(arena, root, "pull --ff-only", false);
+        GitRunResult const result = run_git(arena, root, "pull --rebase --autostash", false);
         set_message(result.output, result.ok ? "Pulled." : "git pull failed.", message);
         return result.ok;
     }
@@ -1345,6 +1436,89 @@ namespace code_editor {
     auto git_fetch(Arena& arena, StrRef root, StrRef& message) -> bool {
         GitRunResult const result = run_git(arena, root, "fetch", false);
         set_message(result.output, result.ok ? "Fetched." : "git fetch failed.", message);
+        return result.ok;
+    }
+
+    auto git_merge_branch(Arena& arena, StrRef root, StrRef branch, StrRef& message) -> bool {
+        if (branch.trim().empty()) {
+            message = "Branch required.";
+            return false;
+        }
+        GitRunResult const result =
+            run_git(arena, root, command_with_ref(arena, "merge --no-edit", branch), false);
+        set_message(result.output, result.ok ? "Merged." : "git merge failed.", message);
+        return result.ok;
+    }
+
+    auto git_rebase_branch(Arena& arena, StrRef root, StrRef branch, StrRef& message) -> bool {
+        if (branch.trim().empty()) {
+            message = "Branch required.";
+            return false;
+        }
+        GitRunResult const result =
+            run_git(arena, root, command_with_ref(arena, "rebase --autostash", branch), false);
+        set_message(result.output, result.ok ? "Rebased." : "git rebase failed.", message);
+        return result.ok;
+    }
+
+    auto git_cherry_pick(Arena& arena, StrRef root, StrRef commit, StrRef& message) -> bool {
+        if (commit.trim().empty()) {
+            message = "Commit required.";
+            return false;
+        }
+        GitRunResult const result =
+            run_git(arena, root, command_with_ref(arena, "cherry-pick", commit), false);
+        set_message(
+            result.output, result.ok ? "Cherry-picked." : "git cherry-pick failed.", message
+        );
+        return result.ok;
+    }
+
+    auto git_merge_abort(Arena& arena, StrRef root, StrRef& message) -> bool {
+        GitRunResult const result = run_git(arena, root, "merge --abort", false);
+        set_message(
+            result.output, result.ok ? "Merge aborted." : "git merge --abort failed.", message
+        );
+        return result.ok;
+    }
+
+    auto git_rebase_continue(Arena& arena, StrRef root, StrRef& message) -> bool {
+        GitRunResult const result =
+            run_git(arena, root, "-c core.editor=true rebase --continue", false);
+        set_message(
+            result.output,
+            result.ok ? "Rebase continued." : "git rebase --continue failed.",
+            message
+        );
+        return result.ok;
+    }
+
+    auto git_rebase_abort(Arena& arena, StrRef root, StrRef& message) -> bool {
+        GitRunResult const result = run_git(arena, root, "rebase --abort", false);
+        set_message(
+            result.output, result.ok ? "Rebase aborted." : "git rebase --abort failed.", message
+        );
+        return result.ok;
+    }
+
+    auto git_cherry_pick_continue(Arena& arena, StrRef root, StrRef& message) -> bool {
+        GitRunResult const result =
+            run_git(arena, root, "-c core.editor=true cherry-pick --continue", false);
+        set_message(
+            result.output,
+            result.ok ? "Cherry-pick continued." : "git cherry-pick --continue failed.",
+            message
+        );
+        return result.ok;
+    }
+
+    auto git_cherry_pick_abort(Arena& arena, StrRef root, StrRef& message) -> bool {
+        GitRunResult const result = run_git(arena, root, "cherry-pick --abort", false);
+        set_message(
+            result.output,
+            result.ok ? "Cherry-pick aborted." : "git cherry-pick --abort failed.",
+            message
+        );
         return result.ok;
     }
 

@@ -285,7 +285,11 @@ the focused code pane.
 | `u` | Unstage the selected staged file. |
 | `r` | Refresh status and commit data. |
 | `p` | Request `git push`. |
+| `P` | Request `git pull --rebase --autostash`. |
 | `Space` | Start the normal leader prefix, so sidebar focus still supports `Space g`, `Space e`, and the other leader commands. |
+
+The Git sidebar also includes branch and commit search fields, explicit fetch,
+pull, and push controls, and ref-based merge, rebase, and cherry-pick buttons.
 
 ## Git Diff View
 

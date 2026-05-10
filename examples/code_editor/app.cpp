@@ -76,6 +76,14 @@ namespace code_editor {
         PUSH,
         PULL,
         FETCH,
+        MERGE_BRANCH,
+        REBASE_BRANCH,
+        CHERRY_PICK,
+        MERGE_ABORT,
+        REBASE_CONTINUE,
+        REBASE_ABORT,
+        CHERRY_PICK_CONTINUE,
+        CHERRY_PICK_ABORT,
         CHECKOUT_BRANCH,
         OPEN_STATUS_DIFF,
         OPEN_COMMIT_DIFF,
@@ -103,7 +111,9 @@ namespace code_editor {
         size_t count = 0u;
         size_t limit = 0u;
         size_t pending_pull_count = 0u;
+        size_t pending_push_count = 0u;
         GitStatusScope scope = GitStatusScope::UNSTAGED;
+        GitOperationState operation_state = GitOperationState::NONE;
         StrRef root = {};
         StrRef current_branch = {};
         StrRef path = {};
@@ -284,7 +294,9 @@ namespace code_editor {
             result.ok =
                 git_load_branches(arena, root, result.branches, result.current_branch, message) &&
                 git_load_status(arena, root, result.status_items, message) &&
-                git_load_pending_pull_count(arena, root, result.pending_pull_count, message);
+                git_load_pending_pull_count(arena, root, result.pending_pull_count, message) &&
+                git_load_pending_push_count(arena, root, result.pending_push_count, message) &&
+                git_load_operation_state(arena, root, result.operation_state, message);
             result.log_loaded = result.ok && request.count != 0u;
             if (result.log_loaded) {
                 result.ok =
@@ -324,6 +336,30 @@ namespace code_editor {
             break;
         case GitWorkKind::FETCH:
             result.ok = git_fetch(arena, root, message);
+            break;
+        case GitWorkKind::MERGE_BRANCH:
+            result.ok = git_merge_branch(arena, root, request.branch, message);
+            break;
+        case GitWorkKind::REBASE_BRANCH:
+            result.ok = git_rebase_branch(arena, root, request.branch, message);
+            break;
+        case GitWorkKind::CHERRY_PICK:
+            result.ok = git_cherry_pick(arena, root, request.branch, message);
+            break;
+        case GitWorkKind::MERGE_ABORT:
+            result.ok = git_merge_abort(arena, root, message);
+            break;
+        case GitWorkKind::REBASE_CONTINUE:
+            result.ok = git_rebase_continue(arena, root, message);
+            break;
+        case GitWorkKind::REBASE_ABORT:
+            result.ok = git_rebase_abort(arena, root, message);
+            break;
+        case GitWorkKind::CHERRY_PICK_CONTINUE:
+            result.ok = git_cherry_pick_continue(arena, root, message);
+            break;
+        case GitWorkKind::CHERRY_PICK_ABORT:
+            result.ok = git_cherry_pick_abort(arena, root, message);
             break;
         case GitWorkKind::CHECKOUT_BRANCH:
             result.ok = git_checkout_branch(arena, root, request.branch, message);
@@ -395,6 +431,17 @@ namespace code_editor {
             return;
         }
         editor.git_status_text = arena_copy_cstr(*editor.arena, text);
+    }
+
+    auto set_git_error_text(EditorState& editor, StrRef text) -> void {
+        editor.git_status_text = {};
+        if (editor.arena == nullptr || text.empty()) {
+            editor.git_error_text = {};
+            editor.git_error_visible = false;
+            return;
+        }
+        editor.git_error_text = arena_copy_cstr(*editor.arena, text);
+        editor.git_error_visible = true;
     }
 
     [[nodiscard]] auto copy_git_status_item(Arena& arena, GitStatusItem const& item)
@@ -501,7 +548,7 @@ namespace code_editor {
         }
         apply_git_root_result(editor, result);
         if (!result.ok) {
-            set_git_status_text(
+            set_git_error_text(
                 editor, result.message.empty() ? "Git refresh failed." : result.message
             );
             return;
@@ -511,6 +558,8 @@ namespace code_editor {
         copy_git_status_items(editor, result.status_items);
         editor.git_current_branch = arena_copy_cstr(*editor.arena, result.current_branch);
         editor.git_pending_pull_count = result.pending_pull_count;
+        editor.git_pending_push_count = result.pending_push_count;
+        editor.git_operation_state = result.operation_state;
         if (result.log_loaded) {
             copy_git_commits(editor, result.commits);
             editor.git_commit_files.clear();
@@ -529,7 +578,9 @@ namespace code_editor {
             return;
         }
         if (!result.ok) {
-            set_git_status_text(editor, result.message);
+            set_git_error_text(
+                editor, result.message.empty() ? "Git commit page failed." : result.message
+            );
             return;
         }
 
@@ -552,7 +603,9 @@ namespace code_editor {
         }
         apply_git_root_result(editor, result);
         if (!result.ok) {
-            set_git_status_text(editor, result.message);
+            set_git_error_text(
+                editor, result.message.empty() ? "Git commit files failed." : result.message
+            );
             return;
         }
         if (!git_commit_files_loaded(editor, result.commit_oid)) {
@@ -572,7 +625,11 @@ namespace code_editor {
         }
         apply_git_root_result(editor, result);
         if (!result.ok) {
-            set_git_status_text(editor, result.message);
+            set_git_error_text(
+                editor, result.message.empty() ? "Git operation failed." : result.message
+            );
+            editor.git_refresh_requested = true;
+            editor.git_log_refresh_requested = true;
             return;
         }
 
@@ -596,6 +653,12 @@ namespace code_editor {
         set_git_status_text(editor, result.message);
         editor.git_refresh_requested = true;
         if (result.kind == GitWorkKind::COMMIT || result.kind == GitWorkKind::PULL ||
+            result.kind == GitWorkKind::MERGE_BRANCH || result.kind == GitWorkKind::REBASE_BRANCH ||
+            result.kind == GitWorkKind::CHERRY_PICK || result.kind == GitWorkKind::MERGE_ABORT ||
+            result.kind == GitWorkKind::REBASE_CONTINUE ||
+            result.kind == GitWorkKind::REBASE_ABORT ||
+            result.kind == GitWorkKind::CHERRY_PICK_CONTINUE ||
+            result.kind == GitWorkKind::CHERRY_PICK_ABORT ||
             result.kind == GitWorkKind::CHECKOUT_BRANCH) {
             editor.git_log_refresh_requested = true;
         }
@@ -639,6 +702,22 @@ namespace code_editor {
             return GitWorkKind::PULL;
         case GitRequestKind::FETCH:
             return GitWorkKind::FETCH;
+        case GitRequestKind::MERGE_BRANCH:
+            return GitWorkKind::MERGE_BRANCH;
+        case GitRequestKind::REBASE_BRANCH:
+            return GitWorkKind::REBASE_BRANCH;
+        case GitRequestKind::CHERRY_PICK:
+            return GitWorkKind::CHERRY_PICK;
+        case GitRequestKind::MERGE_ABORT:
+            return GitWorkKind::MERGE_ABORT;
+        case GitRequestKind::REBASE_CONTINUE:
+            return GitWorkKind::REBASE_CONTINUE;
+        case GitRequestKind::REBASE_ABORT:
+            return GitWorkKind::REBASE_ABORT;
+        case GitRequestKind::CHERRY_PICK_CONTINUE:
+            return GitWorkKind::CHERRY_PICK_CONTINUE;
+        case GitRequestKind::CHERRY_PICK_ABORT:
+            return GitWorkKind::CHERRY_PICK_ABORT;
         case GitRequestKind::CHECKOUT_BRANCH:
             return GitWorkKind::CHECKOUT_BRANCH;
         case GitRequestKind::OPEN_STATUS_DIFF:
@@ -665,7 +744,7 @@ namespace code_editor {
     submit_git_operation(Runtime& runtime, GitWorkRequest const& request, StrRef status_text)
         -> bool {
         if (!runtime.git_worker.requests.push(request)) {
-            set_git_status_text(runtime.editor, "Git worker queue is full.");
+            set_git_error_text(runtime.editor, "Git worker queue is full.");
             return false;
         }
         runtime.editor.git_operation_pending = true;
@@ -789,7 +868,7 @@ namespace code_editor {
         };
         fill_git_root_request(editor, request);
         if (!runtime.git_worker.requests.push(request)) {
-            set_git_status_text(editor, "Git worker queue is full.");
+            set_git_error_text(editor, "Git worker queue is full.");
             return false;
         }
         editor.git_commit_load_generation = request.generation;

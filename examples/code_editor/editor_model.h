@@ -44,6 +44,7 @@ namespace code_editor {
     inline constexpr size_t SAVE_PATH_TEXT_CAPACITY = 1024u;
     inline constexpr size_t COMMAND_TEXT_CAPACITY = 256u;
     inline constexpr size_t TEXT_SEARCH_TEXT_CAPACITY = 256u;
+    inline constexpr size_t GIT_SEARCH_TEXT_CAPACITY = 128u;
     inline constexpr size_t GIT_COMMIT_POPUP_NONE = static_cast<size_t>(-1);
     struct EditorCommand {
         StrRef name = {};
@@ -396,11 +397,17 @@ namespace code_editor {
         char command_text[COMMAND_TEXT_CAPACITY] = {};
         char config_request_text[COMMAND_TEXT_CAPACITY] = {};
         char text_search_text[TEXT_SEARCH_TEXT_CAPACITY] = {};
+        char git_branch_search_text[GIT_SEARCH_TEXT_CAPACITY] = {};
+        char git_commit_search_text[GIT_SEARCH_TEXT_CAPACITY] = {};
+        char git_action_ref_text[GIT_SEARCH_TEXT_CAPACITY] = {};
         gui::Vec2 file_search_mouse_pos = {};
         size_t file_search_text_size = 0u;
         size_t command_text_size = 0u;
         size_t config_request_text_size = 0u;
         size_t text_search_text_size = 0u;
+        size_t git_branch_search_text_size = 0u;
+        size_t git_commit_search_text_size = 0u;
+        size_t git_action_ref_text_size = 0u;
         size_t text_search_origin_line = 0u;
         size_t multi_cursor_anchor_line = 0u;
         size_t multi_cursor_anchor_column = 0u;
@@ -422,6 +429,7 @@ namespace code_editor {
         size_t git_commit_popup = GIT_COMMIT_POPUP_NONE;
         size_t git_commit_limit = 0u;
         size_t git_pending_pull_count = 0u;
+        size_t git_pending_push_count = 0u;
         uint64_t git_commit_load_generation = 0u;
         size_t pending_line_number = 0u;
         uint64_t lsp_synced_revision = 0u;
@@ -434,6 +442,7 @@ namespace code_editor {
         uint64_t lsp_seen_folding_ranges_generation = 0u;
         StrRef lsp_synced_path = {};
         StrRef git_status_text = {};
+        StrRef git_error_text = {};
         StrRef git_current_branch = {};
         LspBridge const* lsp_bridge = nullptr;
         LspSendEditorRequestFn lsp_send_request = nullptr;
@@ -454,6 +463,7 @@ namespace code_editor {
         EditorJumpListKind jump_list_kind = EditorJumpListKind::HISTORY;
         EditorSidebarTab sidebar_tab = EditorSidebarTab::FILES;
         TreeEditMode tree_edit_mode = TreeEditMode::NONE;
+        GitOperationState git_operation_state = GitOperationState::NONE;
         GitRequest git_request = {};
         bool lsp_rename_text_selected = false;
         bool file_search_mouse_known = false;
@@ -468,6 +478,9 @@ namespace code_editor {
         bool git_refresh_requested = true;
         bool git_log_refresh_requested = true;
         bool git_commit_text_focused = false;
+        bool git_branch_search_focused = false;
+        bool git_commit_search_focused = false;
+        bool git_action_ref_focused = false;
         bool git_staged_open = true;
         bool git_changes_open = true;
         bool git_graph_open = false;
@@ -478,6 +491,7 @@ namespace code_editor {
         bool git_commit_load_more_requested = false;
         bool git_commit_popup_keyboard = false;
         bool git_commit_popup_mouse_known = false;
+        bool git_error_visible = false;
         bool tree_operation_pending = false;
         bool git_root_checked = false;
         bool git_diff_side_by_side = true;

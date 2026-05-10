@@ -83,6 +83,13 @@ namespace code_editor {
         StrRef name = {};
     };
 
+    enum class GitOperationState : uint8_t {
+        NONE,
+        MERGE,
+        REBASE,
+        CHERRY_PICK,
+    };
+
     enum class GitDiffRowKind : uint8_t {
         FILE_HEADER,
         HUNK_HEADER,
@@ -124,6 +131,14 @@ namespace code_editor {
         PUSH,
         PULL,
         FETCH,
+        MERGE_BRANCH,
+        REBASE_BRANCH,
+        CHERRY_PICK,
+        MERGE_ABORT,
+        REBASE_CONTINUE,
+        REBASE_ABORT,
+        CHERRY_PICK_CONTINUE,
+        CHERRY_PICK_ABORT,
         CHECKOUT_BRANCH,
         OPEN_STATUS_DIFF,
         OPEN_COMMIT_DIFF,
@@ -147,6 +162,42 @@ namespace code_editor {
 
     [[nodiscard]] auto git_file_status_label(GitFileStatus status) -> StrRef;
     [[nodiscard]] auto git_status_scope_label(GitStatusScope scope) -> StrRef;
+    [[nodiscard]] inline auto git_text_contains_ignore_ascii_case(StrRef text, StrRef query)
+        -> bool {
+        query = query.trim();
+        if (query.empty()) {
+            return true;
+        }
+        if (query.size() > text.size()) {
+            return false;
+        }
+        for (size_t start = 0u; start <= text.size() - query.size(); ++start) {
+            size_t index = 0u;
+            while (index < query.size() &&
+                   to_ascii_lower(text[start + index]) == to_ascii_lower(query[index])) {
+                index += 1u;
+            }
+            if (index == query.size()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    [[nodiscard]] inline auto git_branch_matches_search(GitBranch const& branch, StrRef query)
+        -> bool {
+        return git_text_contains_ignore_ascii_case(branch.name, query);
+    }
+
+    [[nodiscard]] inline auto git_commit_matches_search(GitCommit const& commit, StrRef query)
+        -> bool {
+        query = query.trim();
+        return query.empty() || git_text_contains_ignore_ascii_case(commit.summary, query) ||
+               git_text_contains_ignore_ascii_case(commit.author, query) ||
+               git_text_contains_ignore_ascii_case(commit.short_oid, query) ||
+               git_text_contains_ignore_ascii_case(commit.oid, query) ||
+               git_text_contains_ignore_ascii_case(commit.refs, query);
+    }
 
     [[nodiscard]] auto parse_git_status(Arena& arena, StrRef text, Vec<GitStatusItem>& out) -> bool;
     [[nodiscard]] auto parse_git_branch_list(Arena& arena, StrRef text, Vec<GitBranch>& out)
@@ -186,6 +237,11 @@ namespace code_editor {
     ) -> bool;
     [[nodiscard]] auto
     git_load_pending_pull_count(Arena& arena, StrRef root, size_t& count, StrRef& message) -> bool;
+    [[nodiscard]] auto
+    git_load_pending_push_count(Arena& arena, StrRef root, size_t& count, StrRef& message) -> bool;
+    [[nodiscard]] auto
+    git_load_operation_state(Arena& arena, StrRef root, GitOperationState& state, StrRef& message)
+        -> bool;
     [[nodiscard]] auto git_stage_path(Arena& arena, StrRef root, StrRef path, StrRef& message)
         -> bool;
     [[nodiscard]] auto git_stage_all(Arena& arena, StrRef root, StrRef& message) -> bool;
@@ -197,6 +253,17 @@ namespace code_editor {
     [[nodiscard]] auto git_push(Arena& arena, StrRef root, StrRef& message) -> bool;
     [[nodiscard]] auto git_pull(Arena& arena, StrRef root, StrRef& message) -> bool;
     [[nodiscard]] auto git_fetch(Arena& arena, StrRef root, StrRef& message) -> bool;
+    [[nodiscard]] auto git_merge_branch(Arena& arena, StrRef root, StrRef branch, StrRef& message)
+        -> bool;
+    [[nodiscard]] auto git_rebase_branch(Arena& arena, StrRef root, StrRef branch, StrRef& message)
+        -> bool;
+    [[nodiscard]] auto git_cherry_pick(Arena& arena, StrRef root, StrRef commit, StrRef& message)
+        -> bool;
+    [[nodiscard]] auto git_merge_abort(Arena& arena, StrRef root, StrRef& message) -> bool;
+    [[nodiscard]] auto git_rebase_continue(Arena& arena, StrRef root, StrRef& message) -> bool;
+    [[nodiscard]] auto git_rebase_abort(Arena& arena, StrRef root, StrRef& message) -> bool;
+    [[nodiscard]] auto git_cherry_pick_continue(Arena& arena, StrRef root, StrRef& message) -> bool;
+    [[nodiscard]] auto git_cherry_pick_abort(Arena& arena, StrRef root, StrRef& message) -> bool;
     [[nodiscard]] auto
     git_checkout_branch(Arena& arena, StrRef root, StrRef branch, StrRef& message) -> bool;
     [[nodiscard]] auto git_status_patch(
