@@ -4854,6 +4854,10 @@ namespace gui {
                 if (signal.focus_lost) {
                     state.text_edit_active = false;
                 }
+                bool const pointer_started_edit = edit_on_enter && signal.pressed_left;
+                if (pointer_started_edit) {
+                    state.text_edit_active = true;
+                }
                 if (text_selection_outside_click(impl, box)) {
                     selection = {state.text_cursor, state.text_cursor};
                     state.text_selection_anchor = state.text_cursor;
@@ -4869,7 +4873,8 @@ namespace gui {
                 selection = pointer_selection;
 
                 bool changed = false;
-                bool reveal_cursor = signal.focus_gained && state.text_edit_active;
+                bool reveal_cursor =
+                    (signal.focus_gained || pointer_started_edit) && state.text_edit_active;
                 size_t skip_text_newlines = 0u;
                 size_t skip_text_tabs = 0u;
                 InputState const& input = impl->frame_desc.input;
@@ -5086,6 +5091,7 @@ namespace gui {
                 state.text_selection_end = selection.end;
                 box.text_selection = selection;
                 signal.changed = changed;
+                signal.text_edit_active = state.text_edit_active;
                 if (multiline && reveal_cursor) {
                     state.text_cursor_reveal_requested = true;
                 }

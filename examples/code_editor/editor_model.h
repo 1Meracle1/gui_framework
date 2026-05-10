@@ -479,6 +479,7 @@ namespace code_editor {
         bool git_log_refresh_requested = true;
         bool git_selection_focused = false;
         bool git_control_focused = false;
+        bool git_text_editing = false;
         bool git_commit_text_focused = false;
         bool git_branch_search_focused = false;
         bool git_commit_search_focused = false;

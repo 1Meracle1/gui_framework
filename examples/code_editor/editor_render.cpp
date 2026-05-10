@@ -3953,6 +3953,7 @@ namespace code_editor {
                 editor.git_control_focused = true;
                 editor.git_selection_focused = false;
             }
+            editor.git_text_editing |= signal.text_edit_active;
         }
         return signal;
     }
@@ -4293,7 +4294,8 @@ namespace code_editor {
                             .width = gui::fill(),
                             .height = gui::children(),
                             .min_height = gui::px(30.0f),
-                            .max_height = gui::px(96.0f),
+                            .max_height = gui::px(192.0f),
+                            .margin = gui::insets(4.0f, 0.0f),
                         },
                     .style = {
                         .background = palette.panel_raised,
@@ -4331,7 +4333,7 @@ namespace code_editor {
                                     .width = gui::fill(),
                                     .height = gui::text(),
                                     .min_height = gui::px(30.0f),
-                                    .max_height = gui::px(96.0f),
+                                    .max_height = gui::px(192.0f),
                                     .padding = gui::insets(4.0f, 8.0f),
                                 },
                             .style =
@@ -4355,6 +4357,7 @@ namespace code_editor {
             editor.git_control_focused = true;
             editor.git_selection_focused = false;
         }
+        editor.git_text_editing |= input.text_edit_active;
         editor.git_commit_text_focused = input.focused;
         bool const sync_pending = editor.git_operation_state == GitOperationState::NONE &&
                                   editor.git_pending_pull_count != 0u;
@@ -4371,6 +4374,7 @@ namespace code_editor {
                 {
                     .width = gui::fill(),
                     .height = gui::px(28.0f),
+                    .margin = gui::insets(0.0f, 0.0f, 6.0f, 0.0f),
                     .padding = gui::insets(0.0f, 10.0f),
                 },
             .style =
@@ -4592,7 +4596,7 @@ namespace code_editor {
     }
 
     auto sync_git_row_focus(EditorState& editor, gui::Signal signal, size_t row_index) -> void {
-        if (signal.focused) {
+        if (signal.focused && !editor.git_cursor_reveal) {
             editor.git_selected = row_index;
             editor.git_selection_focused = true;
         } else if (signal.focus_lost && editor.git_selected == row_index) {
@@ -5816,6 +5820,7 @@ namespace code_editor {
         editor.git_commit_search_focused = false;
         editor.git_action_ref_focused = false;
         editor.git_control_focused = false;
+        editor.git_text_editing = false;
         size_t row_index = 0u;
         draw_git_panel_header(ui, editor, palette, icon_font, branch_icon_font, row_width);
         draw_git_branch_list(ui, editor, palette, sidebar_content_height);
@@ -5959,10 +5964,15 @@ namespace code_editor {
         bool selection_visible,
         gui::InputState const& input
     ) -> void {
-        bool const focused = selection_visible && split == editor.focused_split;
+        bool focused = selection_visible && split == editor.focused_split;
         bool const git_tab = editor.sidebar_tab == EditorSidebarTab::GIT;
         float const panel_padding_y = git_tab ? GIT_PANEL_PADDING_Y : 14.0f;
         gui::Rect const split_rect = editor.split_nodes[split].rect;
+        if (!focused && input.mouse_down[0u] && !editor.flag(EditorFlag::MOUSE_WAS_DOWN) &&
+            point_in_rect(split_rect, input.mouse_pos)) {
+            focus_editor_split(editor, split);
+            focused = selection_visible && split == editor.focused_split;
+        }
         float const row_min_width =
             std::max(0.0f, split_rect.max.x - split_rect.min.x - TREE_PANEL_PADDING_X * 2.0f);
         float const sidebar_content_height =

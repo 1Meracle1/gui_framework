@@ -248,6 +248,7 @@ namespace gui {
         bool clicked_left = false;
         bool activated = false;
         bool changed = false;
+        bool text_edit_active = false;
     };
 
     struct PopupAboveDesc {

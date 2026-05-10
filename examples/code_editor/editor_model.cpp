@@ -8,9 +8,6 @@
 namespace code_editor {
 
     inline constexpr size_t INVALID_INDEX = static_cast<size_t>(-1);
-    inline constexpr float FILESYSTEM_PANEL_PADDING_Y = 14.0f;
-    inline constexpr float FILESYSTEM_TREE_ROW_HEIGHT = 26.0f;
-    inline constexpr float GIT_GRAPH_ROW_HEIGHT = 24.0f;
     inline constexpr EditorCommand EDITOR_COMMANDS[] = {
         {"write", "w", "Save the current file."},
         {"quit", "q", "Close the focused split."},
@@ -1389,6 +1386,7 @@ namespace code_editor {
 
     auto handle_git_normal_char(EditorState& editor, char ch) -> void {
         clamp_git_selection(editor);
+        editor.set_flag(EditorFlag::PENDING_G, false);
         if (ch != 'K') {
             close_git_commit_popup(editor);
         }
@@ -1396,43 +1394,12 @@ namespace code_editor {
         case ' ':
             editor.set_flag(EditorFlag::PENDING_LEADER, true);
             break;
-        case 'j':
-            move_git_selection(editor, 1);
-            break;
-        case 'k':
-            move_git_selection(editor, -1);
-            break;
-        case 'g':
-            editor.git_selected = 0u;
-            editor.git_selection_focused = true;
-            editor.git_cursor_reveal = true;
-            break;
-        case 'G':
-            editor.git_selected =
-                git_visible_row_count(editor) == 0u ? 0u : git_visible_row_count(editor) - 1u;
-            editor.git_selection_focused = true;
-            editor.git_cursor_reveal = true;
-            request_more_git_commits_if_needed(editor);
-            break;
         case 'K':
             open_git_commit_popup(editor);
             break;
-        case 'l':
         case '\r':
             activate_git_selection(editor);
             break;
-        case 'h': {
-            GitVisibleRow const row = git_visible_row(editor, editor.git_selected);
-            if (row.kind == GitVisibleRowKind::STAGED_HEADER) {
-                editor.git_staged_open = false;
-            } else if (row.kind == GitVisibleRowKind::CHANGES_HEADER) {
-                editor.git_changes_open = false;
-            } else if (row.kind == GitVisibleRowKind::GRAPH_HEADER) {
-                editor.git_graph_open = false;
-            } else if (row.kind == GitVisibleRowKind::COMMIT) {
-                editor.git_commits[row.index].open = false;
-            }
-        } break;
         case 'r':
             editor.git_refresh_requested = true;
             editor.git_log_refresh_requested = true;
@@ -2675,31 +2642,6 @@ namespace code_editor {
         move_vertical(editor, static_cast<int32_t>(lines) * direction, false);
         editor.scroll_y += static_cast<float>(direction) * static_cast<float>(lines) * line_height;
         clamp_scroll(editor, rect);
-    }
-
-    auto move_filesystem_half_split(EditorState& editor, int32_t direction) -> void {
-        gui::Rect const rect = split_valid(editor, editor.focused_split)
-                                   ? editor.split_nodes[editor.focused_split].rect
-                                   : gui::Rect{};
-        float const visible_height =
-            std::max(1.0f, rect.max.y - rect.min.y - FILESYSTEM_PANEL_PADDING_Y * 2.0f);
-        size_t const rows = std::max<size_t>(
-            1u, static_cast<size_t>(visible_height / FILESYSTEM_TREE_ROW_HEIGHT * 0.5f)
-        );
-        for (size_t index = 0u; index < rows; ++index) {
-            move_filesystem_tree_cursor(editor, direction);
-        }
-    }
-
-    auto move_git_half_split(EditorState& editor, int32_t direction) -> void {
-        gui::Rect const rect = split_valid(editor, editor.focused_split)
-                                   ? editor.split_nodes[editor.focused_split].rect
-                                   : gui::Rect{};
-        float const visible_height =
-            std::max(1.0f, rect.max.y - rect.min.y - FILESYSTEM_PANEL_PADDING_Y * 2.0f);
-        size_t const rows =
-            std::max<size_t>(1u, static_cast<size_t>(visible_height / GIT_GRAPH_ROW_HEIGHT * 0.5f));
-        move_git_selection(editor, static_cast<int32_t>(rows) * direction);
     }
 
     struct EditorCursorEdit {
@@ -4988,6 +4930,7 @@ namespace code_editor {
     }
 
     auto handle_filesystem_normal_char(EditorState& editor, char ch) -> void {
+        editor.set_flag(EditorFlag::PENDING_G, false);
         if (editor.flag(EditorFlag::PENDING_D)) {
             editor.set_flag(EditorFlag::PENDING_D, false);
             if (ch == 'd') {
@@ -4995,41 +4938,9 @@ namespace code_editor {
             }
             return;
         }
-        if (editor.flag(EditorFlag::PENDING_G)) {
-            editor.set_flag(EditorFlag::PENDING_G, false);
-            if (ch == 'g') {
-                set_tree_cursor(editor, TREE_CURSOR_ROOT);
-            }
-            return;
-        }
-
         switch (ch) {
         case ' ':
             editor.set_flag(EditorFlag::PENDING_LEADER, true);
-            break;
-        case 'j':
-            move_filesystem_tree_cursor(editor, 1);
-            break;
-        case 'k':
-            move_filesystem_tree_cursor(editor, -1);
-            break;
-        case 'h':
-            collapse_filesystem_tree_cursor(editor, true);
-            break;
-        case 'l':
-            open_filesystem_tree_cursor(editor);
-            break;
-        case '<':
-            collapse_filesystem_tree_cursor(editor, false);
-            break;
-        case '>':
-            expand_filesystem_tree_cursor(editor);
-            break;
-        case 'g':
-            editor.set_flag(EditorFlag::PENDING_G, true);
-            break;
-        case 'G':
-            set_tree_cursor(editor, last_visible_tree_entry(editor));
             break;
         case 'i':
         case 'I':
@@ -6519,6 +6430,24 @@ namespace code_editor {
         return true;
     }
 
+    [[nodiscard]] auto
+    git_control_leader_input(EditorState const& editor, gui::InputState const& input) -> bool {
+        if (editor.flag(EditorFlag::PENDING_LEADER) || editor.flag(EditorFlag::PENDING_WINDOW) ||
+            editor.flag(EditorFlag::PENDING_LSP)) {
+            return true;
+        }
+        for (size_t index = 0u; index < input.key_event_count; ++index) {
+            gui::KeyEvent const& event = input.key_events[index];
+            if (event.key == gui::Key::SPACE &&
+                (event.kind == gui::KeyEventKind::PRESS ||
+                 event.kind == gui::KeyEventKind::REPEAT) &&
+                (event.mods & (gui::KEY_MOD_CTRL | gui::KEY_MOD_ALT | gui::KEY_MOD_SUPER)) == 0u) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     auto open_editor_lsp_locations(EditorState& editor) -> void {
         if (editor.lsp_bridge == nullptr) {
             return;
@@ -6674,6 +6603,9 @@ namespace code_editor {
             bool const ctrl = (event.mods & gui::KEY_MOD_CTRL) != 0u &&
                               (event.mods & (gui::KEY_MOD_ALT | gui::KEY_MOD_SUPER)) == 0u;
             if (editor.sidebar_tab == EditorSidebarTab::GIT) {
+                if (editor.git_control_focused && event.key == gui::Key::ENTER) {
+                    return;
+                }
                 if (event.key == gui::Key::ENTER) {
                     activate_git_selection(editor);
                     return;
@@ -6689,16 +6621,6 @@ namespace code_editor {
                     return;
                 case gui::Key::DOWN:
                     move_git_selection(editor, 1);
-                    return;
-                case gui::Key::D:
-                    if (ctrl) {
-                        move_git_half_split(editor, 1);
-                    }
-                    return;
-                case gui::Key::U:
-                    if (ctrl) {
-                        move_git_half_split(editor, -1);
-                    }
                     return;
                 case gui::Key::LEFT: {
                     close_git_commit_popup(editor);
@@ -6770,16 +6692,6 @@ namespace code_editor {
             }
             if (ctrl && event.key == gui::Key::Z) {
                 queue_tree_history(editor, (event.mods & gui::KEY_MOD_SHIFT) != 0u);
-                return;
-            }
-            bool const ctrl_scroll = (event.mods & gui::KEY_MOD_CTRL) != 0u &&
-                                     (event.mods & (gui::KEY_MOD_ALT | gui::KEY_MOD_SUPER)) == 0u;
-            if (ctrl_scroll && event.key == gui::Key::D) {
-                move_filesystem_half_split(editor, 1);
-                return;
-            }
-            if (ctrl_scroll && event.key == gui::Key::U) {
-                move_filesystem_half_split(editor, -1);
                 return;
             }
             if (event.key == gui::Key::TAB &&
@@ -6967,7 +6879,9 @@ namespace code_editor {
         bool const git_control_focused = editor.sidebar_tab == EditorSidebarTab::GIT &&
                                          focused_pane_kind(editor) == EditorPaneKind::FILESYSTEM &&
                                          editor.git_control_focused;
-        if (git_text_focused || git_control_focused || editor.git_error_visible) {
+        bool const git_leader_input = git_control_leader_input(editor, input);
+        if ((git_text_focused && (editor.git_text_editing || !git_leader_input)) ||
+            editor.git_error_visible || (git_control_focused && !git_leader_input)) {
             return;
         }
         for (size_t index = 0u; index < input.key_event_count; ++index) {
@@ -7358,6 +7272,7 @@ namespace code_editor {
         hash =
             hash_bytes(hash, &editor.git_selection_focused, sizeof(editor.git_selection_focused));
         hash = hash_bytes(hash, &editor.git_control_focused, sizeof(editor.git_control_focused));
+        hash = hash_bytes(hash, &editor.git_text_editing, sizeof(editor.git_text_editing));
         hash = hash_bytes(hash, &editor.git_cursor_reveal, sizeof(editor.git_cursor_reveal));
         hash = hash_bytes(hash, &editor.git_commits_more, sizeof(editor.git_commits_more));
         hash = hash_bytes(hash, &editor.git_commits_loading, sizeof(editor.git_commits_loading));

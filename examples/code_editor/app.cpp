@@ -1674,6 +1674,24 @@ namespace code_editor {
         return true;
     }
 
+    [[nodiscard]] auto
+    git_control_space_input(EditorState const& editor, gui::InputState const& input) -> bool {
+        if (editor.sidebar_tab != EditorSidebarTab::GIT || !editor.git_control_focused ||
+            editor.git_text_editing || input.key_events == nullptr) {
+            return false;
+        }
+        for (size_t index = 0u; index < input.key_event_count; ++index) {
+            gui::KeyEvent const& event = input.key_events[index];
+            if (event.key == gui::Key::SPACE &&
+                (event.kind == gui::KeyEventKind::PRESS ||
+                 event.kind == gui::KeyEventKind::REPEAT) &&
+                (event.mods & (gui::KEY_MOD_CTRL | gui::KEY_MOD_ALT | gui::KEY_MOD_SUPER)) == 0u) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     [[nodiscard]] auto build_ui_commands(
         Runtime* runtime,
         render::SizeU32 window_size,
@@ -1695,6 +1713,8 @@ namespace code_editor {
                                 (runtime->editor.flag(EditorFlag::EXTERNAL_CHANGE_PENDING) ||
                                  runtime->editor.flag(EditorFlag::FILE_DELETED_ON_DISK) ||
                                  runtime->editor.close_intent != EditorCloseIntent::NONE);
+        bool const suppress_git_control_space =
+            !popup_open && git_control_space_input(runtime->editor, input);
         if (!popup_open) {
             update_editor_lsp_document(runtime->editor);
             process_editor_input(
@@ -1707,6 +1727,10 @@ namespace code_editor {
                 }
             );
             update_editor_lsp_document(runtime->editor);
+        }
+        gui::InputState ui_input = input;
+        if (suppress_git_control_space) {
+            ui_input.key_event_count = 0u;
         }
         submit_git_worker_requests(*runtime, window_size.height);
         if (runtime->editor.git_commits_loading) {
@@ -1733,7 +1757,7 @@ namespace code_editor {
                         static_cast<float>(window_size.height),
                     },
                 .delta_time = delta_time,
-                .input = input,
+                .input = ui_input,
             }
         );
         draw_editor_ui(
@@ -1747,7 +1771,7 @@ namespace code_editor {
             static_cast<float>(window_size.width),
             static_cast<float>(window_size.height),
             runtime->char_width,
-            input
+            ui_input
         );
         draw_config_error_popup(
             ui,
@@ -1755,7 +1779,7 @@ namespace code_editor {
             palette,
             static_cast<float>(window_size.width),
             static_cast<float>(window_size.height),
-            input
+            ui_input
         );
         gui::end_frame(ui);
 
@@ -1784,7 +1808,7 @@ namespace code_editor {
                 ui,
                 search_open || runtime->editor.lsp_popup == EditorLspPopupKind::RENAME
                     ? gui::InputState{}
-                    : input,
+                    : ui_input,
                 palette,
                 !search_open
             );

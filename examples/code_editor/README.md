@@ -268,18 +268,16 @@ references, symbols, code actions, and global-search result pickers.
 
 ## Git Sidebar
 
-These keys apply while the Git sidebar has focus. `Enter`, `Right`, and `l`
-toggle group rows and commit rows; on changed-file rows they open the diff in
-the focused code pane.
+These keys apply while the Git sidebar has focus. `Enter` and `Right` toggle
+group rows and commit rows; on changed-file rows they open the diff in the
+focused code pane.
 
 | Key | Action |
 | --- | --- |
-| `Up`, `k` | Move to the previous visible Git row. |
-| `Down`, `j` | Move to the next visible Git row. |
-| `Left`, `h` | Collapse the selected Git group or commit row. |
-| `Right`, `l`, `Enter` | Toggle the selected group or commit row, or open the selected file diff. |
-| `g` | Move to the first visible Git row. |
-| `G` | Move to the last visible Git row. |
+| `Tab`, `Shift+Tab` | Move focus to the next or previous Git control or row. |
+| `Up`, `Down` | Move the selected visible Git row. |
+| `Left` | Collapse the selected Git group or commit row. |
+| `Right`, `Enter` | Toggle the selected group or commit row, or open the selected file diff. |
 | `K` | Show commit details for the selected graph commit. |
 | `s` | Stage the selected unstaged or untracked file. |
 | `u` | Unstage the selected staged file. |
@@ -323,15 +321,11 @@ These keys apply while the filesystem sidebar has focus.
 | Key | Action |
 | --- | --- |
 | `Tab`, `Shift+Tab` | Cycle to the next or previous visible tree entry. |
-| `Up`, `k` | Move to the previous visible tree entry. |
-| `Down`, `j` | Move to the next visible tree entry. |
-| `Left`, `h` | Collapse the current directory. If it is already collapsed, move to the parent. At the root, close the tree. |
-| `Right`, `l` | Expand the current directory, open the root, or open the selected file. |
+| `Up` | Move to the previous visible tree entry. |
+| `Down` | Move to the next visible tree entry. |
+| `Left` | Collapse the current directory. If it is already collapsed, move to the parent. At the root, close the tree. |
+| `Right` | Expand the current directory, open the root, or open the selected file. |
 | `Enter` | Toggle the root or directory open state, or open the selected file. |
-| `<` | Collapse the current directory without moving to its parent. |
-| `>` | Expand the current directory. |
-| `g g` | Move the tree cursor to the root. |
-| `G` | Move the tree cursor to the last visible entry. |
 | `i`, `I` | Rename the current tree entry, placing the cursor at the beginning of the name. |
 | `a`, `A` | Rename the current tree entry, placing the cursor at the end of the name. |
 | `o` | Create a new file under the current tree location. |
@@ -341,8 +335,6 @@ These keys apply while the filesystem sidebar has focus.
 | `U` | Redo a filesystem tree operation. |
 | `Ctrl+Z` | Undo a filesystem tree operation. |
 | `Ctrl+Shift+Z` | Redo a filesystem tree operation. |
-| `Ctrl+D` | Scroll the filesystem panel down by half a page. |
-| `Ctrl+U` | Scroll the filesystem panel up by half a page. |
 | `Space` | Start the normal leader prefix, so sidebar focus still supports `Space e`, `Space f`, and the other leader commands. |
 
 ## Filesystem Create And Rename Edits

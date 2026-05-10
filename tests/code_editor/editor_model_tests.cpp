@@ -2187,7 +2187,7 @@ namespace {
         TEST_EXPECT(context, editor.scroll_y == 0.0f);
     }
 
-    TEST_CASE(editor_filesystem_panel_ctrl_d_u_moves_by_half_focused_split) {
+    TEST_CASE(editor_filesystem_panel_ctrl_d_u_do_not_move_tree_cursor) {
         Arena arena = {};
         arena.init();
 
@@ -2209,19 +2209,17 @@ namespace {
         send_text(editor, " e");
         size_t const filesystem = editor.split_nodes[editor.root_split].first;
         code_editor::focus_editor_split(editor, filesystem);
-        code_editor::set_editor_split_rect(editor, filesystem, {{0.0f, 0.0f}, {120.0f, 236.0f}});
 
         press_key(editor, gui::Key::D, gui::KEY_MOD_CTRL);
-        TEST_EXPECT(context, editor.tree_cursor == 3u);
-
-        press_key(editor, gui::Key::D, gui::KEY_MOD_CTRL);
-        TEST_EXPECT(context, editor.tree_cursor == 7u);
-
-        press_key(editor, gui::Key::U, gui::KEY_MOD_CTRL);
-        TEST_EXPECT(context, editor.tree_cursor == 3u);
-
-        press_key(editor, gui::Key::U, gui::KEY_MOD_CTRL);
         TEST_EXPECT(context, editor.tree_cursor == code_editor::TREE_CURSOR_ROOT);
+
+        press_key(editor, gui::Key::DOWN);
+        TEST_EXPECT(context, editor.tree_cursor == 0u);
+
+        press_key(editor, gui::Key::D, gui::KEY_MOD_CTRL);
+        TEST_EXPECT(context, editor.tree_cursor == 0u);
+        press_key(editor, gui::Key::U, gui::KEY_MOD_CTRL);
+        TEST_EXPECT(context, editor.tree_cursor == 0u);
     }
 
     TEST_CASE(editor_reveal_cursor_scrolls_horizontally) {
@@ -3040,7 +3038,14 @@ namespace {
         press_key(editor, gui::Key::TAB);
         TEST_EXPECT(context, editor.tree_cursor == code_editor::TREE_CURSOR_ROOT);
 
-        send_text(editor, "j");
+        send_text(editor, "jkhl<>");
+        send_text(editor, "G", gui::KEY_MOD_SHIFT);
+        send_text(editor, "gg");
+        press_key(editor, gui::Key::D, gui::KEY_MOD_CTRL);
+        press_key(editor, gui::Key::U, gui::KEY_MOD_CTRL);
+        TEST_EXPECT(context, editor.tree_cursor == code_editor::TREE_CURSOR_ROOT);
+
+        press_key(editor, gui::Key::DOWN);
         TEST_EXPECT(context, editor.tree_cursor == 0u);
 
         press_key(editor, gui::Key::ENTER);
@@ -3055,7 +3060,7 @@ namespace {
         press_key(editor, gui::Key::RIGHT);
         TEST_EXPECT(context, tree[0u].open);
 
-        send_text(editor, "j");
+        press_key(editor, gui::Key::DOWN);
         TEST_EXPECT(context, editor.tree_cursor == 1u);
 
         press_key(editor, gui::Key::ENTER);
@@ -3073,10 +3078,7 @@ namespace {
         press_key(editor, gui::Key::LEFT);
         TEST_EXPECT(context, editor.tree_cursor == 0u);
 
-        send_text(editor, "h");
-        TEST_EXPECT(context, editor.tree_cursor == 0u);
-
-        send_text(editor, "<");
+        press_key(editor, gui::Key::LEFT);
         TEST_EXPECT(context, !tree[0u].open);
         TEST_EXPECT(context, editor.tree_cursor == 0u);
 
@@ -3086,7 +3088,7 @@ namespace {
         press_key(editor, gui::Key::DOWN);
         TEST_EXPECT(context, editor.tree_cursor == 0u);
 
-        send_text(editor, ">");
+        press_key(editor, gui::Key::RIGHT);
         TEST_EXPECT(context, tree[0u].open);
 
         press_key(editor, gui::Key::ENTER);
@@ -3101,10 +3103,11 @@ namespace {
         press_key(editor, gui::Key::ENTER);
         TEST_EXPECT(context, tree[0u].open);
 
-        send_text(editor, "G");
+        press_key(editor, gui::Key::TAB);
+        press_key(editor, gui::Key::TAB);
         TEST_EXPECT(context, editor.tree_cursor == 2u);
 
-        send_text(editor, "gg");
+        press_key(editor, gui::Key::TAB);
         TEST_EXPECT(context, editor.tree_cursor == code_editor::TREE_CURSOR_ROOT);
 
         press_key(editor, gui::Key::ENTER);
@@ -3144,7 +3147,7 @@ namespace {
         size_t const code = editor.split_nodes[editor.root_split].second;
         code_editor::focus_editor_split(editor, filesystem);
 
-        send_text(editor, "j");
+        press_key(editor, gui::Key::DOWN);
         send_text(editor, "i");
 
         TEST_EXPECT(context, editor.flag(EditorFlag::INSERT_MODE));
@@ -3184,7 +3187,7 @@ namespace {
         size_t const filesystem = editor.split_nodes[editor.root_split].first;
         code_editor::focus_editor_split(editor, filesystem);
 
-        send_text(editor, "j");
+        press_key(editor, gui::Key::DOWN);
         TEST_EXPECT(context, editor.tree_cursor == 0u);
 
         send_text(editor, "dd");
@@ -3631,14 +3634,16 @@ namespace {
         TEST_EXPECT(context, !editor.git_changes_open);
 
         send_text(editor, "j");
+        TEST_EXPECT(context, editor.git_selected == 0u);
+        press_key(editor, gui::Key::DOWN);
         TEST_EXPECT(context, editor.git_selected == 1u);
-        send_text(editor, "k");
+        press_key(editor, gui::Key::UP);
         TEST_EXPECT(context, editor.git_selected == 0u);
 
         press_key(editor, gui::Key::RIGHT);
         TEST_EXPECT(context, editor.git_changes_open);
 
-        send_text(editor, "j");
+        press_key(editor, gui::Key::DOWN);
         TEST_EXPECT(context, editor.git_selected == 1u);
         send_text(editor, "s");
         TEST_EXPECT(context, editor.git_request.kind == code_editor::GitRequestKind::STAGE);
@@ -3668,7 +3673,11 @@ namespace {
         TEST_EXPECT(context, editor.git_request.kind == code_editor::GitRequestKind::NONE);
 
         press_key(editor, gui::Key::SPACE);
-        TEST_EXPECT(context, !editor.flag(EditorFlag::PENDING_LEADER));
+        TEST_EXPECT(context, editor.flag(EditorFlag::PENDING_LEADER));
+        editor.set_flag(EditorFlag::PENDING_LEADER, false);
+
+        send_text(editor, "j");
+        TEST_EXPECT(context, editor.git_selected == 1u);
 
         editor.git_control_focused = false;
         press_key(editor, gui::Key::ENTER);
@@ -3676,6 +3685,68 @@ namespace {
             context, editor.git_request.kind == code_editor::GitRequestKind::OPEN_STATUS_DIFF
         );
         TEST_EXPECT(context, editor.git_request.path == "changed.cpp");
+    }
+
+    TEST_CASE(git_sidebar_focused_control_allows_window_leader_navigation) {
+        Arena arena = {};
+        arena.init();
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "");
+        code_editor::open_git_sidebar(editor);
+
+        size_t const filesystem = editor.split_nodes[editor.root_split].first;
+        size_t const code = editor.split_nodes[editor.root_split].second;
+        code_editor::set_editor_split_rect(editor, filesystem, {{0.0f, 0.0f}, {80.0f, 100.0f}});
+        code_editor::set_editor_split_rect(editor, code, {{80.0f, 0.0f}, {200.0f, 100.0f}});
+
+        editor.git_control_focused = true;
+        press_key(editor, gui::Key::SPACE);
+        send_text(editor, "wl");
+
+        TEST_EXPECT(
+            context,
+            code_editor::editor_focused_pane_kind(editor) == code_editor::EditorPaneKind::CODE
+        );
+        TEST_EXPECT(context, !editor.flag(EditorFlag::PENDING_LEADER));
+        TEST_EXPECT(context, !editor.flag(EditorFlag::PENDING_WINDOW));
+    }
+
+    TEST_CASE(git_sidebar_tab_focused_text_input_allows_window_leader_navigation) {
+        Arena arena = {};
+        arena.init();
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "");
+        code_editor::open_git_sidebar(editor);
+
+        size_t const filesystem = editor.split_nodes[editor.root_split].first;
+        size_t const code = editor.split_nodes[editor.root_split].second;
+        code_editor::set_editor_split_rect(editor, filesystem, {{0.0f, 0.0f}, {80.0f, 100.0f}});
+        code_editor::set_editor_split_rect(editor, code, {{80.0f, 0.0f}, {200.0f, 100.0f}});
+
+        editor.git_control_focused = true;
+        editor.git_action_ref_focused = true;
+        press_key(editor, gui::Key::SPACE);
+        send_text(editor, "wl");
+
+        TEST_EXPECT(
+            context,
+            code_editor::editor_focused_pane_kind(editor) == code_editor::EditorPaneKind::CODE
+        );
+    }
+
+    TEST_CASE(git_sidebar_editing_text_input_keeps_space_for_text) {
+        Arena arena = {};
+        arena.init();
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "");
+        code_editor::open_git_sidebar(editor);
+
+        editor.git_control_focused = true;
+        editor.git_action_ref_focused = true;
+        editor.git_text_editing = true;
+        press_key(editor, gui::Key::SPACE);
+
+        TEST_EXPECT(context, !editor.flag(EditorFlag::PENDING_LEADER));
     }
 
     TEST_CASE(git_sidebar_graph_header_is_collapsed_by_default) {
@@ -3703,7 +3774,7 @@ namespace {
         press_key(editor, gui::Key::RIGHT);
         TEST_EXPECT(context, editor.git_graph_open);
 
-        send_text(editor, "j");
+        press_key(editor, gui::Key::DOWN);
         TEST_EXPECT(context, editor.git_selected == 2u);
         press_key(editor, gui::Key::ENTER);
         TEST_EXPECT(context, editor.git_commits[0u].open);
@@ -3763,12 +3834,12 @@ namespace {
         );
 
         editor.git_selected = 2u;
-        send_text(editor, "j");
+        press_key(editor, gui::Key::DOWN);
         TEST_EXPECT(context, editor.git_selected == 3u);
         TEST_EXPECT(context, editor.git_commit_load_more_requested);
     }
 
-    TEST_CASE(git_sidebar_ctrl_d_u_moves_by_half_focused_split) {
+    TEST_CASE(git_sidebar_normal_navigation_keys_do_not_move_selection) {
         Arena arena = {};
         arena.init();
         code_editor::EditorState editor = {};
@@ -3776,11 +3847,9 @@ namespace {
         code_editor::open_git_sidebar(editor);
         editor.git_refresh_requested = false;
         editor.git_graph_open = true;
-        code_editor::set_editor_split_rect(
-            editor, editor.focused_split, {{0.0f, 0.0f}, {120.0f, 236.0f}}
-        );
+        editor.git_selection_focused = true;
 
-        for (size_t index = 0u; index < 10u; ++index) {
+        for (size_t index = 0u; index < 3u; ++index) {
             TEST_EXPECT(
                 context,
                 editor.git_commits.push_back({
@@ -3792,15 +3861,9 @@ namespace {
         }
 
         editor.git_selected = 2u;
+        send_text(editor, "jkhlgg");
+        send_text(editor, "G", gui::KEY_MOD_SHIFT);
         press_key(editor, gui::Key::D, gui::KEY_MOD_CTRL);
-        TEST_EXPECT(context, editor.git_selected == 6u);
-
-        press_key(editor, gui::Key::D, gui::KEY_MOD_CTRL);
-        TEST_EXPECT(context, editor.git_selected == 10u);
-
-        press_key(editor, gui::Key::U, gui::KEY_MOD_CTRL);
-        TEST_EXPECT(context, editor.git_selected == 6u);
-
         press_key(editor, gui::Key::U, gui::KEY_MOD_CTRL);
         TEST_EXPECT(context, editor.git_selected == 2u);
     }

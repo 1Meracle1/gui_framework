@@ -4005,6 +4005,46 @@ namespace {
         gui::destroy_context(gui_context);
     }
 
+    TEST_CASE(input_text_edit_on_enter_mouse_press_starts_editing) {
+        Arena arena = {};
+        arena.init();
+
+        gui::Context gui_context = {};
+        gui::create_context(arena, {}, gui_context);
+
+        gui::Id const field_id = gui::id("field");
+        char buffer[16] = "a";
+        gui::InputTextDesc const desc = {
+            .box = {.layout = {.width = gui::px(120.0f), .height = gui::px(20.0f)}},
+            .edit_on_enter = true,
+        };
+
+        gui::Frame ui = gui::begin_frame(gui_context, {.size = {160.0f, 40.0f}});
+        gui::Signal signal = ui.input_text(field_id, "Field", buffer, sizeof(buffer), desc);
+        gui::end_frame(ui);
+
+        gui::Vec2 const click = box_center(ui.find_box(field_id));
+        gui::InputState input = {.mouse_pos = click, .mouse_down = {true}};
+        ui = gui::begin_frame(gui_context, {.size = {160.0f, 40.0f}, .input = input});
+        signal = ui.input_text(field_id, "Field", buffer, sizeof(buffer), desc);
+        gui::end_frame(ui);
+
+        TEST_EXPECT(context, signal.focused);
+        TEST_EXPECT(context, !signal.changed);
+        TEST_EXPECT(context, StrRef(buffer) == StrRef("a"));
+
+        gui::KeyEvent const events[] = {{.kind = gui::KeyEventKind::TEXT, .codepoint = 'X'}};
+        input = {.mouse_pos = click, .key_events = events, .key_event_count = 1u};
+        ui = gui::begin_frame(gui_context, {.size = {160.0f, 40.0f}, .input = input});
+        signal = ui.input_text(field_id, "Field", buffer, sizeof(buffer), desc);
+        gui::end_frame(ui);
+
+        TEST_EXPECT(context, signal.changed);
+        TEST_EXPECT(context, StrRef(buffer) == StrRef("aX"));
+
+        gui::destroy_context(gui_context);
+    }
+
     TEST_CASE(input_text_regains_focus_after_not_being_built) {
         Arena arena = {};
         arena.init();
