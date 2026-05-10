@@ -1376,6 +1376,16 @@ namespace code_editor {
                 BASE_UNUSED(client.folding_ranges.push_back({start_line, end_line}));
             }
         }
+        if (client.folding_ranges.size() > 1u) {
+            std::sort(
+                client.folding_ranges.begin(), client.folding_ranges.end(), [](auto lhs, auto rhs) {
+                    if (lhs.start_line != rhs.start_line) {
+                        return lhs.start_line < rhs.start_line;
+                    }
+                    return lhs.end_line > rhs.end_line;
+                }
+            );
+        }
 
         client.bridge.folding_ranges_generation += 1u;
         bridge_refresh(client);

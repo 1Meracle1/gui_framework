@@ -66,6 +66,12 @@ namespace code_editor {
         size_t end_line = 0u;
     };
 
+    struct EditorFoldInfo {
+        bool foldable = false;
+        bool folded = false;
+        size_t hidden_line_count = 0u;
+    };
+
     enum class EditorGitLineChangeKind : uint8_t {
         ADDED,
         MODIFIED,
@@ -617,9 +623,11 @@ namespace code_editor {
     [[nodiscard]] auto editor_state_hash(EditorState const& editor) -> uint64_t;
     [[nodiscard]] auto editor_visible_line_count(EditorState const& editor) -> size_t;
     [[nodiscard]] auto editor_visible_line_at(EditorState const& editor, size_t index) -> size_t;
+    [[nodiscard]] auto editor_next_visible_line(EditorState const& editor, size_t line) -> size_t;
     [[nodiscard]] auto editor_visible_line_index(EditorState const& editor, size_t line) -> size_t;
     [[nodiscard]] auto editor_line_hidden(EditorState const& editor, size_t line) -> bool;
     [[nodiscard]] auto editor_line_folded(EditorState const& editor, size_t line) -> bool;
+    [[nodiscard]] auto editor_fold_info(EditorState const& editor, size_t line) -> EditorFoldInfo;
     [[nodiscard]] auto editor_line_foldable(EditorState const& editor, size_t line) -> bool;
     [[nodiscard]] auto editor_fold_hidden_line_count(EditorState const& editor, size_t line)
         -> size_t;

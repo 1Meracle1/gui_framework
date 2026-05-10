@@ -1730,12 +1730,13 @@ namespace code_editor {
                 fmt::tprintf("%4zu", line + 1u),
                 nullptr
             );
-            if (editor_line_foldable(editor, line)) {
+            EditorFoldInfo const fold = editor_fold_info(editor, line);
+            if (fold.foldable) {
                 draw::draw_text(
                     context,
                     {std::round(fold_marker_x), std::round(y - 2.0f)},
                     number_style,
-                    editor_line_folded(editor, line) ? "+" : "-",
+                    fold.folded ? "+" : "-",
                     nullptr
                 );
             }
@@ -2462,10 +2463,8 @@ namespace code_editor {
         gui::Rect const full_content = editor_content_rect(rect);
         float const line_height = editor_line_height(editor);
         size_t sticky_scope_lines[STICKY_SCOPE_MAX_LINES] = {};
-        size_t sticky_scope_count =
-            collect_sticky_scope_lines(editor, line_height, full_content, sticky_scope_lines);
+        size_t sticky_scope_count = 0u;
         gui::Rect input_rect = rect;
-        input_rect.min.y += line_height * static_cast<float>(sticky_scope_count);
         bool fold_gutter_clicked = false;
         if (clicked) {
             gui::Rect const content = editor_content_rect(input_rect);
@@ -2477,7 +2476,7 @@ namespace code_editor {
             );
             size_t const line = editor_visible_line_at(editor, visible_line);
             fold_gutter_clicked =
-                input.mouse_pos.x < gutter_max_x && editor_line_foldable(editor, line);
+                input.mouse_pos.x < gutter_max_x && editor_fold_info(editor, line).foldable;
             if (fold_gutter_clicked) {
                 toggle_editor_fold_at_line(editor, line);
                 editor.set_flag(EditorFlag::MOUSE_SELECTING, false);
@@ -2520,7 +2519,7 @@ namespace code_editor {
         editor.set_flag(EditorFlag::MIDDLE_MOUSE_WAS_DOWN, input.mouse_down[1u]);
         if ((clicked && !fold_gutter_clicked) || dragged || middle_clicked || middle_dragged ||
             double_clicked || triple_clicked || apply_key_reveal) {
-            reveal_cursor(editor, input_rect, char_width);
+            reveal_cursor(editor, rect, char_width);
         } else {
             editor.scroll_x = std::max(0.0f, editor.scroll_x);
             editor.scroll_y = std::max(0.0f, editor.scroll_y);
@@ -2529,12 +2528,9 @@ namespace code_editor {
         sticky_scope_count =
             collect_sticky_scope_lines(editor, line_height, full_content, sticky_scope_lines);
         gui::Rect body_rect = rect;
-        body_rect.min.y += line_height * static_cast<float>(sticky_scope_count);
         clamp_scroll(editor, body_rect);
         sticky_scope_count =
             collect_sticky_scope_lines(editor, line_height, full_content, sticky_scope_lines);
-        body_rect = rect;
-        body_rect.min.y += line_height * static_cast<float>(sticky_scope_count);
 
         gui::Rect const content = editor_content_rect(body_rect);
         draw::Rect const clip = {
@@ -2558,10 +2554,11 @@ namespace code_editor {
         Slice<LspSemanticToken const> const semantic_tokens = semantic_tokens_for_editor(editor);
         Slice<EditorGitLineChange const> const git_line_changes = current_git_line_changes(editor);
         size_t visible_line = first_line;
+        size_t line = editor_visible_line_at(editor, visible_line);
         while (visible_line < line_count && y < content.max.y) {
-            size_t const line = editor_visible_line_at(editor, visible_line);
             EditorLine const& text_line = editor_line(editor, line);
             bool const cursor_line = editor_has_cursor_on_line(editor, line);
+            EditorFoldInfo const fold = editor_fold_info(editor, line);
             draw_git_diff_line_background(
                 draw_context, editor, palette, text_line, content, y, line_height
             );
@@ -2593,15 +2590,13 @@ namespace code_editor {
                     fmt::tprintf("%4zu", line + 1u),
                     nullptr
                 );
-                if (editor_line_foldable(editor, line)) {
-                    number_style.color = to_draw_color(
-                        editor_line_folded(editor, line) ? palette.text : palette.faint
-                    );
+                if (fold.foldable) {
+                    number_style.color = to_draw_color(fold.folded ? palette.text : palette.faint);
                     draw::draw_text(
                         draw_context,
                         {std::round(fold_marker_x), std::round(y - 2.0f)},
                         number_style,
-                        editor_line_folded(editor, line) ? "+" : "-",
+                        fold.folded ? "+" : "-",
                         nullptr
                     );
                 }
@@ -2714,7 +2709,7 @@ namespace code_editor {
                 editor.raster_policy,
                 char_width
             );
-            size_t const hidden_count = editor_fold_hidden_line_count(editor, line);
+            size_t const hidden_count = fold.hidden_line_count;
             if (hidden_count != 0u) {
                 draw::TextStyle fold_style = {
                     .font = editor_font,
@@ -2746,6 +2741,7 @@ namespace code_editor {
             );
             y += line_height;
             visible_line += 1u;
+            line = editor_next_visible_line(editor, line);
         }
 
         if (selection_visible && editor.flag(EditorFlag::INSERT_MODE)) {

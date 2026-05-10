@@ -2107,14 +2107,73 @@ namespace code_editor {
         return range.start_line <= line && line <= range.end_line;
     }
 
+    [[nodiscard]] auto
+    folded_range_starting_at_line(EditorState const& editor, size_t line, EditorFoldRange& out)
+        -> bool {
+        if (!folds_active(editor)) {
+            return false;
+        }
+
+        EditorFoldRange const* it = std::lower_bound(
+            editor.folded_ranges.begin(),
+            editor.folded_ranges.end(),
+            line,
+            [](EditorFoldRange range, size_t value) { return range.start_line < value; }
+        );
+        for (; it != editor.folded_ranges.end(); ++it) {
+            EditorFoldRange const range = *it;
+            if (range.start_line != line) {
+                break;
+            }
+            if (fold_range_valid(editor, range)) {
+                out = range;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    [[nodiscard]] auto
+    lsp_range_starting_at_line(EditorState const& editor, size_t line, EditorFoldRange& out)
+        -> bool {
+        Slice<LspFoldingRange const> const ranges = lsp_folding_ranges(editor);
+        LspFoldingRange const* it = std::lower_bound(
+            ranges.begin(), ranges.end(), line, [](LspFoldingRange range, size_t value) {
+                return range.start_line < value;
+            }
+        );
+        for (; it != ranges.end(); ++it) {
+            LspFoldingRange const range = *it;
+            if (range.start_line != line) {
+                break;
+            }
+            if (editor_fold_from_lsp(editor, range, out)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     [[nodiscard]] auto folded_header_for_line(EditorState const& editor, size_t line) -> size_t {
         if (!folds_active(editor)) {
             return line;
         }
-        for (EditorFoldRange const range : editor.folded_ranges) {
+
+        EditorFoldRange const* const begin = editor.folded_ranges.begin();
+        EditorFoldRange const* it = std::lower_bound(
+            begin, editor.folded_ranges.end(), line, [](EditorFoldRange range, size_t value) {
+                return range.start_line < value;
+            }
+        );
+        while (it != begin) {
+            --it;
+            EditorFoldRange const range = *it;
             if (fold_range_valid(editor, range) && range.start_line < line &&
                 line <= range.end_line) {
                 return range.start_line;
+            }
+            if (range.end_line < line) {
+                break;
             }
         }
         return line;
@@ -2125,86 +2184,121 @@ namespace code_editor {
     }
 
     [[nodiscard]] auto editor_line_folded(EditorState const& editor, size_t line) -> bool {
-        if (!folds_active(editor)) {
-            return false;
-        }
-        for (EditorFoldRange const range : editor.folded_ranges) {
-            if (fold_range_valid(editor, range) && range.start_line == line) {
-                return true;
-            }
-        }
-        return false;
+        EditorFoldRange range = {};
+        return folded_range_starting_at_line(editor, line, range);
     }
 
     [[nodiscard]] auto
     fold_range_starting_at_line(EditorState const& editor, size_t line, EditorFoldRange& out)
         -> bool {
-        if (folds_active(editor)) {
-            for (EditorFoldRange const range : editor.folded_ranges) {
-                if (fold_range_valid(editor, range) && range.start_line == line) {
-                    out = range;
-                    return true;
-                }
-            }
+        return folded_range_starting_at_line(editor, line, out) ||
+               lsp_range_starting_at_line(editor, line, out);
+    }
+
+    [[nodiscard]] auto editor_fold_info(EditorState const& editor, size_t line) -> EditorFoldInfo {
+        EditorFoldRange range = {};
+        if (editor_line_hidden(editor, line) || !fold_range_starting_at_line(editor, line, range)) {
+            return {};
         }
-        for (LspFoldingRange const range : lsp_folding_ranges(editor)) {
-            EditorFoldRange fold = {};
-            if (editor_fold_from_lsp(editor, range, fold) && fold.start_line == line) {
-                out = fold;
-                return true;
-            }
-        }
-        return false;
+
+        bool const folded = editor_line_folded(editor, line);
+        return {
+            .foldable = true,
+            .folded = folded,
+            .hidden_line_count = folded ? range.end_line - range.start_line : 0u,
+        };
     }
 
     [[nodiscard]] auto editor_line_foldable(EditorState const& editor, size_t line) -> bool {
-        EditorFoldRange range = {};
-        return !editor_line_hidden(editor, line) &&
-               fold_range_starting_at_line(editor, line, range);
+        return editor_fold_info(editor, line).foldable;
     }
 
     [[nodiscard]] auto editor_fold_hidden_line_count(EditorState const& editor, size_t line)
         -> size_t {
-        EditorFoldRange range = {};
-        if (!fold_range_starting_at_line(editor, line, range) ||
-            !editor_line_folded(editor, line)) {
-            return 0u;
-        }
-        return range.end_line - range.start_line;
+        return editor_fold_info(editor, line).hidden_line_count;
     }
 
     [[nodiscard]] auto editor_visible_line_count(EditorState const& editor) -> size_t {
+        size_t const line_count = editor_line_count(editor);
+        if (!folds_active(editor)) {
+            return std::max<size_t>(1u, line_count);
+        }
+
         size_t count = 0u;
-        for (size_t line = 0u; line < editor_line_count(editor); ++line) {
-            if (!editor_line_hidden(editor, line)) {
-                count += 1u;
+        size_t line = 0u;
+        for (EditorFoldRange const range : editor.folded_ranges) {
+            if (!fold_range_valid(editor, range) || range.end_line < line) {
+                continue;
+            }
+            if (range.start_line >= line) {
+                count += range.start_line - line + 1u;
+            }
+            line = range.end_line + 1u;
+            if (line >= line_count) {
+                break;
             }
         }
+        count += line < line_count ? line_count - line : 0u;
         return std::max<size_t>(1u, count);
     }
 
     [[nodiscard]] auto editor_visible_line_at(EditorState const& editor, size_t index) -> size_t {
-        index = std::min(index, editor_visible_line_count(editor) - 1u);
+        size_t const line_count = editor_line_count(editor);
+        if (!folds_active(editor)) {
+            return std::min(index, line_count - 1u);
+        }
+
         size_t visible = 0u;
-        for (size_t line = 0u; line < editor_line_count(editor); ++line) {
-            if (editor_line_hidden(editor, line)) {
+        size_t line = 0u;
+        for (EditorFoldRange const range : editor.folded_ranges) {
+            if (!fold_range_valid(editor, range) || range.end_line < line) {
                 continue;
             }
-            if (visible == index) {
-                return line;
+            if (range.start_line > line) {
+                size_t const span = range.start_line - line;
+                if (index < visible + span) {
+                    return line + index - visible;
+                }
+                visible += span;
+            }
+            if (index == visible) {
+                return range.start_line;
             }
             visible += 1u;
+            line = range.end_line + 1u;
+            if (line >= line_count) {
+                break;
+            }
         }
-        return editor_line_count(editor) - 1u;
+        if (line < line_count && index < visible + line_count - line) {
+            return line + index - visible;
+        }
+        return line_count - 1u;
+    }
+
+    [[nodiscard]] auto editor_next_visible_line(EditorState const& editor, size_t line) -> size_t {
+        EditorFoldRange range = {};
+        if (folded_range_starting_at_line(editor, line, range)) {
+            return range.end_line + 1u;
+        }
+        return line + 1u;
     }
 
     [[nodiscard]] auto editor_visible_line_index(EditorState const& editor, size_t line) -> size_t {
         line = folded_header_for_line(editor, std::min(line, editor_line_count(editor) - 1u));
-        size_t visible = 0u;
-        for (size_t index = 0u; index < line; ++index) {
-            if (!editor_line_hidden(editor, index)) {
-                visible += 1u;
+        if (!folds_active(editor)) {
+            return line;
+        }
+
+        size_t visible = line;
+        for (EditorFoldRange const range : editor.folded_ranges) {
+            if (!fold_range_valid(editor, range)) {
+                continue;
             }
+            if (range.start_line >= line) {
+                break;
+            }
+            visible -= range.end_line - range.start_line;
         }
         return visible;
     }
