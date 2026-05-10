@@ -5852,6 +5852,9 @@ namespace code_editor {
             editor.git_log_refresh_requested = true;
         }
 
+        if (!focused && editor.git_control_focused) {
+            ui.clear_focus();
+        }
         editor.git_branch_search_focused = false;
         editor.git_commit_search_focused = false;
         editor.git_action_ref_focused = false;
@@ -9443,6 +9446,20 @@ namespace code_editor {
                     input
                 );
                 return;
+            }
+            bool const pressed = !editor.flag(EditorFlag::SIDEBAR_RESIZING) &&
+                                 input.mouse_down[0u] && !editor.flag(EditorFlag::MOUSE_WAS_DOWN) &&
+                                 point_in_rect(editor.split_nodes[split].rect, input.mouse_pos);
+            if (pressed) {
+                ui.clear_focus();
+                editor.git_selection_focused = false;
+                editor.git_control_focused = false;
+                editor.git_text_editing = false;
+                editor.git_commit_text_focused = false;
+                editor.git_branch_search_focused = false;
+                editor.git_commit_search_focused = false;
+                editor.git_action_ref_focused = false;
+                focus_editor_split(editor, split);
             }
             bool const focused = selection_visible && split == editor.focused_split;
             if (auto editor_panel = ui.row(

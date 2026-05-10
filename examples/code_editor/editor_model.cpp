@@ -6966,13 +6966,13 @@ namespace code_editor {
         if (editor.flag(EditorFlag::SAVE_PATH_OPEN)) {
             return;
         }
+        bool const git_sidebar_focused = editor.sidebar_tab == EditorSidebarTab::GIT &&
+                                         focused_pane_kind(editor) == EditorPaneKind::FILESYSTEM;
         bool const git_text_focused =
-            editor.sidebar_tab == EditorSidebarTab::GIT &&
+            git_sidebar_focused &&
             (editor.git_commit_text_focused || editor.git_branch_search_focused ||
              editor.git_commit_search_focused || editor.git_action_ref_focused);
-        bool const git_control_focused = editor.sidebar_tab == EditorSidebarTab::GIT &&
-                                         focused_pane_kind(editor) == EditorPaneKind::FILESYSTEM &&
-                                         editor.git_control_focused;
+        bool const git_control_focused = git_sidebar_focused && editor.git_control_focused;
         bool const git_leader_input = git_control_leader_input(editor, input);
         if ((git_text_focused && (editor.git_text_editing || !git_leader_input)) ||
             editor.git_error_visible || (git_control_focused && !git_leader_input)) {

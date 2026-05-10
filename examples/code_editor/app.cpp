@@ -1677,6 +1677,7 @@ namespace code_editor {
     [[nodiscard]] auto
     git_control_space_input(EditorState const& editor, gui::InputState const& input) -> bool {
         if (editor.sidebar_tab != EditorSidebarTab::GIT || !editor.git_control_focused ||
+            editor_focused_pane_kind(editor) != EditorPaneKind::FILESYSTEM ||
             editor.git_text_editing || input.key_events == nullptr) {
             return false;
         }

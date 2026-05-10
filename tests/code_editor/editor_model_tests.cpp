@@ -3749,6 +3749,26 @@ namespace {
         TEST_EXPECT(context, !editor.flag(EditorFlag::PENDING_LEADER));
     }
 
+    TEST_CASE(git_sidebar_stale_text_focus_does_not_block_focused_code_pane) {
+        Arena arena = {};
+        arena.init();
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "");
+        code_editor::open_git_sidebar(editor);
+
+        size_t const code = editor.split_nodes[editor.root_split].second;
+        code_editor::focus_editor_split(editor, code);
+        editor.set_flag(EditorFlag::INSERT_MODE, true);
+        editor.git_commit_text_focused = true;
+        editor.git_text_editing = true;
+
+        send_text(editor, "x");
+
+        TEST_EXPECT(
+            context, code_editor::editor_line_text(code_editor::editor_line(editor, 0u)) == "x"
+        );
+    }
+
     TEST_CASE(git_sidebar_graph_header_is_collapsed_by_default) {
         Arena arena = {};
         arena.init();
