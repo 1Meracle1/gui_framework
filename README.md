@@ -1,24 +1,58 @@
 # gui_framework
 
-`gui_framework` is the starting point for a custom GPU-based, cross-platform GUI
-framework targeting Windows and macOS.
+`gui_framework` is a custom GPU-oriented GUI framework written in C++20. It is
+not a wrapper around native platform widgets. The project owns its low-level
+memory model, text stack, draw command generation, renderer abstraction, and
+immediate-mode GUI API.
 
-The current scaffold is intentionally small: it sets up the build, tooling,
-guidelines, and no-dependency test/benchmark harnesses before larger subsystems
-are added.
+The active runtime target is Windows with MSVC and Direct3D. macOS Clang
+presets are kept in the build matrix, but the full renderer/window/font path is
+not at Windows parity yet.
+
+## Project Goals
+
+- Small explicit C++20 APIs with no exceptions, RTTI, or compiler extensions.
+- Arena-backed allocation and visible ownership boundaries.
+- GPU-friendly draw and UI command streams.
+- A renderer layer that can host D3D11, D3D12, and later non-Windows backends.
+- No dependency fetching from CMake. Approved dependencies are vendored under
+  `third_party/`.
+- Practical examples that double as development testbeds.
+- No-dependency test and benchmark harnesses.
+
+## Current Status
+
+The project has moved beyond the initial scaffold, but it is still an
+experimental framework rather than a stable application toolkit.
+
+| Area | Status |
+| --- | --- |
+| Base layer | Arena allocation, string/slice helpers, formatting, IO, unicode helpers, virtual memory, asserts, crash handling, and arena-backed containers are present. |
+| Encoding | A compact JSON parser is available for config and tooling-style data. |
+| Font provider | Windows backends cover DirectWrite and vendored FreeType. Non-Windows paths are stubs. |
+| Font cache | Caches opened fonts, shaped text runs, glyph rasters, metrics, and text advance data. |
+| Render | D3D11 and D3D12 backends support contexts, windows, buffers, textures, shaders, pipelines, bind groups, render passes, and presentation. |
+| Draw | Records 2D primitives, paths, styled rectangles, images, text, layers, opacity, blur, drop shadows, and blend modes. |
+| GUI | Immediate-mode layout, theming, widgets, scroll panels, fixed lists, tree nodes, tables, tabs, text inputs, hit testing, and debug metadata are implemented. The API is still expected to change. |
+| Hot reload | Windows debug builds can run a stable host process and reload app/UI DLL modules after source changes. |
+| Tests | CTest covers base, GUI, render, font provider, font cache, draw, and code editor support code. Windows also registers a D3D12 smoke test. |
+| Benchmarks | A minimal benchmark harness exists; current coverage is intentionally small. |
 
 ## Requirements
 
 - CMake 3.28+
-- Ninja
-- MSVC on Windows, from a Visual Studio Developer shell
+- Visual Studio 2022/MSVC on Windows
 - Clang on macOS
-- clangd, clang-format, and clang-tidy
-- ccache, optional but auto-detected
+- Ninja for single-config Clang presets
+- clangd, clang-format, and clang-tidy for normal development
+- ccache, optional
 
-## Build
+The Windows `.bat` scripts set up the MSVC environment before invoking MSVC
+presets, so they can be run from a normal shell.
 
-Windows with MSVC:
+## Build And Test
+
+Windows defaults to `windows-msvc-debug`:
 
 ```powershell
 .\build.bat
@@ -28,17 +62,29 @@ Windows with MSVC:
 ```
 
 `run.bat` builds and launches `render_triangle_testbed` by default. Pass a
-target name as the second argument to run another tool, for example
-`.\run.bat windows-msvc-debug gui_framework_info`.
+target name to run another executable:
 
-Windows with Clang, useful for local clangd/tooling checks:
+```powershell
+.\run.bat windows-msvc-debug ui_api_testbed
+.\run.bat windows-msvc-debug code_editor
+.\run.bat windows-msvc-debug render_effects_testbed
+```
+
+Windows Clang presets are useful for clangd and cross-compiler checks:
 
 ```powershell
 .\build.bat windows-clang-debug
 .\test.bat windows-clang-debug
 ```
 
-macOS with Clang:
+Strict presets enable clang-tidy and warnings-as-errors:
+
+```powershell
+.\build.bat windows-msvc-strict
+.\test.bat windows-msvc-strict
+```
+
+macOS defaults to `macos-clang-debug`:
 
 ```sh
 ./build.sh
@@ -47,51 +93,70 @@ macOS with Clang:
 ./bench.sh
 ```
 
-C++20 is the only supported language standard for now. Strict presets enable
-clang-tidy and warnings-as-errors.
+`run.sh` currently runs `gui_framework_info`. Use CMake directly for a specific
+non-default executable on non-Windows platforms.
 
-If a developer shell puts an older clang-tidy first on PATH, pin the tool:
+## Examples
 
-```sh
-cmake -S . -B build/strict -DENABLE_CLANG_TIDY=ON -DCLANG_TIDY=/path/to/clang-tidy
-```
+| Target | Platform | Description |
+| --- | --- | --- |
+| `gui_framework_info` | Windows, macOS | Prints the framework version and compiler information. Useful as a quick build sanity check. |
+| `render_triangle_testbed` | Windows | Minimal Win32 + D3D11 render loop with shader compilation, buffers, bind groups, resize handling, and presentation. |
+| `render_dx12_clear_smoke` | Windows | D3D12 smoke executable that clears and presents, validates frame upload alignment, exercises texture/sampler binding, and reads back a pixel. Registered as a test on Windows. |
+| `text_rendering_testbed` | Windows | DirectWrite/font-cache/draw-renderer smoke scene for system font text at several sizes. |
+| `text_stage_probe` | Windows | Console probe that writes BMP artifacts for raw glyph masks, font-cache masks, atlas upload masks, and CPU-composited text. |
+| `render_effects_testbed` | Windows | Deterministic visual grid for alpha overlap, group opacity, rounded borders, box shadow, blur, drop shadow, clipped layers, and blend modes. |
+| `liquid_glass_testbed` | Windows | Shader and draw-overlay experiment for layered glass-style refraction, blur, highlights, and text overlay. |
+| `ui_api_testbed` | Windows, macOS build path | Main immediate-mode GUI exercise app. Windows debug builds use a hot-reload module for UI source changes. |
+| `repository_ui_testbed` | Windows | Repository browser-style UI exercise using embedded Codicons and the GUI/draw/render stack. |
+| `code_editor` | Windows, macOS build path | Larger example editor with modal editing, file tree, Git sidebar, LSP messages, syntax support, splits, pickers, diagnostics, folding, config parsing, and hot reload on Windows debug builds. |
 
-Plain MSVC `cl.exe` skips automatic ccache use unless a known-good launcher is
-pinned with `CCACHE`.
+Example-specific notes live in:
 
-## Layout
+- `examples/ui_api_testbed/README.md`
+- `examples/code_editor/README.md`
+- `docs/ui_api_examples.md`
+- `docs/rendering_effects.md`
 
-- `src/base`: reusable low-level building blocks such as config, asserts, and
-  future containers, allocators, algorithms, and custom types.
-- `src/render`: renderer abstraction with a Windows Direct3D 11 backend.
-- `src/gui`: public GUI API.
+## Source Layout
+
+- `src/base`: low-level memory, strings, containers, formatting, IO, asserts,
+  crash handling, unicode, and virtual memory.
+- `src/encoding`: compact JSON parsing helpers.
+- `src/font_provider`: platform font access and glyph rasterization.
+- `src/font_cache`: font and glyph cache built on the provider layer.
+- `src/render`: renderer abstraction plus Windows D3D11/D3D12 backends.
+- `src/draw`: immediate 2D draw commands, text commands, layers, and renderer.
+- `src/gui`: public immediate-mode GUI API and hot-reload support.
 - `src/test`: custom no-dependency test harness.
 - `src/bench`: custom no-dependency benchmark harness.
-- `tests`: test executables.
+- `tests`: test executables registered with CTest.
 - `benchmarks`: benchmark executables.
-- `docs`: project guidelines and testing strategy.
+- `examples`: smoke apps, visual probes, and larger UI examples.
+- `docs`: project guidelines, test strategy, API examples, and rendering notes.
 - `third_party`: approved vendored dependencies only.
 
-No dependency is fetched by CMake.
+## Dependencies
+
+CMake does not fetch dependencies. Current vendored assets/dependencies include:
+
+- `third_party/freetype`: FreeType, used by the optional Windows FreeType font
+  provider backend.
+- `third_party/source_code_pro`: Source Code Pro regular TTF, embedded by the
+  code editor example.
+- `third_party/codicons`: Codicon font assets used by the repository UI testbed.
 
 ## Memory And Containers
 
 Framework-owned memory is allocated from `Arena`. Production code should not use
 the C heap, owning `new`/`delete`, STL containers, or PMR default resources for
-owned data. When an API asks for `MemoryResource*`, pass `arena.resource()`.
-Fixed storage should use an API that explicitly accepts caller-provided backing
-memory.
+owned framework data.
 
-An arena defines the lifetime of everything allocated from it. Use persistent
-context-owned arenas for cached or long-lived state, frame arenas for data that
-dies at the end of a frame, caller-owned arenas for returned data, and
-thread-local temporary arenas only for scratch data that does not escape the
-scope or frame.
+Base containers such as `Vec`, `HashMap`, `StableHashMap`, `XarArray`,
+`XarFreelistArray`, and `StringBuffer` are trivially copyable headers over
+arena-owned backing memory. They do not own or free their backing allocations.
 
-Base containers are trivially copyable headers over arena-owned backing memory:
-`Vec`, `HashMap`, `StableHashMap`, `XarArray`, `XarFreelistArray`, and
-`StringBuffer` do not own or free their backing allocations. Initialize them
-with an explicit resource:
+Initialize growing containers with an explicit resource:
 
 ```cpp
 Arena arena = {};
@@ -102,39 +167,9 @@ DEBUG_ASSERT(values.init(64u, arena.resource()));
 DEBUG_ASSERT(values.push_back(7));
 ```
 
-Container assignment copies only the header. Use it when transferring a header
-inside the same backing lifetime, then clear the source if the old name must stop
-referring to that backing:
+Container assignment copies the header only. Use `copy_from(other,
+arena.resource())` when data must be copied into a different lifetime. Dropping a
+container is just resetting its header with `container = {};`; memory is
+reclaimed by the arena.
 
-```cpp
-Vec<int> transferred = values;
-values = {};
-```
-
-Use `copy_from(other, arena.resource())` when data must be reallocated into a
-different lifetime. It allocates destination backing, copies the contents, and
-does not modify `other`:
-
-```cpp
-Arena copy_arena = {};
-copy_arena.init();
-
-Vec<int> copied = {};
-DEBUG_ASSERT(copied.copy_from(transferred, copy_arena.resource()));
-```
-
-If the destination already referenced backing memory, `copy_from` replaces the
-header and leaves the old backing for its arena to reclaim later.
-
-Do not add container destructors, `destroy()`, move-only ownership, or
-`take_from()` helpers. Dropping a container is just resetting its header with
-`container = {};`; reclaiming backing memory is done by `arena.reset()`,
-`arena.reset_to(marker)`, or `arena.destroy()`.
-
-Container growth allocates new backing from the same resource and leaves old
-backing for the arena to reclaim later. Reserve enough capacity when growing a
-container repeatedly in a long-lived arena.
-
-Container element types must be trivially copyable unless a container documents
-otherwise. Store indices, handles, pointers, or arena-owned payloads instead of
-embedding non-trivial ownership in container elements.
+More detailed style, testing, and rendering guidance is in `docs/`.
