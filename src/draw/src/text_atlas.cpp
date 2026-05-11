@@ -18,11 +18,18 @@ namespace gui::draw {
 
         struct TextAtlasKey {
             size_t font = 0u;
+            font_provider::Backend backend = font_provider::Backend::DEFAULT;
             uint32_t size_bits = 0u;
             uint16_t glyph_index = 0u;
-            font_provider::RasterPolicy raster_policy = font_provider::RasterPolicy::SHARP_HINTED;
+            font_provider::RasterPolicy raster_policy = font_provider::DEFAULT_RASTER_POLICY;
             uint8_t phase_x = 0u;
             uint8_t phase_y = 0u;
+            font_provider::PixelGeometry pixel_geometry =
+                font_provider::PixelGeometry::RGB_HORIZONTAL;
+            font_provider::TargetColorFormat color_format =
+                font_provider::TargetColorFormat::RGBA8_UNORM;
+            uint32_t text_gamma_bits = 0u;
+            uint32_t text_contrast_bits = 0u;
         };
 
         struct TextAtlasPage {
@@ -92,20 +99,34 @@ namespace gui::draw {
                    transform.translation.x == 0.0f && transform.translation.y == 0.0f;
         }
 
-        [[nodiscard]] auto lcd_raster_policy(font_provider::RasterPolicy raster_policy)
-            -> font_provider::RasterPolicy {
-            return raster_policy == font_provider::RasterPolicy::SMOOTH_HINTED ||
-                           raster_policy == font_provider::RasterPolicy::LCD_SMOOTH_HINTED
-                       ? font_provider::RasterPolicy::LCD_SMOOTH_HINTED
-                       : font_provider::RasterPolicy::LCD_SHARP_HINTED;
+        [[nodiscard]] auto lcd_raster_policy(font_provider::RasterPolicy raster_policy) -> bool {
+            return raster_policy == font_provider::RasterPolicy::LCD_SHARP_HINTED ||
+                   raster_policy == font_provider::RasterPolicy::LCD_SMOOTH_HINTED;
         }
 
-        [[nodiscard]] auto text_raster_policy(TextCommand const& command, bool allow_lcd_text)
+        [[nodiscard]] auto grayscale_raster_policy(font_provider::RasterPolicy raster_policy)
             -> font_provider::RasterPolicy {
-            if (allow_lcd_text && transform_identity(command.transform)) {
-                return lcd_raster_policy(command.style.raster_policy);
+            return raster_policy == font_provider::RasterPolicy::LCD_SMOOTH_HINTED
+                       ? font_provider::RasterPolicy::SMOOTH_HINTED
+                       : font_provider::RasterPolicy::SHARP_HINTED;
+        }
+
+        [[nodiscard]] auto surface_allows_lcd_text(font_provider::SurfaceProps const& props)
+            -> bool {
+            return props.pixel_geometry != font_provider::PixelGeometry::UNKNOWN &&
+                   props.color_format == font_provider::TargetColorFormat::RGBA8_UNORM;
+        }
+
+        [[nodiscard]] auto text_raster_policy(
+            TextCommand const& command, font_provider::SurfaceProps const& surface_props
+        ) -> font_provider::RasterPolicy {
+            if (!lcd_raster_policy(command.style.raster_policy)) {
+                return command.style.raster_policy;
             }
-            return command.style.raster_policy;
+            if (surface_allows_lcd_text(surface_props) && transform_identity(command.transform)) {
+                return command.style.raster_policy;
+            }
+            return grayscale_raster_policy(command.style.raster_policy);
         }
 
         [[nodiscard]] auto
@@ -122,29 +143,53 @@ namespace gui::draw {
             );
         }
 
-        [[nodiscard]] auto text_atlas_key(
-            TextCommand const& command, font_cache::TextGlyph const& glyph, bool allow_lcd_text
-        ) -> TextAtlasKey {
+        [[nodiscard]] auto text_glyph_raster_desc(
+            TextCommand const& command,
+            font_cache::TextGlyph const& glyph,
+            font_provider::SurfaceProps const& surface_props
+        ) -> font_provider::GlyphRasterDesc {
             QuantizedGlyphOrigin const x = glyph_origin_x(command, glyph);
             QuantizedGlyphOrigin const y = glyph_origin_y(command, glyph);
+            font_provider::GlyphRasterDesc desc = {};
+            desc.raster_policy = text_raster_policy(command, surface_props);
+            desc.phase_x = x.phase;
+            desc.phase_y = y.phase;
+            desc.surface_props = surface_props;
+            return desc;
+        }
+
+        [[nodiscard]] auto text_atlas_key(
+            font_cache::TextGlyph const& glyph, font_provider::GlyphRasterDesc const& desc
+        ) -> TextAtlasKey {
             return {
                 reinterpret_cast<size_t>(glyph.font.handle),
+                glyph.font.backend,
                 float_bits(glyph.size),
                 glyph.glyph_index,
-                text_raster_policy(command, allow_lcd_text),
-                x.phase,
-                y.phase
+                desc.raster_policy,
+                desc.phase_x,
+                desc.phase_y,
+                desc.surface_props.pixel_geometry,
+                desc.surface_props.color_format,
+                float_bits(desc.surface_props.text_gamma),
+                float_bits(desc.surface_props.text_contrast)
             };
         }
 
         [[nodiscard]] auto text_atlas_key_equal(TextAtlasKey lhs, TextAtlasKey rhs) -> bool {
-            return lhs.font == rhs.font && lhs.size_bits == rhs.size_bits &&
-                   lhs.glyph_index == rhs.glyph_index && lhs.raster_policy == rhs.raster_policy &&
-                   lhs.phase_x == rhs.phase_x && lhs.phase_y == rhs.phase_y;
+            return lhs.font == rhs.font && lhs.backend == rhs.backend &&
+                   lhs.size_bits == rhs.size_bits && lhs.glyph_index == rhs.glyph_index &&
+                   lhs.raster_policy == rhs.raster_policy && lhs.phase_x == rhs.phase_x &&
+                   lhs.phase_y == rhs.phase_y && lhs.pixel_geometry == rhs.pixel_geometry &&
+                   lhs.color_format == rhs.color_format &&
+                   lhs.text_gamma_bits == rhs.text_gamma_bits &&
+                   lhs.text_contrast_bits == rhs.text_contrast_bits;
         }
 
         [[nodiscard]] auto hash_text_atlas_key(TextAtlasKey key) -> size_t {
             size_t result = key.font;
+            result ^=
+                static_cast<size_t>(key.backend) + 0x9e3779b9u + (result << 6u) + (result >> 2u);
             result ^=
                 static_cast<size_t>(key.size_bits) + 0x9e3779b9u + (result << 6u) + (result >> 2u);
             result ^= static_cast<size_t>(key.glyph_index) + 0x9e3779b9u + (result << 6u) +
@@ -155,6 +200,14 @@ namespace gui::draw {
                 static_cast<size_t>(key.phase_x) + 0x9e3779b9u + (result << 6u) + (result >> 2u);
             result ^=
                 static_cast<size_t>(key.phase_y) + 0x9e3779b9u + (result << 6u) + (result >> 2u);
+            result ^= static_cast<size_t>(key.pixel_geometry) + 0x9e3779b9u + (result << 6u) +
+                      (result >> 2u);
+            result ^= static_cast<size_t>(key.color_format) + 0x9e3779b9u + (result << 6u) +
+                      (result >> 2u);
+            result ^= static_cast<size_t>(key.text_gamma_bits) + 0x9e3779b9u + (result << 6u) +
+                      (result >> 2u);
+            result ^= static_cast<size_t>(key.text_contrast_bits) + 0x9e3779b9u + (result << 6u) +
+                      (result >> 2u);
             return result;
         }
 
@@ -303,10 +356,13 @@ namespace gui::draw {
                     (TEXT_ATLAS_PADDING * 4u);
                 if (raster.format == font_provider::RasterFormat::LCD_RGB) {
                     for (uint32_t x = 0u; x < raster.size.width; ++x) {
-                        dst[x * 4u + 0u] = src[x * 4u + 0u];
-                        dst[x * 4u + 1u] = src[x * 4u + 1u];
-                        dst[x * 4u + 2u] = src[x * 4u + 2u];
-                        dst[x * 4u + 3u] = src[x * 4u + 3u];
+                        uint8_t const r = src[x * 4u + 0u];
+                        uint8_t const g = src[x * 4u + 1u];
+                        uint8_t const b = src[x * 4u + 2u];
+                        dst[x * 4u + 0u] = r;
+                        dst[x * 4u + 1u] = g;
+                        dst[x * 4u + 2u] = b;
+                        dst[x * 4u + 3u] = std::max(std::max(r, g), b);
                     }
                 } else {
                     for (uint32_t x = 0u; x < raster.size.width; ++x) {
@@ -326,17 +382,18 @@ namespace gui::draw {
             gui::render::Context render_context,
             TextCommand const& command,
             font_cache::TextGlyph const& glyph,
-            bool allow_lcd_text
+            font_provider::SurfaceProps const& surface_props
         ) -> TextAtlasEntry* {
-            TextAtlasKey const key = text_atlas_key(command, glyph, allow_lcd_text);
+            font_provider::GlyphRasterDesc const desc =
+                text_glyph_raster_desc(command, glyph, surface_props);
+            TextAtlasKey const key = text_atlas_key(glyph, desc);
             TextAtlasEntry* entry = find_text_atlas_entry(atlas, key);
             if (entry != nullptr) {
                 return entry;
             }
 
-            font_provider::GlyphRaster const raster = font_cache::glyph_raster(
-                command.style.font, glyph, key.raster_policy, key.phase_x, key.phase_y
-            );
+            font_provider::GlyphRaster const raster =
+                font_cache::glyph_raster(command.style.font, glyph, desc);
             if (raster.pixels == nullptr || raster.size.width == 0u || raster.size.height == 0u) {
                 return nullptr;
             }
@@ -420,6 +477,33 @@ namespace gui::draw {
             out_piece.format = entry.format;
         }
 
+        auto append_text_subrun(
+            PreparedText& prepared_text, TextAtlasSubRunRange& range, TextAtlasPiece const& piece
+        ) -> void {
+            if (range.subrun_count != 0u) {
+                TextAtlasSubRun& last =
+                    prepared_text.subruns[range.first_subrun + range.subrun_count - 1u];
+                if (last.kind == TextAtlasSubRunKind::DIRECT_MASK &&
+                    last.bind_group.handle == piece.bind_group.handle &&
+                    last.format == piece.format &&
+                    last.first_piece + last.piece_count == prepared_text.piece_count) {
+                    last.piece_count += 1u;
+                    return;
+                }
+            }
+
+            ASSERT(prepared_text.subruns != nullptr);
+            ASSERT(prepared_text.subrun_count <= prepared_text.piece_count);
+            TextAtlasSubRun& subrun = prepared_text.subruns[prepared_text.subrun_count];
+            subrun = {};
+            subrun.first_piece = prepared_text.piece_count;
+            subrun.piece_count = 1u;
+            subrun.bind_group = piece.bind_group;
+            subrun.format = piece.format;
+            prepared_text.subrun_count += 1u;
+            range.subrun_count += 1u;
+        }
+
         [[nodiscard]] auto
         text_piece_capacity(Context draw_context, size_t first_command, size_t end_command)
             -> size_t {
@@ -501,7 +585,7 @@ namespace gui::draw {
         Context draw_context,
         size_t first_command,
         size_t end_command,
-        bool allow_lcd_text,
+        font_provider::SurfaceProps const& surface_props,
         PreparedText& out_text
     ) -> bool {
         out_text = {};
@@ -516,10 +600,11 @@ namespace gui::draw {
         }
 
         size_t const range_count = text_command_count(draw_context);
-        out_text.ranges = arena_alloc<TextAtlasPieceRange>(arena, range_count);
-        std::memset(out_text.ranges, 0, sizeof(TextAtlasPieceRange) * range_count);
+        out_text.ranges = arena_alloc<TextAtlasSubRunRange>(arena, range_count);
+        std::memset(out_text.ranges, 0, sizeof(TextAtlasSubRunRange) * range_count);
         out_text.range_count = range_count;
         out_text.pieces = arena_alloc<TextAtlasPiece>(arena, piece_capacity);
+        out_text.subruns = arena_alloc<TextAtlasSubRun>(arena, piece_capacity);
         ArenaTemp upload_temp = begin_thread_temp_arena();
         for (size_t index = first_command; index < end_command; ++index) {
             Command const* const draw_command = command(draw_context, index);
@@ -527,8 +612,8 @@ namespace gui::draw {
             if (draw_command->kind == CommandKind::TEXT) {
                 TextCommand const* const text = text_command(draw_context, draw_command->index);
                 ASSERT(text != nullptr);
-                TextAtlasPieceRange& range = out_text.ranges[draw_command->index];
-                range.first_piece = out_text.piece_count;
+                TextAtlasSubRunRange& range = out_text.ranges[draw_command->index];
+                range.first_subrun = out_text.subrun_count;
                 if (!text_command_visible(*text)) {
                     continue;
                 }
@@ -536,7 +621,7 @@ namespace gui::draw {
                 for (size_t glyph_index = 0u; glyph_index < text->run.glyph_count; ++glyph_index) {
                     font_cache::TextGlyph const& glyph = text->run.glyphs[glyph_index];
                     TextAtlasEntry const* const entry = ensure_text_atlas_entry(
-                        *upload_temp.arena(), *impl, render_context, *text, glyph, allow_lcd_text
+                        *upload_temp.arena(), *impl, render_context, *text, glyph, surface_props
                     );
                     if (entry == nullptr || entry->page == nullptr) {
                         continue;
@@ -546,8 +631,8 @@ namespace gui::draw {
                     write_text_atlas_piece(
                         *text, glyph, *entry, out_text.pieces[out_text.piece_count]
                     );
+                    append_text_subrun(out_text, range, out_text.pieces[out_text.piece_count]);
                     out_text.piece_count += 1u;
-                    range.piece_count += 1u;
                 }
             } else if (draw_command->kind == CommandKind::LAYER_BEGIN) {
                 LayerCommand const* const layer = layer_command(draw_context, draw_command->index);

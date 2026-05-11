@@ -1,3 +1,6 @@
+#include "coverage_mask_atlas.h"
+#include "draw_path.h"
+#include "draw_primitive.h"
 #include "text_atlas.h"
 
 #include <algorithm>
@@ -45,11 +48,21 @@ namespace gui::draw {
             float params[4];
         };
 
+        struct CoverageMaskVertex {
+            float position[2];
+            float uv[2];
+            float uv_clamp[4];
+            float color[4];
+        };
+
         struct RendererImpl {
             Arena* arena = nullptr;
             gui::render::Shader vertex_shader = {};
             gui::render::Shader pixel_shader = {};
             gui::render::Pipeline pipeline = {};
+            gui::render::Shader coverage_mask_vertex_shader = {};
+            gui::render::Shader coverage_mask_pixel_shader = {};
+            gui::render::Pipeline coverage_mask_pipeline = {};
             gui::render::Shader text_pixel_shader = {};
             gui::render::Pipeline text_pipeline = {};
             gui::render::Shader text_lcd_attenuate_pixel_shader = {};
@@ -74,6 +87,7 @@ namespace gui::draw {
             gui::render::Pipeline styled_rect_instance_pipeline = {};
             gui::render::Texture white_texture = {};
             TextAtlas text_atlas = {};
+            coverage_mask::Atlas coverage_mask_atlas = {};
             gui::render::Sampler sampler = {};
             gui::render::Sampler text_sampler = {};
             gui::render::BindGroup sampler_bind_group = {};
@@ -131,6 +145,7 @@ namespace gui::draw {
                 return;
             }
 
+            coverage_mask::destroy_atlas(context, renderer->coverage_mask_atlas);
             destroy_text_atlas(context, renderer->text_atlas);
             if (gui::render::bind_group_valid(renderer->text_sampler_bind_group)) {
                 gui::render::destroy_bind_group(context, renderer->text_sampler_bind_group);
@@ -149,6 +164,9 @@ namespace gui::draw {
             }
             if (gui::render::pipeline_valid(renderer->pipeline)) {
                 gui::render::destroy_pipeline(context, renderer->pipeline);
+            }
+            if (gui::render::pipeline_valid(renderer->coverage_mask_pipeline)) {
+                gui::render::destroy_pipeline(context, renderer->coverage_mask_pipeline);
             }
             if (gui::render::pipeline_valid(renderer->text_pipeline)) {
                 gui::render::destroy_pipeline(context, renderer->text_pipeline);
@@ -188,6 +206,12 @@ namespace gui::draw {
             }
             if (gui::render::shader_valid(renderer->pixel_shader)) {
                 gui::render::destroy_shader(context, renderer->pixel_shader);
+            }
+            if (gui::render::shader_valid(renderer->coverage_mask_pixel_shader)) {
+                gui::render::destroy_shader(context, renderer->coverage_mask_pixel_shader);
+            }
+            if (gui::render::shader_valid(renderer->coverage_mask_vertex_shader)) {
+                gui::render::destroy_shader(context, renderer->coverage_mask_vertex_shader);
             }
             if (gui::render::shader_valid(renderer->text_pixel_shader)) {
                 gui::render::destroy_shader(context, renderer->text_pixel_shader);
@@ -380,6 +404,16 @@ namespace gui::draw {
         [[nodiscard]] auto text_command_visible(TextCommand const& command) -> bool {
             font_cache::TextRun const& run = command.run;
             return run.glyphs != nullptr && run.glyph_count != 0u;
+        }
+
+        [[nodiscard]] auto root_text_surface_props() -> font_provider::SurfaceProps {
+            return {};
+        }
+
+        [[nodiscard]] auto offscreen_text_surface_props() -> font_provider::SurfaceProps {
+            font_provider::SurfaceProps props = {};
+            props.pixel_geometry = font_provider::PixelGeometry::UNKNOWN;
+            return props;
         }
 
         [[nodiscard]] auto clip_rect_to_scissor(Rect rect, gui::render::SizeU32 target_size)
@@ -633,29 +667,75 @@ namespace gui::draw {
             return result;
         }
 
+        auto write_coverage_mask_vertex(
+            CoverageMaskVertex& vertex,
+            RenderTarget target,
+            Vec2 position,
+            Vec2 uv,
+            coverage_mask::AtlasEntry const& entry,
+            Color color
+        ) -> void {
+            Vec2 const target_pos = target_position(target, position);
+            vertex = {
+                {pixel_to_ndc_x(target_pos.x, target_width(target)),
+                 pixel_to_ndc_y(target_pos.y, target_height(target))},
+                {uv.x, uv.y},
+                {entry.uv_clamp[0u], entry.uv_clamp[1u], entry.uv_clamp[2u], entry.uv_clamp[3u]},
+                {color.r, color.g, color.b, color.a}
+            };
+        }
+
+        [[nodiscard]] auto upload_coverage_mask_vertices(
+            gui::render::Context render_context,
+            RenderTarget target,
+            path_model::ShapeCommand const& command,
+            coverage_mask::AtlasEntry const& entry
+        ) -> gui::render::VertexBufferBinding {
+            gui::render::FrameBufferSlice const upload = gui::render::allocate_frame_vertex_buffer(
+                render_context, 6u * sizeof(CoverageMaskVertex), alignof(CoverageMaskVertex)
+            );
+
+            Rect const rect = command.shape.bounds;
+            Vec2 const p0 = transform_point(command.transform, rect.min);
+            Vec2 const p1 = transform_point(command.transform, {rect.max.x, rect.min.y});
+            Vec2 const p2 = transform_point(command.transform, rect.max);
+            Vec2 const p3 = transform_point(command.transform, {rect.min.x, rect.max.y});
+            Vec2 const uv0 = {entry.uv_rect[0u], entry.uv_rect[1u]};
+            Vec2 const uv1 = {entry.uv_rect[2u], entry.uv_rect[1u]};
+            Vec2 const uv2 = {entry.uv_rect[2u], entry.uv_rect[3u]};
+            Vec2 const uv3 = {entry.uv_rect[0u], entry.uv_rect[3u]};
+            Color color = command.color;
+            color.a *= command.opacity;
+
+            CoverageMaskVertex* const vertices = static_cast<CoverageMaskVertex*>(upload.data);
+            write_coverage_mask_vertex(vertices[0u], target, p0, uv0, entry, color);
+            write_coverage_mask_vertex(vertices[1u], target, p1, uv1, entry, color);
+            write_coverage_mask_vertex(vertices[2u], target, p2, uv2, entry, color);
+            write_coverage_mask_vertex(vertices[3u], target, p0, uv0, entry, color);
+            write_coverage_mask_vertex(vertices[4u], target, p2, uv2, entry, color);
+            write_coverage_mask_vertex(vertices[5u], target, p3, uv3, entry, color);
+            gui::render::commit_frame_uploads(render_context);
+
+            gui::render::VertexBufferBinding result = {};
+            result.buffer = upload.buffer;
+            result.byte_stride = static_cast<uint32_t>(sizeof(CoverageMaskVertex));
+            result.byte_offset = static_cast<uint32_t>(upload.byte_offset);
+            return result;
+        }
+
         auto append_text_draw(
             DrawUpload& upload,
             TextDrawRange& range,
             uint32_t first_vertex,
-            TextAtlasPiece const& piece
+            TextAtlasSubRun const& subrun
         ) -> void {
-            if (piece.format == font_provider::RasterFormat::ALPHA && range.draw_count != 0u) {
-                TextDraw& last = upload.text_draws[range.first_draw + range.draw_count - 1u];
-                if (last.bind_group.handle == piece.bind_group.handle &&
-                    last.format == piece.format &&
-                    last.first_vertex + last.vertex_count == first_vertex) {
-                    last.vertex_count += 6u;
-                    return;
-                }
-            }
-
             ASSERT(upload.text_draw_count < upload.text_draw_capacity);
             TextDraw& draw = upload.text_draws[upload.text_draw_count];
             draw = {};
             draw.first_vertex = first_vertex;
-            draw.vertex_count = 6u;
-            draw.bind_group = piece.bind_group;
-            draw.format = piece.format;
+            draw.vertex_count = static_cast<uint32_t>(subrun.piece_count * 6u);
+            draw.bind_group = subrun.bind_group;
+            draw.format = subrun.format;
             upload.text_draw_count += 1u;
             range.draw_count += 1u;
         }
@@ -686,7 +766,7 @@ namespace gui::draw {
                 }
             }
             if (text_vertex_count != 0u) {
-                result.text_draw_capacity = prepared_text.piece_count;
+                result.text_draw_capacity = prepared_text.subrun_count;
                 result.text_draws = arena_alloc<TextDraw>(arena, result.text_draw_capacity);
             }
 
@@ -727,17 +807,23 @@ namespace gui::draw {
                         range->first_draw = result.text_draw_count;
                     }
 
-                    TextAtlasPieceRange const& piece_range = prepared_text.ranges[index];
-                    for (size_t piece_index = 0u; piece_index < piece_range.piece_count;
-                         ++piece_index) {
-                        TextAtlasPiece const& piece =
-                            prepared_text.pieces[piece_range.first_piece + piece_index];
-                        write_text_vertices(text_vertices, target, *command, piece);
-                        if (range != nullptr) {
-                            append_text_draw(result, *range, text_vertex, piece);
+                    TextAtlasSubRunRange const& subrun_range = prepared_text.ranges[index];
+                    for (size_t subrun_index = 0u; subrun_index < subrun_range.subrun_count;
+                         ++subrun_index) {
+                        TextAtlasSubRun const& subrun =
+                            prepared_text.subruns[subrun_range.first_subrun + subrun_index];
+                        uint32_t const first_vertex = text_vertex;
+                        for (size_t piece_index = 0u; piece_index < subrun.piece_count;
+                             ++piece_index) {
+                            TextAtlasPiece const& piece =
+                                prepared_text.pieces[subrun.first_piece + piece_index];
+                            write_text_vertices(text_vertices, target, *command, piece);
+                            text_vertices += 6u;
+                            text_vertex += 6u;
                         }
-                        text_vertices += 6u;
-                        text_vertex += 6u;
+                        if (range != nullptr) {
+                            append_text_draw(result, *range, first_vertex, subrun);
+                        }
                     }
                 }
 
@@ -872,15 +958,19 @@ namespace gui::draw {
             return !box_shadow_visible(command) && box_body_visible(command.style);
         }
 
-        auto submit_primitive_batch(
+        auto submit_standard_primitive(
             gui::render::Context render_context,
             RenderTarget target,
             RendererImpl const& renderer,
             DrawUpload const& upload,
-            PrimitiveBatch const& batch,
+            PrimitiveCommand const& command,
             uint32_t first_vertex
         ) -> void {
-            gui::render::Texture texture = batch.texture;
+            if (command.vertex_count == 0u) {
+                return;
+            }
+
+            gui::render::Texture texture = command.texture;
             if (!gui::render::texture_valid(texture)) {
                 texture = renderer.white_texture;
             }
@@ -894,14 +984,154 @@ namespace gui::draw {
             gui::render::DrawDesc draw_desc = {};
             draw_desc.vertex_buffers = &upload.vertex_buffer;
             draw_desc.vertex_buffer_count = 1u;
-            draw_desc.vertex_count = static_cast<uint32_t>(batch.vertex_count);
+            draw_desc.vertex_count = static_cast<uint32_t>(command.vertex_count);
             draw_desc.first_vertex = first_vertex;
 
             gui::render::set_scissor_rect(
-                render_context, target_clip_rect_to_scissor(batch.clip_rect, target)
+                render_context, target_clip_rect_to_scissor(command.clip_rect, target)
             );
             gui::render::draw(render_context, draw_desc);
             gui::render::destroy_bind_group(render_context, bind_group);
+        }
+
+        [[nodiscard]] auto styled_rect_from_analytic(
+            PrimitiveCommand const& primitive, primitive_model::PrimitiveInfo const& info
+        ) -> StyledRectCommand {
+            primitive_model::AnalyticRect const& analytic = info.analytic_rect;
+            StyledRectCommand result = {};
+            result.rect = analytic.rect;
+            result.clip_rect = primitive.clip_rect;
+            result.transform = analytic.transform;
+            result.opacity = primitive.opacity;
+            result.style.fill_color = analytic.fill_color;
+            result.style.border_color = analytic.border_color;
+            result.style.border_thickness = analytic.border_thickness;
+            result.style.radius = analytic.radius;
+            result.style.softness = analytic.softness;
+            return result;
+        }
+
+        auto submit_analytic_rect(
+            gui::render::Context render_context,
+            RenderTarget target,
+            RendererImpl const& renderer,
+            PrimitiveCommand const& primitive,
+            primitive_model::PrimitiveInfo const& info
+        ) -> void {
+            StyledRectCommand const command = styled_rect_from_analytic(primitive, info);
+            gui::render::FrameBufferSlice const upload = gui::render::allocate_frame_vertex_buffer(
+                render_context, 6u * sizeof(StyledRectVertex), alignof(StyledRectVertex)
+            );
+            StyledRectVertex* const vertices = static_cast<StyledRectVertex*>(upload.data);
+            write_styled_rect_vertices(
+                vertices, target, command, command.rect, command.rect, command.style
+            );
+            gui::render::commit_frame_uploads(render_context);
+
+            gui::render::VertexBufferBinding vertex_buffer = {};
+            vertex_buffer.buffer = upload.buffer;
+            vertex_buffer.byte_stride = static_cast<uint32_t>(sizeof(StyledRectVertex));
+            vertex_buffer.byte_offset = static_cast<uint32_t>(upload.byte_offset);
+
+            ArenaTemp temp = begin_thread_temp_arena();
+            gui::render::BindGroup bind_group = {};
+            if (!bind_texture(
+                    *temp.arena(), render_context, renderer, renderer.white_texture, bind_group
+                )) {
+                return;
+            }
+
+            gui::render::DrawDesc draw_desc = {};
+            draw_desc.vertex_buffers = &vertex_buffer;
+            draw_desc.vertex_buffer_count = 1u;
+            draw_desc.vertex_count = 6u;
+
+            gui::render::set_scissor_rect(
+                render_context, target_clip_rect_to_scissor(command.clip_rect, target)
+            );
+            gui::render::draw(render_context, draw_desc);
+            gui::render::destroy_bind_group(render_context, bind_group);
+        }
+
+        [[nodiscard]] auto submit_coverage_mask(
+            gui::render::Context render_context,
+            RenderTarget target,
+            RendererImpl& renderer,
+            Context draw_context,
+            primitive_model::PrimitiveInfo const& info
+        ) -> bool {
+            path_model::ShapeCommand const* const shape =
+                path_model::shape_command(draw_context, info.coverage_mask_shape_index);
+            if (shape == nullptr) {
+                return false;
+            }
+
+            ArenaTemp temp = begin_thread_temp_arena();
+            coverage_mask::AtlasEntry entry = {};
+            if (!coverage_mask::ensure_entry(
+                    *temp.arena(), renderer.coverage_mask_atlas, render_context, shape->shape, entry
+                )) {
+                return false;
+            }
+
+            gui::render::VertexBufferBinding const vertex_buffer =
+                upload_coverage_mask_vertices(render_context, target, *shape, entry);
+            gui::render::BindGroup bind_group = {};
+            if (!bind_texture(*temp.arena(), render_context, renderer, entry.texture, bind_group)) {
+                return false;
+            }
+
+            gui::render::DrawDesc draw_desc = {};
+            draw_desc.vertex_buffers = &vertex_buffer;
+            draw_desc.vertex_buffer_count = 1u;
+            draw_desc.vertex_count = 6u;
+
+            gui::render::bind_pipeline(render_context, renderer.coverage_mask_pipeline);
+            gui::render::set_scissor_rect(
+                render_context, target_clip_rect_to_scissor(shape->clip_rect, target)
+            );
+            gui::render::draw(render_context, draw_desc);
+            gui::render::destroy_bind_group(render_context, bind_group);
+            return true;
+        }
+
+        auto submit_primitive_batch(
+            gui::render::Context render_context,
+            RenderTarget target,
+            RendererImpl& renderer,
+            DrawUpload const& upload,
+            Context draw_context,
+            PrimitiveBatch const& batch,
+            uint32_t first_vertex
+        ) -> void {
+            uint32_t command_first_vertex = first_vertex;
+            for (size_t index = 0u; index < batch.command_count; ++index) {
+                PrimitiveCommand const* const primitive =
+                    primitive_command(draw_context, batch.command_index + index);
+                ASSERT(primitive != nullptr);
+                if (primitive == nullptr) {
+                    continue;
+                }
+
+                primitive_model::PrimitiveInfo const* const info =
+                    primitive_model::primitive_info(draw_context, batch.command_index + index);
+                if (info != nullptr &&
+                    info->render_kind == primitive_model::RenderKind::ANALYTIC_RECT) {
+                    gui::render::bind_pipeline(render_context, renderer.styled_rect_pipeline);
+                    submit_analytic_rect(render_context, target, renderer, *primitive, *info);
+                } else if (info != nullptr &&
+                           info->render_kind == primitive_model::RenderKind::COVERAGE_MASK &&
+                           submit_coverage_mask(
+                               render_context, target, renderer, draw_context, *info
+                           )) {
+                } else {
+                    gui::render::bind_pipeline(render_context, renderer.pipeline);
+                    submit_standard_primitive(
+                        render_context, target, renderer, upload, *primitive, command_first_vertex
+                    );
+                }
+                command_first_vertex += static_cast<uint32_t>(primitive->vertex_count);
+            }
         }
 
         auto submit_styled_rect_instances(
@@ -1460,7 +1690,7 @@ namespace gui::draw {
             LayerRender const* layer_renders,
             size_t first_command,
             size_t end_command,
-            bool allow_lcd_text
+            font_provider::SurfaceProps const& surface_props
         ) -> void;
 
         [[nodiscard]] auto render_layer(
@@ -1531,7 +1761,7 @@ namespace gui::draw {
                 layer_renders,
                 layer->begin_command_index + 1u,
                 layer->end_command_index,
-                false
+                offscreen_text_surface_props()
             );
             gui::render::end_render_pass(render_context);
 
@@ -1612,7 +1842,7 @@ namespace gui::draw {
             LayerRender const* layer_renders,
             size_t first_command,
             size_t end_command,
-            bool allow_lcd_text
+            font_provider::SurfaceProps const& surface_props
         ) -> void {
             ArenaTemp temp = begin_thread_temp_arena();
             PreparedText prepared_text = {};
@@ -1623,7 +1853,7 @@ namespace gui::draw {
                 draw_context,
                 first_command,
                 end_command,
-                allow_lcd_text,
+                surface_props,
                 prepared_text
             );
             BASE_UNUSED(text_ready);
@@ -1642,12 +1872,12 @@ namespace gui::draw {
                     PrimitiveBatch const* const batch =
                         primitive_batch(draw_context, draw_command->index);
                     ASSERT(batch != nullptr);
-                    gui::render::bind_pipeline(render_context, renderer.pipeline);
                     submit_primitive_batch(
                         render_context,
                         target,
                         renderer,
                         upload,
+                        draw_context,
                         *batch,
                         primitive_batch_first_vertex(draw_context, *batch)
                     );
@@ -1806,6 +2036,44 @@ float4 ps_main(PSInput input) : SV_Target
 {
     float4 sample_value = g_texture.Sample(g_sampler, input.uv);
     return float4(input.color.rgb * sample_value.rgb, input.color.a * sample_value.a);
+}
+)hlsl";
+
+        constexpr StrRef COVERAGE_MASK_SHADER_SOURCE = R"hlsl(
+Texture2D g_texture : register(t0);
+SamplerState g_sampler : register(s0);
+
+struct VSInput
+{
+    float2 position : POSITION;
+    float2 uv : TEXCOORD0;
+    float4 uv_clamp : TEXCOORD1;
+    float4 color : COLOR0;
+};
+
+struct PSInput
+{
+    float4 position : SV_POSITION;
+    float2 uv : TEXCOORD0;
+    float4 uv_clamp : TEXCOORD1;
+    float4 color : COLOR0;
+};
+
+PSInput vs_main(VSInput input)
+{
+    PSInput output;
+    output.position = float4(input.position, 0.0f, 1.0f);
+    output.uv = input.uv;
+    output.uv_clamp = input.uv_clamp;
+    output.color = input.color;
+    return output;
+}
+
+float4 ps_main(PSInput input) : SV_Target
+{
+    float2 uv = clamp(input.uv, input.uv_clamp.xy, input.uv_clamp.zw);
+    float coverage = g_texture.Sample(g_sampler, uv).r;
+    return float4(input.color.rgb * input.color.a * coverage, input.color.a * coverage);
 }
 )hlsl";
 
@@ -2175,6 +2443,80 @@ PSInput vs_main(VSInput input)
             destroy_renderer_resources(render_context, renderer);
             return result;
         }
+
+        shader_desc.source = COVERAGE_MASK_SHADER_SOURCE;
+        shader_desc.stage = gui::render::ShaderStage::VERTEX;
+        shader_desc.entry_point = "vs_main";
+
+        result = gui::render::create_shader_from_source(
+            arena, render_context, shader_desc, renderer->coverage_mask_vertex_shader
+        );
+        if (gui::render::result_failed(result)) {
+            destroy_renderer_resources(render_context, renderer);
+            return result;
+        }
+
+        shader_desc.stage = gui::render::ShaderStage::PIXEL;
+        shader_desc.entry_point = "ps_main";
+        result = gui::render::create_shader_from_source(
+            arena, render_context, shader_desc, renderer->coverage_mask_pixel_shader
+        );
+        if (gui::render::result_failed(result)) {
+            destroy_renderer_resources(render_context, renderer);
+            return result;
+        }
+
+        gui::render::VertexAttributeDesc coverage_mask_input_elements[] = {
+            {
+                "POSITION",
+                0u,
+                gui::render::VertexFormat::FLOAT32_2,
+                0u,
+                static_cast<uint32_t>(offsetof(CoverageMaskVertex, position)),
+            },
+            {
+                "TEXCOORD",
+                0u,
+                gui::render::VertexFormat::FLOAT32_2,
+                0u,
+                static_cast<uint32_t>(offsetof(CoverageMaskVertex, uv)),
+            },
+            {
+                "TEXCOORD",
+                1u,
+                gui::render::VertexFormat::FLOAT32_4,
+                0u,
+                static_cast<uint32_t>(offsetof(CoverageMaskVertex, uv_clamp)),
+            },
+            {
+                "COLOR",
+                0u,
+                gui::render::VertexFormat::FLOAT32_4,
+                0u,
+                static_cast<uint32_t>(offsetof(CoverageMaskVertex, color)),
+            },
+        };
+
+        pipeline_desc = {};
+        pipeline_desc.vertex_shader = renderer->coverage_mask_vertex_shader;
+        pipeline_desc.pixel_shader = renderer->coverage_mask_pixel_shader;
+        pipeline_desc.vertex_attributes = coverage_mask_input_elements;
+        pipeline_desc.vertex_attribute_count =
+            sizeof(coverage_mask_input_elements) / sizeof(coverage_mask_input_elements[0u]);
+        pipeline_desc.blend_mode = gui::render::BlendMode::PREMULTIPLIED_ALPHA;
+
+        result = gui::render::create_pipeline(
+            arena, render_context, pipeline_desc, renderer->coverage_mask_pipeline
+        );
+        if (gui::render::result_failed(result)) {
+            destroy_renderer_resources(render_context, renderer);
+            return result;
+        }
+
+        pipeline_desc = {};
+        pipeline_desc.vertex_shader = renderer->vertex_shader;
+        pipeline_desc.vertex_attributes = input_elements;
+        pipeline_desc.vertex_attribute_count = sizeof(input_elements) / sizeof(input_elements[0u]);
 
         shader_desc.source = TEXT_SHADER_SOURCE;
         shader_desc.stage = gui::render::ShaderStage::PIXEL;
@@ -2581,6 +2923,13 @@ PSInput vs_main(VSInput input)
             return result;
         }
 
+        result =
+            coverage_mask::create_atlas(arena, render_context, 128u, renderer->coverage_mask_atlas);
+        if (gui::render::result_failed(result)) {
+            destroy_renderer_resources(render_context, renderer);
+            return result;
+        }
+
         result = create_rgba_texture(
             render_context, WHITE_TEXTURE_SIZE, WHITE_TEXTURE_RGBA, renderer->white_texture
         );
@@ -2625,7 +2974,14 @@ PSInput vs_main(VSInput input)
 
         RenderTarget const target = {target_size, {}};
         render_command_range(
-            *impl, render_context, target, draw_context, nullptr, 0u, command_total, false
+            *impl,
+            render_context,
+            target,
+            draw_context,
+            nullptr,
+            0u,
+            command_total,
+            offscreen_text_surface_props()
         );
     }
 
@@ -2675,7 +3031,7 @@ PSInput vs_main(VSInput input)
             layer_renders,
             0u,
             command_count(draw_context),
-            true
+            root_text_surface_props()
         );
         gui::render::end_render_pass(render_context);
         destroy_layer_renders(render_context, layer_renders, layer_count);

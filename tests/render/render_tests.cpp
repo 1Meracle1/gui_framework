@@ -1,4 +1,5 @@
 #include <base/config.h>
+#include <cstring>
 #include <render/render.h>
 #include <test/test.h>
 
@@ -50,6 +51,197 @@ namespace {
             instance,
             nullptr
         );
+    }
+
+    struct IndexedVertex {
+        float position[2u];
+    };
+
+    auto expect_index_buffers_and_indexed_draw(test::Context* context, gui::render::Backend backend)
+        -> void {
+        Arena owner_arena = {};
+        owner_arena.init();
+
+        gui::render::ContextDesc context_desc = {};
+        context_desc.backend = backend;
+        gui::render::Context render_context = {};
+        gui::render::Result result =
+            gui::render::create_context(owner_arena, context_desc, render_context);
+        TEST_EXPECT(context, result == gui::render::Result::OK);
+        if (result != gui::render::Result::OK) {
+            owner_arena.destroy();
+            return;
+        }
+
+        HWND const hwnd = create_render_test_window();
+        TEST_EXPECT(context, hwnd != nullptr);
+        if (hwnd == nullptr) {
+            gui::render::destroy_context(render_context);
+            owner_arena.destroy();
+            return;
+        }
+
+        gui::render::WindowDesc window_desc = {};
+        window_desc.native_window = hwnd;
+        window_desc.size = {32u, 32u};
+        window_desc.present_mode = gui::render::PresentMode::IMMEDIATE;
+        gui::render::Window window = {};
+        result = gui::render::create_window(owner_arena, render_context, window_desc, window);
+        TEST_EXPECT(context, result == gui::render::Result::OK);
+
+        char const vertex_source[] = R"(
+struct VSIn {
+    float2 position : POSITION;
+};
+
+struct VSOut {
+    float4 position : SV_Position;
+};
+
+VSOut vs_main(VSIn input) {
+    VSOut output;
+    output.position = float4(input.position, 0.0f, 1.0f);
+    return output;
+}
+)";
+
+        char const pixel_source[] = R"(
+float4 ps_main() : SV_Target {
+    return float4(1.0f, 0.0f, 0.0f, 1.0f);
+}
+)";
+
+        gui::render::Shader vertex_shader = {};
+        gui::render::Shader pixel_shader = {};
+        if (result == gui::render::Result::OK) {
+            gui::render::ShaderSourceDesc shader_desc = {};
+            shader_desc.stage = gui::render::ShaderStage::VERTEX;
+            shader_desc.source = StrRef(vertex_source);
+            shader_desc.entry_point = "vs_main";
+            result = gui::render::create_shader_from_source(
+                owner_arena, render_context, shader_desc, vertex_shader
+            );
+            TEST_EXPECT(context, result == gui::render::Result::OK);
+        }
+
+        if (result == gui::render::Result::OK) {
+            gui::render::ShaderSourceDesc shader_desc = {};
+            shader_desc.stage = gui::render::ShaderStage::PIXEL;
+            shader_desc.source = StrRef(pixel_source);
+            shader_desc.entry_point = "ps_main";
+            result = gui::render::create_shader_from_source(
+                owner_arena, render_context, shader_desc, pixel_shader
+            );
+            TEST_EXPECT(context, result == gui::render::Result::OK);
+        }
+
+        gui::render::Pipeline pipeline = {};
+        if (result == gui::render::Result::OK) {
+            gui::render::VertexAttributeDesc attributes[1u] = {};
+            attributes[0u].semantic_name = "POSITION";
+            attributes[0u].format = gui::render::VertexFormat::FLOAT32_2;
+
+            gui::render::PipelineDesc pipeline_desc = {};
+            pipeline_desc.vertex_shader = vertex_shader;
+            pipeline_desc.pixel_shader = pixel_shader;
+            pipeline_desc.vertex_attributes = attributes;
+            pipeline_desc.vertex_attribute_count = 1u;
+            result =
+                gui::render::create_pipeline(owner_arena, render_context, pipeline_desc, pipeline);
+            TEST_EXPECT(context, result == gui::render::Result::OK);
+        }
+
+        IndexedVertex const vertices[] = {
+            {{-0.5f, -0.5f}},
+            {{0.0f, 0.5f}},
+            {{0.5f, -0.5f}},
+        };
+        uint16_t const indices[] = {0u, 1u, 2u};
+
+        gui::render::Buffer vertex_buffer = {};
+        if (result == gui::render::Result::OK) {
+            gui::render::BufferDesc vertex_desc = {};
+            vertex_desc.binding = gui::render::BufferBinding::VERTEX;
+            vertex_desc.byte_size = sizeof(vertices);
+            vertex_desc.initial_data = vertices;
+            result = gui::render::create_buffer(render_context, vertex_desc, vertex_buffer);
+            TEST_EXPECT(context, result == gui::render::Result::OK);
+        }
+
+        gui::render::Buffer immutable_index_buffer = {};
+        if (result == gui::render::Result::OK) {
+            gui::render::BufferDesc index_desc = {};
+            index_desc.binding = gui::render::BufferBinding::INDEX;
+            index_desc.byte_size = sizeof(indices);
+            index_desc.initial_data = indices;
+            result = gui::render::create_buffer(render_context, index_desc, immutable_index_buffer);
+            TEST_EXPECT(context, result == gui::render::Result::OK);
+        }
+
+        if (result == gui::render::Result::OK) {
+            gui::render::begin_frame(render_context);
+
+            gui::render::FrameBufferSlice const index_upload =
+                gui::render::allocate_frame_index_buffer(
+                    render_context, sizeof(indices), alignof(uint16_t)
+                );
+            TEST_EXPECT(context, gui::render::buffer_valid(index_upload.buffer));
+            TEST_EXPECT(context, index_upload.data != nullptr);
+            std::memcpy(index_upload.data, indices, sizeof(indices));
+            gui::render::commit_frame_uploads(render_context);
+
+            gui::render::WindowRenderPassDesc pass_desc = {};
+            pass_desc.window = window;
+            pass_desc.clear_color = {0.0f, 0.0f, 0.0f, 1.0f};
+            result = gui::render::begin_render_pass(render_context, pass_desc);
+            TEST_EXPECT(context, result == gui::render::Result::OK);
+            if (result == gui::render::Result::OK) {
+                gui::render::bind_pipeline(render_context, pipeline);
+
+                gui::render::VertexBufferBinding vertex_binding = {};
+                vertex_binding.buffer = vertex_buffer;
+                vertex_binding.byte_stride = static_cast<uint32_t>(sizeof(IndexedVertex));
+
+                gui::render::DrawIndexedDesc draw_desc = {};
+                draw_desc.vertex_buffers = &vertex_binding;
+                draw_desc.vertex_buffer_count = 1u;
+                draw_desc.index_buffer.buffer = index_upload.buffer;
+                draw_desc.index_buffer.format = gui::render::IndexFormat::UINT16;
+                draw_desc.index_buffer.byte_offset =
+                    static_cast<uint32_t>(index_upload.byte_offset);
+                draw_desc.index_count = 3u;
+                gui::render::draw_indexed(render_context, draw_desc);
+                gui::render::end_render_pass(render_context);
+            }
+
+            result = gui::render::present_window(render_context, window);
+            TEST_EXPECT(
+                context,
+                result == gui::render::Result::OK || result == gui::render::Result::OCCLUDED
+            );
+        }
+
+        if (gui::render::buffer_valid(immutable_index_buffer)) {
+            gui::render::destroy_buffer(render_context, immutable_index_buffer);
+        }
+        if (gui::render::buffer_valid(vertex_buffer)) {
+            gui::render::destroy_buffer(render_context, vertex_buffer);
+        }
+        if (gui::render::pipeline_valid(pipeline)) {
+            gui::render::destroy_pipeline(render_context, pipeline);
+        }
+        if (gui::render::shader_valid(pixel_shader)) {
+            gui::render::destroy_shader(render_context, pixel_shader);
+        }
+        if (gui::render::shader_valid(vertex_shader)) {
+            gui::render::destroy_shader(render_context, vertex_shader);
+        }
+        if (gui::render::window_valid(window)) {
+            gui::render::destroy_window(window);
+        }
+        DestroyWindow(hwnd);
+        gui::render::destroy_context(render_context);
+        owner_arena.destroy();
     }
 
     auto expect_r8_texture_subrect_update(test::Context* context, gui::render::Backend backend)
@@ -320,6 +512,15 @@ namespace {
         TEST_EXPECT(context, desc.initial_data == nullptr);
     }
 
+    TEST_CASE(render_buffer_binding_includes_index_buffers) {
+        TEST_EXPECT(
+            context, gui::render::BufferBinding::INDEX != gui::render::BufferBinding::VERTEX
+        );
+        TEST_EXPECT(
+            context, gui::render::BufferBinding::INDEX != gui::render::BufferBinding::UNIFORM
+        );
+    }
+
     TEST_CASE(render_shader_defaults_describe_vertex_shader_without_bytecode) {
         gui::render::ShaderDesc const desc = {};
 
@@ -507,6 +708,14 @@ namespace {
         TEST_EXPECT(context, binding.byte_offset == 0u);
     }
 
+    TEST_CASE(render_index_buffer_binding_defaults_describe_uint16_buffer) {
+        gui::render::IndexBufferBinding const binding = {};
+
+        TEST_EXPECT(context, !gui::render::buffer_valid(binding.buffer));
+        TEST_EXPECT(context, binding.format == gui::render::IndexFormat::UINT16);
+        TEST_EXPECT(context, binding.byte_offset == 0u);
+    }
+
     TEST_CASE(render_draw_defaults_describe_empty_draw) {
         gui::render::DrawDesc const desc = {};
 
@@ -516,6 +725,29 @@ namespace {
         TEST_EXPECT(context, desc.first_vertex == 0u);
         TEST_EXPECT(context, desc.instance_count == 1u);
         TEST_EXPECT(context, desc.first_instance == 0u);
+    }
+
+    TEST_CASE(render_draw_indexed_defaults_describe_empty_indexed_draw) {
+        gui::render::DrawIndexedDesc const desc = {};
+
+        TEST_EXPECT(context, desc.vertex_buffers == nullptr);
+        TEST_EXPECT(context, desc.vertex_buffer_count == 0u);
+        TEST_EXPECT(context, !gui::render::buffer_valid(desc.index_buffer.buffer));
+        TEST_EXPECT(context, desc.index_buffer.format == gui::render::IndexFormat::UINT16);
+        TEST_EXPECT(context, desc.index_count == 0u);
+        TEST_EXPECT(context, desc.first_index == 0u);
+        TEST_EXPECT(context, desc.vertex_offset == 0);
+        TEST_EXPECT(context, desc.instance_count == 1u);
+        TEST_EXPECT(context, desc.first_instance == 0u);
+    }
+
+    TEST_CASE(render_creates_index_buffers_and_submits_indexed_draw) {
+#if BASE_PLATFORM_WINDOWS
+        expect_index_buffers_and_indexed_draw(context, gui::render::Backend::D3D11);
+        expect_index_buffers_and_indexed_draw(context, gui::render::Backend::D3D12);
+#else
+        TEST_EXPECT(context, true);
+#endif
     }
 
     TEST_CASE(render_vertex_attribute_defaults_describe_float2_attribute) {

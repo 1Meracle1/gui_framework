@@ -122,7 +122,7 @@ namespace gui::draw {
     struct TextStyle {
         font_cache::Font font = {};
         float size = 16.0f;
-        font_provider::RasterPolicy raster_policy = font_provider::RasterPolicy::SHARP_HINTED;
+        font_provider::RasterPolicy raster_policy = font_provider::DEFAULT_RASTER_POLICY;
         Color color = {};
     };
 

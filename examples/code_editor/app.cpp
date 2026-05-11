@@ -25,6 +25,7 @@
 #include <base/unicode.h>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #if defined(_WIN32)
 #include <draw/draw_renderer.h>
@@ -1147,6 +1148,9 @@ namespace code_editor {
 
     auto handle_runtime_config_request(Runtime& runtime) -> void {
         EditorConfigRequestKind const request = runtime.editor.config_request;
+        char request_text[COMMAND_TEXT_CAPACITY] = {};
+        size_t const request_text_size = runtime.editor.config_request_text_size;
+        std::memcpy(request_text, runtime.editor.config_request_text, request_text_size);
         runtime.editor.config_request = EditorConfigRequestKind::NONE;
         runtime.editor.config_request_text_size = 0u;
         runtime.editor.config_request_text[0u] = '\0';
@@ -1172,9 +1176,7 @@ namespace code_editor {
         case EditorConfigRequestKind::OVERRIDE: {
             EditorConfigPatch patch = {};
             EditorConfigError error = {};
-            StrRef const text(
-                runtime.editor.config_request_text, runtime.editor.config_request_text_size
-            );
+            StrRef const text(request_text, request_text_size);
             if (parse_editor_config_override(text, patch, error)) {
                 merge_editor_config_patch(runtime.config.session_override, patch);
                 clear_editor_config_error(runtime.config.error);
@@ -1693,6 +1695,414 @@ namespace code_editor {
         return false;
     }
 
+    [[nodiscard]] auto text_reference_mode_enabled() -> bool {
+        char value[8] = {};
+        DWORD const size = GetEnvironmentVariableA(
+            "CODE_EDITOR_TEXT_REFERENCE_MODE", value, static_cast<DWORD>(sizeof(value))
+        );
+        return size != 0u && size < sizeof(value) && value[0u] != '0';
+    }
+
+    [[nodiscard]] auto text_diagnostics_path(char* buffer, size_t capacity) -> StrRef {
+        DWORD const size = GetEnvironmentVariableA(
+            "CODE_EDITOR_TEXT_DIAGNOSTICS_PATH", buffer, static_cast<DWORD>(capacity)
+        );
+        if (size == 0u || size >= capacity) {
+            return {};
+        }
+        return StrRef(buffer, static_cast<size_t>(size));
+    }
+
+    [[nodiscard]] auto open_text_diagnostics_file(StrRef path) -> std::FILE* {
+        std::FILE* file = nullptr;
+#if defined(_MSC_VER)
+        if (fopen_s(&file, path.data(), "wb") != 0) {
+            return nullptr;
+        }
+#else
+        file = std::fopen(path.data(), "wb");
+#endif
+        return file;
+    }
+
+    auto write_text_diagnostic_json_text(std::FILE* file, StrRef text) -> void {
+        std::fputc('"', file);
+        for (char const ch : text) {
+            uint8_t const byte = static_cast<uint8_t>(ch);
+            switch (ch) {
+            case '"':
+                fmt::fprintf(file, "\\\"");
+                break;
+            case '\\':
+                fmt::fprintf(file, "\\\\");
+                break;
+            case '\n':
+                fmt::fprintf(file, "\\n");
+                break;
+            case '\r':
+                fmt::fprintf(file, "\\r");
+                break;
+            case '\t':
+                fmt::fprintf(file, "\\t");
+                break;
+            default:
+                if (byte < 0x20u) {
+                    fmt::fprintf(file, "\\u%04x", static_cast<unsigned>(byte));
+                } else {
+                    std::fputc(ch, file);
+                }
+                break;
+            }
+        }
+        std::fputc('"', file);
+    }
+
+    [[nodiscard]] auto text_diagnostic_raster_policy_name(font_provider::RasterPolicy policy)
+        -> char const* {
+        switch (policy) {
+        case font_provider::RasterPolicy::SHARP_HINTED:
+            return "sharp";
+        case font_provider::RasterPolicy::SMOOTH_HINTED:
+            return "smooth";
+        case font_provider::RasterPolicy::LCD_SHARP_HINTED:
+            return "lcd_sharp";
+        case font_provider::RasterPolicy::LCD_SMOOTH_HINTED:
+            return "lcd_smooth";
+        }
+        return "unknown";
+    }
+
+    [[nodiscard]] auto text_diagnostic_raster_format_name(font_provider::RasterFormat format)
+        -> char const* {
+        switch (format) {
+        case font_provider::RasterFormat::ALPHA:
+            return "alpha";
+        case font_provider::RasterFormat::LCD_RGB:
+            return "lcd_rgb";
+        }
+        return "unknown";
+    }
+
+    [[nodiscard]] auto text_diagnostic_pixel_geometry_name(font_provider::PixelGeometry geometry)
+        -> char const* {
+        switch (geometry) {
+        case font_provider::PixelGeometry::UNKNOWN:
+            return "unknown";
+        case font_provider::PixelGeometry::RGB_HORIZONTAL:
+            return "rgb_horizontal";
+        case font_provider::PixelGeometry::BGR_HORIZONTAL:
+            return "bgr_horizontal";
+        }
+        return "unknown";
+    }
+
+    [[nodiscard]] auto text_diagnostic_color_format_name(font_provider::TargetColorFormat format)
+        -> char const* {
+        switch (format) {
+        case font_provider::TargetColorFormat::RGBA8_UNORM:
+            return "rgba8_unorm";
+        case font_provider::TargetColorFormat::R8_UNORM:
+            return "r8_unorm";
+        }
+        return "unknown";
+    }
+
+    auto write_text_diagnostic_rect(std::FILE* file, gui::Rect rect) -> void {
+        fmt::fprintf(
+            file,
+            "{\"min_x\":%.3f,\"min_y\":%.3f,\"max_x\":%.3f,\"max_y\":%.3f,"
+            "\"width\":%.3f,\"height\":%.3f}",
+            static_cast<double>(rect.min.x),
+            static_cast<double>(rect.min.y),
+            static_cast<double>(rect.max.x),
+            static_cast<double>(rect.max.y),
+            static_cast<double>(rect.max.x - rect.min.x),
+            static_cast<double>(rect.max.y - rect.min.y)
+        );
+    }
+
+    auto write_text_diagnostic_color(std::FILE* file, gui::Color color) -> void {
+        unsigned const r =
+            static_cast<unsigned>(std::round(std::clamp(color.r, 0.0f, 1.0f) * 255.0f));
+        unsigned const g =
+            static_cast<unsigned>(std::round(std::clamp(color.g, 0.0f, 1.0f) * 255.0f));
+        unsigned const b =
+            static_cast<unsigned>(std::round(std::clamp(color.b, 0.0f, 1.0f) * 255.0f));
+        unsigned const a = static_cast<unsigned>(
+            std::round(std::clamp(color.a < 0.0f ? 1.0f : color.a, 0.0f, 1.0f) * 255.0f)
+        );
+        fmt::fprintf(file, "{\"hex\":\"#%02x%02x%02x\"", r, g, b);
+        fmt::fprintf(file, ",\"r\":%u", r);
+        fmt::fprintf(file, ",\"g\":%u", g);
+        fmt::fprintf(file, ",\"b\":%u", b);
+        fmt::fprintf(file, ",\"a\":%u}", a);
+    }
+
+    struct TextDiagnosticGlyphOrigin {
+        float origin = 0.0f;
+        uint8_t phase = 0u;
+    };
+
+    [[nodiscard]] auto text_diagnostic_quantize_glyph_origin(float value)
+        -> TextDiagnosticGlyphOrigin {
+        float const scaled =
+            std::floor(value * static_cast<float>(font_provider::GLYPH_RASTER_PHASE_COUNT) + 0.5f);
+        int32_t const quantized = static_cast<int32_t>(scaled);
+        uint8_t const phase = static_cast<uint8_t>(
+            ((quantized % font_provider::GLYPH_RASTER_PHASE_COUNT) +
+             font_provider::GLYPH_RASTER_PHASE_COUNT) %
+            font_provider::GLYPH_RASTER_PHASE_COUNT
+        );
+        return {scaled / static_cast<float>(font_provider::GLYPH_RASTER_PHASE_COUNT), phase};
+    }
+
+    auto write_text_diagnostic_lines(
+        std::FILE* file,
+        Runtime const& runtime,
+        float text_x,
+        float text_y,
+        float line_height,
+        size_t first_visible,
+        size_t line_count
+    ) -> void {
+        constexpr size_t MAX_DUMP_LINES = 4u;
+        constexpr size_t MAX_DUMP_GLYPHS = 96u;
+        size_t visible = first_visible;
+        size_t line = editor_visible_line_at(runtime.editor, visible);
+        for (size_t dump_line = 0u; dump_line < MAX_DUMP_LINES && visible < line_count;
+             ++dump_line) {
+            if (dump_line != 0u) {
+                fmt::fprintf(file, ",");
+            }
+            EditorLine const editor_line_value = editor_line(runtime.editor, line);
+            StrRef const text = editor_line_text(editor_line_value);
+            font_cache::TextRun run = {};
+            font_cache::text_run(
+                runtime.cache, runtime.editor_font, runtime.editor.font_size, text, run
+            );
+
+            float const y = text_y + static_cast<float>(dump_line) * line_height;
+            fmt::fprintf(file, "{\"line\":%zu,\"visible_index\":%zu,\"text\":", line, visible);
+            write_text_diagnostic_json_text(file, text);
+            fmt::fprintf(
+                file,
+                ",\"text_origin\":{\"x\":%.3f,\"y\":%.3f},"
+                "\"run\":{\"advance\":%.3f,\"origin_x\":%.3f,\"origin_y\":%.3f,"
+                "\"baseline_y\":%.3f,\"height\":%.3f,\"size\":{\"width\":%u,\"height\":%u},"
+                "\"glyph_count\":%zu,\"run_count\":%zu},\"runs\":[",
+                static_cast<double>(text_x),
+                static_cast<double>(y),
+                static_cast<double>(run.advance),
+                static_cast<double>(run.origin_x),
+                static_cast<double>(run.origin_y),
+                static_cast<double>(run.baseline_y),
+                static_cast<double>(run.height),
+                run.size.width,
+                run.size.height,
+                run.glyph_count,
+                run.run_count
+            );
+            for (size_t run_index = 0u; run_index < run.run_count; ++run_index) {
+                font_cache::TextBlobRun const& blob_run = run.runs[run_index];
+                if (run_index != 0u) {
+                    fmt::fprintf(file, ",");
+                }
+                fmt::fprintf(
+                    file,
+                    "{\"first_glyph\":%zu,\"glyph_count\":%zu,\"utf8_start\":%u,"
+                    "\"utf8_end\":%u,\"script\":%u,\"bidi_level\":%u,"
+                    "\"right_to_left\":%s,\"font_backend\":\"%s\"}",
+                    blob_run.first_glyph,
+                    blob_run.glyph_count,
+                    blob_run.utf8_start,
+                    blob_run.utf8_end,
+                    static_cast<unsigned>(blob_run.script),
+                    static_cast<unsigned>(blob_run.bidi_level),
+                    blob_run.right_to_left ? "true" : "false",
+                    font_provider::backend_name(blob_run.font.backend)
+                );
+            }
+            fmt::fprintf(file, "],\"glyphs\":[");
+            size_t const glyph_count = std::min(run.glyph_count, MAX_DUMP_GLYPHS);
+            for (size_t glyph_index = 0u; glyph_index < glyph_count; ++glyph_index) {
+                font_cache::TextGlyph const& glyph = run.glyphs[glyph_index];
+                TextDiagnosticGlyphOrigin const x =
+                    text_diagnostic_quantize_glyph_origin(text_x + glyph.x + glyph.offset_x);
+                TextDiagnosticGlyphOrigin const glyph_y =
+                    text_diagnostic_quantize_glyph_origin(y + run.baseline_y - glyph.offset_y);
+                font_provider::GlyphRaster const raster = font_cache::glyph_raster(
+                    runtime.editor_font, glyph, runtime.editor.raster_policy, x.phase, glyph_y.phase
+                );
+                if (glyph_index != 0u) {
+                    fmt::fprintf(file, ",");
+                }
+                fmt::fprintf(
+                    file,
+                    "{\"glyph_id\":%u,\"run_index\":%u,\"advance\":%.3f,\"x\":%.3f,"
+                    "\"offset_x\":%.3f,\"offset_y\":%.3f,\"cluster\":%u,"
+                    "\"utf8_start\":%u,\"utf8_end\":%u,\"raster_policy\":\"%s\","
+                    "\"phase_x\":%u,\"phase_y\":%u,\"raster\":{\"width\":%u,\"height\":%u,"
+                    "\"stride\":%u,\"format\":\"%s\",\"offset_x\":%.3f,\"offset_y\":%.3f}}",
+                    static_cast<unsigned>(glyph.glyph_index),
+                    static_cast<unsigned>(glyph.run_index),
+                    static_cast<double>(glyph.advance),
+                    static_cast<double>(glyph.x),
+                    static_cast<double>(glyph.offset_x),
+                    static_cast<double>(glyph.offset_y),
+                    glyph.cluster,
+                    glyph.utf8_start,
+                    glyph.utf8_end,
+                    text_diagnostic_raster_policy_name(runtime.editor.raster_policy),
+                    static_cast<unsigned>(x.phase),
+                    static_cast<unsigned>(glyph_y.phase),
+                    raster.size.width,
+                    raster.size.height,
+                    raster.stride,
+                    text_diagnostic_raster_format_name(raster.format),
+                    static_cast<double>(raster.offset_x),
+                    static_cast<double>(raster.offset_y)
+                );
+            }
+            fmt::fprintf(file, "]}");
+            visible += 1u;
+            line = editor_next_visible_line(runtime.editor, line);
+        }
+    }
+
+    auto write_code_editor_text_diagnostics(
+        Runtime const& runtime,
+        render::SizeU32 window_size,
+        Palette const& palette,
+        bool selection_visible
+    ) -> void {
+        char path_buffer[4096] = {};
+        StrRef const path = text_diagnostics_path(path_buffer, sizeof(path_buffer));
+        if (path.empty()) {
+            return;
+        }
+        std::FILE* const file = open_text_diagnostics_file(path);
+        if (file == nullptr) {
+            return;
+        }
+
+        font_provider::Metrics metrics = {};
+        font_cache::metrics_from_font(runtime.editor_font, runtime.editor.font_size, metrics);
+        font_provider::SurfaceProps const surface_props = {};
+        size_t const focused = runtime.editor.focused_split;
+        gui::Rect const surface = focused < runtime.editor.split_nodes.size()
+                                      ? runtime.editor.split_nodes[focused].rect
+                                      : gui::Rect{};
+        gui::Rect const content = editor_content_rect(surface);
+        float const line_height = editor_line_height(runtime.editor);
+        size_t const visible_line_count = editor_visible_line_count(runtime.editor);
+        size_t const first_visible =
+            visible_line_count == 0u
+                ? 0u
+                : std::min(
+                      visible_line_count - 1u,
+                      static_cast<size_t>(runtime.editor.scroll_y / std::max(1.0f, line_height))
+                  );
+        float const first_y = content.min.y - (runtime.editor.scroll_y -
+                                               static_cast<float>(first_visible) * line_height);
+        float const text_x = editor_text_x(runtime.editor, surface);
+        float const text_y = first_y - 2.0f;
+        int const crop_x = static_cast<int>(std::round(text_x));
+        int const crop_y = static_cast<int>(std::round(text_y));
+        int const crop_width = 620;
+        int const crop_height = 190;
+        size_t const viewport_line_count = static_cast<size_t>(
+            std::ceil(std::max(0.0f, content.max.y - first_y) / std::max(1.0f, line_height))
+        );
+        bool const reference_mode = text_reference_mode_enabled();
+
+        fmt::fprintf(
+            file,
+            "{\"source\":\"code_editor\",\"font_size\":%.3f,\"line_height\":%.3f,"
+            "\"font_backend\":\"%s\",\"requested_raster_policy\":\"%s\","
+            "\"resolved_raster_policy\":\"%s\",\"window\":{\"client_width\":%u,"
+            "\"client_height\":%u},\"surface_rect\":",
+            static_cast<double>(runtime.editor.font_size),
+            static_cast<double>(line_height),
+            font_provider::backend_name(runtime.provider.backend),
+            text_diagnostic_raster_policy_name(runtime.editor.raster_policy),
+            text_diagnostic_raster_policy_name(runtime.editor.raster_policy),
+            window_size.width,
+            window_size.height
+        );
+        write_text_diagnostic_rect(file, surface);
+        fmt::fprintf(file, ",\"content_rect\":");
+        write_text_diagnostic_rect(file, content);
+        fmt::fprintf(
+            file,
+            ",\"text_origin\":{\"x\":%.3f,\"y\":%.3f,\"relative_crop_x\":0.0,"
+            "\"relative_crop_y\":0.0},\"crop\":{\"x\":%d,\"y\":%d,\"width\":%d,"
+            "\"height\":%d,\"scale\":1,\"origin\":\"text_origin\"},"
+            "\"font_metrics\":{\"ascent\":%.3f,\"descent\":%.3f,\"line_gap\":%.3f,"
+            "\"capital_height\":%.3f,\"space_advance\":%.3f,\"m_advance\":%.3f},"
+            "\"scroll\":{\"x\":%.3f,\"y\":%.3f},\"visible_lines\":{\"total\":%zu,"
+            "\"first_visible_index\":%zu,\"first_line\":%zu,\"viewport_count\":%zu},"
+            "\"surface_props\":{\"pixel_geometry\":\"%s\",\"color_format\":\"%s\","
+            "\"text_gamma\":%.3f,\"text_contrast\":%.3f},\"contamination\":{"
+            "\"reference_mode\":%s,\"selection_visible\":%s,\"current_line_visible\":%s,"
+            "\"caret_visible\":%s,\"selection_active\":%s,\"line_numbers_in_crop\":false,"
+            "\"crop_origin\":\"text_origin\"},\"colors\":{\"background\":",
+            static_cast<double>(text_x),
+            static_cast<double>(text_y),
+            crop_x,
+            crop_y,
+            crop_width,
+            crop_height,
+            static_cast<double>(metrics.ascent),
+            static_cast<double>(metrics.descent),
+            static_cast<double>(metrics.line_gap),
+            static_cast<double>(metrics.capital_height),
+            static_cast<double>(
+                font_cache::text_advance(runtime.editor_font, runtime.editor.font_size, " ")
+            ),
+            static_cast<double>(runtime.char_width),
+            static_cast<double>(runtime.editor.scroll_x),
+            static_cast<double>(runtime.editor.scroll_y),
+            visible_line_count,
+            first_visible,
+            visible_line_count == 0u ? 0u : editor_visible_line_at(runtime.editor, first_visible),
+            viewport_line_count,
+            text_diagnostic_pixel_geometry_name(surface_props.pixel_geometry),
+            text_diagnostic_color_format_name(surface_props.color_format),
+            static_cast<double>(surface_props.text_gamma),
+            static_cast<double>(surface_props.text_contrast),
+            reference_mode ? "true" : "false",
+            selection_visible ? "true" : "false",
+            selection_visible ? "true" : "false",
+            selection_visible ? "true" : "false",
+            runtime.editor.flag(EditorFlag::SELECTION_ACTIVE) ? "true" : "false"
+        );
+        write_text_diagnostic_color(file, palette.panel);
+        fmt::fprintf(file, ",\"text\":");
+        write_text_diagnostic_color(file, palette.text);
+        fmt::fprintf(file, ",\"keyword\":");
+        write_text_diagnostic_color(file, palette.keyword);
+        fmt::fprintf(file, ",\"type\":");
+        write_text_diagnostic_color(file, palette.type);
+        fmt::fprintf(file, ",\"string\":");
+        write_text_diagnostic_color(file, palette.string);
+        fmt::fprintf(file, ",\"number\":");
+        write_text_diagnostic_color(file, palette.number);
+        fmt::fprintf(file, ",\"comment\":");
+        write_text_diagnostic_color(file, palette.comment);
+        fmt::fprintf(file, ",\"preprocessor\":");
+        write_text_diagnostic_color(file, palette.preprocessor);
+        fmt::fprintf(file, ",\"punctuation\":");
+        write_text_diagnostic_color(file, palette.punctuation);
+        fmt::fprintf(file, "},\"lines\":[");
+        if (visible_line_count != 0u) {
+            write_text_diagnostic_lines(
+                file, runtime, text_x, text_y, line_height, first_visible, visible_line_count
+            );
+        }
+        fmt::fprintf(file, "]}\n");
+        std::fclose(file);
+    }
+
     [[nodiscard]] auto build_ui_commands(
         Runtime* runtime,
         render::SizeU32 window_size,
@@ -1799,6 +2209,7 @@ namespace code_editor {
             draw::push_layer(runtime->draw_context, backdrop);
         }
         gui::render_frame_base(ui, runtime->draw_context);
+        bool const editor_selection_visible = !search_open && !text_reference_mode_enabled();
         if (!runtime->editor.flag(EditorFlag::SAVE_PATH_OPEN)) {
             draw_editor_surface(
                 runtime->draw_context,
@@ -1811,7 +2222,7 @@ namespace code_editor {
                     ? gui::InputState{}
                     : ui_input,
                 palette,
-                !search_open
+                editor_selection_visible
             );
         }
         if (search_open) {
@@ -1826,6 +2237,9 @@ namespace code_editor {
         }
         gui::render_frame_floating(ui, runtime->draw_context);
         draw::end_frame(runtime->draw_context);
+        write_code_editor_text_diagnostics(
+            *runtime, window_size, palette, editor_selection_visible
+        );
         return ui;
     }
 

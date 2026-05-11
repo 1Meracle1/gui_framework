@@ -19,6 +19,8 @@ steps.
 - `code_editor_symbols_repro.ps1`
 - `code_editor_git_panel_repro.ps1`
 - `code_editor_text_rendering_repro.ps1`
+- `code_editor_text_reference_set.ps1`
+- `render_primitives_reference.ps1`
 
 ## Usage
 

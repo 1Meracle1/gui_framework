@@ -71,6 +71,15 @@ if(WIN32)
     )
     cpp_configure_target(text_rendering_testbed)
 
+    add_executable(text_stage_probe
+        examples/text_stage_probe.cpp
+    )
+    target_link_libraries(text_stage_probe PRIVATE
+        base::base
+        font_cache::font_cache
+    )
+    cpp_configure_target(text_stage_probe)
+
     add_executable(render_effects_testbed
         examples/render_effects_testbed.cpp
     )

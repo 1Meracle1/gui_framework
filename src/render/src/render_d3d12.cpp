@@ -139,6 +139,7 @@ namespace gui::render::d3d12 {
         struct D3D12FrameResource {
             ID3D12CommandAllocator* command_allocator = nullptr;
             D3D12FrameBuffer frame_vertex_buffer = {};
+            D3D12FrameBuffer frame_index_buffer = {};
             D3D12FrameBuffer frame_texture_upload_buffer = {};
             uint32_t frame_shader_descriptor_count = 0u;
             uint32_t frame_sampler_descriptor_count = 0u;
@@ -285,6 +286,17 @@ namespace gui::render::d3d12 {
                 return DXGI_FORMAT_R8G8B8A8_UNORM;
             case TextureFormat::R8_UNORM:
                 return DXGI_FORMAT_R8_UNORM;
+            }
+
+            return DXGI_FORMAT_UNKNOWN;
+        }
+
+        [[nodiscard]] auto d3d_format(IndexFormat format) -> DXGI_FORMAT {
+            switch (format) {
+            case IndexFormat::UINT16:
+                return DXGI_FORMAT_R16_UINT;
+            case IndexFormat::UINT32:
+                return DXGI_FORMAT_R32_UINT;
             }
 
             return DXGI_FORMAT_UNKNOWN;
@@ -726,8 +738,24 @@ namespace gui::render::d3d12 {
             return Result::OK;
         }
 
+        [[nodiscard]] auto buffer_resource_state(BufferBinding binding) -> D3D12_RESOURCE_STATES {
+            switch (binding) {
+            case BufferBinding::VERTEX:
+            case BufferBinding::UNIFORM:
+                return D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER;
+            case BufferBinding::INDEX:
+                return D3D12_RESOURCE_STATE_INDEX_BUFFER;
+            }
+
+            return D3D12_RESOURCE_STATE_COMMON;
+        }
+
         auto record_buffer_upload(
-            D3D12Context* context, ID3D12Resource* buffer, ID3D12Resource* upload, size_t byte_size
+            D3D12Context* context,
+            ID3D12Resource* buffer,
+            ID3D12Resource* upload,
+            size_t byte_size,
+            D3D12_RESOURCE_STATES resource_state
         ) -> void {
             context->command_list->CopyBufferRegion(buffer, 0u, upload, 0u, byte_size);
 
@@ -735,16 +763,20 @@ namespace gui::render::d3d12 {
             barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
             barrier.Transition.pResource = buffer;
             barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
-            barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER;
+            barrier.Transition.StateAfter = resource_state;
             barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
             context->command_list->ResourceBarrier(1u, &barrier);
         }
 
         [[nodiscard]] auto upload_buffer(
-            D3D12Context* context, ID3D12Resource* buffer, ID3D12Resource* upload, size_t byte_size
+            D3D12Context* context,
+            ID3D12Resource* buffer,
+            ID3D12Resource* upload,
+            size_t byte_size,
+            D3D12_RESOURCE_STATES resource_state
         ) -> Result {
             if (context->frame_active) {
-                record_buffer_upload(context, buffer, upload, byte_size);
+                record_buffer_upload(context, buffer, upload, byte_size, resource_state);
                 return Result::OK;
             }
 
@@ -759,7 +791,7 @@ namespace gui::render::d3d12 {
                 return Result::BUFFER_CREATION_FAILED;
             }
 
-            record_buffer_upload(context, buffer, upload, byte_size);
+            record_buffer_upload(context, buffer, upload, byte_size, resource_state);
 
             hr = context->command_list->Close();
             if (FAILED(hr)) {
@@ -786,9 +818,12 @@ namespace gui::render::d3d12 {
             frame_buffer->used_size = 0u;
         }
 
-        auto
-        ensure_frame_buffer(D3D12Context* context, D3D12FrameBuffer* frame_buffer, size_t byte_size)
-            -> void {
+        auto ensure_frame_buffer(
+            D3D12Context* context,
+            D3D12FrameBuffer* frame_buffer,
+            BufferBinding binding,
+            size_t byte_size
+        ) -> void {
             if (byte_size <= frame_buffer->capacity) {
                 return;
             }
@@ -815,7 +850,7 @@ namespace gui::render::d3d12 {
 
             frame_buffer->buffer.context = context;
             frame_buffer->buffer.resource = resource;
-            frame_buffer->buffer.binding = BufferBinding::VERTEX;
+            frame_buffer->buffer.binding = binding;
             frame_buffer->buffer.usage = BufferUsage::DYNAMIC;
             frame_buffer->buffer.byte_size = byte_size;
             frame_buffer->mapped_data = mapped_data;
@@ -826,6 +861,7 @@ namespace gui::render::d3d12 {
         [[nodiscard]] auto allocate_frame_buffer(
             D3D12Context* context,
             D3D12FrameBuffer& frame_buffer,
+            BufferBinding binding,
             size_t byte_size,
             size_t byte_alignment,
             size_t default_capacity
@@ -850,7 +886,7 @@ namespace gui::render::d3d12 {
                     }
                     new_capacity *= 2u;
                 }
-                ensure_frame_buffer(context, &frame_buffer, new_capacity);
+                ensure_frame_buffer(context, &frame_buffer, binding, new_capacity);
             }
 
             frame_buffer.used_size = needed_size;
@@ -913,6 +949,7 @@ namespace gui::render::d3d12 {
 
             for (uint32_t index = 0u; index < FRAME_RESOURCE_COUNT; ++index) {
                 release_frame_buffer(context, &context->frame_resources[index].frame_vertex_buffer);
+                release_frame_buffer(context, &context->frame_resources[index].frame_index_buffer);
                 release_frame_buffer(
                     context, &context->frame_resources[index].frame_texture_upload_buffer
                 );
@@ -1605,7 +1642,9 @@ namespace gui::render::d3d12 {
             std::memcpy(mapped_data, desc.initial_data, desc.byte_size);
             upload->Unmap(0u, nullptr);
 
-            result = upload_buffer(context_impl, resource, upload, desc.byte_size);
+            result = upload_buffer(
+                context_impl, resource, upload, desc.byte_size, buffer_resource_state(desc.binding)
+            );
             if (result_failed(result)) {
                 defer_release(context_impl, upload);
                 defer_release(context_impl, resource);
@@ -1667,6 +1706,25 @@ namespace gui::render::d3d12 {
         return allocate_frame_buffer(
             context_impl,
             frame.frame_vertex_buffer,
+            BufferBinding::VERTEX,
+            byte_size,
+            byte_alignment,
+            FRAME_VERTEX_BUFFER_DEFAULT_SIZE
+        );
+    }
+
+    auto allocate_frame_index_buffer(Context context, size_t byte_size, size_t byte_alignment)
+        -> FrameBufferSlice {
+        D3D12Context* context_impl = context_from_handle(context);
+        ASSERT(context_impl != nullptr);
+        ASSERT(context_impl->frame_active);
+
+        D3D12FrameResource& frame =
+            context_impl->frame_resources[context_impl->active_frame_resource_index];
+        return allocate_frame_buffer(
+            context_impl,
+            frame.frame_index_buffer,
+            BufferBinding::INDEX,
             byte_size,
             byte_alignment,
             FRAME_VERTEX_BUFFER_DEFAULT_SIZE
@@ -1823,6 +1881,7 @@ namespace gui::render::d3d12 {
             FrameBufferSlice const upload = allocate_frame_buffer(
                 context_impl,
                 frame.frame_texture_upload_buffer,
+                BufferBinding::VERTEX,
                 static_cast<size_t>(upload_size),
                 D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT,
                 FRAME_VERTEX_BUFFER_DEFAULT_SIZE
@@ -1930,6 +1989,7 @@ namespace gui::render::d3d12 {
             FrameBufferSlice const upload = allocate_frame_buffer(
                 context_impl,
                 frame.frame_texture_upload_buffer,
+                BufferBinding::VERTEX,
                 static_cast<size_t>(upload_size),
                 D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT,
                 FRAME_VERTEX_BUFFER_DEFAULT_SIZE
@@ -2417,11 +2477,7 @@ namespace gui::render::d3d12 {
         context_impl->command_list->RSSetScissorRects(1u, &scissor);
     }
 
-    auto draw(Context context, DrawDesc const& desc) -> void {
-        D3D12Context* context_impl = context_from_handle(context);
-        ASSERT(context_impl != nullptr);
-        ASSERT(context_impl->render_pass_active);
-
+    auto bind_vertex_buffers(D3D12Context* context_impl, DrawDesc const& desc) -> void {
         for (size_t index = 0u; index < desc.vertex_buffer_count; ++index) {
             VertexBufferBinding const& binding = desc.vertex_buffers[index];
             D3D12Buffer* buffer = buffer_from_handle(binding.buffer);
@@ -2441,9 +2497,52 @@ namespace gui::render::d3d12 {
             view.StrideInBytes = binding.byte_stride;
             context_impl->command_list->IASetVertexBuffers(binding.slot, 1u, &view);
         }
+    }
 
+    auto draw(Context context, DrawDesc const& desc) -> void {
+        D3D12Context* context_impl = context_from_handle(context);
+        ASSERT(context_impl != nullptr);
+        ASSERT(context_impl->render_pass_active);
+
+        bind_vertex_buffers(context_impl, desc);
         context_impl->command_list->DrawInstanced(
             desc.vertex_count, desc.instance_count, desc.first_vertex, desc.first_instance
+        );
+    }
+
+    auto draw_indexed(Context context, DrawIndexedDesc const& desc) -> void {
+        D3D12Context* context_impl = context_from_handle(context);
+        ASSERT(context_impl != nullptr);
+        ASSERT(context_impl->render_pass_active);
+
+        DrawDesc vertex_desc = {};
+        vertex_desc.vertex_buffers = desc.vertex_buffers;
+        vertex_desc.vertex_buffer_count = desc.vertex_buffer_count;
+        bind_vertex_buffers(context_impl, vertex_desc);
+
+        D3D12Buffer* index_buffer = buffer_from_handle(desc.index_buffer.buffer);
+        ASSERT(index_buffer != nullptr);
+        ASSERT(index_buffer->context == context_impl);
+        ASSERT(index_buffer->resource != nullptr);
+        ASSERT(index_buffer->binding == BufferBinding::INDEX);
+        ASSERT(desc.index_buffer.byte_offset <= index_buffer->byte_size);
+
+        UINT view_size = 0u;
+        bool const valid_size =
+            buffer_view_size(index_buffer->byte_size - desc.index_buffer.byte_offset, view_size);
+        ASSERT(valid_size);
+        D3D12_INDEX_BUFFER_VIEW view = {};
+        view.BufferLocation =
+            index_buffer->resource->GetGPUVirtualAddress() + desc.index_buffer.byte_offset;
+        view.SizeInBytes = view_size;
+        view.Format = d3d_format(desc.index_buffer.format);
+        context_impl->command_list->IASetIndexBuffer(&view);
+        context_impl->command_list->DrawIndexedInstanced(
+            desc.index_count,
+            desc.instance_count,
+            desc.first_index,
+            desc.vertex_offset,
+            desc.first_instance
         );
     }
 
@@ -2490,6 +2589,7 @@ namespace gui::render::d3d12 {
         frame.frame_shader_descriptor_count = 0u;
         frame.frame_sampler_descriptor_count = 0u;
         frame.frame_vertex_buffer.used_size = 0u;
+        frame.frame_index_buffer.used_size = 0u;
         frame.frame_texture_upload_buffer.used_size = 0u;
         reset_bound_descriptor_tables(context_impl);
 

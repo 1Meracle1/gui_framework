@@ -287,6 +287,29 @@ namespace gui::render {
 #endif
     }
 
+    auto allocate_frame_index_buffer(Context context, size_t byte_size, size_t byte_alignment)
+        -> FrameBufferSlice {
+        ASSERT(context_valid(context));
+        ASSERT(byte_size != 0u);
+        ASSERT(byte_alignment != 0u);
+
+#if BASE_PLATFORM_WINDOWS
+        switch (context_backend(context)) {
+        case Backend::D3D11:
+            return d3d11::allocate_frame_index_buffer(context, byte_size, byte_alignment);
+        case Backend::D3D12:
+            return d3d12::allocate_frame_index_buffer(context, byte_size, byte_alignment);
+        }
+
+        return {};
+#else
+        BASE_UNUSED(context);
+        BASE_UNUSED(byte_size);
+        BASE_UNUSED(byte_alignment);
+        return {};
+#endif
+    }
+
     auto commit_frame_uploads(Context context) -> void {
         ASSERT(context_valid(context));
 
@@ -714,6 +737,33 @@ namespace gui::render {
             return;
         case Backend::D3D12:
             d3d12::draw(context, desc);
+            return;
+        }
+#else
+        BASE_UNUSED(context);
+        BASE_UNUSED(desc);
+#endif
+    }
+
+    auto draw_indexed(Context context, DrawIndexedDesc const& desc) -> void {
+        ASSERT(context_valid(context));
+        ASSERT(buffer_valid(desc.index_buffer.buffer));
+        ASSERT(desc.index_count != 0u);
+        ASSERT(desc.instance_count != 0u);
+        ASSERT(desc.vertex_buffer_count == 0u || desc.vertex_buffers != nullptr);
+
+        for (size_t index = 0u; index < desc.vertex_buffer_count; ++index) {
+            ASSERT(buffer_valid(desc.vertex_buffers[index].buffer));
+            ASSERT(desc.vertex_buffers[index].byte_stride != 0u);
+        }
+
+#if BASE_PLATFORM_WINDOWS
+        switch (context_backend(context)) {
+        case Backend::D3D11:
+            d3d11::draw_indexed(context, desc);
+            return;
+        case Backend::D3D12:
+            d3d12::draw_indexed(context, desc);
             return;
         }
 #else

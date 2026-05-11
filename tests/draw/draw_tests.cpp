@@ -1,3 +1,9 @@
+#include "../../src/draw/src/coverage_mask_atlas.h"
+#include "../../src/draw/src/draw_path.h"
+#include "../../src/draw/src/draw_primitive.h"
+#include "../../src/draw/src/draw_renderer_state.h"
+#include "../../src/draw/src/text_atlas.h"
+
 #include <base/config.h>
 #include <draw/draw.h>
 #include <draw/draw_renderer.h>
@@ -15,6 +21,41 @@ namespace {
         -> void {
         expect_position(context, rect.min, expected.min.x, expected.min.y);
         expect_position(context, rect.max, expected.max.x, expected.max.y);
+    }
+
+    auto expect_analytic_rect(
+        test::Context* context,
+        gui::draw::Context draw_context,
+        size_t index,
+        gui::draw::Rect rect,
+        float radius,
+        float border_thickness
+    ) -> void {
+        gui::draw::primitive_model::PrimitiveInfo const* info =
+            gui::draw::primitive_model::primitive_info(draw_context, index);
+        TEST_EXPECT(context, info != nullptr);
+        if (info != nullptr) {
+            TEST_EXPECT(
+                context, info->render_kind == gui::draw::primitive_model::RenderKind::ANALYTIC_RECT
+            );
+            expect_rect(context, info->analytic_rect.rect, rect);
+            TEST_EXPECT(context, info->analytic_rect.radius == radius);
+            TEST_EXPECT(context, info->analytic_rect.border_thickness == border_thickness);
+        }
+    }
+
+    auto expect_verb(
+        test::Context* context,
+        gui::draw::path_model::Path const& path,
+        size_t index,
+        gui::draw::path_model::PathVerb verb,
+        size_t point_count
+    ) -> void {
+        TEST_EXPECT(context, index < path.verbs.size());
+        if (index < path.verbs.size()) {
+            TEST_EXPECT(context, path.verbs[index].verb == verb);
+            TEST_EXPECT(context, path.verbs[index].point_count == point_count);
+        }
     }
 
     auto expect_transform(
@@ -54,6 +95,137 @@ namespace {
 
         BASE_UNUSED(desc);
         TEST_EXPECT(context, !gui::draw::renderer_valid(renderer));
+    }
+
+    TEST_CASE(draw_renderer_state_maps_public_paint_transform_clip_and_surface_props) {
+        using namespace gui::draw::renderer_state;
+
+        SurfaceProps const default_props = default_surface_props();
+        TEST_EXPECT(context, default_props.pixel_geometry == PixelGeometry::RGB_HORIZONTAL);
+        TEST_EXPECT(context, default_props.color_format == TargetColorFormat::RGBA8_UNORM);
+        TEST_EXPECT(context, default_props.text_gamma == DEFAULT_TEXT_GAMMA);
+        TEST_EXPECT(context, default_props.text_contrast == 0.0f);
+
+        SurfaceProps const r8_props =
+            surface_props_from_target_format(gui::render::TextureFormat::R8_UNORM);
+        TEST_EXPECT(context, r8_props.color_format == TargetColorFormat::R8_UNORM);
+
+        gui::draw::Transform2D const skew = {{1.0f, 0.25f}, {0.0f, 1.0f}, {3.0f, 4.0f}};
+        Transform const identity_transform = transform_from_draw({});
+        Transform const skew_transform = transform_from_draw(skew);
+        TEST_EXPECT(context, identity_transform.identity);
+        TEST_EXPECT(context, identity_transform.axis_aligned);
+        TEST_EXPECT(context, !skew_transform.identity);
+        TEST_EXPECT(context, !skew_transform.axis_aligned);
+        TEST_EXPECT(context, skew_transform.local_to_device.translation.x == 3.0f);
+
+        gui::draw::Rect const clip_rect = {{1.0f, 2.0f}, {10.0f, 12.0f}};
+        Clip const clip = clip_from_rect(clip_rect);
+        expect_rect(context, clip.rect, clip_rect);
+        TEST_EXPECT(context, clip.radius == 0.0f);
+        TEST_EXPECT(context, clip.aa_mode == AntiAliasMode::NONE);
+
+        Paint const primitive_paint = paint_from_color({0.1f, 0.2f, 0.3f, 0.4f}, 0.5f);
+        TEST_EXPECT(context, primitive_paint.color.r == 0.1f);
+        TEST_EXPECT(context, primitive_paint.color.a == 0.2f);
+        TEST_EXPECT(context, primitive_paint.blend_mode == PaintBlendMode::SOURCE_OVER);
+        TEST_EXPECT(context, primitive_paint.coverage_mode == CoverageMode::ANALYTIC);
+        TEST_EXPECT(context, primitive_paint.aa_mode == AntiAliasMode::GRAYSCALE);
+        TEST_EXPECT(context, !primitive_paint.source_premultiplied);
+
+        int texture_storage = 0;
+        gui::render::Texture const texture = {&texture_storage};
+        Paint const image_paint = image_paint_from_color(texture, {1.0f, 0.5f, 0.25f, 0.8f}, 0.25f);
+        TEST_EXPECT(context, image_paint.texture.handle == texture.handle);
+        TEST_EXPECT(context, image_paint.color.a == 0.2f);
+        TEST_EXPECT(context, image_paint.coverage_mode == CoverageMode::NONE);
+    }
+
+    TEST_CASE(draw_renderer_state_maps_box_layer_and_text_decisions) {
+        using namespace gui::draw::renderer_state;
+
+        int texture_storage = 0;
+        gui::render::Texture const texture = {&texture_storage};
+
+        gui::draw::BoxStyle box = {};
+        box.fill_color = {0.2f, 0.3f, 0.4f, 0.8f};
+        box.texture = texture;
+        box.border_color = {0.5f, 0.6f, 0.7f, 0.6f};
+        box.shadow.color = {0.1f, 0.2f, 0.3f, 0.4f};
+
+        Paint const fill = box_fill_paint(box, 0.5f);
+        TEST_EXPECT(context, fill.texture.handle == texture.handle);
+        TEST_EXPECT(context, fill.color.a == 0.4f);
+        TEST_EXPECT(context, fill.blend_mode == PaintBlendMode::PREMULTIPLIED_SOURCE_OVER);
+        TEST_EXPECT(context, fill.coverage_mode == CoverageMode::ANALYTIC);
+        TEST_EXPECT(context, fill.source_premultiplied);
+
+        Paint const border = box_border_paint(box, 0.25f);
+        TEST_EXPECT(context, border.color.a == 0.15f);
+        TEST_EXPECT(context, border.source_premultiplied);
+
+        Paint const shadow = box_shadow_paint(box, 0.5f);
+        TEST_EXPECT(context, shadow.color.a == 0.2f);
+        TEST_EXPECT(context, shadow.blend_mode == PaintBlendMode::PREMULTIPLIED_SOURCE_OVER);
+
+        gui::draw::LayerDesc layer = {};
+        layer.opacity = 0.75f;
+        layer.blend_mode = gui::draw::LayerBlendMode::SCREEN;
+        layer.clip_radius = 6.0f;
+        layer.filter_kind = gui::draw::FilterKind::BLUR;
+        layer.filter_radius = 4.0f;
+        layer.drop_shadow.color = {0.2f, 0.3f, 0.4f, 0.5f};
+        layer.drop_shadow.blur_radius = 7.0f;
+
+        gui::draw::Rect const layer_clip = {{4.0f, 5.0f}, {40.0f, 50.0f}};
+        LayerState const layer_state = layer_state_from_desc(layer, layer_clip);
+        TEST_EXPECT(context, layer_state.paint.color.a == 0.75f);
+        TEST_EXPECT(context, layer_state.paint.blend_mode == PaintBlendMode::SCREEN);
+        TEST_EXPECT(context, layer_state.paint.coverage_mode == CoverageMode::NONE);
+        expect_rect(context, layer_state.clip.rect, layer_clip);
+        TEST_EXPECT(context, layer_state.clip.radius == 6.0f);
+        TEST_EXPECT(context, layer_state.clip.aa_mode == AntiAliasMode::GRAYSCALE);
+        TEST_EXPECT(context, layer_state.filter_kind == gui::draw::FilterKind::BLUR);
+        TEST_EXPECT(context, layer_state.filter_radius == 4.0f);
+        TEST_EXPECT(context, layer_state.drop_shadow.blur_radius == 7.0f);
+
+        gui::draw::TextStyle text_style = {};
+        text_style.raster_policy = gui::font_provider::RasterPolicy::LCD_SMOOTH_HINTED;
+        text_style.color = {0.4f, 0.5f, 0.6f, 0.8f};
+
+        TextPaint const root_text =
+            text_paint_from_style(text_style, {}, 0.25f, default_surface_props(), true);
+        TEST_EXPECT(context, root_text.lcd_allowed);
+        TEST_EXPECT(
+            context,
+            root_text.resolved_raster_policy == gui::font_provider::RasterPolicy::LCD_SMOOTH_HINTED
+        );
+        TEST_EXPECT(context, root_text.paint.coverage_mode == CoverageMode::LCD_MASK);
+        TEST_EXPECT(context, root_text.paint.aa_mode == AntiAliasMode::LCD);
+        TEST_EXPECT(context, root_text.paint.color.a == 0.2f);
+        TEST_EXPECT(context, root_text.surface_props.text_gamma == DEFAULT_TEXT_GAMMA);
+
+        gui::draw::Transform2D const translated = {{1.0f, 0.0f}, {0.0f, 1.0f}, {1.0f, 0.0f}};
+        TextPaint const transformed_text =
+            text_paint_from_style(text_style, translated, 1.0f, default_surface_props(), true);
+        TEST_EXPECT(context, !transformed_text.lcd_allowed);
+        TEST_EXPECT(
+            context,
+            transformed_text.resolved_raster_policy ==
+                gui::font_provider::RasterPolicy::SMOOTH_HINTED
+        );
+        TEST_EXPECT(context, transformed_text.paint.coverage_mode == CoverageMode::ALPHA_MASK);
+
+        SurfaceProps unknown_geometry = default_surface_props();
+        unknown_geometry.pixel_geometry = PixelGeometry::UNKNOWN;
+        TextPaint const unknown_surface_text =
+            text_paint_from_style(text_style, {}, 1.0f, unknown_geometry, true);
+        TEST_EXPECT(context, !unknown_surface_text.lcd_allowed);
+        TEST_EXPECT(
+            context,
+            unknown_surface_text.resolved_raster_policy ==
+                gui::font_provider::RasterPolicy::SMOOTH_HINTED
+        );
     }
 
     TEST_CASE(draw_renderer_create_builds_pipelines) {
@@ -200,6 +372,7 @@ namespace {
 
         gui::draw::PrimitiveCommand const* command = gui::draw::primitive_command(draw_context, 0u);
         TEST_EXPECT(context, command != nullptr);
+        expect_analytic_rect(context, draw_context, 0u, {{1.0f, 2.0f}, {11.0f, 7.0f}}, 0.0f, 0.0f);
         TEST_EXPECT(context, command->vertex_count == 30u);
         TEST_EXPECT(context, !gui::render::texture_valid(command->texture));
         TEST_EXPECT(context, command->vertices[0u].position.x == 1.0f);
@@ -251,6 +424,14 @@ namespace {
         gui::draw::PrimitiveCommand const* triangle_command =
             gui::draw::primitive_command(draw_context, 0u);
         TEST_EXPECT(context, triangle_command != nullptr);
+        gui::draw::primitive_model::PrimitiveInfo const* triangle_info =
+            gui::draw::primitive_model::primitive_info(draw_context, 0u);
+        TEST_EXPECT(context, triangle_info != nullptr);
+        TEST_EXPECT(
+            context,
+            triangle_info != nullptr &&
+                triangle_info->render_kind == gui::draw::primitive_model::RenderKind::TRIANGLES
+        );
         TEST_EXPECT(context, triangle_command->vertex_count == 21u);
         expect_position(context, triangle_command->vertices[0u].position, 0.0f, 0.0f);
         expect_position(context, triangle_command->vertices[1u].position, 4.0f, 0.0f);
@@ -261,6 +442,7 @@ namespace {
         gui::draw::PrimitiveCommand const* quad_command =
             gui::draw::primitive_command(draw_context, 1u);
         TEST_EXPECT(context, quad_command != nullptr);
+        expect_analytic_rect(context, draw_context, 1u, {{6.0f, 0.0f}, {10.0f, 4.0f}}, 0.0f, 0.0f);
         TEST_EXPECT(context, quad_command->vertex_count == 30u);
         expect_position(context, quad_command->vertices[0u].position, 6.0f, 0.0f);
         expect_position(context, quad_command->vertices[2u].position, 10.0f, 4.0f);
@@ -596,6 +778,155 @@ namespace {
 
         gui::draw::begin_frame(draw_context);
         TEST_EXPECT(context, gui::draw::command_count(draw_context) == 0u);
+
+        gui::draw::destroy_context(draw_context);
+        gui::font_cache::destroy_cache(cache);
+        gui::font_provider::destroy_context(provider);
+#else
+        TEST_EXPECT(context, provider_result == gui::font_provider::Result::UNSUPPORTED_PLATFORM);
+#endif
+    }
+
+    TEST_CASE(draw_records_mixed_layer_command_order_and_metadata) {
+        Arena owner_arena = {};
+        owner_arena.init();
+
+        gui::font_provider::Context provider = {};
+        gui::font_provider::Result const provider_result =
+            gui::font_provider::create_context(owner_arena, {}, provider);
+
+#if BASE_PLATFORM_WINDOWS
+        TEST_EXPECT(context, provider_result == gui::font_provider::Result::OK);
+
+        gui::font_cache::Cache cache = {};
+        gui::font_cache::create_cache(owner_arena, provider, {}, cache);
+
+        gui::font_cache::Font font = {};
+        gui::font_cache::open_system_font(cache, {}, font);
+
+        gui::draw::Context draw_context = {};
+        gui::draw::ContextDesc draw_desc = {};
+        draw_desc.font_cache = cache;
+        gui::draw::create_context(owner_arena, draw_desc, draw_context);
+
+        gui::draw::TextStyle text_style = {};
+        text_style.font = font;
+        text_style.size = 17.0f;
+        text_style.raster_policy = gui::font_provider::RasterPolicy::SMOOTH_HINTED;
+        text_style.color = {0.8f, 0.7f, 0.6f, 0.9f};
+
+        gui::draw::BoxStyle box_style = {};
+        box_style.fill_color = {0.1f, 0.2f, 0.3f, 0.4f};
+        box_style.border_color = {0.5f, 0.6f, 0.7f, 0.8f};
+        box_style.border_thickness = 1.0f;
+        box_style.radius = 3.0f;
+
+        gui::draw::Rect const clip = {{0.0f, 0.0f}, {80.0f, 80.0f}};
+        gui::draw::Rect const layer_bounds = {{10.0f, 20.0f}, {70.0f, 90.0f}};
+        gui::draw::Rect const layer_clip = {{10.0f, 20.0f}, {70.0f, 80.0f}};
+        gui::draw::Transform2D const transform = {{1.0f, 0.0f}, {0.0f, 1.0f}, {2.0f, 3.0f}};
+
+        char text[] = "layer text";
+
+        gui::draw::begin_frame(draw_context);
+        gui::draw::draw_rect_filled(
+            draw_context, {{0.0f, 0.0f}, {4.0f, 4.0f}}, {1.0f, 1.0f, 1.0f, 1.0f}, 0.0f
+        );
+        gui::draw::push_clip_rect(draw_context, clip);
+        gui::draw::LayerDesc layer = {};
+        layer.bounds = layer_bounds;
+        layer.opacity = 0.6f;
+        gui::draw::push_layer(draw_context, layer);
+        gui::draw::push_transform(draw_context, transform);
+        gui::draw::push_opacity(draw_context, 0.5f);
+        gui::draw::draw_rect_styled(draw_context, {{12.0f, 22.0f}, {36.0f, 46.0f}}, box_style);
+        gui::draw::draw_text(draw_context, {14.0f, 28.0f}, text_style, text, nullptr);
+        text[0u] = 'X';
+        gui::draw::draw_triangle_filled(
+            draw_context, {18.0f, 32.0f}, {24.0f, 32.0f}, {18.0f, 38.0f}, {0.2f, 0.4f, 0.6f, 0.8f}
+        );
+        gui::draw::pop_opacity(draw_context);
+        gui::draw::pop_transform(draw_context);
+        gui::draw::pop_layer(draw_context);
+        gui::draw::pop_clip_rect(draw_context);
+        gui::draw::draw_rect_filled(
+            draw_context, {{90.0f, 0.0f}, {94.0f, 4.0f}}, {1.0f, 1.0f, 1.0f, 1.0f}, 0.0f
+        );
+
+        TEST_EXPECT(context, gui::draw::primitive_command_count(draw_context) == 3u);
+        TEST_EXPECT(context, gui::draw::primitive_batch_count(draw_context) == 3u);
+        TEST_EXPECT(context, gui::draw::styled_rect_command_count(draw_context) == 1u);
+        TEST_EXPECT(context, gui::draw::text_command_count(draw_context) == 1u);
+        TEST_EXPECT(context, gui::draw::layer_command_count(draw_context) == 1u);
+        TEST_EXPECT(context, gui::draw::command_count(draw_context) == 7u);
+
+        gui::draw::LayerCommand const* layer_command = gui::draw::layer_command(draw_context, 0u);
+        TEST_EXPECT(context, layer_command != nullptr);
+        expect_rect(context, layer_command->desc.bounds, layer_bounds);
+        expect_rect(context, layer_command->clip_rect, layer_clip);
+        TEST_EXPECT(context, layer_command->desc.opacity == 0.6f);
+        TEST_EXPECT(context, layer_command->begin_command_index == 1u);
+        TEST_EXPECT(context, layer_command->end_command_index == 5u);
+
+        gui::draw::StyledRectCommand const* styled =
+            gui::draw::styled_rect_command(draw_context, 0u);
+        TEST_EXPECT(context, styled != nullptr);
+        expect_rect(context, styled->rect, {{12.0f, 22.0f}, {36.0f, 46.0f}});
+        expect_rect(context, styled->clip_rect, layer_clip);
+        expect_transform(context, styled->transform, transform);
+        TEST_EXPECT(context, styled->opacity == 0.5f);
+        TEST_EXPECT(context, styled->style.fill_color.b == 0.3f);
+        TEST_EXPECT(context, styled->style.border_color.g == 0.6f);
+
+        gui::draw::TextCommand const* text_command = gui::draw::text_command(draw_context, 0u);
+        TEST_EXPECT(context, text_command != nullptr);
+        expect_position(context, text_command->position, 14.0f, 28.0f);
+        expect_rect(context, text_command->clip_rect, layer_clip);
+        expect_transform(context, text_command->transform, transform);
+        TEST_EXPECT(context, text_command->opacity == 0.5f);
+        TEST_EXPECT(context, text_command->style.size == 17.0f);
+        TEST_EXPECT(context, text_command->style.raster_policy == text_style.raster_policy);
+        TEST_EXPECT(context, text_command->style.color.a == 0.9f);
+        TEST_EXPECT(context, text_command->text == StrRef("layer text"));
+        TEST_EXPECT(context, text_command->run.glyph_count > 0u);
+
+        gui::draw::PrimitiveCommand const* primitive =
+            gui::draw::primitive_command(draw_context, 1u);
+        TEST_EXPECT(context, primitive != nullptr);
+        expect_rect(context, primitive->clip_rect, layer_clip);
+        expect_transform(context, primitive->transform, transform);
+        TEST_EXPECT(context, primitive->opacity == 0.5f);
+        expect_position(context, primitive->vertices[0u].position, 20.0f, 35.0f);
+        TEST_EXPECT(context, primitive->vertices[0u].color.a == 0.4f);
+
+        gui::draw::Command const* command0 = gui::draw::command(draw_context, 0u);
+        gui::draw::Command const* command1 = gui::draw::command(draw_context, 1u);
+        gui::draw::Command const* command2 = gui::draw::command(draw_context, 2u);
+        gui::draw::Command const* command3 = gui::draw::command(draw_context, 3u);
+        gui::draw::Command const* command4 = gui::draw::command(draw_context, 4u);
+        gui::draw::Command const* command5 = gui::draw::command(draw_context, 5u);
+        gui::draw::Command const* command6 = gui::draw::command(draw_context, 6u);
+        TEST_EXPECT(context, command0 != nullptr);
+        TEST_EXPECT(context, command0->kind == gui::draw::CommandKind::PRIMITIVE_BATCH);
+        TEST_EXPECT(context, command0->index == 0u);
+        TEST_EXPECT(context, command1 != nullptr);
+        TEST_EXPECT(context, command1->kind == gui::draw::CommandKind::LAYER_BEGIN);
+        TEST_EXPECT(context, command1->index == 0u);
+        TEST_EXPECT(context, command2 != nullptr);
+        TEST_EXPECT(context, command2->kind == gui::draw::CommandKind::STYLED_RECT);
+        TEST_EXPECT(context, command2->index == 0u);
+        TEST_EXPECT(context, command3 != nullptr);
+        TEST_EXPECT(context, command3->kind == gui::draw::CommandKind::TEXT);
+        TEST_EXPECT(context, command3->index == 0u);
+        TEST_EXPECT(context, command4 != nullptr);
+        TEST_EXPECT(context, command4->kind == gui::draw::CommandKind::PRIMITIVE_BATCH);
+        TEST_EXPECT(context, command4->index == 1u);
+        TEST_EXPECT(context, command5 != nullptr);
+        TEST_EXPECT(context, command5->kind == gui::draw::CommandKind::LAYER_END);
+        TEST_EXPECT(context, command5->index == 0u);
+        TEST_EXPECT(context, command6 != nullptr);
+        TEST_EXPECT(context, command6->kind == gui::draw::CommandKind::PRIMITIVE_BATCH);
+        TEST_EXPECT(context, command6->index == 2u);
 
         gui::draw::destroy_context(draw_context);
         gui::font_cache::destroy_cache(cache);
@@ -1019,10 +1350,18 @@ namespace {
 
         gui::draw::PrimitiveCommand const* command = gui::draw::primitive_command(draw_context, 0u);
         TEST_EXPECT(context, command != nullptr);
+        expect_analytic_rect(context, draw_context, 0u, {{0.0f, -0.5f}, {10.0f, 0.5f}}, 0.0f, 0.0f);
         TEST_EXPECT(context, command->vertex_count == 30u);
         expect_rect(context, command->clip_rect, clip);
         expect_transform(context, command->transform, transform);
         TEST_EXPECT(context, command->opacity == 0.5f);
+        gui::draw::primitive_model::PrimitiveInfo const* line_info =
+            gui::draw::primitive_model::primitive_info(draw_context, 0u);
+        TEST_EXPECT(context, line_info != nullptr);
+        if (line_info != nullptr) {
+            TEST_EXPECT(context, line_info->analytic_rect.fill_color.a == 0.5f);
+            expect_transform(context, line_info->analytic_rect.transform, transform);
+        }
         expect_position(context, command->vertices[0u].position, 1.0f, 2.5f);
         expect_position(context, command->vertices[8u].position, 11.0f, 3.5f);
         expect_position(context, command->vertices[20u].position, 0.0f, 3.5f);
@@ -1062,6 +1401,9 @@ namespace {
         gui::draw::PrimitiveCommand const* rect_command =
             gui::draw::primitive_command(draw_context, 0u);
         TEST_EXPECT(context, rect_command != nullptr);
+        expect_analytic_rect(
+            context, draw_context, 0u, {{-1.0f, -1.0f}, {11.0f, 9.0f}}, 1.0f, 2.0f
+        );
         TEST_EXPECT(context, rect_command->vertex_count == 72u);
         expect_position(context, rect_command->vertices[0u].position, 1.0f, 1.0f);
         expect_position(context, rect_command->vertices[19u].position, 1.0f, 1.0f);
@@ -1105,6 +1447,343 @@ namespace {
         gui::draw::destroy_context(draw_context);
     }
 
+    TEST_CASE(draw_stroke_pipeline_limits_miter_joins_and_handles_ellipse_outlines) {
+        Arena owner_arena = {};
+        owner_arena.init();
+
+        gui::draw::Context draw_context = {};
+        gui::draw::create_context(owner_arena, {}, draw_context);
+
+        gui::draw::begin_frame(draw_context);
+        gui::draw::draw_polyline(
+            draw_context,
+            {{0.0f, 0.0f}, {10.0f, 0.0f}, {9.9f, 0.01f}},
+            {1.0f, 1.0f, 1.0f, 1.0f},
+            2.0f,
+            false
+        );
+
+        gui::draw::PrimitiveCommand const* sharp_join =
+            gui::draw::primitive_command(draw_context, 0u);
+        TEST_EXPECT(context, sharp_join != nullptr);
+        TEST_EXPECT(context, sharp_join->vertex_count == 48u);
+        TEST_EXPECT(context, sharp_join->vertices[1u].position.x > 0.0f);
+        TEST_EXPECT(context, sharp_join->vertices[1u].position.x < 10.0f);
+
+        gui::draw::begin_frame(draw_context);
+        gui::draw::Transform2D const transform = {{1.0f, 0.0f}, {0.0f, 1.0f}, {4.0f, 5.0f}};
+        gui::draw::push_transform(draw_context, transform);
+        gui::draw::draw_ellipse(
+            draw_context, {10.0f, 12.0f}, {6.0f, 3.0f}, {0.4f, 0.8f, 1.0f, 1.0f}, 3.0f, 8
+        );
+
+        gui::draw::PrimitiveCommand const* ellipse = gui::draw::primitive_command(draw_context, 0u);
+        TEST_EXPECT(context, ellipse != nullptr);
+        TEST_EXPECT(context, ellipse->vertex_count == 144u);
+        expect_transform(context, ellipse->transform, transform);
+        TEST_EXPECT(context, ellipse->vertices[0u].color.a == 1.0f);
+        TEST_EXPECT(context, ellipse->vertices[50u].color.a == 0.0f);
+
+        gui::draw::destroy_context(draw_context);
+    }
+
+    TEST_CASE(draw_path_records_rect_fill_shape_verbs_bounds_and_old_vertices) {
+        using namespace gui::draw::path_model;
+
+        Arena owner_arena = {};
+        owner_arena.init();
+
+        gui::draw::Context draw_context = {};
+        gui::draw::create_context(owner_arena, {}, draw_context);
+
+        gui::draw::begin_frame(draw_context);
+        gui::draw::path_rect(draw_context, {{10.0f, 20.0f}, {2.0f, 4.0f}}, 0.0f);
+        gui::draw::path_fill_convex(draw_context, {1.0f, 0.5f, 0.25f, 1.0f});
+
+        TEST_EXPECT(context, shape_command_count(draw_context) == 1u);
+        ShapeCommand const* record = shape_command(draw_context, 0u);
+        TEST_EXPECT(context, record != nullptr);
+        TEST_EXPECT(context, record->shape.kind == ShapeKind::RECT);
+        TEST_EXPECT(context, record->shape.op == ShapeOp::FILL);
+        TEST_EXPECT(context, record->shape.convexity == Convexity::CONVEX);
+        TEST_EXPECT(context, record->shape.segment_mask == PATH_SEGMENT_LINE);
+        expect_rect(context, record->shape.bounds, {{2.0f, 4.0f}, {10.0f, 20.0f}});
+
+        Path const& path = record->shape.path;
+        TEST_EXPECT(context, path.verbs.size() == 5u);
+        TEST_EXPECT(context, path.points.size() == 4u);
+        TEST_EXPECT(context, path.flat_points.size() == 4u);
+        expect_verb(context, path, 0u, PathVerb::MOVE, 1u);
+        expect_verb(context, path, 1u, PathVerb::LINE, 1u);
+        expect_verb(context, path, 2u, PathVerb::LINE, 1u);
+        expect_verb(context, path, 3u, PathVerb::LINE, 1u);
+        expect_verb(context, path, 4u, PathVerb::CLOSE, 0u);
+
+        gui::draw::PrimitiveCommand const* command = gui::draw::primitive_command(draw_context, 0u);
+        TEST_EXPECT(context, command != nullptr);
+        expect_analytic_rect(context, draw_context, 0u, {{2.0f, 4.0f}, {10.0f, 20.0f}}, 0.0f, 0.0f);
+        TEST_EXPECT(context, command->vertex_count == 30u);
+
+        gui::draw::destroy_context(draw_context);
+    }
+
+    TEST_CASE(draw_path_records_rounded_rect_shape_bounds_and_keeps_old_output) {
+        using namespace gui::draw::path_model;
+
+        Arena owner_arena = {};
+        owner_arena.init();
+
+        gui::draw::Context draw_context = {};
+        gui::draw::create_context(owner_arena, {}, draw_context);
+
+        gui::draw::begin_frame(draw_context);
+        gui::draw::path_rect(draw_context, {{0.0f, 0.0f}, {20.0f, 10.0f}}, 3.0f);
+        gui::draw::path_fill_convex(draw_context, {1.0f, 1.0f, 1.0f, 1.0f});
+
+        TEST_EXPECT(context, shape_command_count(draw_context) == 1u);
+        ShapeCommand const* record = shape_command(draw_context, 0u);
+        TEST_EXPECT(context, record != nullptr);
+        TEST_EXPECT(context, record->shape.kind == ShapeKind::RRECT);
+        TEST_EXPECT(context, record->shape.radius == 3.0f);
+        TEST_EXPECT(context, record->shape.convexity == Convexity::CONVEX);
+        TEST_EXPECT(context, (record->shape.segment_mask & PATH_SEGMENT_LINE) != 0u);
+        expect_rect(context, record->shape.bounds, {{0.0f, 0.0f}, {20.0f, 10.0f}});
+
+        Path const& path = record->shape.path;
+        TEST_EXPECT(context, path.verbs.size() > 5u);
+        TEST_EXPECT(context, path.flat_points.size() > 4u);
+        expect_verb(context, path, 0u, PathVerb::MOVE, 1u);
+        expect_verb(context, path, path.verbs.size() - 1u, PathVerb::CLOSE, 0u);
+        TEST_EXPECT(context, gui::draw::primitive_command_count(draw_context) == 1u);
+        gui::draw::PrimitiveCommand const* command = gui::draw::primitive_command(draw_context, 0u);
+        TEST_EXPECT(context, command != nullptr);
+        expect_analytic_rect(context, draw_context, 0u, {{0.0f, 0.0f}, {20.0f, 10.0f}}, 3.0f, 0.0f);
+
+        gui::draw::destroy_context(draw_context);
+    }
+
+    TEST_CASE(draw_path_records_quadratic_cubic_stroke_shape_and_bounds) {
+        using namespace gui::draw::path_model;
+
+        Arena owner_arena = {};
+        owner_arena.init();
+
+        gui::draw::Context draw_context = {};
+        gui::draw::create_context(owner_arena, {}, draw_context);
+
+        gui::draw::begin_frame(draw_context);
+        gui::draw::path_line_to(draw_context, {1.0f, 2.0f});
+        gui::draw::path_bezier_quadratic_to(draw_context, {5.0f, 10.0f}, {9.0f, 2.0f}, 2);
+        gui::draw::path_bezier_cubic_to(
+            draw_context, {12.0f, -4.0f}, {16.0f, 8.0f}, {20.0f, 2.0f}, 2
+        );
+        gui::draw::path_stroke(draw_context, {0.2f, 0.4f, 0.6f, 1.0f}, false, 4.0f);
+
+        TEST_EXPECT(context, shape_command_count(draw_context) == 1u);
+        ShapeCommand const* record = shape_command(draw_context, 0u);
+        TEST_EXPECT(context, record != nullptr);
+        TEST_EXPECT(context, record->shape.kind == ShapeKind::GENERAL_PATH);
+        TEST_EXPECT(context, record->shape.op == ShapeOp::STROKE);
+        TEST_EXPECT(context, record->shape.stroke_thickness == 4.0f);
+        TEST_EXPECT(context, (record->shape.segment_mask & PATH_SEGMENT_QUAD) != 0u);
+        TEST_EXPECT(context, (record->shape.segment_mask & PATH_SEGMENT_CUBIC) != 0u);
+        expect_rect(context, record->shape.bounds, {{-1.0f, -6.0f}, {22.0f, 12.0f}});
+
+        Path const& path = record->shape.path;
+        TEST_EXPECT(context, path.verbs.size() == 3u);
+        TEST_EXPECT(context, path.flat_points.size() == 5u);
+        expect_verb(context, path, 0u, PathVerb::MOVE, 1u);
+        expect_verb(context, path, 1u, PathVerb::QUAD, 2u);
+        expect_verb(context, path, 2u, PathVerb::CUBIC, 3u);
+        TEST_EXPECT(context, gui::draw::primitive_command_count(draw_context) == 1u);
+
+        gui::draw::destroy_context(draw_context);
+    }
+
+    TEST_CASE(draw_path_shape_helpers_classify_line_oval_and_polygon) {
+        using namespace gui::draw::path_model;
+
+        Arena owner_arena = {};
+        owner_arena.init();
+
+        Shape const line = line_shape({1.0f, 2.0f}, {5.0f, 6.0f}, 2.0f, owner_arena.resource());
+        TEST_EXPECT(context, line.kind == ShapeKind::LINE);
+        TEST_EXPECT(context, line.op == ShapeOp::STROKE);
+        expect_rect(context, line.bounds, {{0.0f, 1.0f}, {6.0f, 7.0f}});
+
+        Shape const oval = oval_shape({4.0f, 5.0f}, {2.0f, 3.0f}, owner_arena.resource());
+        TEST_EXPECT(context, oval.kind == ShapeKind::OVAL);
+        TEST_EXPECT(context, (oval.segment_mask & PATH_SEGMENT_CUBIC) != 0u);
+        expect_rect(context, oval.bounds, {{2.0f, 2.0f}, {6.0f, 8.0f}});
+
+        gui::draw::Vec2 const points[] = {
+            {0.0f, 0.0f}, {4.0f, 0.0f}, {2.0f, 2.0f}, {4.0f, 4.0f}, {0.0f, 4.0f}
+        };
+        Shape const polygon = polygon_shape(points, owner_arena.resource());
+        TEST_EXPECT(context, polygon.kind == ShapeKind::POLYGON);
+        TEST_EXPECT(context, polygon.convexity == Convexity::CONCAVE);
+        expect_rect(context, polygon.bounds, {{0.0f, 0.0f}, {4.0f, 4.0f}});
+    }
+
+    TEST_CASE(draw_coverage_mask_keys_are_stable_for_translated_small_shapes) {
+        using namespace gui::draw::coverage_mask;
+        using namespace gui::draw::path_model;
+
+        Arena owner_arena = {};
+        owner_arena.init();
+
+        Shape const oval_a = oval_shape({8.0f, 9.0f}, {5.0f, 6.0f}, owner_arena.resource());
+        Shape const oval_b = oval_shape({38.0f, 49.0f}, {5.0f, 6.0f}, owner_arena.resource());
+        ShapeKey oval_key_a = {};
+        ShapeKey oval_key_b = {};
+        TEST_EXPECT(context, shape_key(oval_a, oval_key_a));
+        TEST_EXPECT(context, shape_key(oval_b, oval_key_b));
+        TEST_EXPECT(context, shape_key_equal(oval_key_a, oval_key_b));
+
+        Path path_a = {};
+        init(path_a, owner_arena.resource());
+        move_to(path_a, {0.0f, 0.0f});
+        quad_to(path_a, {8.0f, 12.0f}, {16.0f, 0.0f}, 4);
+        line_to(path_a, {8.0f, 18.0f});
+        close(path_a);
+
+        Path path_b = {};
+        init(path_b, owner_arena.resource());
+        move_to(path_b, {20.0f, 30.0f});
+        quad_to(path_b, {28.0f, 42.0f}, {36.0f, 30.0f}, 4);
+        line_to(path_b, {28.0f, 48.0f});
+        close(path_b);
+
+        Shape const curve_a = fill_shape(path_a, owner_arena.resource());
+        Shape const curve_b = fill_shape(path_b, owner_arena.resource());
+        ShapeKey curve_key_a = {};
+        ShapeKey curve_key_b = {};
+        TEST_EXPECT(context, shape_key(curve_a, curve_key_a));
+        TEST_EXPECT(context, shape_key(curve_b, curve_key_b));
+        TEST_EXPECT(context, shape_key_equal(curve_key_a, curve_key_b));
+
+        Shape const large_oval = oval_shape({0.0f, 0.0f}, {80.0f, 80.0f}, owner_arena.resource());
+        ShapeKey large_key = {};
+        TEST_EXPECT(context, !shape_key(large_oval, large_key));
+    }
+
+    TEST_CASE(draw_coverage_mask_raster_has_padding_and_antialiased_coverage) {
+        using namespace gui::draw::coverage_mask;
+        using namespace gui::draw::path_model;
+
+        Arena owner_arena = {};
+        owner_arena.init();
+
+        Shape const oval = oval_shape({8.0f, 8.0f}, {6.0f, 4.0f}, owner_arena.resource());
+        Raster raster = {};
+        TEST_EXPECT(context, rasterize(owner_arena, oval, raster));
+        TEST_EXPECT(context, raster.pixels != nullptr);
+        TEST_EXPECT(context, raster.content_x == 1u);
+        TEST_EXPECT(context, raster.content_y == 1u);
+        TEST_EXPECT(context, raster.content_width == 12u);
+        TEST_EXPECT(context, raster.content_height == 8u);
+        TEST_EXPECT(context, raster.size.width == 14u);
+        TEST_EXPECT(context, raster.size.height == 10u);
+        TEST_EXPECT(context, raster.pixels[0u] == 0u);
+        TEST_EXPECT(context, raster.pixels[raster.size.width - 1u] == 0u);
+
+        uint8_t const center = raster.pixels[(5u * raster.bytes_per_row) + raster.content_x + 6u];
+        uint8_t const edge =
+            raster.pixels[(raster.content_y * raster.bytes_per_row) + raster.content_x];
+        TEST_EXPECT(context, center > 220u);
+        TEST_EXPECT(context, edge < center);
+    }
+
+    TEST_CASE(draw_marks_small_ovals_for_coverage_mask_fallback_only_when_cacheable) {
+        Arena owner_arena = {};
+        owner_arena.init();
+
+        gui::draw::Context draw_context = {};
+        gui::draw::create_context(owner_arena, {}, draw_context);
+
+        gui::draw::begin_frame(draw_context);
+        gui::draw::draw_circle_filled(
+            draw_context, {12.0f, 12.0f}, 8.0f, {0.3f, 0.7f, 1.0f, 1.0f}, 16
+        );
+        gui::draw::primitive_model::PrimitiveInfo const* small_info =
+            gui::draw::primitive_model::primitive_info(draw_context, 0u);
+        TEST_EXPECT(context, small_info != nullptr);
+        if (small_info != nullptr) {
+            TEST_EXPECT(
+                context,
+                small_info->render_kind == gui::draw::primitive_model::RenderKind::COVERAGE_MASK
+            );
+            TEST_EXPECT(context, small_info->coverage_mask_shape_index == 0u);
+        }
+
+        gui::draw::begin_frame(draw_context);
+        gui::draw::draw_circle_filled(
+            draw_context, {90.0f, 90.0f}, 80.0f, {0.3f, 0.7f, 1.0f, 1.0f}, 32
+        );
+        gui::draw::primitive_model::PrimitiveInfo const* large_info =
+            gui::draw::primitive_model::primitive_info(draw_context, 0u);
+        TEST_EXPECT(context, large_info != nullptr);
+        if (large_info != nullptr) {
+            TEST_EXPECT(
+                context,
+                large_info->render_kind == gui::draw::primitive_model::RenderKind::TRIANGLES
+            );
+        }
+
+        gui::draw::destroy_context(draw_context);
+    }
+
+#if BASE_PLATFORM_WINDOWS
+    TEST_CASE(draw_coverage_mask_atlas_reuses_clears_and_destroys_entries) {
+        using namespace gui::draw::coverage_mask;
+        using namespace gui::draw::path_model;
+
+        Arena owner_arena = {};
+        owner_arena.init();
+
+        gui::render::ContextDesc render_desc = {};
+        render_desc.backend = gui::render::Backend::D3D11;
+        gui::render::Context render_context = {};
+        gui::render::Result result =
+            gui::render::create_context(owner_arena, render_desc, render_context);
+        TEST_EXPECT(context, result == gui::render::Result::OK);
+        if (result != gui::render::Result::OK) {
+            return;
+        }
+
+        Atlas atlas = {};
+        result = create_atlas(owner_arena, render_context, 16u, atlas);
+        TEST_EXPECT(context, result == gui::render::Result::OK);
+        TEST_EXPECT(context, atlas_valid(atlas));
+
+        Shape const shape_a = oval_shape({8.0f, 8.0f}, {5.0f, 5.0f}, owner_arena.resource());
+        Shape const shape_b = oval_shape({40.0f, 42.0f}, {5.0f, 5.0f}, owner_arena.resource());
+
+        ArenaTemp temp = begin_thread_temp_arena();
+        AtlasEntry entry_a = {};
+        AtlasEntry entry_b = {};
+        TEST_EXPECT(context, ensure_entry(*temp.arena(), atlas, render_context, shape_a, entry_a));
+        TEST_EXPECT(context, atlas_entry_count(atlas) == 1u);
+        TEST_EXPECT(context, ensure_entry(*temp.arena(), atlas, render_context, shape_b, entry_b));
+        TEST_EXPECT(context, atlas_entry_count(atlas) == 1u);
+        TEST_EXPECT(context, entry_a.texture.handle == entry_b.texture.handle);
+        TEST_EXPECT(context, entry_a.uv_rect[0u] == entry_b.uv_rect[0u]);
+
+        clear_atlas(render_context, atlas);
+        TEST_EXPECT(context, atlas_entry_count(atlas) == 0u);
+        ArenaTemp temp_after_clear = begin_thread_temp_arena();
+        TEST_EXPECT(
+            context,
+            ensure_entry(*temp_after_clear.arena(), atlas, render_context, shape_a, entry_a)
+        );
+        TEST_EXPECT(context, atlas_entry_count(atlas) == 1u);
+
+        destroy_atlas(render_context, atlas);
+        TEST_EXPECT(context, !atlas_valid(atlas));
+        gui::render::destroy_context(render_context);
+    }
+#endif
+
     TEST_CASE(draw_fill_convex_compacts_degenerate_edges) {
         Arena owner_arena = {};
         owner_arena.init();
@@ -1135,6 +1814,58 @@ namespace {
         gui::draw::path_line_to(draw_context, {2.0f, 3.0f});
         gui::draw::path_fill_convex(draw_context, {1.0f, 1.0f, 1.0f, 1.0f});
         TEST_EXPECT(context, gui::draw::primitive_command_count(draw_context) == 0u);
+
+        gui::draw::destroy_context(draw_context);
+    }
+
+    TEST_CASE(draw_path_fill_triangulates_convex_and_concave_paths) {
+        using namespace gui::draw::path_model;
+
+        Arena owner_arena = {};
+        owner_arena.init();
+
+        gui::draw::Context draw_context = {};
+        gui::draw::create_context(owner_arena, {}, draw_context);
+
+        gui::draw::begin_frame(draw_context);
+        gui::draw::path_line_to(draw_context, {0.0f, 0.0f});
+        gui::draw::path_line_to(draw_context, {5.0f, 0.0f});
+        gui::draw::path_line_to(draw_context, {6.0f, 3.0f});
+        gui::draw::path_line_to(draw_context, {3.0f, 5.0f});
+        gui::draw::path_line_to(draw_context, {0.0f, 3.0f});
+        gui::draw::path_fill_convex(draw_context, {0.2f, 0.4f, 0.8f, 1.0f});
+
+        ShapeCommand const* convex_shape = shape_command(draw_context, 0u);
+        TEST_EXPECT(context, convex_shape != nullptr);
+        TEST_EXPECT(context, convex_shape->shape.kind == ShapeKind::POLYGON);
+        TEST_EXPECT(context, convex_shape->shape.convexity == Convexity::CONVEX);
+        gui::draw::PrimitiveCommand const* convex_command =
+            gui::draw::primitive_command(draw_context, 0u);
+        TEST_EXPECT(context, convex_command != nullptr);
+        TEST_EXPECT(context, convex_command->vertex_count == 39u);
+        expect_position(context, convex_command->vertices[0u].position, 0.0f, 0.0f);
+        expect_position(context, convex_command->vertices[1u].position, 5.0f, 0.0f);
+        expect_position(context, convex_command->vertices[2u].position, 6.0f, 3.0f);
+
+        gui::draw::begin_frame(draw_context);
+        gui::draw::path_line_to(draw_context, {0.0f, 0.0f});
+        gui::draw::path_line_to(draw_context, {6.0f, 0.0f});
+        gui::draw::path_line_to(draw_context, {6.0f, 4.0f});
+        gui::draw::path_line_to(draw_context, {3.0f, 2.0f});
+        gui::draw::path_line_to(draw_context, {0.0f, 4.0f});
+        gui::draw::path_fill_convex(draw_context, {0.8f, 0.4f, 0.2f, 1.0f});
+
+        ShapeCommand const* concave_shape = shape_command(draw_context, 0u);
+        TEST_EXPECT(context, concave_shape != nullptr);
+        TEST_EXPECT(context, concave_shape->shape.kind == ShapeKind::POLYGON);
+        TEST_EXPECT(context, concave_shape->shape.convexity == Convexity::CONCAVE);
+        gui::draw::PrimitiveCommand const* concave_command =
+            gui::draw::primitive_command(draw_context, 0u);
+        TEST_EXPECT(context, concave_command != nullptr);
+        TEST_EXPECT(context, concave_command->vertex_count == 39u);
+        expect_position(context, concave_command->vertices[0u].position, 6.0f, 0.0f);
+        expect_position(context, concave_command->vertices[1u].position, 6.0f, 4.0f);
+        expect_position(context, concave_command->vertices[2u].position, 3.0f, 2.0f);
 
         gui::draw::destroy_context(draw_context);
     }
@@ -1285,6 +2016,103 @@ namespace {
         gui::font_provider::destroy_context(provider);
 #else
         TEST_EXPECT(context, provider_result == gui::font_provider::Result::UNSUPPORTED_PLATFORM);
+#endif
+    }
+
+    TEST_CASE(draw_text_atlas_groups_glyphs_into_direct_mask_subruns) {
+        Arena owner_arena = {};
+        owner_arena.init();
+
+        gui::render::ContextDesc render_desc = {};
+        render_desc.backend = gui::render::Backend::D3D11;
+        gui::render::Context render_context = {};
+        gui::render::Result render_result =
+            gui::render::create_context(owner_arena, render_desc, render_context);
+
+#if BASE_PLATFORM_WINDOWS
+        TEST_EXPECT(context, render_result == gui::render::Result::OK);
+        if (render_result != gui::render::Result::OK) {
+            return;
+        }
+
+        gui::font_provider::Context provider = {};
+        gui::font_provider::Result const provider_result =
+            gui::font_provider::create_context(owner_arena, {}, provider);
+        TEST_EXPECT(context, provider_result == gui::font_provider::Result::OK);
+
+        gui::font_cache::Cache cache = {};
+        gui::font_cache::create_cache(owner_arena, provider, {}, cache);
+
+        gui::font_cache::Font font = {};
+        gui::font_cache::open_system_font(cache, {}, font);
+
+        gui::draw::ContextDesc draw_desc = {};
+        draw_desc.font_cache = cache;
+        gui::draw::Context draw_context = {};
+        gui::draw::create_context(owner_arena, draw_desc, draw_context);
+
+        gui::draw::TextAtlas atlas = {};
+        gui::render::Result const atlas_result =
+            gui::draw::create_text_atlas(owner_arena, render_context, 64u, atlas);
+        TEST_EXPECT(context, atlas_result == gui::render::Result::OK);
+
+        gui::draw::begin_frame(draw_context);
+        gui::draw::TextStyle style = {};
+        style.font = font;
+        style.size = 18.0f;
+        style.raster_policy = gui::font_provider::RasterPolicy::LCD_SHARP_HINTED;
+        style.color = {1.0f, 1.0f, 1.0f, 1.0f};
+
+        gui::draw::draw_text(draw_context, {2.0f, 24.0f}, style, "abc", nullptr);
+        gui::draw::push_transform(draw_context, {{1.0f, 0.0f}, {0.0f, 1.0f}, {0.5f, 0.0f}});
+        gui::draw::draw_text(draw_context, {2.0f, 48.0f}, style, "abc", nullptr);
+        gui::draw::pop_transform(draw_context);
+
+        ArenaTemp temp = begin_thread_temp_arena();
+        gui::draw::PreparedText prepared = {};
+        bool const prepared_ok = gui::draw::prepare_text_pieces(
+            *temp.arena(),
+            atlas,
+            render_context,
+            draw_context,
+            0u,
+            gui::draw::command_count(draw_context),
+            {},
+            prepared
+        );
+        TEST_EXPECT(context, prepared_ok);
+        TEST_EXPECT(context, prepared.range_count == gui::draw::text_command_count(draw_context));
+        TEST_EXPECT(context, prepared.piece_count > 2u);
+        TEST_EXPECT(context, prepared.subrun_count == 2u);
+
+        if (prepared_ok && prepared.range_count >= 2u && prepared.subrun_count == 2u) {
+            gui::draw::TextAtlasSubRunRange const first_range = prepared.ranges[0u];
+            gui::draw::TextAtlasSubRunRange const second_range = prepared.ranges[1u];
+            TEST_EXPECT(context, first_range.subrun_count == 1u);
+            TEST_EXPECT(context, second_range.subrun_count == 1u);
+            gui::draw::TextAtlasSubRun const& lcd_subrun =
+                prepared.subruns[first_range.first_subrun];
+            gui::draw::TextAtlasSubRun const& alpha_subrun =
+                prepared.subruns[second_range.first_subrun];
+            TEST_EXPECT(context, lcd_subrun.kind == gui::draw::TextAtlasSubRunKind::DIRECT_MASK);
+            TEST_EXPECT(context, lcd_subrun.format == gui::font_provider::RasterFormat::LCD_RGB);
+            TEST_EXPECT(context, alpha_subrun.format == gui::font_provider::RasterFormat::ALPHA);
+            TEST_EXPECT(context, lcd_subrun.first_piece == 0u);
+            gui::draw::TextCommand const* const first_text =
+                gui::draw::text_command(draw_context, 0u);
+            TEST_EXPECT(context, first_text != nullptr);
+            if (first_text != nullptr) {
+                TEST_EXPECT(context, lcd_subrun.piece_count == first_text->run.glyph_count);
+            }
+        }
+
+        gui::draw::destroy_text_atlas(render_context, atlas);
+        gui::draw::destroy_context(draw_context);
+        gui::font_cache::destroy_cache(cache);
+        gui::font_provider::destroy_context(provider);
+        gui::render::destroy_context(render_context);
+#else
+        TEST_EXPECT(context, render_result == gui::render::Result::UNSUPPORTED_PLATFORM);
 #endif
     }
 

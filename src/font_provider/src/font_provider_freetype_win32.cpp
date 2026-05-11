@@ -14,6 +14,7 @@
 #include <cstring>
 #include <ft2build.h>
 #include FT_FREETYPE_H
+#include FT_LCD_FILTER_H
 #include <limits>
 #include <windows.h>
 
@@ -22,7 +23,6 @@ namespace gui::font_provider::platform::freetype {
 
         constexpr StrRef DEFAULT_FONT_FAMILY = "Segoe UI";
         constexpr float TEXT_PADDING = 2.0f;
-        constexpr float POINTS_TO_PIXELS = 96.0f / 72.0f;
 
         struct ContextImpl {
             FT_Library library = nullptr;
@@ -102,7 +102,7 @@ namespace gui::font_provider::platform::freetype {
         }
 
         [[nodiscard]] auto ft_size(float size) -> FT_UInt {
-            double value = std::round(static_cast<double>(size * POINTS_TO_PIXELS));
+            double value = std::round(static_cast<double>(size));
             value =
                 std::clamp(value, 1.0, static_cast<double>(std::numeric_limits<FT_UInt>::max()));
             return static_cast<FT_UInt>(value);
@@ -132,12 +132,23 @@ namespace gui::font_provider::platform::freetype {
                    raster_policy == RasterPolicy::LCD_SMOOTH_HINTED;
         }
 
+        [[nodiscard]] auto raster_policy_lcd(RasterPolicy raster_policy) -> bool {
+            return raster_policy == RasterPolicy::LCD_SHARP_HINTED ||
+                   raster_policy == RasterPolicy::LCD_SMOOTH_HINTED;
+        }
+
         [[nodiscard]] auto ft_load_flags(RasterPolicy raster_policy) -> FT_Int32 {
+            if (raster_policy == RasterPolicy::LCD_SHARP_HINTED) {
+                return FT_LOAD_DEFAULT | FT_LOAD_TARGET_LCD;
+            }
             return raster_policy_smooth(raster_policy) ? FT_LOAD_DEFAULT | FT_LOAD_TARGET_LIGHT
                                                        : FT_LOAD_DEFAULT | FT_LOAD_TARGET_NORMAL;
         }
 
         [[nodiscard]] auto ft_render_mode(RasterPolicy raster_policy) -> FT_Render_Mode {
+            if (raster_policy_lcd(raster_policy)) {
+                return FT_RENDER_MODE_LCD;
+            }
             return raster_policy_smooth(raster_policy) ? FT_RENDER_MODE_LIGHT
                                                        : FT_RENDER_MODE_NORMAL;
         }
@@ -221,6 +232,7 @@ namespace gui::font_provider::platform::freetype {
 
             ft_set_phase(font->face, 0u, 0u);
             ShapedGlyph* const glyphs = arena_alloc<ShapedGlyph>(arena, text.size());
+            ShapedRun* const runs = arena_alloc<ShapedRun>(arena, 1u);
             float pen_x = 0.0f;
             size_t glyph_count = 0u;
             FT_UInt previous_glyph = 0u;
@@ -247,9 +259,13 @@ namespace gui::font_provider::platform::freetype {
                 glyph = {};
                 glyph.font = font_handle(font);
                 glyph.glyph_index = glyph_index_u16(glyph_index);
+                glyph.run_index = 0u;
                 glyph.size = size;
                 glyph.x = pen_x;
                 glyph.advance = advance;
+                glyph.cluster = static_cast<uint32_t>(offset);
+                glyph.utf8_start = static_cast<uint32_t>(offset);
+                glyph.utf8_end = static_cast<uint32_t>(offset + decoded.size);
                 pen_x += advance;
                 previous_glyph = glyph_index;
                 glyph_count += 1u;
@@ -268,6 +284,14 @@ namespace gui::font_provider::platform::freetype {
 
             out_text.glyphs = glyphs;
             out_text.glyph_count = glyph_count;
+            runs[0u] = {};
+            runs[0u].font = font_handle(font);
+            runs[0u].first_glyph = 0u;
+            runs[0u].glyph_count = glyph_count;
+            runs[0u].utf8_start = 0u;
+            runs[0u].utf8_end = static_cast<uint32_t>(text.size());
+            out_text.runs = runs;
+            out_text.run_count = glyph_count != 0u ? 1u : 0u;
             out_text.advance = pen_x;
             out_text.origin_x = TEXT_PADDING;
             out_text.origin_y = TEXT_PADDING;
@@ -277,14 +301,16 @@ namespace gui::font_provider::platform::freetype {
         }
 
         auto copy_bitmap(FT_Bitmap const& bitmap, Arena& arena, GlyphRaster& out_raster) -> void {
-            uint32_t const width = bitmap.width;
+            uint32_t const width =
+                bitmap.pixel_mode == FT_PIXEL_MODE_LCD ? (bitmap.width + 2u) / 3u : bitmap.width;
             uint32_t const height = bitmap.rows;
             if (width == 0u || height == 0u || bitmap.buffer == nullptr) {
                 return;
             }
 
             size_t byte_count = 0u;
-            ASSERT(checked_pixel_size(width, height, 1u, byte_count));
+            uint32_t const bytes_per_pixel = bitmap.pixel_mode == FT_PIXEL_MODE_LCD ? 4u : 1u;
+            ASSERT(checked_pixel_size(width, height, bytes_per_pixel, byte_count));
             uint8_t* const pixels = arena_alloc<uint8_t>(arena, byte_count);
             std::memset(pixels, 0, byte_count);
 
@@ -294,8 +320,19 @@ namespace gui::font_provider::platform::freetype {
                 uint32_t const source_y = pitch >= 0 ? y : height - y - 1u;
                 uint8_t const* const src =
                     bitmap.buffer + (static_cast<size_t>(source_y) * abs_pitch);
-                uint8_t* const dst = pixels + (static_cast<size_t>(y) * width);
-                if (bitmap.pixel_mode == FT_PIXEL_MODE_MONO) {
+                uint8_t* const dst = pixels + (static_cast<size_t>(y) * width * bytes_per_pixel);
+                if (bitmap.pixel_mode == FT_PIXEL_MODE_LCD) {
+                    for (uint32_t x = 0u; x < width; ++x) {
+                        uint32_t const source_x = x * 3u;
+                        uint8_t const r = source_x < bitmap.width ? src[source_x] : 0u;
+                        uint8_t const g = source_x + 1u < bitmap.width ? src[source_x + 1u] : 0u;
+                        uint8_t const b = source_x + 2u < bitmap.width ? src[source_x + 2u] : 0u;
+                        dst[x * 4u + 0u] = r;
+                        dst[x * 4u + 1u] = g;
+                        dst[x * 4u + 2u] = b;
+                        dst[x * 4u + 3u] = std::max(std::max(r, g), b);
+                    }
+                } else if (bitmap.pixel_mode == FT_PIXEL_MODE_MONO) {
                     for (uint32_t x = 0u; x < width; ++x) {
                         dst[x] = (src[x / 8u] & (0x80u >> (x % 8u))) != 0u ? 255u : 0u;
                     }
@@ -309,9 +346,10 @@ namespace gui::font_provider::platform::freetype {
             }
 
             out_raster.size = {width, height};
-            out_raster.stride = width;
+            out_raster.stride = width * bytes_per_pixel;
             out_raster.pixels = pixels;
-            out_raster.format = RasterFormat::ALPHA;
+            out_raster.format = bitmap.pixel_mode == FT_PIXEL_MODE_LCD ? RasterFormat::LCD_RGB
+                                                                       : RasterFormat::ALPHA;
         }
 
         auto raster_glyph(
@@ -471,6 +509,7 @@ namespace gui::font_provider::platform::freetype {
             arena.reset_to(marker);
             return Result::BACKEND_FAILURE;
         }
+        BASE_UNUSED(FT_Library_SetLcdFilter(context->library, FT_LCD_FILTER_DEFAULT));
 
         out_context = {context, Backend::FREETYPE};
         return Result::OK;
@@ -538,9 +577,7 @@ namespace gui::font_provider::platform::freetype {
         -> void {
         FontImpl* const impl = font_from_handle(font);
         ASSERT(impl != nullptr);
-        raster_glyph(
-            impl, size, glyph_index, RasterPolicy::SHARP_HINTED, 0u, 0u, arena, out_raster
-        );
+        raster_glyph(impl, size, glyph_index, DEFAULT_RASTER_POLICY, 0u, 0u, arena, out_raster);
     }
 
     auto raster_glyph(
@@ -568,7 +605,7 @@ namespace gui::font_provider::platform::freetype {
         GlyphRaster& out_raster
     ) -> void {
         gui::font_provider::platform::freetype::raster_glyph(
-            font, size, glyph_index, RasterPolicy::SHARP_HINTED, phase_x, phase_y, arena, out_raster
+            font, size, glyph_index, DEFAULT_RASTER_POLICY, phase_x, phase_y, arena, out_raster
         );
     }
 

@@ -68,6 +68,34 @@ namespace gui::font_provider {
         LCD_SMOOTH_HINTED,
     };
 
+    inline constexpr RasterPolicy DEFAULT_RASTER_POLICY = RasterPolicy::LCD_SMOOTH_HINTED;
+    inline constexpr float DEFAULT_TEXT_GAMMA = 1.0f;
+
+    enum class PixelGeometry : uint8_t {
+        UNKNOWN,
+        RGB_HORIZONTAL,
+        BGR_HORIZONTAL,
+    };
+
+    enum class TargetColorFormat : uint8_t {
+        RGBA8_UNORM,
+        R8_UNORM,
+    };
+
+    struct SurfaceProps {
+        PixelGeometry pixel_geometry = PixelGeometry::RGB_HORIZONTAL;
+        TargetColorFormat color_format = TargetColorFormat::RGBA8_UNORM;
+        float text_gamma = DEFAULT_TEXT_GAMMA;
+        float text_contrast = 0.0f;
+    };
+
+    struct GlyphRasterDesc {
+        RasterPolicy raster_policy = DEFAULT_RASTER_POLICY;
+        uint8_t phase_x = 0u;
+        uint8_t phase_y = 0u;
+        SurfaceProps surface_props = {};
+    };
+
     struct RasterResult {
         SizeU32 size = {};
         uint32_t stride = 0u;
@@ -90,16 +118,33 @@ namespace gui::font_provider {
     struct ShapedGlyph {
         Font font = {};
         uint16_t glyph_index = 0u;
+        uint16_t run_index = 0u;
         float size = 0.0f;
         float x = 0.0f;
         float advance = 0.0f;
         float offset_x = 0.0f;
         float offset_y = 0.0f;
+        uint32_t cluster = 0u;
+        uint32_t utf8_start = 0u;
+        uint32_t utf8_end = 0u;
+    };
+
+    struct ShapedRun {
+        Font font = {};
+        size_t first_glyph = 0u;
+        size_t glyph_count = 0u;
+        uint32_t utf8_start = 0u;
+        uint32_t utf8_end = 0u;
+        uint16_t script = 0u;
+        uint8_t bidi_level = 0u;
+        bool right_to_left = false;
     };
 
     struct ShapedText {
         ShapedGlyph* glyphs = nullptr;
         size_t glyph_count = 0u;
+        ShapedRun* runs = nullptr;
+        size_t run_count = 0u;
         float advance = 0.0f;
         float origin_x = 0.0f;
         float origin_y = 0.0f;

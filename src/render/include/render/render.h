@@ -48,6 +48,7 @@ namespace gui::render {
 
     enum class BufferBinding : uint8_t {
         VERTEX,
+        INDEX,
         UNIFORM,
     };
 
@@ -69,6 +70,11 @@ namespace gui::render {
 
     enum class PrimitiveTopology : uint8_t {
         TRIANGLE_LIST,
+    };
+
+    enum class IndexFormat : uint8_t {
+        UINT16,
+        UINT32,
     };
 
     enum class BlendMode : uint8_t {
@@ -270,6 +276,12 @@ namespace gui::render {
         uint32_t byte_offset = 0u;
     };
 
+    struct IndexBufferBinding {
+        Buffer buffer = {};
+        IndexFormat format = IndexFormat::UINT16;
+        uint32_t byte_offset = 0u;
+    };
+
     // Resource handles are referenced, not owned.
     struct BindGroupDesc {
         BindGroupBufferBinding const* buffers = nullptr;
@@ -285,6 +297,17 @@ namespace gui::render {
         size_t vertex_buffer_count = 0u;
         uint32_t vertex_count = 0u;
         uint32_t first_vertex = 0u;
+        uint32_t instance_count = 1u;
+        uint32_t first_instance = 0u;
+    };
+
+    struct DrawIndexedDesc {
+        VertexBufferBinding const* vertex_buffers = nullptr;
+        size_t vertex_buffer_count = 0u;
+        IndexBufferBinding index_buffer = {};
+        uint32_t index_count = 0u;
+        uint32_t first_index = 0u;
+        int32_t vertex_offset = 0;
         uint32_t instance_count = 1u;
         uint32_t first_instance = 0u;
     };
@@ -317,6 +340,9 @@ namespace gui::render {
     auto update_buffer(Context context, Buffer buffer, void const* data, size_t byte_size) -> void;
     [[nodiscard]] auto
     allocate_frame_vertex_buffer(Context context, size_t byte_size, size_t byte_alignment)
+        -> FrameBufferSlice;
+    [[nodiscard]] auto
+    allocate_frame_index_buffer(Context context, size_t byte_size, size_t byte_alignment)
         -> FrameBufferSlice;
     auto commit_frame_uploads(Context context) -> void;
 
@@ -359,6 +385,7 @@ namespace gui::render {
     auto bind_group(Context context, BindGroup bind_group) -> void;
     auto set_scissor_rect(Context context, ScissorRect rect) -> void;
     auto draw(Context context, DrawDesc const& desc) -> void;
+    auto draw_indexed(Context context, DrawIndexedDesc const& desc) -> void;
 
     [[nodiscard]] auto resize_window(Context context, Window window, SizeU32 size) -> Result;
     auto begin_frame(Context context) -> void;

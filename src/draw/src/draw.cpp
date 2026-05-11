@@ -1,3 +1,7 @@
+#include "coverage_mask_atlas.h"
+#include "draw_path.h"
+#include "draw_primitive.h"
+
 #include <algorithm>
 #include <base/memory.h>
 #include <cfloat>
@@ -10,16 +14,13 @@ namespace gui::draw {
 
         constexpr float PI = 3.14159265358979323846f;
         constexpr float TWO_PI = 2.0f * PI;
-        constexpr float HALF_PI = 0.5f * PI;
         constexpr int32_t MIN_SEGMENTS = 3;
         constexpr int32_t MAX_SEGMENTS = 128;
-        constexpr int32_t DEFAULT_CURVE_SEGMENTS = 12;
         constexpr float AA_FRINGE_SIZE = 1.0f;
-
-        struct PathPoint {
-            PathPoint* next = nullptr;
-            Vec2 point = {};
-        };
+        constexpr float DEFAULT_STROKE_MITER_LIMIT = 10.0f;
+        constexpr float TRIANGULATION_EPSILON = 0.000001f;
+        constexpr size_t INVALID_SHAPE_COMMAND_INDEX = static_cast<size_t>(-1);
+        constexpr Color TRANSPARENT = {0.0f, 0.0f, 0.0f, 0.0f};
 
         struct ClipStackNode {
             ClipStackNode* next = nullptr;
@@ -42,17 +43,26 @@ namespace gui::draw {
             Rect previous_clip_rect = {};
         };
 
+        struct StrokeStyle {
+            float thickness = 0.0f;
+            float half_width = 0.0f;
+            float outer_half_width = 0.0f;
+            float miter_limit = DEFAULT_STROKE_MITER_LIMIT;
+            bool closed = false;
+        };
+
         struct ContextImpl {
             Arena frame_arena = {};
             font_cache::Cache font_cache = {};
             PrimitiveCommand* primitive_commands = nullptr;
+            primitive_model::PrimitiveInfo* primitive_infos = nullptr;
             PrimitiveBatch* primitive_batches = nullptr;
             Command* commands = nullptr;
             LayerCommand* layer_commands = nullptr;
             StyledRectCommand* styled_rect_commands = nullptr;
             TextCommand* text_commands = nullptr;
-            PathPoint* path_first = nullptr;
-            PathPoint* path_last = nullptr;
+            path_model::ShapeCommand* shape_commands = nullptr;
+            path_model::Path path = {};
             ClipStackNode* clip_stack_top = nullptr;
             TransformStackNode* transform_stack_top = nullptr;
             OpacityStackNode* opacity_stack_top = nullptr;
@@ -66,7 +76,7 @@ namespace gui::draw {
             size_t layer_command_count = 0u;
             size_t styled_rect_command_count = 0u;
             size_t text_command_count = 0u;
-            size_t path_count = 0u;
+            size_t shape_command_count = 0u;
             size_t command_capacity = 0u;
             size_t order_capacity = 0u;
         };
@@ -113,6 +123,21 @@ namespace gui::draw {
             };
         }
 
+        [[nodiscard]] auto transform_vector(Transform2D const& transform, Vec2 vector) -> Vec2 {
+            return {
+                (vector.x * transform.x_axis.x) + (vector.y * transform.y_axis.x),
+                (vector.x * transform.x_axis.y) + (vector.y * transform.y_axis.y)
+            };
+        }
+
+        [[nodiscard]] auto compose_transform(Transform2D outer, Transform2D inner) -> Transform2D {
+            return {
+                transform_vector(outer, inner.x_axis),
+                transform_vector(outer, inner.y_axis),
+                transform_point(outer, inner.translation)
+            };
+        }
+
         [[nodiscard]] auto vec2_add(Vec2 lhs, Vec2 rhs) -> Vec2 {
             return {lhs.x + rhs.x, lhs.y + rhs.y};
         }
@@ -151,6 +176,13 @@ namespace gui::draw {
             return rect_width(rect) > 0.0f && rect_height(rect) > 0.0f;
         }
 
+        [[nodiscard]] auto rect_outset(Rect rect, float amount) -> Rect {
+            return {
+                {rect.min.x - amount, rect.min.y - amount},
+                {rect.max.x + amount, rect.max.y + amount}
+            };
+        }
+
         [[nodiscard]] auto vec2_equal(Vec2 lhs, Vec2 rhs) -> bool {
             return lhs.x == rhs.x && lhs.y == rhs.y;
         }
@@ -164,6 +196,10 @@ namespace gui::draw {
                    vec2_equal(lhs.translation, rhs.translation);
         }
 
+        [[nodiscard]] auto
+        primitive_commands_compatible(PrimitiveCommand const& lhs, PrimitiveCommand const& rhs)
+            -> bool;
+
         [[nodiscard]] auto segment_count_from_radius(float radius) -> int32_t {
             float const estimate = std::clamp(radius * 0.35f, 12.0f, 64.0f);
             return static_cast<int32_t>(estimate);
@@ -175,19 +211,6 @@ namespace gui::draw {
             }
 
             return std::clamp(segment_count, MIN_SEGMENTS, MAX_SEGMENTS);
-        }
-
-        [[nodiscard]] auto
-        clamped_arc_segment_count(float radius, float angle_delta, int32_t segment_count)
-            -> int32_t {
-            if (segment_count > 0) {
-                return std::clamp(segment_count, 1, MAX_SEGMENTS);
-            }
-
-            float const fraction = std::abs(angle_delta) / TWO_PI;
-            int32_t const full_count = segment_count_from_radius(radius);
-            int32_t const result = static_cast<int32_t>(std::max(1.0f, full_count * fraction));
-            return std::clamp(result, 1, MAX_SEGMENTS);
         }
 
         [[nodiscard]] auto
@@ -255,6 +278,7 @@ namespace gui::draw {
             size_t const command_index = impl->primitive_command_count;
             PrimitiveCommand* const command = impl->primitive_commands + command_index;
             *command = {};
+            impl->primitive_infos[command_index] = {};
             command->vertices = vertices;
             command->vertex_count = vertex_count;
             command->texture = texture;
@@ -264,6 +288,116 @@ namespace gui::draw {
             impl->primitive_command_count += 1u;
             append_primitive_batch(impl, command_index);
             return vertices;
+        }
+
+        auto mark_analytic_rect(
+            ContextImpl* impl,
+            size_t command_index,
+            Rect rect,
+            Transform2D analytic_transform,
+            Color fill_color,
+            Color border_color,
+            float border_thickness,
+            float radius
+        ) -> void {
+            ASSERT(impl != nullptr);
+            ASSERT(command_index < impl->primitive_command_count);
+
+            rect = rect_normalized(rect);
+            if (!rect_visible(rect) ||
+                (!color_visible(fill_color) &&
+                 !(border_thickness > 0.0f && color_visible(border_color)))) {
+                return;
+            }
+
+            float const max_size = std::min(rect_width(rect), rect_height(rect)) * 0.5f;
+            primitive_model::PrimitiveInfo* const info = impl->primitive_infos + command_index;
+            info->render_kind = primitive_model::RenderKind::ANALYTIC_RECT;
+            info->analytic_rect.rect = rect;
+            info->analytic_rect.transform = analytic_transform;
+            info->analytic_rect.fill_color = fill_color;
+            info->analytic_rect.border_color = border_color;
+            info->analytic_rect.border_thickness = std::clamp(border_thickness, 0.0f, max_size);
+            info->analytic_rect.radius = std::clamp(radius, 0.0f, max_size);
+            info->analytic_rect.softness = 1.0f;
+        }
+
+        auto mark_analytic_rect(
+            ContextImpl* impl,
+            size_t command_index,
+            Rect rect,
+            Color fill_color,
+            Color border_color,
+            float border_thickness,
+            float radius
+        ) -> void {
+            mark_analytic_rect(
+                impl,
+                command_index,
+                rect,
+                impl->current_transform,
+                fill_color,
+                border_color,
+                border_thickness,
+                radius
+            );
+        }
+
+        auto mark_analytic_line(
+            ContextImpl* impl, size_t command_index, Vec2 p0, Vec2 p1, Color color, float thickness
+        ) -> void {
+            ASSERT(impl != nullptr);
+            if (thickness <= 0.0f || !color_visible(color) || vec2_equal(p0, p1)) {
+                return;
+            }
+
+            float const dx = p1.x - p0.x;
+            float const dy = p1.y - p0.y;
+            float const length = std::sqrt((dx * dx) + (dy * dy));
+            if (length <= 0.0f) {
+                return;
+            }
+
+            float const inverse_length = 1.0f / length;
+            Transform2D const line_transform = {
+                {dx * inverse_length, dy * inverse_length},
+                {-dy * inverse_length, dx * inverse_length},
+                p0
+            };
+            float const half_thickness = std::max(thickness, 1.0f) * 0.5f;
+            Color line_color = color;
+            line_color.a *= std::min(thickness, 1.0f);
+            mark_analytic_rect(
+                impl,
+                command_index,
+                {{0.0f, -half_thickness}, {length, half_thickness}},
+                compose_transform(impl->current_transform, line_transform),
+                line_color,
+                TRANSPARENT,
+                0.0f,
+                0.0f
+            );
+        }
+
+        auto mark_coverage_mask(ContextImpl* impl, size_t command_index, size_t shape_command_index)
+            -> void {
+            ASSERT(impl != nullptr);
+            ASSERT(command_index < impl->primitive_command_count);
+            if (shape_command_index == INVALID_SHAPE_COMMAND_INDEX ||
+                shape_command_index >= impl->shape_command_count) {
+                return;
+            }
+
+            path_model::ShapeCommand const& shape_command =
+                impl->shape_commands[shape_command_index];
+            coverage_mask::ShapeKey key = {};
+            if (!coverage_mask::shape_key(shape_command.shape, key)) {
+                return;
+            }
+
+            primitive_model::PrimitiveInfo* const info = impl->primitive_infos + command_index;
+            info->render_kind = primitive_model::RenderKind::COVERAGE_MASK;
+            info->coverage_mask_shape_index = shape_command_index;
         }
 
         auto push_styled_rect(ContextImpl* impl, Rect rect, BoxStyle style) -> void {
@@ -346,16 +480,24 @@ namespace gui::draw {
             return {normal.y, -normal.x};
         }
 
-        [[nodiscard]] auto
-        stroke_join_offset(Vec2 prev_normal, Vec2 next_normal, float half_thickness) -> Vec2 {
+        [[nodiscard]] auto miter_join_offset(
+            Vec2 prev_normal, Vec2 next_normal, float half_thickness, float miter_limit
+        ) -> Vec2 {
             Vec2 const average = vec2_mul(vec2_add(prev_normal, next_normal), 0.5f);
             float const length_sqr = (average.x * average.x) + (average.y * average.y);
             if (length_sqr <= 0.000001f) {
                 return vec2_mul(next_normal, half_thickness);
             }
 
-            float const inverse_length_sqr = std::min(1.0f / length_sqr, 100.0f);
+            float const inverse_length_sqr = std::min(1.0f / length_sqr, miter_limit * miter_limit);
             return vec2_mul(average, inverse_length_sqr * half_thickness);
+        }
+
+        [[nodiscard]] auto
+        stroke_join_offset(Vec2 prev_normal, Vec2 next_normal, float half_thickness) -> Vec2 {
+            return miter_join_offset(
+                prev_normal, next_normal, half_thickness, DEFAULT_STROKE_MITER_LIMIT
+            );
         }
 
         auto write_stroke_segment(
@@ -418,6 +560,15 @@ namespace gui::draw {
             );
         }
 
+        [[nodiscard]] auto default_stroke_style(float thickness, bool closed) -> StrokeStyle {
+            StrokeStyle style = {};
+            style.thickness = thickness;
+            style.half_width = std::max(thickness, 1.0f) * 0.5f;
+            style.outer_half_width = style.half_width + AA_FRINGE_SIZE;
+            style.closed = closed;
+            return style;
+        }
+
         auto
         compact_points(ContextImpl* impl, Slice<Vec2 const> points, bool closed, size_t& out_count)
             -> Vec2 const* {
@@ -463,6 +614,139 @@ namespace gui::draw {
             return result;
         }
 
+        [[nodiscard]] auto triangle_cross(Vec2 p0, Vec2 p1, Vec2 p2) -> float {
+            return ((p1.x - p0.x) * (p2.y - p0.y)) - ((p1.y - p0.y) * (p2.x - p0.x));
+        }
+
+        [[nodiscard]] auto convex_turn(float turn, float area_twice) -> bool {
+            return area_twice > 0.0f ? turn > TRIANGULATION_EPSILON : turn < -TRIANGULATION_EPSILON;
+        }
+
+        [[nodiscard]] auto
+        point_in_triangle(Vec2 point, Vec2 p0, Vec2 p1, Vec2 p2, float area_twice) -> bool {
+            float const c0 = triangle_cross(p0, p1, point);
+            float const c1 = triangle_cross(p1, p2, point);
+            float const c2 = triangle_cross(p2, p0, point);
+            return area_twice > 0.0f
+                       ? c0 >= -TRIANGULATION_EPSILON && c1 >= -TRIANGULATION_EPSILON &&
+                             c2 >= -TRIANGULATION_EPSILON
+                       : c0 <= TRIANGULATION_EPSILON && c1 <= TRIANGULATION_EPSILON &&
+                             c2 <= TRIANGULATION_EPSILON;
+        }
+
+        [[nodiscard]] auto polygon_convex(Slice<Vec2 const> points, float area_twice) -> bool {
+            for (size_t index = 0u; index < points.size(); ++index) {
+                float const turn = triangle_cross(
+                    points[index],
+                    points[(index + 1u) % points.size()],
+                    points[(index + 2u) % points.size()]
+                );
+                if (std::abs(turn) > TRIANGULATION_EPSILON && !convex_turn(turn, area_twice)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        auto write_fill_fringe(
+            ContextImpl* impl,
+            Vertex* fringe_vertices,
+            Slice<Vec2 const> points,
+            Color color,
+            float area_twice
+        ) -> void {
+            float const normal_scale = area_twice > 0.0f ? -1.0f : 1.0f;
+            Vec2* const fringe_offsets = arena_alloc<Vec2>(impl->frame_arena, points.size());
+            for (size_t index = 0u; index < points.size(); ++index) {
+                size_t const prev_index = (index + points.size() - 1u) % points.size();
+                size_t const next_index = (index + 1u) % points.size();
+                Vec2 const prev_normal =
+                    vec2_mul(segment_normal(points[prev_index], points[index]), normal_scale);
+                Vec2 const next_normal =
+                    vec2_mul(segment_normal(points[index], points[next_index]), normal_scale);
+                fringe_offsets[index] =
+                    stroke_join_offset(prev_normal, next_normal, AA_FRINGE_SIZE);
+            }
+
+            Color outer_color = color;
+            outer_color.a = 0.0f;
+            for (size_t index = 0u; index < points.size(); ++index) {
+                size_t const next_index = (index + 1u) % points.size();
+                write_fringe_segment(
+                    impl,
+                    fringe_vertices + (index * 6u),
+                    points[index],
+                    points[next_index],
+                    fringe_offsets[index],
+                    fringe_offsets[next_index],
+                    color,
+                    outer_color
+                );
+            }
+        }
+
+        [[nodiscard]] auto triangulate_simple_polygon(
+            ContextImpl* impl, Slice<Vec2 const> points, float area_twice, size_t* out_indices
+        ) -> bool {
+            size_t* const remaining = arena_alloc<size_t>(impl->frame_arena, points.size());
+            for (size_t index = 0u; index < points.size(); ++index) {
+                remaining[index] = index;
+            }
+
+            size_t remaining_count = points.size();
+            size_t index_count = 0u;
+            while (remaining_count > 3u) {
+                bool clipped = false;
+                for (size_t index = 0u; index < remaining_count; ++index) {
+                    size_t const prev_index =
+                        remaining[(index + remaining_count - 1u) % remaining_count];
+                    size_t const curr_index = remaining[index];
+                    size_t const next_index = remaining[(index + 1u) % remaining_count];
+                    Vec2 const p0 = points[prev_index];
+                    Vec2 const p1 = points[curr_index];
+                    Vec2 const p2 = points[next_index];
+                    if (!convex_turn(triangle_cross(p0, p1, p2), area_twice)) {
+                        continue;
+                    }
+
+                    bool contains_point = false;
+                    for (size_t test = 0u; test < remaining_count; ++test) {
+                        size_t const point_index = remaining[test];
+                        if (point_index == prev_index || point_index == curr_index ||
+                            point_index == next_index) {
+                            continue;
+                        }
+                        if (point_in_triangle(points[point_index], p0, p1, p2, area_twice)) {
+                            contains_point = true;
+                            break;
+                        }
+                    }
+                    if (contains_point) {
+                        continue;
+                    }
+
+                    out_indices[index_count++] = prev_index;
+                    out_indices[index_count++] = curr_index;
+                    out_indices[index_count++] = next_index;
+                    for (size_t move = index; move + 1u < remaining_count; ++move) {
+                        remaining[move] = remaining[move + 1u];
+                    }
+                    remaining_count -= 1u;
+                    clipped = true;
+                    break;
+                }
+
+                if (!clipped) {
+                    return false;
+                }
+            }
+
+            out_indices[index_count++] = remaining[0u];
+            out_indices[index_count++] = remaining[1u];
+            out_indices[index_count++] = remaining[2u];
+            return index_count == (points.size() - 2u) * 3u;
+        }
+
         auto fill_convex_points(ContextImpl* impl, Slice<Vec2 const> points, Color color) -> void {
             if (points.size() < 3u || !color_visible(color)) {
                 return;
@@ -492,76 +776,228 @@ namespace gui::draw {
                     color
                 );
             }
+            write_fill_fringe(impl, vertices + fill_vertex_count, points, color, area_twice);
+        }
 
-            float const normal_scale = area_twice > 0.0f ? -1.0f : 1.0f;
-            Vec2* const fringe_offsets = arena_alloc<Vec2>(impl->frame_arena, points.size());
-            for (size_t index = 0u; index < points.size(); ++index) {
-                size_t const prev_index = (index + points.size() - 1u) % points.size();
-                size_t const next_index = (index + 1u) % points.size();
-                Vec2 const prev_normal =
-                    vec2_mul(segment_normal(points[prev_index], points[index]), normal_scale);
-                Vec2 const next_normal =
-                    vec2_mul(segment_normal(points[index], points[next_index]), normal_scale);
-                fringe_offsets[index] =
-                    stroke_join_offset(prev_normal, next_normal, AA_FRINGE_SIZE);
+        auto fill_path_points(ContextImpl* impl, Slice<Vec2 const> points, Color color) -> void {
+            if (points.size() < 3u || !color_visible(color)) {
+                return;
             }
 
-            Color outer_color = color;
-            outer_color.a = 0.0f;
-            Vertex* const fringe_vertices = vertices + fill_vertex_count;
-            for (size_t index = 0u; index < points.size(); ++index) {
-                size_t const next_index = (index + 1u) % points.size();
-                write_fringe_segment(
+            size_t point_count = 0u;
+            points = {compact_points(impl, points, true, point_count), point_count};
+            if (points.size() < 3u) {
+                return;
+            }
+
+            float const area_twice = polygon_area_twice(points);
+            if (area_twice == 0.0f) {
+                return;
+            }
+
+            if (polygon_convex(points, area_twice)) {
+                fill_convex_points(impl, points, color);
+                return;
+            }
+
+            size_t const fill_index_count = (points.size() - 2u) * 3u;
+            size_t* const indices = arena_alloc<size_t>(impl->frame_arena, fill_index_count);
+            if (!triangulate_simple_polygon(impl, points, area_twice, indices)) {
+                fill_convex_points(impl, points, color);
+                return;
+            }
+
+            size_t const vertex_count = fill_index_count + (points.size() * 6u);
+            Vertex* const vertices = push_primitive_vertices(impl, vertex_count);
+            for (size_t index = 0u; index < fill_index_count; index += 3u) {
+                write_triangle(
                     impl,
-                    fringe_vertices + (index * 6u),
-                    points[index],
-                    points[next_index],
-                    fringe_offsets[index],
-                    fringe_offsets[next_index],
-                    color,
-                    outer_color
+                    vertices + index,
+                    points[indices[index]],
+                    points[indices[index + 1u]],
+                    points[indices[index + 2u]],
+                    color
                 );
             }
+            write_fill_fringe(impl, vertices + fill_index_count, points, color, area_twice);
         }
 
         auto copy_path_points(ContextImpl* impl) -> Slice<Vec2 const> {
             ASSERT(impl != nullptr);
-
-            if (impl->path_count == 0u) {
-                return {};
-            }
-
-            Vec2* const points = arena_alloc<Vec2>(impl->frame_arena, impl->path_count);
-            size_t index = 0u;
-            for (PathPoint* node = impl->path_first; node != nullptr; node = node->next) {
-                ASSERT(index < impl->path_count);
-                points[index] = node->point;
-                index += 1u;
-            }
-            return {points, impl->path_count};
+            return path_model::flattened_points(impl->path);
         }
 
         auto clear_path(ContextImpl* impl) -> void {
             ASSERT(impl != nullptr);
-            impl->path_first = nullptr;
-            impl->path_last = nullptr;
-            impl->path_count = 0u;
+            path_model::clear(impl->path);
         }
 
         auto append_path_point(ContextImpl* impl, Vec2 point) -> void {
             ASSERT(impl != nullptr);
+            path_model::line_to(impl->path, point);
+        }
 
-            PathPoint* const node = arena_new<PathPoint>(impl->frame_arena);
-            node->point = point;
-
-            if (impl->path_last != nullptr) {
-                impl->path_last->next = node;
-            } else {
-                impl->path_first = node;
+        auto push_shape_command(ContextImpl* impl, path_model::Shape shape, Color color) -> size_t {
+            ASSERT(impl != nullptr);
+            if (shape.kind == path_model::ShapeKind::EMPTY) {
+                return INVALID_SHAPE_COMMAND_INDEX;
             }
 
-            impl->path_last = node;
-            impl->path_count += 1u;
+            ASSERT(impl->shape_command_count < impl->command_capacity);
+            size_t const command_index = impl->shape_command_count;
+            path_model::ShapeCommand* const command = impl->shape_commands + command_index;
+            *command = {};
+            command->shape = shape;
+            command->color = color;
+            command->clip_rect = impl->current_clip_rect;
+            command->transform = impl->current_transform;
+            command->opacity = impl->current_opacity;
+            impl->shape_command_count += 1u;
+            return command_index;
+        }
+
+        auto emit_stroke_contour(
+            ContextImpl* impl, Slice<Vec2 const> points, Color color, StrokeStyle style
+        ) -> void {
+            ASSERT(impl != nullptr);
+
+            size_t point_count = 0u;
+            Vec2 const* const stroke_points =
+                compact_points(impl, points, style.closed, point_count);
+            if (point_count < 2u || (style.closed && point_count < 3u)) {
+                return;
+            }
+
+            size_t const segment_count = style.closed ? point_count : point_count - 1u;
+            Vec2* const segment_normals = arena_alloc<Vec2>(impl->frame_arena, segment_count);
+            for (size_t index = 0u; index < segment_count; ++index) {
+                segment_normals[index] =
+                    segment_normal(stroke_points[index], stroke_points[(index + 1u) % point_count]);
+            }
+
+            Color inner_color = color;
+            inner_color.a *= std::min(style.thickness, 1.0f);
+            Color outer_color = inner_color;
+            outer_color.a = 0.0f;
+
+            Vec2* const point_offsets = arena_alloc<Vec2>(impl->frame_arena, point_count);
+            Vec2* const outer_point_offsets = arena_alloc<Vec2>(impl->frame_arena, point_count);
+            if (style.closed) {
+                for (size_t index = 0u; index < point_count; ++index) {
+                    size_t const prev_index = (index + segment_count - 1u) % segment_count;
+                    point_offsets[index] = miter_join_offset(
+                        segment_normals[prev_index],
+                        segment_normals[index],
+                        style.half_width,
+                        style.miter_limit
+                    );
+                    outer_point_offsets[index] = miter_join_offset(
+                        segment_normals[prev_index],
+                        segment_normals[index],
+                        style.outer_half_width,
+                        style.miter_limit
+                    );
+                }
+            } else {
+                point_offsets[0u] = vec2_mul(segment_normals[0u], style.half_width);
+                outer_point_offsets[0u] = vec2_mul(segment_normals[0u], style.outer_half_width);
+                point_offsets[point_count - 1u] =
+                    vec2_mul(segment_normals[segment_count - 1u], style.half_width);
+                outer_point_offsets[point_count - 1u] =
+                    vec2_mul(segment_normals[segment_count - 1u], style.outer_half_width);
+                for (size_t index = 1u; index + 1u < point_count; ++index) {
+                    point_offsets[index] = miter_join_offset(
+                        segment_normals[index - 1u],
+                        segment_normals[index],
+                        style.half_width,
+                        style.miter_limit
+                    );
+                    outer_point_offsets[index] = miter_join_offset(
+                        segment_normals[index - 1u],
+                        segment_normals[index],
+                        style.outer_half_width,
+                        style.miter_limit
+                    );
+                }
+            }
+
+            size_t const core_vertex_count = segment_count * 6u;
+            size_t const side_fringe_vertex_count = segment_count * 12u;
+            size_t const cap_vertex_count = style.closed ? 0u : 12u;
+            Vertex* const vertices = push_primitive_vertices(
+                impl, core_vertex_count + side_fringe_vertex_count + cap_vertex_count
+            );
+            for (size_t index = 0u; index < segment_count; ++index) {
+                size_t const next_index = (index + 1u) % point_count;
+                write_stroke_segment(
+                    impl,
+                    vertices + (index * 6u),
+                    stroke_points[index],
+                    stroke_points[next_index],
+                    point_offsets[index],
+                    point_offsets[next_index],
+                    inner_color
+                );
+            }
+
+            Vertex* const fringe_vertices = vertices + core_vertex_count;
+            for (size_t index = 0u; index < segment_count; ++index) {
+                size_t const next_index = (index + 1u) % point_count;
+                Vec2 const positive_delta0 =
+                    vec2_sub(outer_point_offsets[index], point_offsets[index]);
+                Vec2 const positive_delta1 =
+                    vec2_sub(outer_point_offsets[next_index], point_offsets[next_index]);
+                Vec2 const negative_delta0 =
+                    vec2_sub(point_offsets[index], outer_point_offsets[index]);
+                Vec2 const negative_delta1 =
+                    vec2_sub(point_offsets[next_index], outer_point_offsets[next_index]);
+                write_fringe_segment(
+                    impl,
+                    fringe_vertices + (index * 12u),
+                    vec2_add(stroke_points[index], point_offsets[index]),
+                    vec2_add(stroke_points[next_index], point_offsets[next_index]),
+                    positive_delta0,
+                    positive_delta1,
+                    inner_color,
+                    outer_color
+                );
+                write_fringe_segment(
+                    impl,
+                    fringe_vertices + (index * 12u) + 6u,
+                    vec2_sub(stroke_points[index], point_offsets[index]),
+                    vec2_sub(stroke_points[next_index], point_offsets[next_index]),
+                    negative_delta0,
+                    negative_delta1,
+                    inner_color,
+                    outer_color
+                );
+            }
+
+            if (!style.closed) {
+                Vec2 const start_tangent = tangent_from_normal(segment_normals[0u]);
+                Vec2 const end_tangent = tangent_from_normal(segment_normals[segment_count - 1u]);
+                Vertex* const cap_vertices = fringe_vertices + side_fringe_vertex_count;
+                write_stroke_cap(
+                    impl,
+                    cap_vertices,
+                    stroke_points[0u],
+                    point_offsets[0u],
+                    outer_point_offsets[0u],
+                    vec2_mul(start_tangent, -AA_FRINGE_SIZE),
+                    inner_color,
+                    outer_color
+                );
+                write_stroke_cap(
+                    impl,
+                    cap_vertices + 6u,
+                    stroke_points[point_count - 1u],
+                    point_offsets[point_count - 1u],
+                    outer_point_offsets[point_count - 1u],
+                    vec2_mul(end_tangent, AA_FRINGE_SIZE),
+                    inner_color,
+                    outer_color
+                );
+            }
         }
 
         auto
@@ -615,15 +1051,20 @@ namespace gui::draw {
 
         impl->primitive_commands =
             arena_alloc<PrimitiveCommand>(arena, desc.initial_command_capacity);
+        impl->primitive_infos =
+            arena_alloc<primitive_model::PrimitiveInfo>(arena, desc.initial_command_capacity);
         impl->primitive_batches = arena_alloc<PrimitiveBatch>(arena, desc.initial_command_capacity);
         impl->commands = arena_alloc<Command>(arena, desc.initial_command_capacity * 5u);
         impl->layer_commands = arena_alloc<LayerCommand>(arena, desc.initial_command_capacity);
         impl->styled_rect_commands =
             arena_alloc<StyledRectCommand>(arena, desc.initial_command_capacity);
         impl->text_commands = arena_alloc<TextCommand>(arena, desc.initial_command_capacity);
+        impl->shape_commands =
+            arena_alloc<path_model::ShapeCommand>(arena, desc.initial_command_capacity);
         impl->command_capacity = desc.initial_command_capacity;
         impl->order_capacity = desc.initial_command_capacity * 5u;
         impl->font_cache = desc.font_cache;
+        path_model::init(impl->path, impl->frame_arena.resource());
         reset_state(impl);
         out_context.handle = impl;
     }
@@ -633,17 +1074,20 @@ namespace gui::draw {
 
         ContextImpl* const impl = context_from_handle(context);
         impl->primitive_commands = nullptr;
+        impl->primitive_infos = nullptr;
         impl->primitive_batches = nullptr;
         impl->commands = nullptr;
         impl->layer_commands = nullptr;
         impl->styled_rect_commands = nullptr;
         impl->text_commands = nullptr;
+        impl->shape_commands = nullptr;
         impl->primitive_command_count = 0u;
         impl->primitive_batch_count = 0u;
         impl->command_count = 0u;
         impl->layer_command_count = 0u;
         impl->styled_rect_command_count = 0u;
         impl->text_command_count = 0u;
+        impl->shape_command_count = 0u;
         clear_path(impl);
         reset_state(impl);
         impl->command_capacity = 0u;
@@ -663,6 +1107,8 @@ namespace gui::draw {
         impl->layer_command_count = 0u;
         impl->styled_rect_command_count = 0u;
         impl->text_command_count = 0u;
+        impl->shape_command_count = 0u;
+        path_model::init(impl->path, impl->frame_arena.resource());
         clear_path(impl);
         reset_state(impl);
     }
@@ -810,7 +1256,19 @@ namespace gui::draw {
     }
 
     auto draw_line(Context context, Vec2 p0, Vec2 p1, Color color, float thickness) -> void {
-        draw_polyline(context, {p0, p1}, color, thickness, false);
+        ContextImpl* const impl = context_from_handle(context);
+        ASSERT(impl != nullptr);
+
+        if (thickness > 0.0f && color_visible(color) && !vec2_equal(p0, p1)) {
+            size_t const command_index = impl->primitive_command_count;
+            push_shape_command(
+                impl, path_model::line_shape(p0, p1, thickness, impl->frame_arena.resource()), color
+            );
+            draw_polyline(context, {p0, p1}, color, thickness, false);
+            if (impl->primitive_command_count > command_index) {
+                mark_analytic_line(impl, command_index, p0, p1, color, thickness);
+            }
+        }
     }
 
     auto draw_polyline(
@@ -823,130 +1281,7 @@ namespace gui::draw {
             return;
         }
 
-        size_t point_count = 0u;
-        Vec2 const* const stroke_points = compact_points(impl, points, closed, point_count);
-        if (point_count < 2u || (closed && point_count < 3u)) {
-            return;
-        }
-
-        size_t const segment_count = closed ? point_count : point_count - 1u;
-        Vec2* const segment_normals = arena_alloc<Vec2>(impl->frame_arena, segment_count);
-        for (size_t index = 0u; index < segment_count; ++index) {
-            segment_normals[index] =
-                segment_normal(stroke_points[index], stroke_points[(index + 1u) % point_count]);
-        }
-
-        Color inner_color = color;
-        inner_color.a *= std::min(thickness, 1.0f);
-        Color outer_color = inner_color;
-        outer_color.a = 0.0f;
-
-        float const half_thickness = std::max(thickness, 1.0f) * 0.5f;
-        float const outer_half_thickness = half_thickness + AA_FRINGE_SIZE;
-        Vec2* const point_offsets = arena_alloc<Vec2>(impl->frame_arena, point_count);
-        Vec2* const outer_point_offsets = arena_alloc<Vec2>(impl->frame_arena, point_count);
-        if (closed) {
-            for (size_t index = 0u; index < point_count; ++index) {
-                size_t const prev_index = (index + segment_count - 1u) % segment_count;
-                point_offsets[index] = stroke_join_offset(
-                    segment_normals[prev_index], segment_normals[index], half_thickness
-                );
-                outer_point_offsets[index] = stroke_join_offset(
-                    segment_normals[prev_index], segment_normals[index], outer_half_thickness
-                );
-            }
-        } else {
-            point_offsets[0u] = vec2_mul(segment_normals[0u], half_thickness);
-            outer_point_offsets[0u] = vec2_mul(segment_normals[0u], outer_half_thickness);
-            point_offsets[point_count - 1u] =
-                vec2_mul(segment_normals[segment_count - 1u], half_thickness);
-            outer_point_offsets[point_count - 1u] =
-                vec2_mul(segment_normals[segment_count - 1u], outer_half_thickness);
-            for (size_t index = 1u; index + 1u < point_count; ++index) {
-                point_offsets[index] = stroke_join_offset(
-                    segment_normals[index - 1u], segment_normals[index], half_thickness
-                );
-                outer_point_offsets[index] = stroke_join_offset(
-                    segment_normals[index - 1u], segment_normals[index], outer_half_thickness
-                );
-            }
-        }
-
-        size_t const core_vertex_count = segment_count * 6u;
-        size_t const side_fringe_vertex_count = segment_count * 12u;
-        size_t const cap_vertex_count = closed ? 0u : 12u;
-        Vertex* const vertices = push_primitive_vertices(
-            impl, core_vertex_count + side_fringe_vertex_count + cap_vertex_count
-        );
-        for (size_t index = 0u; index < segment_count; ++index) {
-            size_t const next_index = (index + 1u) % point_count;
-            write_stroke_segment(
-                impl,
-                vertices + (index * 6u),
-                stroke_points[index],
-                stroke_points[next_index],
-                point_offsets[index],
-                point_offsets[next_index],
-                inner_color
-            );
-        }
-
-        Vertex* const fringe_vertices = vertices + core_vertex_count;
-        for (size_t index = 0u; index < segment_count; ++index) {
-            size_t const next_index = (index + 1u) % point_count;
-            Vec2 const positive_delta0 = vec2_sub(outer_point_offsets[index], point_offsets[index]);
-            Vec2 const positive_delta1 =
-                vec2_sub(outer_point_offsets[next_index], point_offsets[next_index]);
-            Vec2 const negative_delta0 = vec2_sub(point_offsets[index], outer_point_offsets[index]);
-            Vec2 const negative_delta1 =
-                vec2_sub(point_offsets[next_index], outer_point_offsets[next_index]);
-            write_fringe_segment(
-                impl,
-                fringe_vertices + (index * 12u),
-                vec2_add(stroke_points[index], point_offsets[index]),
-                vec2_add(stroke_points[next_index], point_offsets[next_index]),
-                positive_delta0,
-                positive_delta1,
-                inner_color,
-                outer_color
-            );
-            write_fringe_segment(
-                impl,
-                fringe_vertices + (index * 12u) + 6u,
-                vec2_sub(stroke_points[index], point_offsets[index]),
-                vec2_sub(stroke_points[next_index], point_offsets[next_index]),
-                negative_delta0,
-                negative_delta1,
-                inner_color,
-                outer_color
-            );
-        }
-
-        if (!closed) {
-            Vec2 const start_tangent = tangent_from_normal(segment_normals[0u]);
-            Vec2 const end_tangent = tangent_from_normal(segment_normals[segment_count - 1u]);
-            Vertex* const cap_vertices = fringe_vertices + side_fringe_vertex_count;
-            write_stroke_cap(
-                impl,
-                cap_vertices,
-                stroke_points[0u],
-                point_offsets[0u],
-                outer_point_offsets[0u],
-                vec2_mul(start_tangent, -AA_FRINGE_SIZE),
-                inner_color,
-                outer_color
-            );
-            write_stroke_cap(
-                impl,
-                cap_vertices + 6u,
-                stroke_points[point_count - 1u],
-                point_offsets[point_count - 1u],
-                outer_point_offsets[point_count - 1u],
-                vec2_mul(end_tangent, AA_FRINGE_SIZE),
-                inner_color,
-                outer_color
-            );
-        }
+        emit_stroke_contour(impl, points, color, default_stroke_style(thickness, closed));
     }
 
     auto draw_triangle(Context context, Vec2 p0, Vec2 p1, Vec2 p2, Color color, float thickness)
@@ -972,7 +1307,23 @@ namespace gui::draw {
         ContextImpl* const impl = context_from_handle(context);
         ASSERT(impl != nullptr);
 
-        fill_convex_points(impl, {p0, p1, p2, p3}, color);
+        if (p0.y == p1.y && p1.x == p2.x && p2.y == p3.y && p3.x == p0.x) {
+            Rect const rect = rect_normalized({p0, p2});
+            if (!rect_visible(rect) || !color_visible(color)) {
+                return;
+            }
+            push_shape_command(
+                impl, path_model::rect_shape(rect, impl->frame_arena.resource()), color
+            );
+            size_t const command_index = impl->primitive_command_count;
+            fill_convex_points(impl, {p0, p1, p2, p3}, color);
+            if (impl->primitive_command_count > command_index) {
+                mark_analytic_rect(impl, command_index, rect, color, TRANSPARENT, 0.0f, 0.0f);
+            }
+            return;
+        }
+
+        fill_path_points(impl, {p0, p1, p2, p3}, color);
     }
 
     auto draw_rect(Context context, Rect rect, Color color, float thickness, float rounding)
@@ -992,11 +1343,18 @@ namespace gui::draw {
         }
 
         if (rounding < 0.5f) {
+            push_shape_command(
+                impl, path_model::rect_shape(rect, impl->frame_arena.resource()), color
+            );
+            size_t const command_index = impl->primitive_command_count;
             fill_convex_points(
                 impl,
                 {rect.min, {rect.max.x, rect.min.y}, rect.max, {rect.min.x, rect.max.y}},
                 color
             );
+            if (impl->primitive_command_count > command_index) {
+                mark_analytic_rect(impl, command_index, rect, color, TRANSPARENT, 0.0f, 0.0f);
+            }
             return;
         }
 
@@ -1108,8 +1466,15 @@ namespace gui::draw {
             return;
         }
 
+        size_t const shape_command_index = push_shape_command(
+            impl, path_model::oval_shape(center, radius, impl->frame_arena.resource()), color
+        );
+        size_t const command_index = impl->primitive_command_count;
         Slice<Vec2 const> points = append_ellipse_points(impl, center, radius, segment_count);
-        fill_convex_points(impl, points, color);
+        fill_path_points(impl, points, color);
+        if (impl->primitive_command_count > command_index) {
+            mark_coverage_mask(impl, command_index, shape_command_index);
+        }
     }
 
     auto path_clear(Context context) -> void {
@@ -1140,35 +1505,15 @@ namespace gui::draw {
             return;
         }
 
-        int32_t const segments =
-            clamped_arc_segment_count(radius, angle_max - angle_min, segment_count);
-        float const step = (angle_max - angle_min) / static_cast<float>(segments);
-        for (int32_t index = 0; index <= segments; ++index) {
-            float const angle = angle_min + (step * static_cast<float>(index));
-            append_path_point(
-                impl, {center.x + (std::cos(angle) * radius), center.y + (std::sin(angle) * radius)}
-            );
-        }
+        path_model::arc_to(impl->path, center, radius, angle_min, angle_max, segment_count);
     }
 
     auto path_bezier_quadratic_to(Context context, Vec2 control, Vec2 end, int32_t segment_count)
         -> void {
         ContextImpl* const impl = context_from_handle(context);
         ASSERT(impl != nullptr);
-        ASSERT(impl->path_last != nullptr);
-
-        int32_t const segments =
-            segment_count > 0 ? std::clamp(segment_count, 1, MAX_SEGMENTS) : DEFAULT_CURVE_SEGMENTS;
-        Vec2 const start = impl->path_last->point;
-        for (int32_t index = 1; index <= segments; ++index) {
-            float const t = static_cast<float>(index) / static_cast<float>(segments);
-            float const u = 1.0f - t;
-            Vec2 const point = vec2_add(
-                vec2_add(vec2_mul(start, u * u), vec2_mul(control, 2.0f * u * t)),
-                vec2_mul(end, t * t)
-            );
-            append_path_point(impl, point);
-        }
+        ASSERT(impl->path.has_current);
+        path_model::quad_to(impl->path, control, end, segment_count);
     }
 
     auto path_bezier_cubic_to(
@@ -1176,53 +1521,15 @@ namespace gui::draw {
     ) -> void {
         ContextImpl* const impl = context_from_handle(context);
         ASSERT(impl != nullptr);
-        ASSERT(impl->path_last != nullptr);
-
-        int32_t const segments =
-            segment_count > 0 ? std::clamp(segment_count, 1, MAX_SEGMENTS) : DEFAULT_CURVE_SEGMENTS;
-        Vec2 const start = impl->path_last->point;
-        for (int32_t index = 1; index <= segments; ++index) {
-            float const t = static_cast<float>(index) / static_cast<float>(segments);
-            float const u = 1.0f - t;
-            Vec2 const point = vec2_add(
-                vec2_add(vec2_mul(start, u * u * u), vec2_mul(control0, 3.0f * u * u * t)),
-                vec2_add(vec2_mul(control1, 3.0f * u * t * t), vec2_mul(end, t * t * t))
-            );
-            append_path_point(impl, point);
-        }
+        ASSERT(impl->path.has_current);
+        path_model::cubic_to(impl->path, control0, control1, end, segment_count);
     }
 
     auto path_rect(Context context, Rect rect, float rounding) -> void {
         ContextImpl* const impl = context_from_handle(context);
         ASSERT(impl != nullptr);
 
-        rect = rect_normalized(rect);
-        if (!rect_visible(rect)) {
-            return;
-        }
-
-        float const max_rounding = std::min(rect_width(rect), rect_height(rect)) * 0.5f;
-        rounding = std::clamp(rounding, 0.0f, max_rounding);
-        if (rounding < 0.5f) {
-            append_path_point(impl, rect.min);
-            append_path_point(impl, {rect.max.x, rect.min.y});
-            append_path_point(impl, rect.max);
-            append_path_point(impl, {rect.min.x, rect.max.y});
-            return;
-        }
-
-        path_arc_to(
-            context, {rect.max.x - rounding, rect.min.y + rounding}, rounding, -HALF_PI, 0.0f, 0
-        );
-        path_arc_to(
-            context, {rect.max.x - rounding, rect.max.y - rounding}, rounding, 0.0f, HALF_PI, 0
-        );
-        path_arc_to(
-            context, {rect.min.x + rounding, rect.max.y - rounding}, rounding, HALF_PI, PI, 0
-        );
-        path_arc_to(
-            context, {rect.min.x + rounding, rect.min.y + rounding}, rounding, PI, PI + HALF_PI, 0
-        );
+        path_model::rect(impl->path, rect, rounding);
     }
 
     auto path_stroke(Context context, Color color, bool closed, float thickness) -> void {
@@ -1230,7 +1537,40 @@ namespace gui::draw {
         ASSERT(impl != nullptr);
 
         Slice<Vec2 const> const points = copy_path_points(impl);
+        path_model::Shape shape = {};
+        if (color_visible(color) && thickness > 0.0f) {
+            shape = path_model::stroke_shape(
+                impl->path, closed, thickness, impl->frame_arena.resource()
+            );
+            push_shape_command(impl, shape, color);
+        }
+        size_t const command_index = impl->primitive_command_count;
         draw_polyline(context, points, color, thickness, closed);
+        if (impl->primitive_command_count > command_index) {
+            if (shape.kind == path_model::ShapeKind::RECT ||
+                shape.kind == path_model::ShapeKind::RRECT) {
+                float const half_thickness = thickness * 0.5f;
+                mark_analytic_rect(
+                    impl,
+                    command_index,
+                    shape.bounds,
+                    TRANSPARENT,
+                    color,
+                    thickness,
+                    shape.radius + half_thickness
+                );
+            } else if (shape.kind == path_model::ShapeKind::LINE &&
+                       shape.path.flat_points.size() >= 2u) {
+                mark_analytic_line(
+                    impl,
+                    command_index,
+                    shape.path.flat_points[0u],
+                    shape.path.flat_points[1u],
+                    color,
+                    thickness
+                );
+            }
+        }
         clear_path(impl);
     }
 
@@ -1239,7 +1579,23 @@ namespace gui::draw {
         ASSERT(impl != nullptr);
 
         Slice<Vec2 const> const points = copy_path_points(impl);
-        fill_convex_points(impl, points, color);
+        path_model::Shape shape = {};
+        size_t shape_command_index = INVALID_SHAPE_COMMAND_INDEX;
+        if (color_visible(color)) {
+            shape = path_model::fill_shape(impl->path, impl->frame_arena.resource());
+            shape_command_index = push_shape_command(impl, shape, color);
+        }
+        size_t const command_index = impl->primitive_command_count;
+        fill_path_points(impl, points, color);
+        if (impl->primitive_command_count > command_index &&
+            (shape.kind == path_model::ShapeKind::RECT ||
+             shape.kind == path_model::ShapeKind::RRECT)) {
+            mark_analytic_rect(
+                impl, command_index, shape.bounds, color, TRANSPARENT, 0.0f, shape.radius
+            );
+        } else if (impl->primitive_command_count > command_index) {
+            mark_coverage_mask(impl, command_index, shape_command_index);
+        }
         clear_path(impl);
     }
 
@@ -1368,5 +1724,36 @@ namespace gui::draw {
 
         return impl->text_commands + index;
     }
+
+    namespace path_model {
+
+        auto shape_command_count(Context context) -> size_t {
+            ContextImpl const* const impl = context_from_handle(context);
+            return impl != nullptr ? impl->shape_command_count : 0u;
+        }
+
+        auto shape_command(Context context, size_t index) -> ShapeCommand const* {
+            ContextImpl const* const impl = context_from_handle(context);
+            if (impl == nullptr || index >= impl->shape_command_count) {
+                return nullptr;
+            }
+
+            return impl->shape_commands + index;
+        }
+
+    } // namespace path_model
+
+    namespace primitive_model {
+
+        auto primitive_info(Context context, size_t index) -> PrimitiveInfo const* {
+            ContextImpl const* const impl = context_from_handle(context);
+            if (impl == nullptr || index >= impl->primitive_command_count) {
+                return nullptr;
+            }
+
+            return impl->primitive_infos + index;
+        }
+
+    } // namespace primitive_model
 
 } // namespace gui::draw

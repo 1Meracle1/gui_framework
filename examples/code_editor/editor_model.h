@@ -19,7 +19,7 @@ namespace code_editor {
 
     struct EditorUndoEntry;
 
-    inline constexpr float EDITOR_FONT_SIZE = 12.0f;
+    inline constexpr float EDITOR_FONT_SIZE = 15.0f;
     inline constexpr float EDITOR_MIN_FONT_SIZE = 8.0f;
     inline constexpr float EDITOR_MAX_FONT_SIZE = 24.0f;
     inline constexpr float EDITOR_FONT_SIZE_STEP = 1.0f;
@@ -390,8 +390,7 @@ namespace code_editor {
         size_t selection_anchor_column = 0u;
         uint64_t folded_revision = 0u;
         EditorSelectionMode selection_mode = EditorSelectionMode::NONE;
-        gui::font_provider::RasterPolicy raster_policy =
-            gui::font_provider::RasterPolicy::SHARP_HINTED;
+        gui::font_provider::RasterPolicy raster_policy = gui::font_provider::DEFAULT_RASTER_POLICY;
         float font_size = EDITOR_FONT_SIZE;
         float scroll_x = 0.0f;
         float scroll_y = 0.0f;

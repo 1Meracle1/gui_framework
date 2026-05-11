@@ -12,6 +12,8 @@
 #include <base/memory.h>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
+#include <cstring>
 #include <draw/draw.h>
 #include <draw/draw_renderer.h>
 #include <render/render.h>
@@ -33,6 +35,11 @@ namespace {
         render::SizeU32 pending_size = {};
     };
 
+    struct RunOptions {
+        bool fixed_time = false;
+        float time_seconds = 0.0f;
+    };
+
     AppState* global_app_state = nullptr;
 
     [[nodiscard]] auto loword_u32(LPARAM value) -> uint32_t {
@@ -47,6 +54,22 @@ namespace {
         fmt::eprintf("%s failed: %s\n", operation, render::result_name(result));
     }
 
+    [[nodiscard]] auto parse_run_options(int argc, char** argv, RunOptions* out_options) -> bool {
+        constexpr char PREFIX[] = "--automation-time-seconds=";
+        constexpr size_t PREFIX_SIZE = sizeof(PREFIX) - 1u;
+        for (int index = 1; index < argc; ++index) {
+            char const* const arg = argv[index];
+            if (std::strncmp(arg, PREFIX, PREFIX_SIZE) == 0) {
+                out_options->fixed_time = true;
+                out_options->time_seconds = std::strtof(arg + PREFIX_SIZE, nullptr);
+            } else {
+                fmt::eprintf("unknown option: %s\n", arg);
+                return false;
+            }
+        }
+        return true;
+    }
+
     [[nodiscard]] auto wave(float time_seconds, float speed, float phase) -> float {
         return static_cast<float>(std::sin((time_seconds * speed) + phase));
     }
@@ -58,13 +81,16 @@ namespace {
     }
 
     [[nodiscard]] auto inset(draw::Rect rect, float amount) -> draw::Rect {
-        return {{rect.min.x + amount, rect.min.y + amount},
-                {rect.max.x - amount, rect.max.y - amount}};
+        return {
+            {rect.min.x + amount, rect.min.y + amount}, {rect.max.x - amount, rect.max.y - amount}
+        };
     }
 
     [[nodiscard]] auto offset(draw::Rect rect, draw::Vec2 amount) -> draw::Rect {
-        return {{rect.min.x + amount.x, rect.min.y + amount.y},
-                {rect.max.x + amount.x, rect.max.y + amount.y}};
+        return {
+            {rect.min.x + amount.x, rect.min.y + amount.y},
+            {rect.max.x + amount.x, rect.max.y + amount.y}
+        };
     }
 
     auto draw_tile(draw::Context context, draw::Rect rect) -> void {
@@ -75,6 +101,26 @@ namespace {
         style.radius = 10.0f;
         style.softness = 1.0f;
         draw::draw_rect_styled(context, rect, style);
+    }
+
+    auto draw_concave_fill_path(draw::Context context, draw::Vec2 origin, draw::Color color)
+        -> void {
+        draw::path_line_to(context, {origin.x + 0.0f, origin.y + 0.0f});
+        draw::path_line_to(context, {origin.x + 78.0f, origin.y + 0.0f});
+        draw::path_line_to(context, {origin.x + 78.0f, origin.y + 54.0f});
+        draw::path_line_to(context, {origin.x + 39.0f, origin.y + 30.0f});
+        draw::path_line_to(context, {origin.x + 0.0f, origin.y + 54.0f});
+        draw::path_fill_convex(context, color);
+    }
+
+    auto draw_small_curve_mask_shape(draw::Context context, draw::Vec2 origin, draw::Color color)
+        -> void {
+        draw::path_line_to(context, {origin.x + 0.0f, origin.y + 18.0f});
+        draw::path_bezier_quadratic_to(
+            context, {origin.x + 12.0f, origin.y - 6.0f}, {origin.x + 24.0f, origin.y + 18.0f}, 6
+        );
+        draw::path_line_to(context, {origin.x + 12.0f, origin.y + 32.0f});
+        draw::path_fill_convex(context, color);
     }
 
     auto draw_alpha_overlap(draw::Context context, draw::Rect tile, float time_seconds) -> void {
@@ -88,17 +134,22 @@ namespace {
             context,
             {{rect.min.x + red_x, rect.min.y}, {rect.max.x - 34.0f + red_x, rect.max.y}},
             {0.95f, 0.22f, 0.18f, 0.58f},
-            18.0f);
-        draw::draw_rect_filled(context,
-                               {{rect.min.x + 54.0f, rect.min.y + 34.0f + blue_y},
-                                {rect.max.x, rect.max.y - 22.0f + blue_y}},
-                               {0.12f, 0.62f, 1.0f, 0.58f},
-                               18.0f);
-        draw::draw_rect_filled(context,
-                               {{rect.min.x + 96.0f + gold_x, rect.min.y + 72.0f + gold_y},
-                                {rect.max.x - 22.0f + gold_x, rect.max.y + 10.0f + gold_y}},
-                               {0.98f, 0.74f, 0.18f, 0.58f},
-                               18.0f);
+            18.0f
+        );
+        draw::draw_rect_filled(
+            context,
+            {{rect.min.x + 54.0f, rect.min.y + 34.0f + blue_y},
+             {rect.max.x, rect.max.y - 22.0f + blue_y}},
+            {0.12f, 0.62f, 1.0f, 0.58f},
+            18.0f
+        );
+        draw::draw_rect_filled(
+            context,
+            {{rect.min.x + 96.0f + gold_x, rect.min.y + 72.0f + gold_y},
+             {rect.max.x - 22.0f + gold_x, rect.max.y + 10.0f + gold_y}},
+            {0.98f, 0.74f, 0.18f, 0.58f},
+            18.0f
+        );
     }
 
     auto draw_group_opacity(draw::Context context, draw::Rect tile, float time_seconds) -> void {
@@ -108,16 +159,20 @@ namespace {
         layer.opacity = 0.56f + (wave(time_seconds, 0.28f, 1.2f) * 0.08f);
         float const slide = wave(time_seconds, 0.36f, 0.6f) * 8.0f;
         draw::push_layer(context, layer);
-        draw::draw_rect_filled(context,
-                               {{layer.bounds.min.x + 12.0f + slide, layer.bounds.min.y + 16.0f},
-                                {layer.bounds.min.x + 136.0f + slide, layer.bounds.max.y - 16.0f}},
-                               {0.95f, 0.22f, 0.18f, 1.0f},
-                               20.0f);
-        draw::draw_rect_filled(context,
-                               {{layer.bounds.min.x + 74.0f - slide, layer.bounds.min.y + 44.0f},
-                                {layer.bounds.max.x - 10.0f - slide, layer.bounds.max.y - 8.0f}},
-                               {0.12f, 0.62f, 1.0f, 1.0f},
-                               20.0f);
+        draw::draw_rect_filled(
+            context,
+            {{layer.bounds.min.x + 12.0f + slide, layer.bounds.min.y + 16.0f},
+             {layer.bounds.min.x + 136.0f + slide, layer.bounds.max.y - 16.0f}},
+            {0.95f, 0.22f, 0.18f, 1.0f},
+            20.0f
+        );
+        draw::draw_rect_filled(
+            context,
+            {{layer.bounds.min.x + 74.0f - slide, layer.bounds.min.y + 44.0f},
+             {layer.bounds.max.x - 10.0f - slide, layer.bounds.max.y - 8.0f}},
+            {0.12f, 0.62f, 1.0f, 1.0f},
+            20.0f
+        );
         draw::pop_layer(context);
     }
 
@@ -156,21 +211,26 @@ namespace {
         layer.filter_radius = 7.0f;
         float const sweep = wave(time_seconds, 0.32f, 0.9f) * 10.0f;
         draw::push_layer(context, layer);
-        draw::draw_rect_filled(context,
-                               offset(inset(layer.bounds, 34.0f), {sweep, 0.0f}),
-                               {0.20f, 0.76f, 1.0f, 0.92f},
-                               8.0f);
-        draw::draw_circle_filled(context,
-                                 {layer.bounds.min.x + 134.0f - sweep, layer.bounds.min.y + 92.0f},
-                                 56.0f,
-                                 {0.98f, 0.32f, 0.52f, 0.9f},
-                                 32);
+        draw::draw_rect_filled(
+            context,
+            offset(inset(layer.bounds, 34.0f), {sweep, 0.0f}),
+            {0.20f, 0.76f, 1.0f, 0.92f},
+            8.0f
+        );
+        draw::draw_circle_filled(
+            context,
+            {layer.bounds.min.x + 134.0f - sweep, layer.bounds.min.y + 92.0f},
+            56.0f,
+            {0.98f, 0.32f, 0.52f, 0.9f},
+            32
+        );
         draw::draw_rect_filled(
             context,
             {{layer.bounds.min.x + 86.0f, layer.bounds.min.y + 112.0f + sweep * 0.35f},
              {layer.bounds.max.x - 22.0f, layer.bounds.max.y - 18.0f + sweep * 0.35f}},
             {0.98f, 0.76f, 0.22f, 0.86f},
-            12.0f);
+            12.0f
+        );
         draw::pop_layer(context);
     }
 
@@ -183,18 +243,36 @@ namespace {
         layer.drop_shadow.blur_radius = 9.0f;
         layer.drop_shadow.color = {0.0f, 0.0f, 0.0f, 0.55f};
         draw::push_layer(context, layer);
-        draw::draw_circle_filled(context,
-                                 {layer.bounds.min.x + 74.0f + drift, layer.bounds.min.y + 70.0f},
-                                 48.0f,
-                                 {0.28f, 0.92f, 0.55f, 0.95f},
-                                 40);
+        draw::draw_circle_filled(
+            context,
+            {layer.bounds.min.x + 74.0f + drift, layer.bounds.min.y + 70.0f},
+            48.0f,
+            {0.28f, 0.92f, 0.55f, 0.95f},
+            40
+        );
         draw::draw_triangle_filled(
             context,
             {layer.bounds.min.x + 124.0f - drift, layer.bounds.min.y + 38.0f},
             {layer.bounds.max.x - 18.0f - drift, layer.bounds.min.y + 120.0f},
             {layer.bounds.min.x + 104.0f - drift, layer.bounds.max.y - 16.0f},
-            {0.22f, 0.48f, 0.96f, 0.95f});
+            {0.22f, 0.48f, 0.96f, 0.95f}
+        );
+        draw_concave_fill_path(
+            context,
+            {layer.bounds.min.x + 18.0f, layer.bounds.max.y - 70.0f},
+            {0.98f, 0.78f, 0.20f, 0.92f}
+        );
         draw::pop_layer(context);
+
+        for (uint32_t index = 0u; index < 4u; ++index) {
+            float const x = tile.min.x + 38.0f + (static_cast<float>(index) * 28.0f);
+            draw::draw_circle_filled(
+                context, {x, tile.max.y - 24.0f}, 8.0f, {0.92f, 0.96f, 1.0f, 0.86f}, 18
+            );
+        }
+        draw_small_curve_mask_shape(
+            context, {tile.max.x - 66.0f, tile.max.y - 42.0f}, {0.98f, 0.46f, 0.68f, 0.88f}
+        );
     }
 
     auto draw_clipped_layer(draw::Context context, draw::Rect tile, float time_seconds) -> void {
@@ -205,40 +283,50 @@ namespace {
         float const slide = wave(time_seconds, 0.26f, 0.2f) * 16.0f;
         draw::push_layer(context, layer);
         draw::draw_rect_filled(context, layer.bounds, {0.95f, 0.96f, 0.90f, 1.0f}, 0.0f);
-        draw::draw_rect_filled(context,
-                               {{layer.bounds.min.x - 34.0f + slide, layer.bounds.min.y + 24.0f},
-                                {layer.bounds.max.x + 34.0f + slide, layer.bounds.min.y + 74.0f}},
-                               {0.92f, 0.20f, 0.24f, 0.9f},
-                               0.0f);
-        draw::draw_rect_filled(context,
-                               {{layer.bounds.min.x - 30.0f - slide, layer.bounds.min.y + 94.0f},
-                                {layer.bounds.max.x + 48.0f - slide, layer.bounds.min.y + 142.0f}},
-                               {0.12f, 0.62f, 1.0f, 0.9f},
-                               0.0f);
+        draw::draw_rect_filled(
+            context,
+            {{layer.bounds.min.x - 34.0f + slide, layer.bounds.min.y + 24.0f},
+             {layer.bounds.max.x + 34.0f + slide, layer.bounds.min.y + 74.0f}},
+            {0.92f, 0.20f, 0.24f, 0.9f},
+            0.0f
+        );
+        draw::draw_rect_filled(
+            context,
+            {{layer.bounds.min.x - 30.0f - slide, layer.bounds.min.y + 94.0f},
+             {layer.bounds.max.x + 48.0f - slide, layer.bounds.min.y + 142.0f}},
+            {0.12f, 0.62f, 1.0f, 0.9f},
+            0.0f
+        );
         draw::draw_circle_filled(
             context,
             {layer.bounds.max.x - 22.0f + (slide * 0.2f), layer.bounds.max.y - 16.0f},
             54.0f,
             {0.98f, 0.78f, 0.20f, 0.88f},
-            32);
+            32
+        );
         draw::pop_layer(context);
         draw::draw_rect(
-            context, layer.bounds, {0.92f, 0.95f, 0.98f, 0.9f}, 2.0f, layer.clip_radius);
+            context, layer.bounds, {0.92f, 0.95f, 0.98f, 0.9f}, 2.0f, layer.clip_radius
+        );
     }
 
-    auto draw_blend_swatch(draw::Context context,
-                           draw::Rect rect,
-                           draw::LayerBlendMode blend_mode,
-                           draw::Color color,
-                           float time_seconds,
-                           float phase) -> void {
+    auto draw_blend_swatch(
+        draw::Context context,
+        draw::Rect rect,
+        draw::LayerBlendMode blend_mode,
+        draw::Color color,
+        float time_seconds,
+        float phase
+    ) -> void {
         draw::draw_rect_filled(context, rect, {0.02f, 0.04f, 0.055f, 1.0f}, 7.0f);
         draw::draw_rect_filled(context, inset(rect, 12.0f), {0.14f, 0.50f, 0.95f, 1.0f}, 5.0f);
-        draw::draw_circle_filled(context,
-                                 {rect.min.x + 56.0f, rect.min.y + 72.0f},
-                                 38.0f,
-                                 {0.98f, 0.78f, 0.18f, 1.0f},
-                                 28);
+        draw::draw_circle_filled(
+            context,
+            {rect.min.x + 56.0f, rect.min.y + 72.0f},
+            38.0f,
+            {0.98f, 0.78f, 0.18f, 1.0f},
+            28
+        );
 
         draw::LayerDesc layer = {};
         layer.bounds = rect;
@@ -246,7 +334,8 @@ namespace {
         draw::push_layer(context, layer);
         float const drift = wave(time_seconds, 0.30f, phase) * 7.0f;
         draw::draw_rect_filled(
-            context, offset(inset(rect, 30.0f), {16.0f + drift, 14.0f}), color, 8.0f);
+            context, offset(inset(rect, 30.0f), {16.0f + drift, 14.0f}), color, 8.0f
+        );
         draw::pop_layer(context);
     }
 
@@ -257,30 +346,38 @@ namespace {
         draw::Rect const additive = offset(normal, {110.0f, 0.0f});
         draw::Rect const multiply = offset(normal, {0.0f, 104.0f});
         draw::Rect const screen = offset(normal, {110.0f, 104.0f});
-        draw_blend_swatch(context,
-                          normal,
-                          draw::LayerBlendMode::NORMAL,
-                          {0.94f, 0.20f, 0.48f, 0.78f},
-                          time_seconds,
-                          0.0f);
-        draw_blend_swatch(context,
-                          additive,
-                          draw::LayerBlendMode::ADDITIVE,
-                          {0.94f, 0.20f, 0.48f, 0.78f},
-                          time_seconds,
-                          1.1f);
-        draw_blend_swatch(context,
-                          multiply,
-                          draw::LayerBlendMode::MULTIPLY,
-                          {0.94f, 0.20f, 0.48f, 0.78f},
-                          time_seconds,
-                          2.2f);
-        draw_blend_swatch(context,
-                          screen,
-                          draw::LayerBlendMode::SCREEN,
-                          {0.94f, 0.20f, 0.48f, 0.78f},
-                          time_seconds,
-                          3.3f);
+        draw_blend_swatch(
+            context,
+            normal,
+            draw::LayerBlendMode::NORMAL,
+            {0.94f, 0.20f, 0.48f, 0.78f},
+            time_seconds,
+            0.0f
+        );
+        draw_blend_swatch(
+            context,
+            additive,
+            draw::LayerBlendMode::ADDITIVE,
+            {0.94f, 0.20f, 0.48f, 0.78f},
+            time_seconds,
+            1.1f
+        );
+        draw_blend_swatch(
+            context,
+            multiply,
+            draw::LayerBlendMode::MULTIPLY,
+            {0.94f, 0.20f, 0.48f, 0.78f},
+            time_seconds,
+            2.2f
+        );
+        draw_blend_swatch(
+            context,
+            screen,
+            draw::LayerBlendMode::SCREEN,
+            {0.94f, 0.20f, 0.48f, 0.78f},
+            time_seconds,
+            3.3f
+        );
     }
 
     auto build_draw_commands(draw::Context context, float time_seconds) -> void {
@@ -349,18 +446,20 @@ namespace {
             return false;
         }
 
-        HWND const hwnd = CreateWindowExW(0u,
-                                          WINDOW_CLASS_NAME,
-                                          L"gui_framework rendering effects testbed",
-                                          style,
-                                          CW_USEDEFAULT,
-                                          CW_USEDEFAULT,
-                                          rect.right - rect.left,
-                                          rect.bottom - rect.top,
-                                          nullptr,
-                                          nullptr,
-                                          instance,
-                                          nullptr);
+        HWND const hwnd = CreateWindowExW(
+            0u,
+            WINDOW_CLASS_NAME,
+            L"gui_framework rendering effects testbed",
+            style,
+            CW_USEDEFAULT,
+            CW_USEDEFAULT,
+            rect.right - rect.left,
+            rect.bottom - rect.top,
+            nullptr,
+            nullptr,
+            instance,
+            nullptr
+        );
         if (hwnd == nullptr) {
             fmt::eprintf("CreateWindowExW failed: %lu\n", GetLastError());
             return false;
@@ -374,8 +473,13 @@ namespace {
 
 } // namespace
 
-auto main() -> int {
+auto main(int argc, char** argv) -> int {
     base::install_crash_handlers();
+
+    RunOptions options = {};
+    if (!parse_run_options(argc, argv, &options)) {
+        return 2;
+    }
 
     AppState app_state = {};
     global_app_state = &app_state;
@@ -461,7 +565,8 @@ auto main() -> int {
 
         render::begin_frame(render_context);
         uint64_t const elapsed_ticks = GetTickCount64() - start_ticks;
-        float const time_seconds = static_cast<float>(elapsed_ticks) * 0.006f;
+        float const time_seconds =
+            options.fixed_time ? options.time_seconds : static_cast<float>(elapsed_ticks) * 0.006f;
         build_draw_commands(draw_context, time_seconds);
 
         render::WindowRenderPassDesc pass_desc = {};

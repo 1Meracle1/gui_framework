@@ -1,6 +1,8 @@
+#include <algorithm>
 #include <base/memory.h>
 #include <base/slice.h>
 #include <base/vec.h>
+#include <cmath>
 #include <cstring>
 #include <font_cache/font_cache.h>
 #include <limits>
@@ -37,14 +39,25 @@ namespace gui::font_cache {
             float advance = 0.0f;
         };
 
-        struct GlyphEntry {
-            GlyphEntry* next = nullptr;
+        struct GlyphStrikeKey {
             font_provider::Font font = {};
+            font_provider::Backend backend = font_provider::Backend::DEFAULT;
             uint32_t size_bits = 0u;
             uint16_t glyph_index = 0u;
-            font_provider::RasterPolicy raster_policy = font_provider::RasterPolicy::SHARP_HINTED;
+            font_provider::RasterPolicy raster_policy = font_provider::DEFAULT_RASTER_POLICY;
             uint8_t phase_x = 0u;
             uint8_t phase_y = 0u;
+            font_provider::PixelGeometry pixel_geometry =
+                font_provider::PixelGeometry::RGB_HORIZONTAL;
+            font_provider::TargetColorFormat color_format =
+                font_provider::TargetColorFormat::RGBA8_UNORM;
+            uint32_t text_gamma_bits = 0u;
+            uint32_t text_contrast_bits = 0u;
+        };
+
+        struct GlyphEntry {
+            GlyphEntry* next = nullptr;
+            GlyphStrikeKey key = {};
             font_provider::GlyphRaster raster = {};
         };
 
@@ -98,22 +111,86 @@ namespace gui::font_cache {
             return result;
         }
 
-        [[nodiscard]] auto glyph_hash(
+        [[nodiscard]] auto raster_policy_lcd(font_provider::RasterPolicy raster_policy) -> bool {
+            return raster_policy == font_provider::RasterPolicy::LCD_SHARP_HINTED ||
+                   raster_policy == font_provider::RasterPolicy::LCD_SMOOTH_HINTED;
+        }
+
+        [[nodiscard]] auto grayscale_raster_policy(font_provider::RasterPolicy raster_policy)
+            -> font_provider::RasterPolicy {
+            return raster_policy == font_provider::RasterPolicy::LCD_SMOOTH_HINTED
+                       ? font_provider::RasterPolicy::SMOOTH_HINTED
+                       : font_provider::RasterPolicy::SHARP_HINTED;
+        }
+
+        [[nodiscard]] auto surface_allows_lcd_text(font_provider::SurfaceProps props) -> bool {
+            return props.pixel_geometry != font_provider::PixelGeometry::UNKNOWN &&
+                   props.color_format == font_provider::TargetColorFormat::RGBA8_UNORM;
+        }
+
+        [[nodiscard]] auto canonical_text_gamma(float gamma) -> float {
+            return gamma > 0.0f ? gamma : 1.0f;
+        }
+
+        [[nodiscard]] auto canonical_surface_props(font_provider::SurfaceProps props)
+            -> font_provider::SurfaceProps {
+            props.text_gamma = canonical_text_gamma(props.text_gamma);
+            props.text_contrast = std::clamp(props.text_contrast, 0.0f, 1.0f);
+            return props;
+        }
+
+        [[nodiscard]] auto glyph_strike_key(
             font_provider::Font font,
             uint32_t size_bits,
             uint16_t glyph_index,
-            font_provider::RasterPolicy raster_policy,
-            uint8_t phase_x,
-            uint8_t phase_y
-        ) -> uint64_t {
+            font_provider::GlyphRasterDesc desc
+        ) -> GlyphStrikeKey {
+            desc.surface_props = canonical_surface_props(desc.surface_props);
+            if (raster_policy_lcd(desc.raster_policy) &&
+                !surface_allows_lcd_text(desc.surface_props)) {
+                desc.raster_policy = grayscale_raster_policy(desc.raster_policy);
+            }
+
+            GlyphStrikeKey key = {};
+            key.font = font;
+            key.backend = font.backend;
+            key.size_bits = size_bits;
+            key.glyph_index = glyph_index;
+            key.raster_policy = desc.raster_policy;
+            key.phase_x = desc.phase_x % font_provider::GLYPH_RASTER_PHASE_COUNT;
+            key.phase_y = desc.phase_y % font_provider::GLYPH_RASTER_PHASE_COUNT;
+            key.pixel_geometry = desc.surface_props.pixel_geometry;
+            key.color_format = desc.surface_props.color_format;
+            key.text_gamma_bits = float_bits(desc.surface_props.text_gamma);
+            key.text_contrast_bits = float_bits(desc.surface_props.text_contrast);
+            return key;
+        }
+
+        [[nodiscard]] auto glyph_hash(GlyphStrikeKey const& key) -> uint64_t {
             uint64_t result = FNV64_OFFSET;
-            result = hash_size(result, reinterpret_cast<size_t>(font.handle));
-            result = hash_bytes(result, &size_bits, sizeof(size_bits));
-            result = hash_bytes(result, &glyph_index, sizeof(glyph_index));
-            result = hash_bytes(result, &raster_policy, sizeof(raster_policy));
-            result = hash_bytes(result, &phase_x, sizeof(phase_x));
-            result = hash_bytes(result, &phase_y, sizeof(phase_y));
+            result = hash_size(result, reinterpret_cast<size_t>(key.font.handle));
+            result = hash_bytes(result, &key.backend, sizeof(key.backend));
+            result = hash_bytes(result, &key.size_bits, sizeof(key.size_bits));
+            result = hash_bytes(result, &key.glyph_index, sizeof(key.glyph_index));
+            result = hash_bytes(result, &key.raster_policy, sizeof(key.raster_policy));
+            result = hash_bytes(result, &key.phase_x, sizeof(key.phase_x));
+            result = hash_bytes(result, &key.phase_y, sizeof(key.phase_y));
+            result = hash_bytes(result, &key.pixel_geometry, sizeof(key.pixel_geometry));
+            result = hash_bytes(result, &key.color_format, sizeof(key.color_format));
+            result = hash_bytes(result, &key.text_gamma_bits, sizeof(key.text_gamma_bits));
+            result = hash_bytes(result, &key.text_contrast_bits, sizeof(key.text_contrast_bits));
             return result;
+        }
+
+        [[nodiscard]] auto
+        glyph_strike_key_equal(GlyphStrikeKey const& lhs, GlyphStrikeKey const& rhs) -> bool {
+            return lhs.font.handle == rhs.font.handle && lhs.backend == rhs.backend &&
+                   lhs.size_bits == rhs.size_bits && lhs.glyph_index == rhs.glyph_index &&
+                   lhs.raster_policy == rhs.raster_policy && lhs.phase_x == rhs.phase_x &&
+                   lhs.phase_y == rhs.phase_y && lhs.pixel_geometry == rhs.pixel_geometry &&
+                   lhs.color_format == rhs.color_format &&
+                   lhs.text_gamma_bits == rhs.text_gamma_bits &&
+                   lhs.text_contrast_bits == rhs.text_contrast_bits;
         }
 
         [[nodiscard]] auto pixel_byte_count(font_provider::SizeU32 size, uint32_t stride)
@@ -139,8 +216,44 @@ namespace gui::font_cache {
             out_text = StrRef(data, text.size());
         }
 
+        [[nodiscard]] auto key_text_gamma(GlyphStrikeKey const& key) -> float {
+            float gamma = 1.0f;
+            std::memcpy(&gamma, &key.text_gamma_bits, sizeof(gamma));
+            return gamma;
+        }
+
+        [[nodiscard]] auto key_text_contrast(GlyphStrikeKey const& key) -> float {
+            float contrast = 0.0f;
+            std::memcpy(&contrast, &key.text_contrast_bits, sizeof(contrast));
+            return contrast;
+        }
+
+        [[nodiscard]] auto apply_contrast(float alpha, float contrast) -> float {
+            return alpha + ((1.0f - alpha) * contrast * alpha);
+        }
+
+        [[nodiscard]] auto mask_coverage(GlyphStrikeKey const& key, uint8_t coverage) -> uint8_t {
+            if (coverage == 0u || coverage == 255u) {
+                return coverage;
+            }
+
+            float alpha = static_cast<float>(coverage) / 255.0f;
+            float const contrast = key_text_contrast(key);
+            alpha = apply_contrast(alpha, contrast);
+
+            float const gamma = key_text_gamma(key);
+            if (gamma != 1.0f) {
+                alpha = std::pow(alpha, 1.0f / gamma);
+            }
+
+            return static_cast<uint8_t>(std::clamp(alpha * 255.0f + 0.5f, 0.0f, 255.0f));
+        }
+
         auto copy_glyph_raster(
-            Arena& arena, font_provider::GlyphRaster const& raster, font_provider::GlyphRaster& out
+            Arena& arena,
+            GlyphStrikeKey const& key,
+            font_provider::GlyphRaster const& raster,
+            font_provider::GlyphRaster& out
         ) -> void {
             out = raster;
             size_t const bytes = pixel_byte_count(raster.size, raster.stride);
@@ -150,7 +263,35 @@ namespace gui::font_cache {
             }
 
             uint8_t* const data = arena_alloc<uint8_t>(arena, bytes);
-            std::memcpy(data, raster.pixels, bytes);
+            std::memset(data, 0, bytes);
+            if (raster.format == font_provider::RasterFormat::LCD_RGB) {
+                for (uint32_t y = 0u; y < raster.size.height; ++y) {
+                    uint8_t const* const src =
+                        raster.pixels + (static_cast<size_t>(y) * raster.stride);
+                    uint8_t* const dst = data + (static_cast<size_t>(y) * raster.stride);
+                    for (uint32_t x = 0u; x < raster.size.width; ++x) {
+                        uint8_t r = mask_coverage(key, src[x * 4u + 0u]);
+                        uint8_t const g = mask_coverage(key, src[x * 4u + 1u]);
+                        uint8_t b = mask_coverage(key, src[x * 4u + 2u]);
+                        if (key.pixel_geometry == font_provider::PixelGeometry::BGR_HORIZONTAL) {
+                            std::swap(r, b);
+                        }
+                        dst[x * 4u + 0u] = r;
+                        dst[x * 4u + 1u] = g;
+                        dst[x * 4u + 2u] = b;
+                        dst[x * 4u + 3u] = std::max(std::max(r, g), b);
+                    }
+                }
+            } else {
+                for (uint32_t y = 0u; y < raster.size.height; ++y) {
+                    uint8_t const* const src =
+                        raster.pixels + (static_cast<size_t>(y) * raster.stride);
+                    uint8_t* const dst = data + (static_cast<size_t>(y) * raster.stride);
+                    for (uint32_t x = 0u; x < raster.size.width; ++x) {
+                        dst[x] = mask_coverage(key, src[x]);
+                    }
+                }
+            }
             out.pixels = data;
         }
 
@@ -160,19 +301,15 @@ namespace gui::font_cache {
             uint32_t size_bits,
             float size,
             uint16_t glyph_index,
-            font_provider::RasterPolicy raster_policy,
-            uint8_t phase_x,
-            uint8_t phase_y
+            font_provider::GlyphRasterDesc desc
         ) -> font_provider::GlyphRaster {
-            uint64_t const hash =
-                glyph_hash(font, size_bits, glyph_index, raster_policy, phase_x, phase_y);
+            GlyphStrikeKey const key = glyph_strike_key(font, size_bits, glyph_index, desc);
+            uint64_t const hash = glyph_hash(key);
             size_t const slot_index = static_cast<size_t>(hash % cache->slot_count);
 
             for (GlyphEntry* entry = cache->glyph_slots[slot_index]; entry != nullptr;
                  entry = entry->next) {
-                if (entry->font.handle == font.handle && entry->size_bits == size_bits &&
-                    entry->glyph_index == glyph_index && entry->raster_policy == raster_policy &&
-                    entry->phase_x == phase_x && entry->phase_y == phase_y) {
+                if (glyph_strike_key_equal(entry->key, key)) {
                     return entry->raster;
                 }
             }
@@ -180,17 +317,19 @@ namespace gui::font_cache {
             ArenaTemp temp = begin_thread_temp_arena();
             font_provider::GlyphRaster raster = {};
             font_provider::raster_glyph(
-                font, size, glyph_index, raster_policy, phase_x, phase_y, *temp.arena(), raster
+                font,
+                size,
+                glyph_index,
+                key.raster_policy,
+                key.phase_x,
+                key.phase_y,
+                *temp.arena(),
+                raster
             );
 
             GlyphEntry* const entry = arena_new<GlyphEntry>(cache->cache_arena);
-            entry->font = font;
-            entry->size_bits = size_bits;
-            entry->glyph_index = glyph_index;
-            entry->raster_policy = raster_policy;
-            entry->phase_x = phase_x;
-            entry->phase_y = phase_y;
-            copy_glyph_raster(cache->cache_arena, raster, entry->raster);
+            entry->key = key;
+            copy_glyph_raster(cache->cache_arena, key, raster, entry->raster);
             entry->next = cache->glyph_slots[slot_index];
             cache->glyph_slots[slot_index] = entry;
             return entry->raster;
@@ -399,6 +538,7 @@ namespace gui::font_cache {
         entry->run.offset_y = shaped.origin_y;
         entry->run.height = shaped.height;
         entry->run.glyph_count = shaped.glyph_count;
+        entry->run.run_count = shaped.run_count;
 
         if (shaped.glyph_count != 0u) {
             TextGlyph* const glyphs = arena_alloc<TextGlyph>(impl->cache_arena, shaped.glyph_count);
@@ -407,19 +547,52 @@ namespace gui::font_cache {
                 TextGlyph& glyph = glyphs[index];
                 glyph.font = shaped_glyph.font;
                 glyph.glyph_index = shaped_glyph.glyph_index;
+                glyph.run_index = shaped_glyph.run_index;
                 glyph.size = shaped_glyph.size;
                 glyph.x = shaped_glyph.x;
                 glyph.advance = shaped_glyph.advance;
                 glyph.offset_x = shaped_glyph.offset_x;
                 glyph.offset_y = shaped_glyph.offset_y;
+                glyph.cluster = shaped_glyph.cluster;
+                glyph.utf8_start = shaped_glyph.utf8_start;
+                glyph.utf8_end = shaped_glyph.utf8_end;
             }
             entry->run.glyphs = glyphs;
+        }
+        if (shaped.run_count != 0u) {
+            TextBlobRun* const runs = arena_alloc<TextBlobRun>(impl->cache_arena, shaped.run_count);
+            for (size_t index = 0u; index < shaped.run_count; ++index) {
+                font_provider::ShapedRun const& shaped_run = shaped.runs[index];
+                TextBlobRun& run = runs[index];
+                run.font = shaped_run.font;
+                run.first_glyph = shaped_run.first_glyph;
+                run.glyph_count = shaped_run.glyph_count;
+                run.utf8_start = shaped_run.utf8_start;
+                run.utf8_end = shaped_run.utf8_end;
+                run.script = shaped_run.script;
+                run.bidi_level = shaped_run.bidi_level;
+                run.right_to_left = shaped_run.right_to_left;
+            }
+            entry->run.runs = runs;
         }
 
         entry->next = impl->slots[slot_index];
         impl->slots[slot_index] = entry;
 
         out_run = entry->run;
+    }
+
+    auto glyph_raster(Font font, TextGlyph const& glyph, font_provider::GlyphRasterDesc const& desc)
+        -> font_provider::GlyphRaster {
+        CacheFont* const impl = font_from_handle(font);
+        ASSERT(impl != nullptr);
+        ASSERT(impl->cache != nullptr);
+        ASSERT(font_provider::font_valid(glyph.font));
+        ASSERT(glyph.size > 0.0f);
+
+        return cached_glyph_raster(
+            impl->cache, glyph.font, float_bits(glyph.size), glyph.size, glyph.glyph_index, desc
+        );
     }
 
     auto glyph_raster(
@@ -429,29 +602,16 @@ namespace gui::font_cache {
         uint8_t phase_x,
         uint8_t phase_y
     ) -> font_provider::GlyphRaster {
-        CacheFont* const impl = font_from_handle(font);
-        ASSERT(impl != nullptr);
-        ASSERT(impl->cache != nullptr);
-        ASSERT(font_provider::font_valid(glyph.font));
-        ASSERT(glyph.size > 0.0f);
-
-        return cached_glyph_raster(
-            impl->cache,
-            glyph.font,
-            float_bits(glyph.size),
-            glyph.size,
-            glyph.glyph_index,
-            raster_policy,
-            phase_x,
-            phase_y
-        );
+        font_provider::GlyphRasterDesc desc = {};
+        desc.raster_policy = raster_policy;
+        desc.phase_x = phase_x;
+        desc.phase_y = phase_y;
+        return glyph_raster(font, glyph, desc);
     }
 
     auto glyph_raster(Font font, TextGlyph const& glyph, uint8_t phase_x, uint8_t phase_y)
         -> font_provider::GlyphRaster {
-        return glyph_raster(
-            font, glyph, font_provider::RasterPolicy::SHARP_HINTED, phase_x, phase_y
-        );
+        return glyph_raster(font, glyph, font_provider::DEFAULT_RASTER_POLICY, phase_x, phase_y);
     }
 
 } // namespace gui::font_cache

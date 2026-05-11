@@ -241,6 +241,16 @@ namespace code_editor {
                 out_value = gui::font_provider::RasterPolicy::SMOOTH_HINTED;
                 return true;
             }
+            if (value.equals_ignore_ascii_case("lcd-sharp") ||
+                value.equals_ignore_ascii_case("lcd-sharp-hinted")) {
+                out_value = gui::font_provider::RasterPolicy::LCD_SHARP_HINTED;
+                return true;
+            }
+            if (value.equals_ignore_ascii_case("lcd-smooth") ||
+                value.equals_ignore_ascii_case("lcd-smooth-hinted")) {
+                out_value = gui::font_provider::RasterPolicy::LCD_SMOOTH_HINTED;
+                return true;
+            }
             return false;
         }
 
@@ -545,10 +555,17 @@ namespace code_editor {
             }
             if (full_key.equals_ignore_ascii_case("editor.raster-policy")) {
                 gui::font_provider::RasterPolicy raster_policy =
-                    gui::font_provider::RasterPolicy::SHARP_HINTED;
+                    gui::font_provider::DEFAULT_RASTER_POLICY;
                 if (!parse_raster_policy_value(value, raster_policy)) {
                     set_value_error(
-                        error, source, path, line, column, full_key, "\"sharp\" or \"smooth\"", text
+                        error,
+                        source,
+                        path,
+                        line,
+                        column,
+                        full_key,
+                        "\"sharp\", \"smooth\", \"lcd-sharp\", or \"lcd-smooth\"",
+                        text
                     );
                     return false;
                 }
@@ -776,7 +793,8 @@ namespace code_editor {
                "[editor]\n"
                "# font-size = 12\n"
                "# sidebar-visible = true\n"
-               "# raster-policy = \"sharp\"\n"
+               "# raster-policy = \"lcd-smooth\"\n"
+               "# raster-policy = \"smooth\"\n"
                "\n"
                "[theme.ui]\n"
                "# shell = \"#0d1116\"\n"

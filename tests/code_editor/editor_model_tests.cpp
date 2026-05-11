@@ -1149,16 +1149,14 @@ namespace {
         TEST_EXPECT(context, editor.flag(EditorFlag::WRITE_QUIT_REQUESTED));
         editor.set_flag(EditorFlag::WRITE_QUIT_REQUESTED, false);
 
-        TEST_EXPECT(
-            context, editor.raster_policy == gui::font_provider::RasterPolicy::SHARP_HINTED
-        );
+        TEST_EXPECT(context, editor.raster_policy == gui::font_provider::DEFAULT_RASTER_POLICY);
         run_command_line_text(editor, "rp");
         TEST_EXPECT(
-            context, editor.raster_policy == gui::font_provider::RasterPolicy::SMOOTH_HINTED
+            context, editor.raster_policy == gui::font_provider::RasterPolicy::SHARP_HINTED
         );
         run_command_line_text(editor, "toggle-raster-policy");
         TEST_EXPECT(
-            context, editor.raster_policy == gui::font_provider::RasterPolicy::SHARP_HINTED
+            context, editor.raster_policy == gui::font_provider::RasterPolicy::SMOOTH_HINTED
         );
 
         run_command_line_text(editor, "open");

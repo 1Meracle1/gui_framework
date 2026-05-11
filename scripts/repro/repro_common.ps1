@@ -28,8 +28,11 @@ public static class ReproWin32 {
     }
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
     [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+    [DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr hWnd, out RECT rect);
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
     [DllImport("user32.dll")] public static extern bool ClientToScreen(IntPtr hWnd, ref POINT point);
+    [DllImport("user32.dll")] public static extern uint GetDpiForSystem();
+    [DllImport("user32.dll")] public static extern uint GetDpiForWindow(IntPtr hWnd);
     [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
     [DllImport("user32.dll", SetLastError=true)] public static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
     [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
@@ -141,9 +144,50 @@ function Focus-ReproWindow(
     [int]$height = 900
 ) {
     [ReproWin32]::ShowWindow($handle, 9) | Out-Null
-    [ReproWin32]::SetWindowPos($handle, [IntPtr]::Zero, $x, $y, $width, $height, 0) | Out-Null
+    [ReproWin32]::SetWindowPos($handle, [IntPtr](-1), $x, $y, $width, $height, 0x0040) | Out-Null
     [ReproWin32]::SetForegroundWindow($handle) | Out-Null
     Start-Sleep -Milliseconds 250
+}
+
+function Get-ReproWindowDiagnostics([IntPtr]$handle = [IntPtr]::Zero) {
+    if ($handle -eq [IntPtr]::Zero) {
+        $handle = $script:repro_hwnd
+    }
+    $window = New-Object ReproWin32+RECT
+    $client = New-Object ReproWin32+RECT
+    [ReproWin32]::GetWindowRect($handle, [ref]$window) | Out-Null
+    [ReproWin32]::GetClientRect($handle, [ref]$client) | Out-Null
+    $origin = New-Object ReproWin32+POINT
+    $origin.X = 0
+    $origin.Y = 0
+    [ReproWin32]::ClientToScreen($handle, [ref]$origin) | Out-Null
+    $window_dpi = [ReproWin32]::GetDpiForWindow($handle)
+    $system_dpi = [ReproWin32]::GetDpiForSystem()
+    return [ordered]@{
+        window_rect = [ordered]@{
+            left = $window.Left
+            top = $window.Top
+            right = $window.Right
+            bottom = $window.Bottom
+            width = $window.Right - $window.Left
+            height = $window.Bottom - $window.Top
+        }
+        client_rect = [ordered]@{
+            left = $client.Left
+            top = $client.Top
+            right = $client.Right
+            bottom = $client.Bottom
+            width = $client.Right - $client.Left
+            height = $client.Bottom - $client.Top
+            screen_x = $origin.X
+            screen_y = $origin.Y
+        }
+        dpi = [ordered]@{
+            system = $system_dpi
+            window = $window_dpi
+            scale = [Math]::Round([double]$window_dpi / 96.0, 4)
+        }
+    }
 }
 
 function Start-ReproSession {
@@ -355,6 +399,170 @@ function Save-ReproScreenshot([string]$name, [string]$path) {
     $graphics.Dispose()
     $bitmap.Dispose()
     Add-ReproArtifact $name $path
+}
+
+function Save-ReproClientScreenshot([string]$name, [string]$path) {
+    [ReproWin32]::SetForegroundWindow($script:repro_hwnd) | Out-Null
+    Start-Sleep -Milliseconds 80
+    $rect = New-Object ReproWin32+RECT
+    [ReproWin32]::GetClientRect($script:repro_hwnd, [ref]$rect) | Out-Null
+    $point = New-Object ReproWin32+POINT
+    $point.X = 0
+    $point.Y = 0
+    [ReproWin32]::ClientToScreen($script:repro_hwnd, [ref]$point) | Out-Null
+    $width = $rect.Right - $rect.Left
+    $height = $rect.Bottom - $rect.Top
+    $bitmap = [System.Drawing.Bitmap]::new($width, $height)
+    $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+    $graphics.CopyFromScreen($point.X, $point.Y, 0, 0, $bitmap.Size)
+    $bitmap.Save($path, [System.Drawing.Imaging.ImageFormat]::Png)
+    $graphics.Dispose()
+    $bitmap.Dispose()
+    Add-ReproArtifact $name $path
+}
+
+function Save-ReproImageCrop(
+    [string]$name,
+    [string]$source,
+    [string]$target,
+    [int]$x,
+    [int]$y,
+    [int]$width,
+    [int]$height,
+    [int]$scale = 1
+) {
+    $bitmap = [System.Drawing.Bitmap]::FromFile($source)
+    $crop_rect = [System.Drawing.Rectangle]::new(
+        $x,
+        $y,
+        [Math]::Min($width, $bitmap.Width - $x),
+        [Math]::Min($height, $bitmap.Height - $y)
+    )
+    $crop = $bitmap.Clone($crop_rect, $bitmap.PixelFormat)
+    if ($scale -eq 1) {
+        $crop.Save($target, [System.Drawing.Imaging.ImageFormat]::Png)
+    } else {
+        $copy = [System.Drawing.Bitmap]::new($crop.Width * $scale, $crop.Height * $scale)
+        $graphics = [System.Drawing.Graphics]::FromImage($copy)
+        $graphics.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::NearestNeighbor
+        $graphics.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::Half
+        $graphics.DrawImage($crop, 0, 0, $copy.Width, $copy.Height)
+        $copy.Save($target, [System.Drawing.Imaging.ImageFormat]::Png)
+        $graphics.Dispose()
+        $copy.Dispose()
+    }
+    $crop.Dispose()
+    $bitmap.Dispose()
+    Add-ReproArtifact $name $target
+}
+
+function Measure-ReproImage([string]$path) {
+    $bitmap = [System.Drawing.Bitmap]::FromFile($path)
+    $width = $bitmap.Width
+    $height = $bitmap.Height
+    $count = [int64]$width * [int64]$height
+    $sum_r = [int64]0
+    $sum_g = [int64]0
+    $sum_b = [int64]0
+    $non_bg = [int64]0
+    $bg = $bitmap.GetPixel(0, 0)
+    for ($y = 0; $y -lt $height; ++$y) {
+        for ($x = 0; $x -lt $width; ++$x) {
+            $pixel = $bitmap.GetPixel($x, $y)
+            $sum_r += $pixel.R
+            $sum_g += $pixel.G
+            $sum_b += $pixel.B
+            $bg_delta = [Math]::Abs($pixel.R - $bg.R) +
+                [Math]::Abs($pixel.G - $bg.G) +
+                [Math]::Abs($pixel.B - $bg.B)
+            if ($bg_delta -gt 12) {
+                $non_bg += 1
+            }
+        }
+    }
+    $bitmap.Dispose()
+    return [ordered]@{
+        path = $path
+        width = $width
+        height = $height
+        mean_r = [Math]::Round([double]$sum_r / [double]$count, 4)
+        mean_g = [Math]::Round([double]$sum_g / [double]$count, 4)
+        mean_b = [Math]::Round([double]$sum_b / [double]$count, 4)
+        non_background_pct = [Math]::Round(([double]$non_bg * 100.0) / [double]$count, 4)
+    }
+}
+
+function Compare-ReproImages([string]$reference, [string]$candidate) {
+    $a = [System.Drawing.Bitmap]::FromFile($reference)
+    $b = [System.Drawing.Bitmap]::FromFile($candidate)
+    $width = [Math]::Min($a.Width, $b.Width)
+    $height = [Math]::Min($a.Height, $b.Height)
+    $count = [int64]$width * [int64]$height
+    $sum = [int64]0
+    $sum_sq = [double]0.0
+    $changed = [int64]0
+    $max_delta = 0
+    for ($y = 0; $y -lt $height; ++$y) {
+        for ($x = 0; $x -lt $width; ++$x) {
+            $pa = $a.GetPixel($x, $y)
+            $pb = $b.GetPixel($x, $y)
+            $dr = [Math]::Abs($pa.R - $pb.R)
+            $dg = [Math]::Abs($pa.G - $pb.G)
+            $db = [Math]::Abs($pa.B - $pb.B)
+            $pixel_sum = $dr + $dg + $db
+            $sum += $pixel_sum
+            $sum_sq += ($dr * $dr) + ($dg * $dg) + ($db * $db)
+            $max_delta = [Math]::Max($max_delta, [Math]::Max($dr, [Math]::Max($dg, $db)))
+            if ($pixel_sum -ne 0) {
+                $changed += 1
+            }
+        }
+    }
+    $a.Dispose()
+    $b.Dispose()
+    return [ordered]@{
+        reference = $reference
+        candidate = $candidate
+        width = $width
+        height = $height
+        mean_rgb_abs_sum = [Math]::Round([double]$sum / [double]$count, 4)
+        rms_channel_delta = [Math]::Round([Math]::Sqrt($sum_sq / ([double]$count * 3.0)), 4)
+        max_channel_delta = $max_delta
+        changed_pct = [Math]::Round(([double]$changed * 100.0) / [double]$count, 4)
+    }
+}
+
+function Save-ReproContactSheet(
+    [string]$target,
+    [object[]]$items,
+    [int]$columns,
+    [int]$thumb_width,
+    [int]$thumb_height
+) {
+    $label_height = 24
+    $rows = [Math]::Ceiling([double]$items.Count / [double]$columns)
+    $sheet = [System.Drawing.Bitmap]::new($columns * $thumb_width, $rows * ($thumb_height + $label_height))
+    $graphics = [System.Drawing.Graphics]::FromImage($sheet)
+    $graphics.Clear([System.Drawing.Color]::FromArgb(18, 23, 30))
+    $graphics.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+    $font = [System.Drawing.Font]::new('Consolas', 10.0)
+    $brush = [System.Drawing.SolidBrush]::new([System.Drawing.Color]::FromArgb(224, 230, 236))
+    for ($index = 0; $index -lt $items.Count; ++$index) {
+        $item = $items[$index]
+        $column = $index % $columns
+        $row = [Math]::Floor($index / $columns)
+        $x = $column * $thumb_width
+        $y = $row * ($thumb_height + $label_height)
+        $graphics.DrawString([string]$item.label, $font, $brush, $x + 4, $y + 4)
+        $image = [System.Drawing.Bitmap]::FromFile([string]$item.path)
+        $graphics.DrawImage($image, $x, $y + $label_height, $thumb_width, $thumb_height)
+        $image.Dispose()
+    }
+    $sheet.Save($target, [System.Drawing.Imaging.ImageFormat]::Png)
+    $brush.Dispose()
+    $font.Dispose()
+    $graphics.Dispose()
+    $sheet.Dispose()
 }
 
 function Save-ReproLeftCrop([string]$name, [string]$source, [string]$target) {

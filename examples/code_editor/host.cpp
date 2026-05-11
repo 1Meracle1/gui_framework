@@ -129,6 +129,12 @@ namespace code_editor {
 
     AppState* global_app_state = nullptr;
 
+    auto enable_process_dpi_awareness() -> void {
+        if (SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) == FALSE) {
+            BASE_UNUSED(SetProcessDPIAware());
+        }
+    }
+
     auto request_redraw(AppState* state) -> void {
         if (state != nullptr) {
             state->redraw_pending = true;
@@ -846,6 +852,26 @@ namespace code_editor {
 
     auto window_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) -> LRESULT {
         switch (message) {
+        case WM_DPICHANGED: {
+            RECT const* const rect = reinterpret_cast<RECT const*>(lparam);
+            if (rect != nullptr) {
+                BASE_UNUSED(SetWindowPos(
+                    hwnd,
+                    nullptr,
+                    rect->left,
+                    rect->top,
+                    rect->right - rect->left,
+                    rect->bottom - rect->top,
+                    SWP_NOZORDER | SWP_NOACTIVATE
+                ));
+            }
+            if (global_app_state != nullptr) {
+                global_app_state->pending_size = window_client_size(hwnd);
+                global_app_state->resize_pending = true;
+                request_redraw(global_app_state);
+            }
+            return 0;
+        }
         case WM_SIZE:
             if (global_app_state != nullptr && wparam != SIZE_MINIMIZED) {
                 render::SizeU32 const size = {loword_u32(lparam), hiword_u32(lparam)};
@@ -2554,6 +2580,8 @@ auto main(int argc, char** argv) -> int {
     base::install_crash_handlers();
 
 #if defined(_WIN32)
+    code_editor::enable_process_dpi_awareness();
+
     code_editor::RunOptions options = {};
     if (!code_editor::parse_run_options(argc, argv, &options)) {
         shutdown_thread_temp_arenas();

@@ -1,6 +1,9 @@
 target_sources(gui_framework PRIVATE
+    src/coverage_mask_atlas.cpp
     src/draw.cpp
+    src/draw_path.cpp
     src/draw_renderer.cpp
+    src/draw_renderer_state.cpp
     src/text_atlas.cpp
 )
 

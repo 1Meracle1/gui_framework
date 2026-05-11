@@ -20,6 +20,9 @@ namespace gui::render::d3d11 {
     [[nodiscard]] auto
     allocate_frame_vertex_buffer(Context context, size_t byte_size, size_t byte_alignment)
         -> FrameBufferSlice;
+    [[nodiscard]] auto
+    allocate_frame_index_buffer(Context context, size_t byte_size, size_t byte_alignment)
+        -> FrameBufferSlice;
     auto commit_frame_uploads(Context context) -> void;
 
     [[nodiscard]] auto
@@ -55,6 +58,7 @@ namespace gui::render::d3d11 {
     auto bind_group(Context context, BindGroup bind_group) -> void;
     auto set_scissor_rect(Context context, ScissorRect rect) -> void;
     auto draw(Context context, DrawDesc const& desc) -> void;
+    auto draw_indexed(Context context, DrawIndexedDesc const& desc) -> void;
 
     [[nodiscard]] auto resize_window(Context context, Window window, SizeU32 size) -> Result;
     auto begin_frame(Context context) -> void;

@@ -83,7 +83,7 @@ namespace gui::font_provider::platform {
     raster_glyph(Font font, float size, uint16_t glyph_index, Arena& arena, GlyphRaster& out_raster)
         -> void {
         gui::font_provider::platform::raster_glyph(
-            font, size, glyph_index, RasterPolicy::SHARP_HINTED, 0u, 0u, arena, out_raster
+            font, size, glyph_index, DEFAULT_RASTER_POLICY, 0u, 0u, arena, out_raster
         );
     }
 
@@ -97,7 +97,7 @@ namespace gui::font_provider::platform {
         GlyphRaster& out_raster
     ) -> void {
         gui::font_provider::platform::raster_glyph(
-            font, size, glyph_index, RasterPolicy::SHARP_HINTED, phase_x, phase_y, arena, out_raster
+            font, size, glyph_index, DEFAULT_RASTER_POLICY, phase_x, phase_y, arena, out_raster
         );
     }
 

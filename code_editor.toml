@@ -5,9 +5,9 @@
 #   :set theme.ui.cursor="#ffcc00"
 
 [editor]
-font-size = 12
+font-size = 15
 # sidebar-visible = true
-raster-policy = "smooth"
+raster-policy = "lcd-smooth"
 #raster-policy = "sharp"
 
 [theme.ui]

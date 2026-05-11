@@ -15,8 +15,7 @@ namespace code_editor {
 
     struct EditorConfig {
         Palette palette = {};
-        gui::font_provider::RasterPolicy raster_policy =
-            gui::font_provider::RasterPolicy::SHARP_HINTED;
+        gui::font_provider::RasterPolicy raster_policy = gui::font_provider::DEFAULT_RASTER_POLICY;
         float font_size = 12.0f;
         bool sidebar_visible = false;
     };
@@ -24,8 +23,7 @@ namespace code_editor {
     struct EditorConfigPatch {
         Palette palette = {};
         uint32_t palette_mask = 0u;
-        gui::font_provider::RasterPolicy raster_policy =
-            gui::font_provider::RasterPolicy::SHARP_HINTED;
+        gui::font_provider::RasterPolicy raster_policy = gui::font_provider::DEFAULT_RASTER_POLICY;
         float font_size = 0.0f;
         bool sidebar_visible = false;
         bool has_raster_policy = false;

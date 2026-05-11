@@ -120,7 +120,7 @@ namespace gui::font_provider {
     auto
     raster_glyph(Font font, float size, uint16_t glyph_index, Arena& arena, GlyphRaster& out_raster)
         -> void {
-        raster_glyph(font, size, glyph_index, RasterPolicy::SHARP_HINTED, arena, out_raster);
+        raster_glyph(font, size, glyph_index, DEFAULT_RASTER_POLICY, arena, out_raster);
     }
 
     auto raster_glyph(
@@ -144,7 +144,7 @@ namespace gui::font_provider {
         GlyphRaster& out_raster
     ) -> void {
         raster_glyph(
-            font, size, glyph_index, RasterPolicy::SHARP_HINTED, phase_x, phase_y, arena, out_raster
+            font, size, glyph_index, DEFAULT_RASTER_POLICY, phase_x, phase_y, arena, out_raster
         );
     }
 

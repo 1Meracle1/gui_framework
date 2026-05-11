@@ -26,11 +26,26 @@ namespace gui::font_cache {
     struct TextGlyph {
         font_provider::Font font = {};
         uint16_t glyph_index = 0u;
+        uint16_t run_index = 0u;
         float size = 0.0f;
         float x = 0.0f;
         float advance = 0.0f;
         float offset_x = 0.0f;
         float offset_y = 0.0f;
+        uint32_t cluster = 0u;
+        uint32_t utf8_start = 0u;
+        uint32_t utf8_end = 0u;
+    };
+
+    struct TextBlobRun {
+        font_provider::Font font = {};
+        size_t first_glyph = 0u;
+        size_t glyph_count = 0u;
+        uint32_t utf8_start = 0u;
+        uint32_t utf8_end = 0u;
+        uint16_t script = 0u;
+        uint8_t bidi_level = 0u;
+        bool right_to_left = false;
     };
 
     struct TextRun {
@@ -43,6 +58,8 @@ namespace gui::font_cache {
         float height = 0.0f;
         TextGlyph const* glyphs = nullptr;
         size_t glyph_count = 0u;
+        TextBlobRun const* runs = nullptr;
+        size_t run_count = 0u;
     };
 
     [[nodiscard]] auto cache_valid(Cache cache) -> bool;
@@ -61,6 +78,9 @@ namespace gui::font_cache {
     [[nodiscard]] auto text_advance(Font font, float size, StrRef text) -> float;
 
     auto text_run(Cache cache, Font font, float size, StrRef text, TextRun& out_run) -> void;
+    [[nodiscard]] auto
+    glyph_raster(Font font, TextGlyph const& glyph, font_provider::GlyphRasterDesc const& desc)
+        -> font_provider::GlyphRaster;
     [[nodiscard]] auto glyph_raster(
         Font font,
         TextGlyph const& glyph,
