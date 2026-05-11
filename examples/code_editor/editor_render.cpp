@@ -851,12 +851,6 @@ namespace code_editor {
         store_current_open_file(editor);
     }
 
-    [[nodiscard]] auto git_log_limit_for_height(float sidebar_content_height) -> size_t {
-        float const height = std::max(0.0f, sidebar_content_height);
-        size_t const rows = static_cast<size_t>(std::ceil(height / GIT_ROW_HEIGHT));
-        return std::max(GIT_LOG_MIN_LIMIT, rows);
-    }
-
     auto request_more_git_commits_for_scroll(EditorState& editor, gui::ScrollState scroll) -> void {
         if (!scroll.valid || scroll.max_y <= 0.0f || !editor.git_graph_open ||
             !editor.git_commits_more || editor.git_commits_loading || editor.git_commits.empty()) {
@@ -5694,7 +5688,7 @@ namespace code_editor {
         draw_git_graph_spacer(ui, row_width, skipped_rows);
     }
 
-    [[nodiscard]] auto git_loading_alpha(float phase, size_t index) -> float {
+    [[nodiscard]] auto loading_alpha(float phase, size_t index) -> float {
         float offset = phase - static_cast<float>(index) * 0.18f;
         if (offset < 0.0f) {
             offset += 1.0f;
@@ -5731,7 +5725,45 @@ namespace code_editor {
                     .layout = {.width = gui::px(5.0f), .height = gui::px(5.0f)},
                     .style = {
                         .background = gui::color_alpha(
-                            palette.cursor, git_loading_alpha(editor.git_loading_phase, index)
+                            palette.cursor, loading_alpha(editor.git_loading_phase, index)
+                        ),
+                        .radius = 2.5f,
+                    },
+                });
+            }
+            ui.spacer({.layout = {.width = gui::fill(), .height = gui::px(1.0f)}});
+        }
+    }
+
+    auto draw_filesystem_loading_row(
+        gui::Frame& ui, EditorState const& editor, Palette const& palette, float row_width
+    ) -> void {
+        if (auto row = ui.row(
+                gui::id("filesystem_loading_row"),
+                {
+                    .layout = {
+                        .width = row_width > 0.0f ? gui::px(row_width) : gui::fill(),
+                        .height = gui::px(26.0f),
+                        .gap = 6.0f,
+                        .align_y = gui::Align::CENTER,
+                    },
+                }
+            )) {
+            BASE_UNUSED(row);
+            draw_tree_guide(ui, palette);
+            ui.label(
+                "Loading files",
+                {
+                    .layout = {.width = gui::text(), .height = gui::fill()},
+                    .style = {.foreground = palette.muted, .font_size = editor.font_size},
+                }
+            );
+            for (size_t index = 0u; index < 3u; ++index) {
+                ui.spacer({
+                    .layout = {.width = gui::px(5.0f), .height = gui::px(5.0f)},
+                    .style = {
+                        .background = gui::color_alpha(
+                            palette.cursor, loading_alpha(editor.git_loading_phase, index)
                         ),
                         .radius = 2.5f,
                     },
@@ -5847,11 +5879,6 @@ namespace code_editor {
         bool focused,
         gui::InputState const& input
     ) -> void {
-        size_t const git_log_limit = git_log_limit_for_height(sidebar_content_height);
-        if (editor.git_graph_open && editor.git_commit_limit < git_log_limit) {
-            editor.git_log_refresh_requested = true;
-        }
-
         if (!focused && editor.git_control_focused) {
             ui.clear_focus();
         }
@@ -6082,6 +6109,10 @@ namespace code_editor {
             editor.set_flag(EditorFlag::TREE_OPEN, tree_open);
             size_t row_index = 1u;
             if (tree_open) {
+                if (editor.tree_loading) {
+                    draw_filesystem_loading_row(ui, editor, palette, row_min_width);
+                    row_index += 1u;
+                }
                 if (draft.active && draft.after_index == TREE_CURSOR_ROOT) {
                     if (editor.tree_edit_mode == TreeEditMode::CREATE_FILE ||
                         editor.tree_edit_mode == TreeEditMode::CREATE_DIRECTORY) {

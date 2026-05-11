@@ -1,11 +1,13 @@
 #pragma once
 
+#include "git.h"
 #include "lsp.h"
 
 #include <algorithm>
 #include <base/config.h>
 #include <base/memory.h>
 #include <base/slice.h>
+#include <base/spsc_queue.h>
 #include <base/str_ref.h>
 #include <base/unicode.h>
 #include <cstddef>
@@ -138,6 +140,71 @@ namespace code_editor {
         char target_path[TREE_OPERATION_PATH_CAPACITY] = {};
     };
 
+    enum class GitWorkKind : uint8_t {
+        NONE,
+        REFRESH,
+        COMMIT_PAGE,
+        COMMIT_FILES,
+        STAGE,
+        STAGE_ALL,
+        UNSTAGE,
+        UNSTAGE_ALL,
+        COMMIT,
+        PUSH,
+        PULL,
+        FETCH,
+        MERGE_BRANCH,
+        REBASE_BRANCH,
+        CHERRY_PICK,
+        MERGE_ABORT,
+        REBASE_CONTINUE,
+        REBASE_ABORT,
+        CHERRY_PICK_CONTINUE,
+        CHERRY_PICK_ABORT,
+        CHECKOUT_BRANCH,
+        OPEN_STATUS_DIFF,
+        OPEN_COMMIT_DIFF,
+    };
+
+    struct GitWorkRequest {
+        GitWorkKind kind = GitWorkKind::NONE;
+        uint64_t generation = 0u;
+        size_t offset = 0u;
+        size_t count = 0u;
+        size_t limit = 0u;
+        GitStatusScope scope = GitStatusScope::UNSTAGED;
+        StrRef save_root = {};
+        StrRef root = {};
+        StrRef path = {};
+        StrRef commit_oid = {};
+        StrRef message_text = {};
+        StrRef branch = {};
+    };
+
+    struct GitWorkResult {
+        GitWorkKind kind = GitWorkKind::NONE;
+        uint64_t generation = 0u;
+        size_t offset = 0u;
+        size_t count = 0u;
+        size_t limit = 0u;
+        size_t pending_pull_count = 0u;
+        size_t pending_push_count = 0u;
+        GitStatusScope scope = GitStatusScope::UNSTAGED;
+        GitOperationState operation_state = GitOperationState::NONE;
+        StrRef root = {};
+        StrRef current_branch = {};
+        StrRef path = {};
+        StrRef commit_oid = {};
+        StrRef patch = {};
+        StrRef message = {};
+        Vec<GitStatusItem> status_items = {};
+        Vec<GitCommit> commits = {};
+        Vec<GitCommitFile> commit_files = {};
+        Vec<GitBranch> branches = {};
+        bool ok = false;
+        bool log_loaded = false;
+    };
+
     struct ModuleRuntimeContext {
         gui::render::Context render_context = {};
         void* native_window = nullptr;
@@ -149,7 +216,10 @@ namespace code_editor {
         Slice<FileTreeEntry> tree_files = {};
         StrRef const* shared_tree_root_name = nullptr;
         Slice<FileTreeEntry>* shared_tree_files = nullptr;
+        bool const* shared_tree_loading = nullptr;
         uint64_t const* shared_file_change_generation = nullptr;
+        SpscQueue<GitWorkRequest>* shared_git_requests = nullptr;
+        SpscQueue<GitWorkResult>* shared_git_results = nullptr;
         TreeOperationRequest* shared_tree_operation_request = nullptr;
         TreeOperationResult* shared_tree_operation_result = nullptr;
         LspBridge const* lsp_bridge = nullptr;

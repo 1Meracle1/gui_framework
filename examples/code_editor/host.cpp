@@ -10,11 +10,14 @@
 #include "app.h"
 
 #include <algorithm>
+#include <atomic>
 #include <base/config.h>
 #include <base/crash.h>
 #include <base/fmt.h>
+#include <base/hash_map.h>
 #include <base/memory.h>
 #include <base/slice.h>
+#include <base/spsc_queue.h>
 #include <base/vec.h>
 #include <cstdint>
 #include <cstdio>
@@ -59,6 +62,35 @@ namespace code_editor {
     constexpr COLORREF WINDOW_HEADER_BACKGROUND = RGB(12, 15, 18);
     constexpr COLORREF WINDOW_HEADER_TEXT = RGB(230, 235, 239);
     constexpr size_t GIT_PATH_LINE_CAPACITY = MAX_PATH * 4u;
+    constexpr size_t GIT_WORK_QUEUE_CAPACITY = 8u;
+    constexpr size_t TREE_FETCH_QUEUE_CAPACITY = 2u;
+    constexpr uint64_t TREE_OPERATION_WATCHER_IGNORE_MS = 1000u;
+
+    struct TreeFetchRequest {
+        uint64_t generation = 0u;
+        size_t git_log_limit = GIT_LOG_MIN_LIMIT;
+        bool load_git_log = false;
+        StrRef root = {};
+        Arena* arena = nullptr;
+        uint32_t arena_index = 0u;
+    };
+
+    struct TreeFetchResult {
+        uint64_t generation = 0u;
+        Vec<FileTreeEntry> files = {};
+        uint32_t arena_index = 0u;
+        bool ok = false;
+    };
+
+    struct BackgroundWorker {
+        SpscQueue<GitWorkRequest> git_requests = {};
+        SpscQueue<GitWorkResult> git_results = {};
+        SpscQueue<TreeFetchRequest> requests = {};
+        SpscQueue<TreeFetchResult> results = {};
+        Arena git_result_arena = {};
+        HANDLE thread = nullptr;
+        std::atomic<bool> stop_requested = false;
+    };
 
     struct AppState {
         HWND hwnd = nullptr;
@@ -115,6 +147,7 @@ namespace code_editor {
         Arena tree_arenas[2] = {};
         Arena tree_history_arena = {};
         Vec<FileTreeEntry> tree_files = {};
+        BackgroundWorker worker = {};
         DirectoryWatcher tree_watcher = {};
         TreeHistoryEntry* tree_undo_stack = nullptr;
         TreeHistoryEntry* tree_redo_stack = nullptr;
@@ -123,7 +156,15 @@ namespace code_editor {
         uint32_t tree_arena_index = 0u;
         uint64_t file_change_generation = 0u;
         uint64_t file_change_ticks = 0u;
+        uint64_t ignore_tree_change_ticks = 0u;
+        uint64_t tree_fetch_generation = 0u;
+        size_t git_log_limit = GIT_LOG_MIN_LIMIT;
         bool tree_change_pending = false;
+        bool tree_fetch_pending = false;
+        bool tree_fetch_refresh_requested = false;
+        bool tree_loading = false;
+        bool git_log_prefetched = false;
+        bool initial_tree_refresh = false;
         bool initial_sidebar_visible = false;
     };
 
@@ -283,6 +324,33 @@ namespace code_editor {
         return true;
     }
 
+    [[nodiscard]] auto wide_ascii_lower(wchar_t value) -> wchar_t {
+        return value >= L'A' && value <= L'Z' ? static_cast<wchar_t>(value + (L'a' - L'A')) : value;
+    }
+
+    [[nodiscard]] auto wide_component_is_git(wchar_t const* text, size_t size) -> bool {
+        return size == 4u && text[0u] == L'.' && wide_ascii_lower(text[1u]) == L'g' &&
+               wide_ascii_lower(text[2u]) == L'i' && wide_ascii_lower(text[3u]) == L't';
+    }
+
+    [[nodiscard]] auto directory_change_is_git_metadata(FILE_NOTIFY_INFORMATION const& info)
+        -> bool {
+        wchar_t const* const text = info.FileName;
+        size_t const size = static_cast<size_t>(info.FileNameLength) / sizeof(wchar_t);
+        size_t begin = 0u;
+        for (size_t index = 0u; index <= size; ++index) {
+            bool const separator = index == size || text[index] == L'\\' || text[index] == L'/';
+            if (!separator) {
+                continue;
+            }
+            if (wide_component_is_git(text + begin, index - begin)) {
+                return true;
+            }
+            begin = index + 1u;
+        }
+        return false;
+    }
+
     [[nodiscard]] auto directory_change_affects_tree(uint8_t const* buffer, DWORD bytes) -> bool {
         if (bytes == 0u) {
             return true;
@@ -296,7 +364,10 @@ namespace code_editor {
             case FILE_ACTION_REMOVED:
             case FILE_ACTION_RENAMED_OLD_NAME:
             case FILE_ACTION_RENAMED_NEW_NAME:
-                return true;
+                if (!directory_change_is_git_metadata(*info)) {
+                    return true;
+                }
+                break;
             default:
                 break;
             }
@@ -1578,6 +1649,9 @@ namespace code_editor {
                 continue;
             }
             bool const is_directory = (find_data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0u;
+            if (is_directory && name.equals_ignore_ascii_case(".git")) {
+                continue;
+            }
             if (!append_tree_entry(
                     arena,
                     entries,
@@ -1634,6 +1708,7 @@ namespace code_editor {
             launch.save_root_path = current_directory_cstr(arena);
             launch.window_cache_path = window_cache_path(arena, launch.save_root_path);
             launch.tree_root_name = arena_copy_str(arena, path_leaf(launch.save_root_path));
+            launch.initial_tree_refresh = true;
             return true;
         }
 
@@ -1648,7 +1723,8 @@ namespace code_editor {
             launch.save_root_path = path;
             launch.tree_root_name = arena_copy_str(arena, path_leaf(path));
             launch.initial_sidebar_visible = true;
-            return read_directory_files(launch.tree_arenas[0u], path, "", launch.tree_files, 0u);
+            launch.initial_tree_refresh = true;
+            return true;
         }
 
         if (!read_file_text(arena, full_path, launch.initial_text)) {
@@ -1661,15 +1737,262 @@ namespace code_editor {
         launch.initial_file_path = path;
         StrRef const parent = path_parent(path);
         launch.save_root_path = parent;
-        if (read_directory_files(launch.tree_arenas[0u], parent, "", launch.tree_files, 0u)) {
-            launch.tree_root_name = arena_copy_str(arena, path_leaf(parent));
-        }
+        launch.tree_root_name = arena_copy_str(arena, path_leaf(parent));
+        launch.initial_tree_refresh = true;
         return true;
     }
 
-    auto refresh_launch_tree(LaunchDesc& launch) -> void {
-        if (launch.save_root_path.empty()) {
+    auto apply_tree_open_state(Vec<FileTreeEntry>& files, Slice<FileTreeEntry> old_files) -> void {
+        ArenaTemp temp = begin_thread_temp_arena();
+        HashMap<StrRef, bool> open_dirs = {};
+        if (!open_dirs.init(old_files.size(), temp.arena()->resource())) {
             return;
+        }
+        for (FileTreeEntry const& file : old_files) {
+            if (file.is_directory && file.open) {
+                BASE_UNUSED(open_dirs.set(file.relative_path, true));
+            }
+        }
+        for (FileTreeEntry& file : files) {
+            if (file.is_directory) {
+                file.open = open_dirs.contains(file.relative_path);
+            }
+        }
+    }
+
+    [[nodiscard]] auto
+    git_work_root(Arena& arena, GitWorkRequest const& request, StrRef& root, StrRef& message)
+        -> bool {
+        if (!request.root.empty()) {
+            root = request.root;
+            message = {};
+            return true;
+        }
+        if (request.save_root.empty()) {
+            message = "Not a Git repository.";
+            return false;
+        }
+        return git_discover_root(arena, request.save_root, root, message);
+    }
+
+    [[nodiscard]] auto init_git_result_vecs(Arena& arena, GitWorkResult& result) -> bool {
+        return result.status_items.init(0u, arena.resource()) &&
+               result.commits.init(0u, arena.resource()) &&
+               result.commit_files.init(0u, arena.resource()) &&
+               result.branches.init(0u, arena.resource());
+    }
+
+    [[nodiscard]] auto execute_git_work(Arena& arena, GitWorkRequest const& request)
+        -> GitWorkResult {
+        GitWorkResult result = {
+            .kind = request.kind,
+            .generation = request.generation,
+            .offset = request.offset,
+            .count = request.count,
+            .limit = request.limit,
+            .scope = request.scope,
+            .path = request.path,
+            .commit_oid = request.commit_oid,
+        };
+        BASE_UNUSED(init_git_result_vecs(arena, result));
+
+        StrRef root = {};
+        StrRef message = {};
+        if (!git_work_root(arena, request, root, message)) {
+            result.root = root;
+            result.message = message;
+            return result;
+        }
+        result.root = root;
+
+        switch (request.kind) {
+        case GitWorkKind::REFRESH:
+            result.ok =
+                git_load_branches(arena, root, result.branches, result.current_branch, message) &&
+                git_load_status(arena, root, result.status_items, message) &&
+                git_load_pending_pull_count(arena, root, result.pending_pull_count, message) &&
+                git_load_pending_push_count(arena, root, result.pending_push_count, message) &&
+                git_load_operation_state(arena, root, result.operation_state, message);
+            result.log_loaded = result.ok && request.count != 0u;
+            if (result.log_loaded) {
+                result.ok =
+                    git_load_commits(arena, root, 0u, request.count, result.commits, message);
+            }
+            break;
+        case GitWorkKind::COMMIT_PAGE:
+            result.ok = git_load_commits(
+                arena, root, request.offset, request.count + 1u, result.commits, message
+            );
+            break;
+        case GitWorkKind::COMMIT_FILES:
+            result.ok = git_load_commit_files(
+                arena, root, request.commit_oid, result.commit_files, message
+            );
+            break;
+        case GitWorkKind::STAGE:
+            result.ok = git_stage_path(arena, root, request.path, message);
+            break;
+        case GitWorkKind::STAGE_ALL:
+            result.ok = git_stage_all(arena, root, message);
+            break;
+        case GitWorkKind::UNSTAGE:
+            result.ok = git_unstage_path(arena, root, request.path, message);
+            break;
+        case GitWorkKind::UNSTAGE_ALL:
+            result.ok = git_unstage_all(arena, root, message);
+            break;
+        case GitWorkKind::COMMIT:
+            result.ok = git_commit(arena, root, request.message_text, message);
+            break;
+        case GitWorkKind::PUSH:
+            result.ok = git_push(arena, root, message);
+            break;
+        case GitWorkKind::PULL:
+            result.ok = git_pull(arena, root, message);
+            break;
+        case GitWorkKind::FETCH:
+            result.ok = git_fetch(arena, root, message);
+            break;
+        case GitWorkKind::MERGE_BRANCH:
+            result.ok = git_merge_branch(arena, root, request.branch, message);
+            break;
+        case GitWorkKind::REBASE_BRANCH:
+            result.ok = git_rebase_branch(arena, root, request.branch, message);
+            break;
+        case GitWorkKind::CHERRY_PICK:
+            result.ok = git_cherry_pick(arena, root, request.branch, message);
+            break;
+        case GitWorkKind::MERGE_ABORT:
+            result.ok = git_merge_abort(arena, root, message);
+            break;
+        case GitWorkKind::REBASE_CONTINUE:
+            result.ok = git_rebase_continue(arena, root, message);
+            break;
+        case GitWorkKind::REBASE_ABORT:
+            result.ok = git_rebase_abort(arena, root, message);
+            break;
+        case GitWorkKind::CHERRY_PICK_CONTINUE:
+            result.ok = git_cherry_pick_continue(arena, root, message);
+            break;
+        case GitWorkKind::CHERRY_PICK_ABORT:
+            result.ok = git_cherry_pick_abort(arena, root, message);
+            break;
+        case GitWorkKind::CHECKOUT_BRANCH:
+            result.ok = git_checkout_branch(arena, root, request.branch, message);
+            break;
+        case GitWorkKind::OPEN_STATUS_DIFF:
+            result.ok =
+                git_status_patch(arena, root, request.scope, request.path, result.patch, message);
+            break;
+        case GitWorkKind::OPEN_COMMIT_DIFF:
+            result.ok = git_commit_patch(
+                arena, root, request.commit_oid, request.path, result.patch, message
+            );
+            break;
+        case GitWorkKind::NONE:
+        default:
+            break;
+        }
+        result.message = message;
+        return result;
+    }
+
+    auto WINAPI background_worker_thread(void* user_data) -> DWORD {
+        auto* const worker = static_cast<BackgroundWorker*>(user_data);
+        init_thread_temp_arenas();
+        while (!worker->stop_requested.load(std::memory_order_acquire)) {
+            GitWorkRequest git_request = {};
+            if (worker->git_requests.pop(git_request)) {
+                GitWorkResult const result =
+                    execute_git_work(worker->git_result_arena, git_request);
+                while (!worker->stop_requested.load(std::memory_order_acquire) &&
+                       !worker->git_results.push(result)) {
+                    Sleep(1u);
+                }
+                reset_thread_temp_arenas();
+                continue;
+            }
+
+            TreeFetchRequest request = {};
+            if (!worker->requests.pop(request)) {
+                Sleep(1u);
+                continue;
+            }
+
+            Vec<FileTreeEntry> files = {};
+            bool const ok = request.arena != nullptr && !request.root.empty() &&
+                            files.init(32u, request.arena->resource()) &&
+                            read_directory_files(*request.arena, request.root, "", files, 0u);
+            TreeFetchResult const result = {
+                .generation = request.generation,
+                .files = files,
+                .arena_index = request.arena_index,
+                .ok = ok,
+            };
+            while (!worker->stop_requested.load(std::memory_order_acquire) &&
+                   !worker->results.push(result)) {
+                Sleep(1u);
+            }
+            if (ok) {
+                GitWorkRequest const refresh_request = {
+                    .kind = GitWorkKind::REFRESH,
+                    .count = request.load_git_log ? request.git_log_limit + 1u : 0u,
+                    .limit = request.git_log_limit,
+                    .save_root = request.root,
+                };
+                GitWorkResult const git_result =
+                    execute_git_work(worker->git_result_arena, refresh_request);
+                while (!worker->stop_requested.load(std::memory_order_acquire) &&
+                       !worker->git_results.push(git_result)) {
+                    Sleep(1u);
+                }
+            }
+            reset_thread_temp_arenas();
+        }
+        shutdown_thread_temp_arenas();
+        return 0u;
+    }
+
+    [[nodiscard]] auto create_background_worker(Arena& arena, BackgroundWorker& worker) -> bool {
+        worker.stop_requested.store(false, std::memory_order_relaxed);
+        if (!worker.git_requests.init(GIT_WORK_QUEUE_CAPACITY, arena.resource()) ||
+            !worker.git_results.init(GIT_WORK_QUEUE_CAPACITY, arena.resource()) ||
+            !worker.requests.init(TREE_FETCH_QUEUE_CAPACITY, arena.resource()) ||
+            !worker.results.init(TREE_FETCH_QUEUE_CAPACITY, arena.resource())) {
+            return false;
+        }
+        worker.git_result_arena.init();
+        worker.thread = CreateThread(nullptr, 0u, background_worker_thread, &worker, 0u, nullptr);
+        return worker.thread != nullptr;
+    }
+
+    auto destroy_background_worker(BackgroundWorker& worker) -> void {
+        worker.stop_requested.store(true, std::memory_order_release);
+        if (worker.thread != nullptr) {
+            WaitForSingleObject(worker.thread, INFINITE);
+            CloseHandle(worker.thread);
+            worker.thread = nullptr;
+        }
+        worker.git_result_arena.destroy();
+        worker.git_requests = {};
+        worker.git_results = {};
+        worker.requests = {};
+        worker.results = {};
+    }
+
+    [[nodiscard]] auto git_log_limit_for_window_height(uint32_t height) -> size_t {
+        size_t const rows = (static_cast<size_t>(height) + 23u) / 24u;
+        return std::max(GIT_LOG_MIN_LIMIT, rows);
+    }
+
+    [[nodiscard]] auto request_launch_tree_refresh(LaunchDesc& launch) -> bool {
+        if (launch.save_root_path.empty()) {
+            return false;
+        }
+        launch.tree_loading = true;
+        if (launch.tree_fetch_pending) {
+            launch.tree_fetch_refresh_requested = true;
+            return true;
         }
 
         uint32_t const old_index = launch.tree_arena_index;
@@ -1677,18 +2000,56 @@ namespace code_editor {
         Arena& arena = launch.tree_arenas[new_index];
         arena.reset();
 
-        Vec<FileTreeEntry> files = {};
-        if (!files.init(32u, arena.resource()) ||
-            !read_directory_files(
-                arena, launch.save_root_path, "", files, 0u, launch.tree_files.slice()
-            )) {
-            return;
+        TreeFetchRequest const request = {
+            .generation = launch.tree_fetch_generation + 1u,
+            .git_log_limit = launch.git_log_limit,
+            .load_git_log = !launch.git_log_prefetched,
+            .root = launch.save_root_path,
+            .arena = &arena,
+            .arena_index = new_index,
+        };
+        if (!launch.worker.requests.push(request)) {
+            launch.tree_loading = false;
+            return false;
         }
 
-        launch.tree_files = files;
-        files = {};
-        launch.tree_arenas[old_index].reset();
-        launch.tree_arena_index = new_index;
+        launch.tree_fetch_generation = request.generation;
+        launch.tree_fetch_pending = true;
+        launch.git_log_prefetched = launch.git_log_prefetched || request.load_git_log;
+        return true;
+    }
+
+    auto refresh_launch_tree(LaunchDesc& launch) -> void {
+        BASE_UNUSED(request_launch_tree_refresh(launch));
+    }
+
+    [[nodiscard]] auto sync_launch_tree_fetch_results(LaunchDesc& launch) -> bool {
+        bool changed = false;
+        TreeFetchResult result = {};
+        while (launch.worker.results.pop(result)) {
+            if (result.generation != launch.tree_fetch_generation) {
+                continue;
+            }
+
+            launch.tree_fetch_pending = false;
+            if (result.ok) {
+                uint32_t const old_index = launch.tree_arena_index;
+                apply_tree_open_state(result.files, launch.tree_files.slice());
+                launch.tree_files = result.files;
+                launch.tree_arena_index = result.arena_index;
+                launch.tree_arenas[old_index].reset();
+                launch.file_change_generation += 1u;
+            }
+
+            if (launch.tree_fetch_refresh_requested) {
+                launch.tree_fetch_refresh_requested = false;
+                BASE_UNUSED(request_launch_tree_refresh(launch));
+            } else {
+                launch.tree_loading = false;
+            }
+            changed = true;
+        }
+        return changed;
     }
 
     [[nodiscard]] auto tree_file_index_by_path(Slice<FileTreeEntry const> files, StrRef path)
@@ -1966,6 +2327,10 @@ namespace code_editor {
         launch.file_change_generation += 1u;
         launch.file_change_ticks = 0u;
         launch.tree_change_pending = false;
+        launch.ignore_tree_change_ticks = GetTickCount64() + TREE_OPERATION_WATCHER_IGNORE_MS;
+        if (launch.tree_fetch_pending) {
+            launch.tree_fetch_refresh_requested = true;
+        }
     }
 
     [[nodiscard]] auto tree_operation_targets_root(LaunchDesc const& launch, StrRef path) -> bool {
@@ -1982,7 +2347,6 @@ namespace code_editor {
 
     auto refresh_launch_tree_from_operation(LaunchDesc& launch) -> void {
         refresh_launch_tree(launch);
-        mark_launch_tree_changed_from_operation(launch);
     }
 
     auto remove_launch_tree_path_from_operation(LaunchDesc& launch, StrRef path) -> void {
@@ -2242,6 +2606,9 @@ namespace code_editor {
         uint64_t const ticks = GetTickCount64();
         bool tree_changed = false;
         if (consume_directory_change(launch.tree_watcher, tree_changed)) {
+            if (tree_changed && ticks <= launch.ignore_tree_change_ticks) {
+                tree_changed = false;
+            }
             launch.file_change_ticks = ticks;
             launch.tree_change_pending = launch.tree_change_pending || tree_changed;
         }
@@ -2252,9 +2619,10 @@ namespace code_editor {
         tree_changed = launch.tree_change_pending;
         launch.file_change_ticks = 0u;
         launch.tree_change_pending = false;
-        launch.file_change_generation += 1u;
         if (tree_changed) {
             refresh_launch_tree(launch);
+        } else {
+            launch.file_change_generation += 1u;
         }
         return true;
     }
@@ -2296,6 +2664,7 @@ namespace code_editor {
         window_desc.size = window_client_size(app_state.hwnd);
         window_desc.buffer_count = 2u;
         window_desc.present_mode = render::PresentMode::VSYNC;
+        launch.git_log_limit = git_log_limit_for_window_height(window_desc.size.height);
 
         result = render::create_window(app_arena, render_context, window_desc, render_window);
         if (render::result_failed(result)) {
@@ -2342,8 +2711,11 @@ namespace code_editor {
         };
         module_context.shared_tree_root_name = &module_context.tree_root_name;
         module_context.shared_tree_files = &module_context.tree_files;
+        module_context.shared_tree_loading = &launch.tree_loading;
         module_context.shared_file_change_generation =
             watching_files ? &launch.file_change_generation : nullptr;
+        module_context.shared_git_requests = &launch.worker.git_requests;
+        module_context.shared_git_results = &launch.worker.git_results;
         gui::HotReloadDesc module_desc = hot_reload_desc(&module_context);
         gui::HotReloadAppModule module = {};
         gui::init_hot_reload_app_module(&module, module_desc, app_arena);
@@ -2371,6 +2743,27 @@ namespace code_editor {
             return 1;
         }
 
+        if (!create_background_worker(app_arena, launch.worker)) {
+            gui::destroy_hot_reload_app_module(&module, module_desc);
+#if BASE_DEBUG
+            if (hot_reload_overlay_ready) {
+                gui::destroy_hot_reload_overlay(render_context, &hot_reload_overlay);
+            }
+#endif
+            if (lsp_initialized) {
+                lsp_client_shutdown(lsp_client);
+            }
+            close_directory_watcher(launch.tree_watcher);
+            render::destroy_window(render_window);
+            render::destroy_context(render_context);
+            destroy_testbed_window(&app_state);
+            global_app_state = nullptr;
+            return 1;
+        }
+        if (launch.initial_tree_refresh) {
+            BASE_UNUSED(request_launch_tree_refresh(launch));
+        }
+
         uint64_t previous_ticks = GetTickCount64();
         while (app_state.running) {
             MSG message = {};
@@ -2396,6 +2789,8 @@ namespace code_editor {
                 app_state.resize_pending = false;
                 app_state.redraw_pending = true;
             }
+            launch.git_log_limit =
+                git_log_limit_for_window_height(render::window_size(render_window).height);
 
             if (gui::update_hot_reload_app_module(&module, module_desc)) {
                 app_state.last_frame = {};
@@ -2421,6 +2816,11 @@ namespace code_editor {
                 hot_reload_overlay_visible = hot_reload_overlay_state.visible;
             }
 #endif
+            if (sync_launch_tree_fetch_results(launch)) {
+                module_context.tree_root_name = launch.tree_root_name;
+                module_context.tree_files = launch.tree_files.slice();
+                app_state.redraw_pending = true;
+            }
             uint64_t const tree_operation_generation_before =
                 launch.tree_operation_result.generation;
             BASE_UNUSED(process_tree_operation_request(launch));
@@ -2555,6 +2955,7 @@ namespace code_editor {
             }
         }
 
+        destroy_background_worker(launch.worker);
         close_directory_watcher(launch.tree_watcher);
         gui::destroy_hot_reload_app_module(&module, module_desc);
 #if BASE_DEBUG

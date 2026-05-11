@@ -16,12 +16,10 @@
 #include "git.h"
 
 #include <algorithm>
-#include <atomic>
 #include <base/config.h>
 #include <base/fmt.h>
 #include <base/memory.h>
 #include <base/slice.h>
-#include <base/spsc_queue.h>
 #include <base/unicode.h>
 #include <cmath>
 #include <cstdio>
@@ -62,80 +60,6 @@ namespace code_editor {
     constexpr float CONFIG_ERROR_MESSAGE_LINE_HEIGHT_SCALE = 1.45f;
     constexpr float CONFIG_ERROR_MESSAGE_MIN_HEIGHT = 24.0f;
     constexpr float CONFIG_ERROR_EXCERPT_PADDING = 20.0f;
-    constexpr size_t GIT_WORK_QUEUE_CAPACITY = 8u;
-
-    enum class GitWorkKind : uint8_t {
-        NONE,
-        REFRESH,
-        COMMIT_PAGE,
-        COMMIT_FILES,
-        STAGE,
-        STAGE_ALL,
-        UNSTAGE,
-        UNSTAGE_ALL,
-        COMMIT,
-        PUSH,
-        PULL,
-        FETCH,
-        MERGE_BRANCH,
-        REBASE_BRANCH,
-        CHERRY_PICK,
-        MERGE_ABORT,
-        REBASE_CONTINUE,
-        REBASE_ABORT,
-        CHERRY_PICK_CONTINUE,
-        CHERRY_PICK_ABORT,
-        CHECKOUT_BRANCH,
-        OPEN_STATUS_DIFF,
-        OPEN_COMMIT_DIFF,
-    };
-
-    struct GitWorkRequest {
-        GitWorkKind kind = GitWorkKind::NONE;
-        uint64_t generation = 0u;
-        size_t offset = 0u;
-        size_t count = 0u;
-        size_t limit = 0u;
-        GitStatusScope scope = GitStatusScope::UNSTAGED;
-        StrRef save_root = {};
-        StrRef root = {};
-        StrRef path = {};
-        StrRef commit_oid = {};
-        StrRef message_text = {};
-        StrRef branch = {};
-    };
-
-    struct GitWorkResult {
-        GitWorkKind kind = GitWorkKind::NONE;
-        uint64_t generation = 0u;
-        size_t offset = 0u;
-        size_t count = 0u;
-        size_t limit = 0u;
-        size_t pending_pull_count = 0u;
-        size_t pending_push_count = 0u;
-        GitStatusScope scope = GitStatusScope::UNSTAGED;
-        GitOperationState operation_state = GitOperationState::NONE;
-        StrRef root = {};
-        StrRef current_branch = {};
-        StrRef path = {};
-        StrRef commit_oid = {};
-        StrRef patch = {};
-        StrRef message = {};
-        Vec<GitStatusItem> status_items = {};
-        Vec<GitCommit> commits = {};
-        Vec<GitCommitFile> commit_files = {};
-        Vec<GitBranch> branches = {};
-        bool ok = false;
-        bool log_loaded = false;
-    };
-
-    struct GitWorker {
-        SpscQueue<GitWorkRequest> requests = {};
-        SpscQueue<GitWorkResult> results = {};
-        Arena result_arena = {};
-        HANDLE thread = nullptr;
-        std::atomic<bool> stop_requested = false;
-    };
 
     struct RuntimeConfigState {
         EditorConfig base = {};
@@ -163,7 +87,10 @@ namespace code_editor {
         void* native_window = nullptr;
         StrRef const* shared_tree_root_name = nullptr;
         Slice<FileTreeEntry>* shared_tree_files = nullptr;
+        bool const* shared_tree_loading = nullptr;
         uint64_t const* shared_file_change_generation = nullptr;
+        SpscQueue<GitWorkRequest>* shared_git_requests = nullptr;
+        SpscQueue<GitWorkResult>* shared_git_results = nullptr;
         LspBridge const* lsp_bridge = nullptr;
         LspSendEditorRequestFn lsp_send_request = nullptr;
         void* lsp_user_data = nullptr;
@@ -172,7 +99,6 @@ namespace code_editor {
         uint64_t file_change_generation = 0u;
         float char_width = 8.0f;
         RuntimeConfigState config = {};
-        GitWorker git_worker = {};
     };
 
     static auto log_render_result(char const* operation, render::Result result) -> void {
@@ -223,6 +149,9 @@ namespace code_editor {
         if (runtime.shared_tree_files != nullptr) {
             runtime.editor.tree_files = *runtime.shared_tree_files;
         }
+        if (runtime.shared_tree_loading != nullptr) {
+            runtime.editor.tree_loading = *runtime.shared_tree_loading;
+        }
         if (runtime.shared_file_change_generation == nullptr) {
             return true;
         }
@@ -243,187 +172,6 @@ namespace code_editor {
             std::memcpy(buffer, text.data(), size);
         }
         buffer[size] = '\0';
-    }
-
-    [[nodiscard]] auto
-    git_work_root(Arena& arena, GitWorkRequest const& request, StrRef& root, StrRef& message)
-        -> bool {
-        if (!request.root.empty()) {
-            root = request.root;
-            message = {};
-            return true;
-        }
-        if (request.save_root.empty()) {
-            message = "Not a Git repository.";
-            return false;
-        }
-        return git_discover_root(arena, request.save_root, root, message);
-    }
-
-    [[nodiscard]] auto init_git_result_vecs(Arena& arena, GitWorkResult& result) -> bool {
-        return result.status_items.init(0u, arena.resource()) &&
-               result.commits.init(0u, arena.resource()) &&
-               result.commit_files.init(0u, arena.resource()) &&
-               result.branches.init(0u, arena.resource());
-    }
-
-    [[nodiscard]] auto execute_git_work(Arena& arena, GitWorkRequest const& request)
-        -> GitWorkResult {
-        GitWorkResult result = {
-            .kind = request.kind,
-            .generation = request.generation,
-            .offset = request.offset,
-            .count = request.count,
-            .limit = request.limit,
-            .scope = request.scope,
-            .path = request.path,
-            .commit_oid = request.commit_oid,
-        };
-        BASE_UNUSED(init_git_result_vecs(arena, result));
-
-        StrRef root = {};
-        StrRef message = {};
-        if (!git_work_root(arena, request, root, message)) {
-            result.root = root;
-            result.message = message;
-            return result;
-        }
-        result.root = root;
-
-        switch (request.kind) {
-        case GitWorkKind::REFRESH:
-            result.ok =
-                git_load_branches(arena, root, result.branches, result.current_branch, message) &&
-                git_load_status(arena, root, result.status_items, message) &&
-                git_load_pending_pull_count(arena, root, result.pending_pull_count, message) &&
-                git_load_pending_push_count(arena, root, result.pending_push_count, message) &&
-                git_load_operation_state(arena, root, result.operation_state, message);
-            result.log_loaded = result.ok && request.count != 0u;
-            if (result.log_loaded) {
-                result.ok =
-                    git_load_commits(arena, root, 0u, request.count, result.commits, message);
-            }
-            break;
-        case GitWorkKind::COMMIT_PAGE:
-            result.ok = git_load_commits(
-                arena, root, request.offset, request.count + 1u, result.commits, message
-            );
-            break;
-        case GitWorkKind::COMMIT_FILES:
-            result.ok = git_load_commit_files(
-                arena, root, request.commit_oid, result.commit_files, message
-            );
-            break;
-        case GitWorkKind::STAGE:
-            result.ok = git_stage_path(arena, root, request.path, message);
-            break;
-        case GitWorkKind::STAGE_ALL:
-            result.ok = git_stage_all(arena, root, message);
-            break;
-        case GitWorkKind::UNSTAGE:
-            result.ok = git_unstage_path(arena, root, request.path, message);
-            break;
-        case GitWorkKind::UNSTAGE_ALL:
-            result.ok = git_unstage_all(arena, root, message);
-            break;
-        case GitWorkKind::COMMIT:
-            result.ok = git_commit(arena, root, request.message_text, message);
-            break;
-        case GitWorkKind::PUSH:
-            result.ok = git_push(arena, root, message);
-            break;
-        case GitWorkKind::PULL:
-            result.ok = git_pull(arena, root, message);
-            break;
-        case GitWorkKind::FETCH:
-            result.ok = git_fetch(arena, root, message);
-            break;
-        case GitWorkKind::MERGE_BRANCH:
-            result.ok = git_merge_branch(arena, root, request.branch, message);
-            break;
-        case GitWorkKind::REBASE_BRANCH:
-            result.ok = git_rebase_branch(arena, root, request.branch, message);
-            break;
-        case GitWorkKind::CHERRY_PICK:
-            result.ok = git_cherry_pick(arena, root, request.branch, message);
-            break;
-        case GitWorkKind::MERGE_ABORT:
-            result.ok = git_merge_abort(arena, root, message);
-            break;
-        case GitWorkKind::REBASE_CONTINUE:
-            result.ok = git_rebase_continue(arena, root, message);
-            break;
-        case GitWorkKind::REBASE_ABORT:
-            result.ok = git_rebase_abort(arena, root, message);
-            break;
-        case GitWorkKind::CHERRY_PICK_CONTINUE:
-            result.ok = git_cherry_pick_continue(arena, root, message);
-            break;
-        case GitWorkKind::CHERRY_PICK_ABORT:
-            result.ok = git_cherry_pick_abort(arena, root, message);
-            break;
-        case GitWorkKind::CHECKOUT_BRANCH:
-            result.ok = git_checkout_branch(arena, root, request.branch, message);
-            break;
-        case GitWorkKind::OPEN_STATUS_DIFF:
-            result.ok =
-                git_status_patch(arena, root, request.scope, request.path, result.patch, message);
-            break;
-        case GitWorkKind::OPEN_COMMIT_DIFF:
-            result.ok = git_commit_patch(
-                arena, root, request.commit_oid, request.path, result.patch, message
-            );
-            break;
-        case GitWorkKind::NONE:
-        default:
-            break;
-        }
-        result.message = message;
-        return result;
-    }
-
-    auto WINAPI git_worker_thread(void* user_data) -> DWORD {
-        auto* const worker = static_cast<GitWorker*>(user_data);
-        init_thread_temp_arenas();
-        while (!worker->stop_requested.load(std::memory_order_acquire)) {
-            GitWorkRequest request = {};
-            if (!worker->requests.pop(request)) {
-                Sleep(1u);
-                continue;
-            }
-
-            GitWorkResult const result = execute_git_work(worker->result_arena, request);
-            while (!worker->stop_requested.load(std::memory_order_acquire) &&
-                   !worker->results.push(result)) {
-                Sleep(1u);
-            }
-            reset_thread_temp_arenas();
-        }
-        shutdown_thread_temp_arenas();
-        return 0u;
-    }
-
-    [[nodiscard]] auto create_git_worker(Arena& arena, GitWorker& worker) -> bool {
-        worker.stop_requested.store(false, std::memory_order_relaxed);
-        if (!worker.requests.init(GIT_WORK_QUEUE_CAPACITY, arena.resource()) ||
-            !worker.results.init(GIT_WORK_QUEUE_CAPACITY, arena.resource())) {
-            return false;
-        }
-        worker.result_arena.init();
-        worker.thread = CreateThread(nullptr, 0u, git_worker_thread, &worker, 0u, nullptr);
-        return worker.thread != nullptr;
-    }
-
-    auto destroy_git_worker(GitWorker& worker) -> void {
-        worker.stop_requested.store(true, std::memory_order_release);
-        if (worker.thread != nullptr) {
-            WaitForSingleObject(worker.thread, INFINITE);
-            CloseHandle(worker.thread);
-            worker.thread = nullptr;
-        }
-        worker.result_arena.destroy();
-        worker.requests = {};
-        worker.results = {};
     }
 
     auto set_git_status_text(EditorState& editor, StrRef text) -> void {
@@ -544,6 +292,8 @@ namespace code_editor {
 
     auto apply_git_refresh_result(EditorState& editor, GitWorkResult const& result) -> void {
         editor.git_operation_pending = false;
+        editor.git_refresh_requested = false;
+        editor.git_log_refresh_requested = false;
         if (editor.arena == nullptr) {
             return;
         }
@@ -666,8 +416,11 @@ namespace code_editor {
     }
 
     auto sync_git_worker_results(Runtime& runtime) -> void {
+        if (runtime.shared_git_results == nullptr) {
+            return;
+        }
         GitWorkResult result = {};
-        while (runtime.git_worker.results.pop(result)) {
+        while (runtime.shared_git_results->pop(result)) {
             switch (result.kind) {
             case GitWorkKind::REFRESH:
                 apply_git_refresh_result(runtime.editor, result);
@@ -744,7 +497,7 @@ namespace code_editor {
     [[nodiscard]] auto
     submit_git_operation(Runtime& runtime, GitWorkRequest const& request, StrRef status_text)
         -> bool {
-        if (!runtime.git_worker.requests.push(request)) {
+        if (runtime.shared_git_requests == nullptr || !runtime.shared_git_requests->push(request)) {
             set_git_error_text(runtime.editor, "Git worker queue is full.");
             return false;
         }
@@ -868,7 +621,7 @@ namespace code_editor {
             .count = GIT_LOG_PAGE_SIZE,
         };
         fill_git_root_request(editor, request);
-        if (!runtime.git_worker.requests.push(request)) {
+        if (runtime.shared_git_requests == nullptr || !runtime.shared_git_requests->push(request)) {
             set_git_error_text(editor, "Git worker queue is full.");
             return false;
         }
@@ -1529,7 +1282,6 @@ namespace code_editor {
         if (runtime == nullptr) {
             return;
         }
-        destroy_git_worker(runtime->git_worker);
         if (gui::context_valid(runtime->ui_context)) {
             gui::destroy_context(runtime->ui_context);
         }
@@ -1602,7 +1354,10 @@ namespace code_editor {
         runtime->native_window = context.native_window;
         runtime->shared_tree_root_name = context.shared_tree_root_name;
         runtime->shared_tree_files = context.shared_tree_files;
+        runtime->shared_tree_loading = context.shared_tree_loading;
         runtime->shared_file_change_generation = context.shared_file_change_generation;
+        runtime->shared_git_requests = context.shared_git_requests;
+        runtime->shared_git_results = context.shared_git_results;
         runtime->lsp_bridge = context.lsp_bridge;
         runtime->lsp_send_request = context.lsp_send_request;
         runtime->lsp_user_data = context.lsp_user_data;
@@ -1627,6 +1382,8 @@ namespace code_editor {
         runtime->editor.tree_root_name = context.tree_root_name;
         runtime->editor.save_root_path = context.save_root_path;
         runtime->editor.tree_files = context.tree_files;
+        runtime->editor.tree_loading =
+            context.shared_tree_loading != nullptr && *context.shared_tree_loading;
         runtime->editor.set_flag(EditorFlag::SIDEBAR_VISIBLE, context.initial_sidebar_visible);
         BASE_UNUSED(editor_global_config_path(
             runtime->config.global_path, sizeof(runtime->config.global_path)
@@ -1667,9 +1424,6 @@ namespace code_editor {
             },
             runtime->ui_context
         );
-        if (!create_git_worker(arena, runtime->git_worker)) {
-            return false;
-        }
         touch_open_file(
             runtime->editor, runtime->editor.current_file_name, runtime->editor.current_file_path
         );
@@ -2144,7 +1898,7 @@ namespace code_editor {
             ui_input.key_event_count = 0u;
         }
         submit_git_worker_requests(*runtime, window_size.height);
-        if (runtime->editor.git_commits_loading) {
+        if (runtime->editor.git_commits_loading || runtime->editor.tree_loading) {
             runtime->editor.git_loading_phase += delta_time * 3.0f;
             while (runtime->editor.git_loading_phase >= 1.0f) {
                 runtime->editor.git_loading_phase -= 1.0f;
@@ -2325,7 +2079,7 @@ namespace code_editor {
         frame_result.draw_counts = draw_command_counts(module->runtime.draw_context);
         frame_result.redraw_pending =
             frame_result.frame.redraw_requested() || module->runtime.editor.git_commits_loading ||
-            module->runtime.editor.git_operation_pending ||
+            module->runtime.editor.git_operation_pending || module->runtime.editor.tree_loading ||
             editor_state_hash(module->runtime.editor) != state_hash_before;
         reset_thread_temp_arenas();
         return frame_result;

@@ -1046,7 +1046,6 @@ namespace code_editor {
         editor.sidebar_tab = EditorSidebarTab::GIT;
         editor.git_selection_focused = false;
         editor.git_control_focused = false;
-        editor.git_refresh_requested = true;
         ensure_filesystem_panel(editor);
         size_t const split =
             find_leaf_by_kind(editor, editor.root_split, EditorPaneKind::FILESYSTEM);
@@ -7420,6 +7419,7 @@ namespace code_editor {
         hash = hash_bytes(hash, &editor.tree_edit_mode, sizeof(editor.tree_edit_mode));
         hash =
             hash_bytes(hash, &editor.tree_operation_pending, sizeof(editor.tree_operation_pending));
+        hash = hash_bytes(hash, &editor.tree_loading, sizeof(editor.tree_loading));
         hash = hash_bytes(hash, &editor.jump_selected, sizeof(editor.jump_selected));
         hash = hash_bytes(hash, &editor.jump_cursor, sizeof(editor.jump_cursor));
         hash = hash_bytes(hash, &editor.jump_open_index, sizeof(editor.jump_open_index));

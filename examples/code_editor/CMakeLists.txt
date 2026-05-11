@@ -79,6 +79,7 @@ if(WIN32)
     target_sources(code_editor PRIVATE
         "${CMAKE_CURRENT_BINARY_DIR}/generated/code_editor_hot_reload_manifest.h"
         "$<$<CONFIG:Debug>:${CMAKE_CURRENT_SOURCE_DIR}/lsp.cpp>"
+        "$<$<CONFIG:Debug>:${CMAKE_CURRENT_SOURCE_DIR}/git.cpp>"
         lsp_client_win32.cpp
         lsp_client_win32.h
         resources/code_editor.rc

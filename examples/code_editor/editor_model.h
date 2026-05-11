@@ -474,14 +474,15 @@ namespace code_editor {
         bool file_search_mouse_known = false;
         bool file_search_mouse_select = false;
         bool file_search_reveal_selected = false;
+        bool tree_loading = false;
         bool tree_cursor_reveal = false;
         bool git_cursor_reveal = false;
         bool jump_list_mouse_known = false;
         bool jump_list_mouse_select = false;
         bool jump_list_reveal_selected = false;
         bool global_search_refresh_requested = false;
-        bool git_refresh_requested = true;
-        bool git_log_refresh_requested = true;
+        bool git_refresh_requested = false;
+        bool git_log_refresh_requested = false;
         bool git_selection_focused = false;
         bool git_control_focused = false;
         bool git_text_editing = false;
