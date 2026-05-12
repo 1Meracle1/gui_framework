@@ -29,6 +29,7 @@ namespace code_editor {
     inline constexpr size_t MODULE_STORAGE_ALIGNMENT = 64u;
     inline constexpr StrRef MODULE_FILE_NAME = "code_editor_module.dll";
     inline constexpr uint32_t HOT_RELOAD_POLL_MS = 250u;
+    inline constexpr size_t FILE_DROP_PATH_CAPACITY = 4096u;
 
     [[nodiscard]] inline auto hex_digit(uint8_t value) -> char {
         return static_cast<char>(value < 10u ? '0' + value : 'a' + value - 10u);
@@ -102,6 +103,12 @@ namespace code_editor {
         bool is_directory = false;
         bool open = false;
         bool file_search_visible = true;
+    };
+
+    struct FileDropRequest {
+        char path[FILE_DROP_PATH_CAPACITY] = {};
+        gui::Vec2 pos = {};
+        uint64_t generation = 0u;
     };
 
     inline constexpr size_t TREE_OPERATION_PATH_CAPACITY = 2048u;
@@ -218,6 +225,7 @@ namespace code_editor {
         Slice<FileTreeEntry>* shared_tree_files = nullptr;
         bool const* shared_tree_loading = nullptr;
         uint64_t const* shared_file_change_generation = nullptr;
+        FileDropRequest const* shared_file_drop_request = nullptr;
         SpscQueue<GitWorkRequest>* shared_git_requests = nullptr;
         SpscQueue<GitWorkResult>* shared_git_results = nullptr;
         TreeOperationRequest* shared_tree_operation_request = nullptr;

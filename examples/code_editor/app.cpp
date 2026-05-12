@@ -89,6 +89,7 @@ namespace code_editor {
         Slice<FileTreeEntry>* shared_tree_files = nullptr;
         bool const* shared_tree_loading = nullptr;
         uint64_t const* shared_file_change_generation = nullptr;
+        FileDropRequest const* shared_file_drop_request = nullptr;
         SpscQueue<GitWorkRequest>* shared_git_requests = nullptr;
         SpscQueue<GitWorkResult>* shared_git_results = nullptr;
         LspBridge const* lsp_bridge = nullptr;
@@ -97,6 +98,7 @@ namespace code_editor {
         bool* app_close_requested = nullptr;
         bool* app_close_confirmed = nullptr;
         uint64_t file_change_generation = 0u;
+        uint64_t file_drop_generation = 0u;
         float char_width = 8.0f;
         RuntimeConfigState config = {};
     };
@@ -161,6 +163,36 @@ namespace code_editor {
         }
         runtime.file_change_generation = generation;
         return true;
+    }
+
+    [[nodiscard]] static auto code_split_at_point(EditorState const& editor, gui::Vec2 point)
+        -> size_t {
+        for (size_t split = 0u; split < editor.split_nodes.size(); ++split) {
+            EditorSplitNode const& node = editor.split_nodes[split];
+            if (node.kind == EditorSplitKind::LEAF &&
+                editor_split_pane_kind(editor, split) == EditorPaneKind::CODE &&
+                point_in_rect(node.rect, point)) {
+                return split;
+            }
+        }
+        return static_cast<size_t>(-1);
+    }
+
+    [[nodiscard]] static auto sync_file_drop(Runtime& runtime) -> bool {
+        FileDropRequest const* const drop = runtime.shared_file_drop_request;
+        if (drop == nullptr || drop->generation == runtime.file_drop_generation) {
+            return false;
+        }
+
+        runtime.file_drop_generation = drop->generation;
+        StrRef const path = StrRef(drop->path);
+        size_t const split = code_split_at_point(runtime.editor, drop->pos);
+        if (path.empty() || split == static_cast<size_t>(-1)) {
+            return false;
+        }
+
+        focus_editor_split(runtime.editor, split);
+        return editor_open_path(runtime.editor, path);
     }
 
     auto copy_cstr(char* buffer, size_t capacity, StrRef text) -> void {
@@ -1386,6 +1418,7 @@ namespace code_editor {
         runtime->shared_tree_files = context.shared_tree_files;
         runtime->shared_tree_loading = context.shared_tree_loading;
         runtime->shared_file_change_generation = context.shared_file_change_generation;
+        runtime->shared_file_drop_request = context.shared_file_drop_request;
         runtime->shared_git_requests = context.shared_git_requests;
         runtime->shared_git_results = context.shared_git_results;
         runtime->lsp_bridge = context.lsp_bridge;
@@ -1901,6 +1934,7 @@ namespace code_editor {
         if (files_changed) {
             update_open_file_changes(runtime->editor);
         }
+        BASE_UNUSED(sync_file_drop(*runtime));
         if (runtime->app_close_requested != nullptr && *runtime->app_close_requested) {
             runtime->editor.set_flag(EditorFlag::CLOSE_APP_REQUESTED, true);
             *runtime->app_close_requested = false;

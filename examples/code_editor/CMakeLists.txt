@@ -101,6 +101,7 @@ if(WIN32)
         draw::draw
         render::render
         dwmapi
+        shell32
     )
     target_link_options(code_editor PRIVATE
         "$<$<CONFIG:Release>:LINKER:/ENTRY:mainCRTStartup>"

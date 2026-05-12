@@ -52,6 +52,7 @@ namespace code_editor {
     inline constexpr size_t FILE_SEARCH_PREVIEW_COLUMN_LIMIT = 128u;
     inline constexpr size_t FILE_SEARCH_PREVIEW_TOKENS_PER_LINE = 64u;
     inline constexpr size_t FILE_SEARCH_PREVIEW_TOKEN_LIMIT = 384u;
+    inline constexpr size_t TEXT_DRAW_CHUNK_SIZE = 4096u;
     inline constexpr float COMMAND_OVERLAY_HEIGHT = 88.0f;
     inline constexpr float COMMAND_LIST_HEIGHT = 30.0f;
     inline constexpr size_t STICKY_SCOPE_MAX_LINES = 5u;
@@ -1340,13 +1341,25 @@ namespace code_editor {
         if (end <= start) {
             return;
         }
-        draw::draw_text(
-            context,
-            {std::round(x + char_width * static_cast<float>(start)), std::round(y)},
-            style,
-            StrRef(line.text + start, end - start),
-            nullptr
-        );
+        size_t chunk_start = start;
+        while (chunk_start < end) {
+            size_t chunk_end = std::min(chunk_start + TEXT_DRAW_CHUNK_SIZE, end);
+            while (chunk_end < end && chunk_end > chunk_start &&
+                   (static_cast<uint8_t>(line.text[chunk_end]) & 0xc0u) == 0x80u) {
+                chunk_end -= 1u;
+            }
+            if (chunk_end == chunk_start) {
+                chunk_end = std::min(chunk_start + TEXT_DRAW_CHUNK_SIZE, end);
+            }
+            draw::draw_text(
+                context,
+                {std::round(x + char_width * static_cast<float>(chunk_start)), std::round(y)},
+                style,
+                StrRef(line.text + chunk_start, chunk_end - chunk_start),
+                nullptr
+            );
+            chunk_start = chunk_end;
+        }
     }
 
     [[nodiscard]] auto syntax_token_color(Palette const& palette, SyntaxTokenKind kind)

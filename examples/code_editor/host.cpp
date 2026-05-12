@@ -29,6 +29,7 @@
 #include <gui/hot_reload_app.h>
 #include <gui/hot_reload_overlay.h>
 #include <render/render.h>
+#include <shellapi.h>
 #include <windows.h>
 #endif
 
@@ -102,6 +103,7 @@ namespace code_editor {
         gui::Frame last_frame = {};
         gui::Id mouse_hit_id = {};
         gui::InputState input = {};
+        FileDropRequest file_drop_request = {};
         gui::KeyEvent key_events[MAX_KEY_EVENTS_PER_FRAME] = {};
         gui::Vec2 last_click_pos = {};
         uint64_t last_click_ticks = 0u;
@@ -201,6 +203,56 @@ namespace code_editor {
     [[nodiscard]] auto frame_hit_id(gui::Frame const& frame, gui::Vec2 pos) -> gui::Id {
         gui::BoxInfo const* const box = frame.hit_test(pos);
         return box != nullptr ? box->id : gui::Id{};
+    }
+
+    [[nodiscard]] auto file_drop_hits_editor_surface(AppState const* state, gui::Vec2 pos) -> bool {
+        if (state == nullptr || !frame_ready(state->last_frame)) {
+            return false;
+        }
+        gui::BoxInfo const* const box = state->last_frame.hit_test(pos);
+        return box != nullptr && box->debug_name == "editor_surface";
+    }
+
+    [[nodiscard]] auto queue_file_drop(AppState* state, HDROP drop) -> bool {
+        if (state == nullptr || drop == nullptr) {
+            return false;
+        }
+
+        POINT point = {};
+        BASE_UNUSED(DragQueryPoint(drop, &point));
+        gui::Vec2 const pos = {static_cast<float>(point.x), static_cast<float>(point.y)};
+        if (!file_drop_hits_editor_surface(state, pos) ||
+            DragQueryFileW(drop, 0xffffffffu, nullptr, 0u) == 0u) {
+            return false;
+        }
+
+        UINT const wide_size = DragQueryFileW(drop, 0u, nullptr, 0u);
+        if (wide_size == 0u) {
+            return false;
+        }
+
+        ArenaTemp temp = begin_thread_temp_arena();
+        wchar_t* const wide_path =
+            arena_alloc<wchar_t>(*temp.arena(), static_cast<size_t>(wide_size) + 1u);
+        UINT const copied = DragQueryFileW(drop, 0u, wide_path, wide_size + 1u);
+        DWORD const attributes =
+            copied != 0u ? GetFileAttributesW(wide_path) : INVALID_FILE_ATTRIBUTES;
+        if (attributes == INVALID_FILE_ATTRIBUTES ||
+            (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0u) {
+            return false;
+        }
+
+        StrRef path = {};
+        if (!base::wide_to_utf8(wide_path, static_cast<int>(copied), *temp.arena(), path) ||
+            path.empty() || path.size() >= FILE_DROP_PATH_CAPACITY) {
+            return false;
+        }
+
+        std::memcpy(state->file_drop_request.path, path.data(), path.size());
+        state->file_drop_request.path[path.size()] = '\0';
+        state->file_drop_request.pos = pos;
+        state->file_drop_request.generation += 1u;
+        return true;
     }
 
     [[nodiscard]] auto loword_u32(LPARAM value) -> uint32_t {
@@ -1025,6 +1077,14 @@ namespace code_editor {
                 request_redraw(global_app_state);
             }
             return 0;
+        case WM_DROPFILES: {
+            HDROP const drop = reinterpret_cast<HDROP>(wparam);
+            if (queue_file_drop(global_app_state, drop)) {
+                request_redraw(global_app_state);
+            }
+            DragFinish(drop);
+            return 0;
+        }
         case WM_KEYDOWN:
         case WM_SYSKEYDOWN: {
             gui::Key const key = key_from_virtual_key(wparam);
@@ -1149,6 +1209,7 @@ namespace code_editor {
         }
 
         apply_window_header_theme(hwnd);
+        DragAcceptFiles(hwnd, TRUE);
         restore_window_rect(hwnd, window_cache);
         app_state->hwnd = hwnd;
         ShowWindow(hwnd, SW_SHOW);
@@ -1158,6 +1219,7 @@ namespace code_editor {
 
     auto destroy_testbed_window(AppState* app_state) -> void {
         if (app_state->hwnd != nullptr && IsWindow(app_state->hwnd)) {
+            DragAcceptFiles(app_state->hwnd, FALSE);
             DestroyWindow(app_state->hwnd);
         }
         app_state->hwnd = nullptr;
@@ -2713,6 +2775,7 @@ namespace code_editor {
             .tree_root_name = launch.tree_root_name,
             .save_root_path = launch.save_root_path,
             .tree_files = launch.tree_files.slice(),
+            .shared_file_drop_request = &app_state.file_drop_request,
             .shared_tree_operation_request = &launch.tree_operation_request,
             .shared_tree_operation_result = &launch.tree_operation_result,
             .lsp_bridge = lsp_initialized ? lsp_client_bridge(lsp_client) : nullptr,

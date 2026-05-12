@@ -1426,7 +1426,6 @@ namespace gui::font_provider::platform::dwrite {
                     run_count,
                     pen_x
                 );
-                ASSERT(shaped);
                 if (!shaped) {
                     out_text = {};
                     return;
