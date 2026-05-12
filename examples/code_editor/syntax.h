@@ -34,5 +34,6 @@ namespace code_editor {
         -> SyntaxToken;
     [[nodiscard]] auto syntax_tokenizer_for_file_name(StrRef file_name) -> SyntaxTokenizer;
     [[nodiscard]] auto cpp_syntax_tokenizer() -> SyntaxTokenizer;
+    [[nodiscard]] auto json_syntax_tokenizer() -> SyntaxTokenizer;
 
 } // namespace code_editor

@@ -217,6 +217,7 @@ if(BUILD_TESTS)
         tests/code_editor/syntax_tests.cpp
         examples/code_editor/syntax.cpp
         examples/code_editor/cpp_tokenizer.cpp
+        examples/code_editor/json_tokenizer.cpp
     )
     target_include_directories(code_editor_syntax_tests PRIVATE
         "${PROJECT_SOURCE_DIR}/examples/code_editor"

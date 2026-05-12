@@ -34,9 +34,18 @@ namespace code_editor {
                file_name.ends_with_ignore_ascii_case(".ipp");
     }
 
+    [[nodiscard]] auto json_file_name(StrRef file_name) -> bool {
+        return file_name.ends_with_ignore_ascii_case(".json");
+    }
+
     [[nodiscard]] auto syntax_tokenizer_for_file_name(StrRef file_name) -> SyntaxTokenizer {
-        return cpp_file_name(file_name) ? cpp_syntax_tokenizer()
-                                        : SyntaxTokenizer{.next_token = plain_text_next_token};
+        if (cpp_file_name(file_name)) {
+            return cpp_syntax_tokenizer();
+        }
+        if (json_file_name(file_name)) {
+            return json_syntax_tokenizer();
+        }
+        return {.next_token = plain_text_next_token};
     }
 
 } // namespace code_editor

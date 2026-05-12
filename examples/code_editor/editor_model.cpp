@@ -4,6 +4,7 @@
 #include <charconv>
 #include <cmath>
 #include <cstring>
+#include <encoding/json.h>
 
 namespace code_editor {
 
@@ -427,6 +428,14 @@ namespace code_editor {
             bool const folds_ok = editor.folded_ranges.init(0u, arena.resource());
             DEBUG_ASSERT(folds_ok);
             (void)folds_ok;
+
+            bool const json_diagnostics_ok = editor.json_diagnostics.init(0u, arena.resource());
+            DEBUG_ASSERT(json_diagnostics_ok);
+            (void)json_diagnostics_ok;
+
+            bool const json_folds_ok = editor.json_folding_ranges.init(0u, arena.resource());
+            DEBUG_ASSERT(json_folds_ok);
+            (void)json_folds_ok;
 
             bool const panes_ok = editor.panes.init(0u, arena.resource());
             DEBUG_ASSERT(panes_ok);
@@ -6009,6 +6018,102 @@ namespace code_editor {
         insert_text(editor, text);
     }
 
+    [[nodiscard]] auto editor_json_file_name(StrRef file_name) -> bool {
+        return file_name.ends_with_ignore_ascii_case(".json");
+    }
+
+    [[nodiscard]] auto editor_json_file(EditorState const& editor) -> bool {
+        return editor.view_kind != EditorViewKind::GIT_DIFF &&
+               (editor_json_file_name(editor.current_file_name) ||
+                editor_json_file_name(editor.current_file_path));
+    }
+
+    auto json_add_fold(void* user_data, size_t start_line, size_t end_line) -> void {
+        if (end_line <= start_line) {
+            return;
+        }
+        auto& folds = *static_cast<Vec<LspFoldingRange>*>(user_data);
+        bool const ok = folds.push_back({start_line, end_line});
+        DEBUG_ASSERT(ok);
+        (void)ok;
+    }
+
+    auto add_json_diagnostic(EditorState& editor, LspPosition position, StrRef message) -> void {
+        size_t const line = std::min(position.line, editor_line_count(editor) - 1u);
+        size_t const column = std::min(position.column, line_size(editor, line));
+        size_t const end = column < line_size(editor, line) ? column + 1u : column;
+        bool const ok = editor.json_diagnostics.push_back({
+            .path = editor.current_file_path,
+            .range = {{line, column}, {line, end}},
+            .severity = LspDiagnosticSeverity::ERROR_DIAGNOSTIC,
+            .source = "json",
+            .message = message,
+        });
+        DEBUG_ASSERT(ok);
+        (void)ok;
+    }
+
+    auto sort_json_folds(Vec<LspFoldingRange>& folds) -> void {
+        if (folds.size() < 2u) {
+            return;
+        }
+        std::sort(folds.begin(), folds.end(), [](auto lhs, auto rhs) {
+            if (lhs.start_line != rhs.start_line) {
+                return lhs.start_line < rhs.start_line;
+            }
+            return lhs.end_line > rhs.end_line;
+        });
+    }
+
+    auto refresh_json_bridge(EditorState& editor, bool valid) -> void {
+        uint64_t const diagnostics_generation = editor.json_bridge.diagnostics_generation + 1u;
+        uint64_t const folding_ranges_generation =
+            editor.json_bridge.folding_ranges_generation + 1u;
+        uint64_t const status_generation = editor.json_bridge.status_generation + 1u;
+        editor.json_bridge = {};
+        editor.json_bridge.status = valid ? LspStatusKind::READY : LspStatusKind::WARNING;
+        editor.json_bridge.server_name = "JSON";
+        editor.json_bridge.status_text = valid ? StrRef("valid") : StrRef("error");
+        editor.json_bridge.diagnostics = editor.json_diagnostics.slice();
+        editor.json_bridge.folding_ranges = editor.json_folding_ranges.slice();
+        editor.json_bridge.folding_ranges_path = editor.current_file_path;
+        editor.json_bridge.folding_ranges_revision = editor.text.revision;
+        editor.json_bridge.diagnostics_generation = diagnostics_generation;
+        editor.json_bridge.folding_ranges_generation = folding_ranges_generation;
+        editor.json_bridge.status_generation = status_generation;
+    }
+
+    [[nodiscard]] auto update_editor_json_analysis(EditorState& editor) -> bool {
+        if (editor.external_lsp_bridge == nullptr && editor.lsp_bridge != &editor.json_bridge) {
+            editor.external_lsp_bridge = editor.lsp_bridge;
+        }
+        if (!editor_json_file(editor)) {
+            editor.lsp_bridge = editor.external_lsp_bridge;
+            return false;
+        }
+        editor.lsp_bridge = &editor.json_bridge;
+        if (editor.json_analysis_revision == editor.text.revision &&
+            editor.json_analysis_path == editor.current_file_path) {
+            return true;
+        }
+
+        editor.json_diagnostics.clear();
+        editor.json_folding_ranges.clear();
+        ArenaTemp temp = begin_thread_temp_arena();
+        StrRef const text = text_buffer_copy(editor.text, *temp.arena());
+        encoding::JsonParseError error = {};
+        bool const valid =
+            encoding::json_validate(text, &error, json_add_fold, &editor.json_folding_ranges);
+        sort_json_folds(editor.json_folding_ranges);
+        if (!valid) {
+            add_json_diagnostic(editor, {error.line, error.column}, error.message);
+        }
+        editor.json_analysis_path = editor.current_file_path;
+        editor.json_analysis_revision = editor.text.revision;
+        refresh_json_bridge(editor, valid);
+        return true;
+    }
+
     [[nodiscard]] auto editor_lsp_ready(EditorState const& editor) -> bool {
         if (editor.lsp_bridge == nullptr || editor.lsp_send_request == nullptr) {
             return false;
@@ -6067,6 +6172,20 @@ namespace code_editor {
     }
 
     auto update_editor_lsp_document(EditorState& editor) -> void {
+        bool const json_active = update_editor_json_analysis(editor);
+        if (json_active) {
+            if (!editor.lsp_synced_path.empty()) {
+                send_lsp_request(
+                    editor, {.kind = LspRequestKind::DID_CLOSE, .path = editor.lsp_synced_path}
+                );
+                editor.lsp_synced_path = {};
+                editor.lsp_synced_revision = 0u;
+                editor.lsp_inlay_hints_requested_path = {};
+                editor.lsp_inlay_hints_requested_revision = 0u;
+            }
+            return;
+        }
+
         if (editor.lsp_send_request == nullptr) {
             return;
         }

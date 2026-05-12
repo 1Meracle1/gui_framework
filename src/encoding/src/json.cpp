@@ -8,8 +8,10 @@
 
 namespace {
 
+    using encoding::JsonContainerRangeFn;
     using encoding::JsonKind;
     using encoding::JsonMember;
+    using encoding::JsonParseError;
     using encoding::JsonValue;
 
     struct JsonParser {
@@ -340,6 +342,267 @@ namespace {
         return true;
     }
 
+    [[nodiscard]] auto is_digit(char ch) -> bool {
+        return ch >= '0' && ch <= '9';
+    }
+
+    struct JsonValidator {
+        StrRef text = {};
+        size_t index = 0u;
+        size_t line = 0u;
+        size_t column = 0u;
+        JsonParseError error = {};
+        JsonContainerRangeFn container_range_fn = nullptr;
+        void* user_data = nullptr;
+        bool failed = false;
+    };
+
+    [[nodiscard]] auto validate_at_end(JsonValidator const& parser) -> bool {
+        return parser.index >= parser.text.size();
+    }
+
+    [[nodiscard]] auto validate_peek(JsonValidator const& parser) -> char {
+        return validate_at_end(parser) ? '\0' : parser.text[parser.index];
+    }
+
+    auto validate_advance(JsonValidator& parser) -> void {
+        if (validate_at_end(parser)) {
+            return;
+        }
+        char const ch = parser.text[parser.index++];
+        if (ch == '\n') {
+            parser.line += 1u;
+            parser.column = 0u;
+        } else {
+            parser.column += 1u;
+        }
+    }
+
+    [[nodiscard]] auto validate_fail(JsonValidator& parser, StrRef message) -> bool {
+        if (!parser.failed) {
+            parser.error = {parser.line, parser.column, message};
+            parser.failed = true;
+        }
+        return false;
+    }
+
+    auto validate_skip_ws(JsonValidator& parser) -> void {
+        while (!validate_at_end(parser)) {
+            char const ch = validate_peek(parser);
+            if (ch != ' ' && ch != '\t' && ch != '\r' && ch != '\n') {
+                break;
+            }
+            validate_advance(parser);
+        }
+    }
+
+    [[nodiscard]] auto validate_hex_digit(char ch) -> bool {
+        return is_digit(ch) || (ch >= 'a' && ch <= 'f') || (ch >= 'A' && ch <= 'F');
+    }
+
+    [[nodiscard]] auto validate_string(JsonValidator& parser) -> bool {
+        if (validate_peek(parser) != '"') {
+            return validate_fail(parser, "Expected string");
+        }
+        validate_advance(parser);
+        while (!validate_at_end(parser)) {
+            char const ch = validate_peek(parser);
+            if (ch == '"') {
+                validate_advance(parser);
+                return true;
+            }
+            if (static_cast<uint8_t>(ch) < 0x20u) {
+                return validate_fail(parser, "Invalid control character in string");
+            }
+            if (ch != '\\') {
+                validate_advance(parser);
+                continue;
+            }
+
+            validate_advance(parser);
+            if (validate_at_end(parser)) {
+                return validate_fail(parser, "Unfinished escape sequence");
+            }
+            char const escape = validate_peek(parser);
+            switch (escape) {
+            case '"':
+            case '\\':
+            case '/':
+            case 'b':
+            case 'f':
+            case 'n':
+            case 'r':
+            case 't':
+                validate_advance(parser);
+                break;
+            case 'u':
+                validate_advance(parser);
+                for (size_t digit = 0u; digit < 4u; ++digit) {
+                    if (validate_at_end(parser) || !validate_hex_digit(validate_peek(parser))) {
+                        return validate_fail(parser, "Invalid unicode escape");
+                    }
+                    validate_advance(parser);
+                }
+                break;
+            default:
+                return validate_fail(parser, "Invalid escape sequence");
+            }
+        }
+        return validate_fail(parser, "Unterminated string");
+    }
+
+    [[nodiscard]] auto validate_digits(JsonValidator& parser) -> bool {
+        if (validate_at_end(parser) || !is_digit(validate_peek(parser))) {
+            return false;
+        }
+        while (!validate_at_end(parser) && is_digit(validate_peek(parser))) {
+            validate_advance(parser);
+        }
+        return true;
+    }
+
+    [[nodiscard]] auto validate_number(JsonValidator& parser) -> bool {
+        if (validate_peek(parser) == '-') {
+            validate_advance(parser);
+        }
+        if (validate_at_end(parser)) {
+            return validate_fail(parser, "Expected digit");
+        }
+        if (validate_peek(parser) == '0') {
+            validate_advance(parser);
+            if (!validate_at_end(parser) && is_digit(validate_peek(parser))) {
+                return validate_fail(parser, "Leading zero in number");
+            }
+        } else if (!validate_digits(parser)) {
+            return validate_fail(parser, "Expected digit");
+        }
+
+        if (validate_peek(parser) == '.') {
+            validate_advance(parser);
+            if (!validate_digits(parser)) {
+                return validate_fail(parser, "Expected digit after decimal point");
+            }
+        }
+        if (validate_peek(parser) == 'e' || validate_peek(parser) == 'E') {
+            validate_advance(parser);
+            if (validate_peek(parser) == '+' || validate_peek(parser) == '-') {
+                validate_advance(parser);
+            }
+            if (!validate_digits(parser)) {
+                return validate_fail(parser, "Expected exponent digit");
+            }
+        }
+        return true;
+    }
+
+    [[nodiscard]] auto validate_literal(JsonValidator& parser, StrRef literal) -> bool {
+        for (char const ch : literal) {
+            if (validate_at_end(parser) || validate_peek(parser) != ch) {
+                return validate_fail(parser, "Expected JSON literal");
+            }
+            validate_advance(parser);
+        }
+        return true;
+    }
+
+    [[nodiscard]] auto validate_value(JsonValidator& parser) -> bool;
+
+    auto validate_add_container_range(JsonValidator& parser, size_t start_line, size_t end_line)
+        -> void {
+        if (parser.container_range_fn != nullptr && end_line > start_line) {
+            parser.container_range_fn(parser.user_data, start_line, end_line);
+        }
+    }
+
+    [[nodiscard]] auto validate_array(JsonValidator& parser) -> bool {
+        size_t const start_line = parser.line;
+        validate_advance(parser);
+        validate_skip_ws(parser);
+        if (validate_peek(parser) == ']') {
+            size_t const end_line = parser.line;
+            validate_advance(parser);
+            validate_add_container_range(parser, start_line, end_line);
+            return true;
+        }
+        for (;;) {
+            if (!validate_value(parser)) {
+                return false;
+            }
+            validate_skip_ws(parser);
+            if (validate_peek(parser) == ']') {
+                size_t const end_line = parser.line;
+                validate_advance(parser);
+                validate_add_container_range(parser, start_line, end_line);
+                return true;
+            }
+            if (validate_peek(parser) != ',') {
+                return validate_fail(parser, "Expected ',' or ']'");
+            }
+            validate_advance(parser);
+            validate_skip_ws(parser);
+        }
+    }
+
+    [[nodiscard]] auto validate_object(JsonValidator& parser) -> bool {
+        size_t const start_line = parser.line;
+        validate_advance(parser);
+        validate_skip_ws(parser);
+        if (validate_peek(parser) == '}') {
+            size_t const end_line = parser.line;
+            validate_advance(parser);
+            validate_add_container_range(parser, start_line, end_line);
+            return true;
+        }
+        for (;;) {
+            if (!validate_string(parser)) {
+                return false;
+            }
+            validate_skip_ws(parser);
+            if (validate_peek(parser) != ':') {
+                return validate_fail(parser, "Expected ':'");
+            }
+            validate_advance(parser);
+            if (!validate_value(parser)) {
+                return false;
+            }
+            validate_skip_ws(parser);
+            if (validate_peek(parser) == '}') {
+                size_t const end_line = parser.line;
+                validate_advance(parser);
+                validate_add_container_range(parser, start_line, end_line);
+                return true;
+            }
+            if (validate_peek(parser) != ',') {
+                return validate_fail(parser, "Expected ',' or '}'");
+            }
+            validate_advance(parser);
+            validate_skip_ws(parser);
+        }
+    }
+
+    [[nodiscard]] auto validate_value(JsonValidator& parser) -> bool {
+        validate_skip_ws(parser);
+        switch (validate_peek(parser)) {
+        case '{':
+            return validate_object(parser);
+        case '[':
+            return validate_array(parser);
+        case '"':
+            return validate_string(parser);
+        case 't':
+            return validate_literal(parser, "true");
+        case 'f':
+            return validate_literal(parser, "false");
+        case 'n':
+            return validate_literal(parser, "null");
+        default:
+            if (validate_peek(parser) == '-' || is_digit(validate_peek(parser))) {
+                return validate_number(parser);
+            }
+            return validate_fail(parser, "Expected JSON value");
+        }
+    }
+
 } // namespace
 
 namespace encoding {
@@ -351,6 +614,30 @@ namespace encoding {
         }
         skip_ws(parser);
         return parser.index == text.size();
+    }
+
+    [[nodiscard]] auto json_validate(
+        StrRef text,
+        JsonParseError* out_error,
+        JsonContainerRangeFn container_range_fn,
+        void* user_data
+    ) -> bool {
+        JsonValidator parser = {
+            .text = text,
+            .container_range_fn = container_range_fn,
+            .user_data = user_data,
+        };
+        bool valid = validate_value(parser);
+        if (valid) {
+            validate_skip_ws(parser);
+            if (!validate_at_end(parser)) {
+                valid = validate_fail(parser, "Unexpected text after JSON value");
+            }
+        }
+        if (!valid && out_error != nullptr) {
+            *out_error = parser.error;
+        }
+        return valid;
     }
 
     [[nodiscard]] auto json_object_get(JsonValue const* value, StrRef key) -> JsonValue const* {

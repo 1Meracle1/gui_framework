@@ -12,6 +12,7 @@ set(CODE_EDITOR_RELOAD_SOURCES
     editor_theme.h
     git.cpp
     git.h
+    json_tokenizer.cpp
     lsp.cpp
     lsp.h
     shared.h

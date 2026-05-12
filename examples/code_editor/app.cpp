@@ -1428,6 +1428,7 @@ namespace code_editor {
         runtime->app_close_confirmed = context.app_close_confirmed;
         init_editor(arena, runtime->editor, context.initial_text);
         runtime->editor.lsp_bridge = runtime->lsp_bridge;
+        runtime->editor.external_lsp_bridge = runtime->lsp_bridge;
         runtime->editor.lsp_send_request = runtime->lsp_send_request;
         runtime->editor.lsp_user_data = runtime->lsp_user_data;
         runtime->editor.shared_tree_operation_request = context.shared_tree_operation_request;

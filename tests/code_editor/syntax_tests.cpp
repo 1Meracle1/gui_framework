@@ -124,6 +124,41 @@ namespace {
         TEST_EXPECT(context, text_token.end == cpp_line.size());
     }
 
+    TEST_CASE(json_tokenizer_classifies_common_tokens) {
+        code_editor::SyntaxTokenizer const tokenizer = code_editor::json_syntax_tokenizer();
+        StrRef const line = "\"enabled\": true, \"count\": -12.5e+2";
+        size_t index = 0u;
+        index = expect_token(
+            context, tokenizer, line, index, code_editor::SyntaxTokenKind::STRING, "\"enabled\""
+        );
+        index = expect_token(
+            context, tokenizer, line, index, code_editor::SyntaxTokenKind::PUNCTUATION, ":"
+        );
+        index =
+            expect_token(context, tokenizer, line, index, code_editor::SyntaxTokenKind::TEXT, " ");
+        index = expect_token(
+            context, tokenizer, line, index, code_editor::SyntaxTokenKind::KEYWORD, "true"
+        );
+        index = expect_token(
+            context, tokenizer, line, index, code_editor::SyntaxTokenKind::PUNCTUATION, ","
+        );
+        while (index < line.size() && line[index] != '-') {
+            index = code_editor::syntax_next_token(tokenizer, line, index).end;
+        }
+        index = expect_token(
+            context, tokenizer, line, index, code_editor::SyntaxTokenKind::NUMBER, "-12.5e+2"
+        );
+        TEST_EXPECT(context, index == line.size());
+    }
+
+    TEST_CASE(tokenizer_selection_uses_json_extension) {
+        code_editor::SyntaxTokenizer const tokenizer =
+            code_editor::syntax_tokenizer_for_file_name("settings.json");
+        code_editor::SyntaxToken const token =
+            code_editor::syntax_next_token(tokenizer, "null", 0u);
+        TEST_EXPECT(context, token.kind == code_editor::SyntaxTokenKind::KEYWORD);
+    }
+
 } // namespace
 
 TEST_MAIN()

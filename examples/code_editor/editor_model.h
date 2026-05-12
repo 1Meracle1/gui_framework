@@ -448,9 +448,14 @@ namespace code_editor {
         uint64_t lsp_seen_folding_ranges_generation = 0u;
         StrRef lsp_synced_path = {};
         StrRef lsp_inlay_hints_requested_path = {};
+        StrRef json_analysis_path = {};
         StrRef git_status_text = {};
         StrRef git_error_text = {};
         StrRef git_current_branch = {};
+        LspBridge json_bridge = {};
+        Vec<LspDiagnostic> json_diagnostics = {};
+        Vec<LspFoldingRange> json_folding_ranges = {};
+        LspBridge const* external_lsp_bridge = nullptr;
         LspBridge const* lsp_bridge = nullptr;
         LspSendEditorRequestFn lsp_send_request = nullptr;
         void* lsp_user_data = nullptr;
@@ -460,6 +465,7 @@ namespace code_editor {
         size_t lsp_rename_text_size = 0u;
         uint64_t tree_operation_generation = 0u;
         uint64_t tree_operation_seen_generation = 0u;
+        uint64_t json_analysis_revision = 0u;
         gui::TextSelection git_branch_selection = {};
         gui::TextSelection git_commit_popup_selection = {};
         gui::TextSelection lsp_hover_selection = {};

@@ -2639,6 +2639,52 @@ namespace {
         TEST_EXPECT(context, code_editor::editor_visible_line_count(editor) == 6u);
     }
 
+    TEST_CASE(editor_json_files_publish_validation_diagnostics) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "{\n  \"ok\": true,\n}\n");
+        editor.current_file_name = "settings.json";
+        editor.current_file_path = "C:\\repo\\settings.json";
+
+        code_editor::update_editor_lsp_document(editor);
+
+        TEST_EXPECT(context, editor.lsp_bridge == &editor.json_bridge);
+        TEST_EXPECT(context, editor.lsp_bridge->diagnostics.size() == 1u);
+        code_editor::LspDiagnostic const& diagnostic = editor.lsp_bridge->diagnostics[0u];
+        TEST_EXPECT(
+            context, diagnostic.severity == code_editor::LspDiagnosticSeverity::ERROR_DIAGNOSTIC
+        );
+        TEST_EXPECT(context, diagnostic.source == "json");
+        TEST_EXPECT(context, diagnostic.range.start.line == 2u);
+    }
+
+    TEST_CASE(editor_json_files_publish_folding_ranges) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "{\n  \"items\": [\n    1\n  ]\n}\n");
+        editor.current_file_name = "settings.json";
+        editor.current_file_path = "C:\\repo\\settings.json";
+        editor.cursor_line = 1u;
+
+        code_editor::update_editor_lsp_document(editor);
+
+        TEST_EXPECT(context, editor.lsp_bridge == &editor.json_bridge);
+        TEST_EXPECT(context, editor.lsp_bridge->diagnostics.empty());
+        TEST_EXPECT(context, editor.lsp_bridge->folding_ranges.size() == 2u);
+        TEST_EXPECT(context, code_editor::editor_line_foldable(editor, 0u));
+        TEST_EXPECT(context, code_editor::editor_line_foldable(editor, 1u));
+
+        send_text(editor, "zc");
+
+        TEST_EXPECT(context, code_editor::editor_line_folded(editor, 1u));
+        TEST_EXPECT(context, code_editor::editor_line_hidden(editor, 2u));
+        TEST_EXPECT(context, code_editor::editor_visible_line_count(editor) == 3u);
+    }
+
     TEST_CASE(editor_lsp_rename_prefills_and_selects_current_word) {
         Arena arena = {};
         arena.init();

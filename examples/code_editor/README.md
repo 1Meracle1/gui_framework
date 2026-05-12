@@ -156,16 +156,17 @@ characters, `_`, `.`, `>`, or `:` also requests LSP completion.
 
 ## Scope Folding
 
-Folding is backed by LSP `textDocument/foldingRange`. When no usable folding
-range is cached, close/toggle commands request ranges from the language server.
-The command becomes effective once the LSP response has arrived.
+Folding is backed by LSP `textDocument/foldingRange`, with local fold ranges for
+JSON arrays and objects. When no usable folding range is cached, close/toggle
+commands request ranges from the language server. The command becomes effective
+once the LSP response has arrived.
 
 | Key | Action |
 | --- | --- |
-| `z a` | Toggle the current scope fold. If the cursor line is already folded, open it; otherwise fold the smallest LSP range that contains the cursor. |
-| `z c` | Close the current scope. It folds the smallest LSP range containing the cursor. |
+| `z a` | Toggle the current scope fold. If the cursor line is already folded, open it; otherwise fold the smallest known range that contains the cursor. |
+| `z c` | Close the current scope. It folds the smallest known range containing the cursor. |
 | `z o` | Open the fold at the cursor line. If the cursor is inside hidden folded text, the containing folded header is opened. |
-| `z M` | Close all known LSP fold ranges in the current buffer. Nested folds hidden by a parent fold are skipped. |
+| `z M` | Close all known fold ranges in the current buffer. Nested folds hidden by a parent fold are skipped. |
 | `z R` | Open all folds in the current buffer. |
 | `z z` | Center the cursor line. This is grouped under `z` to match modal editor convention. |
 
@@ -255,7 +256,7 @@ references, symbols, code actions, and global-search result pickers.
 | `fold-toggle` | `za` | Toggle the current scope fold. |
 | `fold-close` | `zc` | Fold the current scope. |
 | `fold-open` | `zo` | Open the fold at the current line. |
-| `fold-close-all` | `zM` | Fold all known LSP scopes. |
+| `fold-close-all` | `zM` | Fold all known scopes. |
 | `fold-open-all` | `zR` | Open all folds. |
 | `jumps` | `jl` | Open the jump history list. |
 | `jump-back` | `jb` | Jump to the previous recorded location. |
