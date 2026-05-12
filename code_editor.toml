@@ -4,6 +4,10 @@
 #   :set editor.font-size=14
 #   :set theme.ui.cursor="#ffcc00"
 
+[actions.build]
+keybinding = "Ctrl+Shift+B"
+command = "build.bat"
+
 [editor]
 font-size = 15
 # sidebar-visible = true

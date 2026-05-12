@@ -271,6 +271,27 @@ references, symbols, code actions, and global-search result pickers.
 | `lsp-stop` | `lsoff` | Stop the language server for the current file. |
 | `lsp-restart` | `lsr` | Restart the language server for the current file. |
 
+## Workspace Actions
+
+Global and local config files can define command actions. Local workspace config
+lives at `code_editor.toml` in the opened folder and overrides same-named global
+actions.
+
+```toml
+[actions.build]
+keybinding = "Ctrl+Shift+B"
+command = "build.bat"
+```
+
+Action keybindings must use `Ctrl`, `Alt`, or `Super`. The config reload rejects
+duplicate action keybindings and bindings that conflict with built-in editor
+shortcuts. Commands run from the workspace root. While a command runs, a
+bottom-right output popup shows the command, a scrollable ordered output stream,
+and the return code at the bottom. Stderr output is red, text is selectable, the
+output follows the bottom while new text arrives, the popup can be closed, and
+completed commands auto-hide after about five seconds unless the popup has been
+focused.
+
 ## Git Sidebar
 
 These keys apply while the Git sidebar has focus. `Enter` and `Right` toggle

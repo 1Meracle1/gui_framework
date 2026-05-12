@@ -103,6 +103,7 @@ namespace code_editor {
         gui::Frame last_frame = {};
         gui::Id mouse_hit_id = {};
         gui::InputState input = {};
+        gui::KeyMods posted_key_mods = gui::KEY_MOD_NONE;
         FileDropRequest file_drop_request = {};
         gui::KeyEvent key_events[MAX_KEY_EVENTS_PER_FRAME] = {};
         gui::Vec2 last_click_pos = {};
@@ -391,6 +392,50 @@ namespace code_editor {
         return mods;
     }
 
+    [[nodiscard]] auto key_mod_from_virtual_key(WPARAM value) -> gui::KeyMods {
+        switch (value) {
+        case VK_SHIFT:
+        case VK_LSHIFT:
+        case VK_RSHIFT:
+            return gui::KEY_MOD_SHIFT;
+        case VK_CONTROL:
+        case VK_LCONTROL:
+        case VK_RCONTROL:
+            return gui::KEY_MOD_CTRL;
+        case VK_MENU:
+        case VK_LMENU:
+        case VK_RMENU:
+            return gui::KEY_MOD_ALT;
+        case VK_LWIN:
+        case VK_RWIN:
+            return gui::KEY_MOD_SUPER;
+        default:
+            return gui::KEY_MOD_NONE;
+        }
+    }
+
+    auto update_posted_key_mods(AppState* state, WPARAM value, bool down) -> void {
+        if (state == nullptr) {
+            return;
+        }
+        gui::KeyMods const mod = key_mod_from_virtual_key(value);
+        if (mod == gui::KEY_MOD_NONE) {
+            return;
+        }
+        if (down) {
+            state->posted_key_mods |= mod;
+        } else {
+            state->posted_key_mods = static_cast<gui::KeyMods>(state->posted_key_mods & ~mod);
+        }
+        state->input.key_mods =
+            static_cast<gui::KeyMods>(current_key_mods() | state->posted_key_mods);
+    }
+
+    [[nodiscard]] auto combined_key_mods(AppState const* state) -> gui::KeyMods {
+        gui::KeyMods const posted = state != nullptr ? state->posted_key_mods : gui::KEY_MOD_NONE;
+        return static_cast<gui::KeyMods>(current_key_mods() | posted);
+    }
+
     [[nodiscard]] auto watcher_valid(DirectoryWatcher const& watcher) -> bool {
         return watcher.directory != INVALID_HANDLE_VALUE && watcher.event != nullptr;
     }
@@ -612,6 +657,17 @@ namespace code_editor {
     }
 
     [[nodiscard]] auto key_from_virtual_key(WPARAM value) -> gui::Key {
+        if (value >= 'A' && value <= 'Z') {
+            return static_cast<gui::Key>(
+                static_cast<uint16_t>(gui::Key::A) + static_cast<uint16_t>(value - 'A')
+            );
+        }
+        if (value >= '0' && value <= '9') {
+            return static_cast<gui::Key>(
+                static_cast<uint16_t>(gui::Key::NUM_0) + static_cast<uint16_t>(value - '0')
+            );
+        }
+
         switch (value) {
         case VK_TAB:
             return gui::Key::TAB;
@@ -646,26 +702,6 @@ namespace code_editor {
         case VK_OEM_2:
         case VK_DIVIDE:
             return gui::Key::SLASH;
-        case 'A':
-            return gui::Key::A;
-        case 'C':
-            return gui::Key::C;
-        case 'D':
-            return gui::Key::D;
-        case 'N':
-            return gui::Key::N;
-        case 'S':
-            return gui::Key::S;
-        case 'U':
-            return gui::Key::U;
-        case 'V':
-            return gui::Key::V;
-        case 'W':
-            return gui::Key::W;
-        case 'X':
-            return gui::Key::X;
-        case 'Z':
-            return gui::Key::Z;
         default:
             return gui::Key::UNKNOWN;
         }
@@ -872,6 +908,25 @@ namespace code_editor {
                 static_cast<double>(box->rect.max.x),
                 static_cast<double>(box->rect.max.y)
             );
+            gui::ScrollState const scroll = box->authored_id.value != 0u
+                                                ? frame.scroll_state(box->authored_id)
+                                                : gui::ScrollState{};
+            if (scroll.valid) {
+                fmt::fprintf(
+                    file,
+                    ",\"scroll\":{\"x\":%.3f,\"max_x\":%.3f,\"y\":%.3f,\"max_y\":%.3f,"
+                    "\"viewport_width\":%.3f,\"content_width\":%.3f,"
+                    "\"viewport_height\":%.3f,\"content_height\":%.3f}",
+                    static_cast<double>(scroll.x),
+                    static_cast<double>(scroll.max_x),
+                    static_cast<double>(scroll.y),
+                    static_cast<double>(scroll.max_y),
+                    static_cast<double>(scroll.viewport_width),
+                    static_cast<double>(scroll.content_width),
+                    static_cast<double>(scroll.viewport_height),
+                    static_cast<double>(scroll.content_height)
+                );
+            }
             fmt::fprintf(
                 file,
                 ",\"focused\":%s,\"flags\":%u,\"duplicate_id\":%s,\"stable_id\":%s}",
@@ -1176,7 +1231,7 @@ namespace code_editor {
                 global_app_state->input.scroll_delta_y +=
                     static_cast<float>(GET_WHEEL_DELTA_WPARAM(wparam)) /
                     static_cast<float>(WHEEL_DELTA) * 72.0f;
-                global_app_state->input.key_mods = current_key_mods();
+                global_app_state->input.key_mods = combined_key_mods(global_app_state);
                 request_redraw(global_app_state);
             }
             return 0;
@@ -1190,21 +1245,44 @@ namespace code_editor {
         }
         case WM_KEYDOWN:
         case WM_SYSKEYDOWN: {
+            update_posted_key_mods(global_app_state, wparam, true);
             gui::Key const key = key_from_virtual_key(wparam);
             if (key != gui::Key::UNKNOWN) {
-                push_key_event(global_app_state, key, key_down_kind(lparam), current_key_mods());
+                push_key_event(
+                    global_app_state,
+                    key,
+                    key_down_kind(lparam),
+                    combined_key_mods(global_app_state)
+                );
+                request_redraw(global_app_state);
+                return 0;
+            }
+            if (key_mod_from_virtual_key(wparam) != gui::KEY_MOD_NONE) {
                 request_redraw(global_app_state);
                 return 0;
             }
             return DefWindowProcW(hwnd, message, wparam, lparam);
         }
+        case WM_KEYUP:
+        case WM_SYSKEYUP:
+            update_posted_key_mods(global_app_state, wparam, false);
+            request_redraw(global_app_state);
+            return 0;
         case WM_CHAR:
         case WM_SYSCHAR:
             if (global_app_state != nullptr && wparam >= 32u && wparam != 127u) {
                 push_text_event(
-                    global_app_state, static_cast<uint32_t>(wparam), current_key_mods()
+                    global_app_state,
+                    static_cast<uint32_t>(wparam),
+                    combined_key_mods(global_app_state)
                 );
                 request_redraw(global_app_state);
+            }
+            return 0;
+        case WM_KILLFOCUS:
+            if (global_app_state != nullptr) {
+                global_app_state->posted_key_mods = gui::KEY_MOD_NONE;
+                global_app_state->input.key_mods = current_key_mods();
             }
             return 0;
         case WM_CLOSE:
@@ -3072,7 +3150,7 @@ namespace code_editor {
             float const delta_time = static_cast<float>(ticks - previous_ticks) * 0.001f;
             previous_ticks = ticks;
             app_state.redraw_pending = false;
-            app_state.input.key_mods = current_key_mods();
+            app_state.input.key_mods = combined_key_mods(&app_state);
             gui::InputState module_input = app_state.input;
 #if BASE_DEBUG
             if (hot_reload_overlay_ready) {

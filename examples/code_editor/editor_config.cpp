@@ -267,6 +267,406 @@ namespace code_editor {
             return false;
         }
 
+        auto set_config_error(
+            EditorConfigError& error,
+            EditorConfigErrorSource source,
+            StrRef path,
+            size_t line,
+            size_t column,
+            StrRef message,
+            StrRef text
+        ) -> void;
+        auto set_value_error(
+            EditorConfigError& error,
+            EditorConfigErrorSource source,
+            StrRef path,
+            size_t line,
+            size_t column,
+            StrRef full_key,
+            StrRef expected,
+            StrRef text
+        ) -> void;
+
+        [[nodiscard]] auto parse_string_value(StrRef value, char* buffer, size_t capacity) -> bool {
+            if (capacity == 0u) {
+                return false;
+            }
+            value = value.trim();
+            size_t size = 0u;
+            if (value.size() >= 2u && value.front() == '"' && value.back() == '"') {
+                value = value.substr(1u, value.size() - 2u);
+                for (size_t index = 0u; index < value.size(); ++index) {
+                    char ch = value[index];
+                    if (ch == '\\' && index + 1u < value.size()) {
+                        char const next = value[++index];
+                        switch (next) {
+                        case '"':
+                        case '\\':
+                            ch = next;
+                            break;
+                        case 'n':
+                            ch = '\n';
+                            break;
+                        case 'r':
+                            ch = '\r';
+                            break;
+                        case 't':
+                            ch = '\t';
+                            break;
+                        default:
+                            if (size + 2u >= capacity) {
+                                return false;
+                            }
+                            buffer[size++] = '\\';
+                            ch = next;
+                            break;
+                        }
+                    }
+                    if (size + 1u >= capacity) {
+                        return false;
+                    }
+                    buffer[size++] = ch;
+                }
+                buffer[size] = '\0';
+                return true;
+            }
+
+            return value.copy_to(buffer, capacity - 1u) == value.size() &&
+                   (buffer[value.size()] = '\0', true);
+        }
+
+        [[nodiscard]] auto parse_action_key_token(StrRef token, gui::Key& out_key) -> bool {
+            if (token.size() == 1u) {
+                char const ch = token[0u];
+                if (ch >= 'a' && ch <= 'z') {
+                    out_key = static_cast<gui::Key>(
+                        static_cast<uint16_t>(gui::Key::A) + static_cast<uint16_t>(ch - 'a')
+                    );
+                    return true;
+                }
+                if (ch >= 'A' && ch <= 'Z') {
+                    out_key = static_cast<gui::Key>(
+                        static_cast<uint16_t>(gui::Key::A) + static_cast<uint16_t>(ch - 'A')
+                    );
+                    return true;
+                }
+                if (ch >= '0' && ch <= '9') {
+                    out_key = static_cast<gui::Key>(
+                        static_cast<uint16_t>(gui::Key::NUM_0) + static_cast<uint16_t>(ch - '0')
+                    );
+                    return true;
+                }
+                if (ch == '-') {
+                    out_key = gui::Key::MINUS;
+                    return true;
+                }
+                if (ch == '/' || ch == '\\') {
+                    out_key = gui::Key::SLASH;
+                    return true;
+                }
+                if (ch == '=') {
+                    out_key = gui::Key::PLUS;
+                    return true;
+                }
+            }
+
+            if (token.equals_ignore_ascii_case("space")) {
+                out_key = gui::Key::SPACE;
+            } else if (token.equals_ignore_ascii_case("tab")) {
+                out_key = gui::Key::TAB;
+            } else if (token.equals_ignore_ascii_case("enter") ||
+                       token.equals_ignore_ascii_case("return")) {
+                out_key = gui::Key::ENTER;
+            } else if (token.equals_ignore_ascii_case("esc") ||
+                       token.equals_ignore_ascii_case("escape")) {
+                out_key = gui::Key::ESCAPE;
+            } else if (token.equals_ignore_ascii_case("left")) {
+                out_key = gui::Key::LEFT;
+            } else if (token.equals_ignore_ascii_case("right")) {
+                out_key = gui::Key::RIGHT;
+            } else if (token.equals_ignore_ascii_case("up")) {
+                out_key = gui::Key::UP;
+            } else if (token.equals_ignore_ascii_case("down")) {
+                out_key = gui::Key::DOWN;
+            } else if (token.equals_ignore_ascii_case("home")) {
+                out_key = gui::Key::HOME;
+            } else if (token.equals_ignore_ascii_case("end")) {
+                out_key = gui::Key::END;
+            } else if (token.equals_ignore_ascii_case("backspace")) {
+                out_key = gui::Key::BACKSPACE;
+            } else if (token.equals_ignore_ascii_case("delete") ||
+                       token.equals_ignore_ascii_case("del")) {
+                out_key = gui::Key::DELETE_KEY;
+            } else if (token.equals_ignore_ascii_case("plus")) {
+                out_key = gui::Key::PLUS;
+            } else if (token.equals_ignore_ascii_case("minus")) {
+                out_key = gui::Key::MINUS;
+            } else if (token.equals_ignore_ascii_case("slash")) {
+                out_key = gui::Key::SLASH;
+            } else {
+                return false;
+            }
+            return true;
+        }
+
+        [[nodiscard]] auto
+        parse_action_keybinding(StrRef text, EditorActionKeyBinding& out_keybinding) -> bool {
+            out_keybinding = {};
+            text = text.trim();
+            while (!text.empty()) {
+                size_t const separator = text.find('+');
+                bool const last = separator == StrRef::NPOS;
+                StrRef const token = (last ? text : text.prefix(separator)).trim();
+                if (token.empty()) {
+                    return false;
+                }
+                if (last) {
+                    return parse_action_key_token(token, out_keybinding.key) &&
+                           out_keybinding.key != gui::Key::UNKNOWN &&
+                           (out_keybinding.mods &
+                            (gui::KEY_MOD_CTRL | gui::KEY_MOD_ALT | gui::KEY_MOD_SUPER)) != 0u;
+                }
+
+                gui::KeyMods mod = gui::KEY_MOD_NONE;
+                if (token.equals_ignore_ascii_case("ctrl") ||
+                    token.equals_ignore_ascii_case("control")) {
+                    mod = gui::KEY_MOD_CTRL;
+                } else if (token.equals_ignore_ascii_case("shift")) {
+                    mod = gui::KEY_MOD_SHIFT;
+                } else if (token.equals_ignore_ascii_case("alt")) {
+                    mod = gui::KEY_MOD_ALT;
+                } else if (token.equals_ignore_ascii_case("super") ||
+                           token.equals_ignore_ascii_case("win") ||
+                           token.equals_ignore_ascii_case("cmd")) {
+                    mod = gui::KEY_MOD_SUPER;
+                } else {
+                    return false;
+                }
+                if ((out_keybinding.mods & mod) != 0u) {
+                    return false;
+                }
+                out_keybinding.mods = static_cast<gui::KeyMods>(out_keybinding.mods | mod);
+                text = text.substr(separator + 1u);
+            }
+            return false;
+        }
+
+        [[nodiscard]] auto same_keybinding(EditorActionKeyBinding lhs, EditorActionKeyBinding rhs)
+            -> bool {
+            return lhs.key == rhs.key && lhs.mods == rhs.mods;
+        }
+
+        [[nodiscard]] auto action_keybinding_conflicts_builtin(EditorActionKeyBinding binding)
+            -> bool {
+            gui::KeyMods const mods = binding.mods;
+            bool const ctrl_no_alt_super = (mods & gui::KEY_MOD_CTRL) != 0u &&
+                                           (mods & (gui::KEY_MOD_ALT | gui::KEY_MOD_SUPER)) == 0u;
+            if (ctrl_no_alt_super) {
+                switch (binding.key) {
+                case gui::Key::A:
+                case gui::Key::C:
+                case gui::Key::D:
+                case gui::Key::N:
+                case gui::Key::S:
+                case gui::Key::U:
+                case gui::Key::V:
+                case gui::Key::W:
+                case gui::Key::Z:
+                case gui::Key::SPACE:
+                case gui::Key::LEFT:
+                case gui::Key::RIGHT:
+                case gui::Key::HOME:
+                case gui::Key::END:
+                case gui::Key::BACKSPACE:
+                case gui::Key::DELETE_KEY:
+                    return true;
+                default:
+                    break;
+                }
+            }
+            if ((mods & gui::KEY_MOD_CTRL) != 0u &&
+                (binding.key == gui::Key::PLUS || binding.key == gui::Key::MINUS)) {
+                return true;
+            }
+            if (binding.key == gui::Key::SLASH && mods == gui::KEY_MOD_CTRL) {
+                return true;
+            }
+            bool const ctrl_alt_no_super = (mods & (gui::KEY_MOD_CTRL | gui::KEY_MOD_ALT)) ==
+                                               (gui::KEY_MOD_CTRL | gui::KEY_MOD_ALT) &&
+                                           (mods & gui::KEY_MOD_SUPER) == 0u;
+            return ctrl_alt_no_super &&
+                   (binding.key == gui::Key::UP || binding.key == gui::Key::DOWN);
+        }
+
+        [[nodiscard]] auto find_action(EditorActionConfig* actions, size_t count, StrRef name)
+            -> EditorActionConfig* {
+            for (size_t index = 0u; index < count; ++index) {
+                if (StrRef(actions[index].name).equals_ignore_ascii_case(name)) {
+                    return actions + index;
+                }
+            }
+            return nullptr;
+        }
+
+        [[nodiscard]] auto action_name_valid(StrRef name) -> bool {
+            if (name.empty()) {
+                return false;
+            }
+            for (char const ch : name) {
+                if (!is_ascii_alphanumeric(ch) && ch != '_' && ch != '-') {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        [[nodiscard]] auto find_or_add_action(
+            EditorConfigPatch& patch,
+            StrRef name,
+            EditorConfigError& error,
+            EditorConfigErrorSource source,
+            StrRef path,
+            size_t line,
+            StrRef text
+        ) -> EditorActionConfig* {
+            if (!action_name_valid(name)) {
+                set_config_error(error, source, path, line, 1u, "Invalid action name.", text);
+                return nullptr;
+            }
+            if (EditorActionConfig* const action =
+                    find_action(patch.actions, patch.action_count, name)) {
+                return action;
+            }
+            if (patch.action_count >= EDITOR_ACTION_CAPACITY) {
+                set_config_error(
+                    error, source, path, line, 1u, "Too many configured actions.", text
+                );
+                return nullptr;
+            }
+
+            EditorActionConfig* const action = patch.actions + patch.action_count++;
+            copy_cstr(action->name, sizeof(action->name), name);
+            return action;
+        }
+
+        [[nodiscard]] auto parse_action_config_value(
+            StrRef rest,
+            StrRef value,
+            EditorConfigPatch& patch,
+            EditorConfigError& error,
+            EditorConfigErrorSource source,
+            StrRef path,
+            size_t line,
+            size_t column,
+            StrRef text
+        ) -> bool {
+            size_t const separator = rest.rfind('.');
+            if (separator == StrRef::NPOS) {
+                set_config_error(error, source, path, line, column, "Expected action key.", text);
+                return false;
+            }
+
+            StrRef const name = rest.prefix(separator);
+            StrRef const key = rest.substr(separator + 1u);
+            EditorActionConfig* const action =
+                find_or_add_action(patch, name, error, source, path, line, text);
+            if (action == nullptr) {
+                return false;
+            }
+
+            if (key.equals_ignore_ascii_case("command")) {
+                if (!parse_string_value(value, action->command, sizeof(action->command)) ||
+                    action->command[0u] == '\0') {
+                    set_value_error(
+                        error, source, path, line, column, rest, "a non-empty string", text
+                    );
+                    return false;
+                }
+                action->has_command = true;
+                return true;
+            }
+            if (key.equals_ignore_ascii_case("keybinding")) {
+                char buffer[EDITOR_ACTION_KEYBINDING_CAPACITY] = {};
+                EditorActionKeyBinding binding = {};
+                if (!parse_string_value(value, buffer, sizeof(buffer)) ||
+                    !parse_action_keybinding(StrRef(buffer), binding)) {
+                    set_value_error(
+                        error,
+                        source,
+                        path,
+                        line,
+                        column,
+                        rest,
+                        "a keybinding like \"Ctrl+Shift+B\"",
+                        text
+                    );
+                    return false;
+                }
+                copy_cstr(action->keybinding_text, sizeof(action->keybinding_text), StrRef(buffer));
+                action->keybinding = binding;
+                action->has_keybinding = true;
+                return true;
+            }
+
+            char buffer[EDITOR_CONFIG_MESSAGE_CAPACITY] = {};
+            StrRef const message =
+                fmt::bprintf(buffer, sizeof(buffer), "Unknown action key %s.", rest);
+            set_config_error(error, source, path, line, column, message, text);
+            return false;
+        }
+
+        [[nodiscard]] auto validate_action_list(
+            EditorActionConfig const* actions,
+            size_t count,
+            StrRef path,
+            EditorConfigErrorSource source,
+            EditorConfigError& error,
+            StrRef text
+        ) -> bool {
+            for (size_t index = 0u; index < count; ++index) {
+                EditorActionConfig const& action = actions[index];
+                if (!action.has_command || !action.has_keybinding) {
+                    char buffer[EDITOR_CONFIG_MESSAGE_CAPACITY] = {};
+                    StrRef const message = fmt::bprintf(
+                        buffer,
+                        sizeof(buffer),
+                        "Action %s must define command and keybinding.",
+                        StrRef(action.name)
+                    );
+                    set_config_error(error, source, path, 1u, 1u, message, text);
+                    return false;
+                }
+                if (action_keybinding_conflicts_builtin(action.keybinding)) {
+                    char buffer[EDITOR_CONFIG_MESSAGE_CAPACITY] = {};
+                    StrRef const message = fmt::bprintf(
+                        buffer,
+                        sizeof(buffer),
+                        "Action %s keybinding %s conflicts with a built-in keybinding.",
+                        StrRef(action.name),
+                        StrRef(action.keybinding_text)
+                    );
+                    set_config_error(error, source, path, 1u, 1u, message, text);
+                    return false;
+                }
+                for (size_t other = index + 1u; other < count; ++other) {
+                    if (same_keybinding(action.keybinding, actions[other].keybinding)) {
+                        char buffer[EDITOR_CONFIG_MESSAGE_CAPACITY] = {};
+                        StrRef const message = fmt::bprintf(
+                            buffer,
+                            sizeof(buffer),
+                            "Action %s keybinding %s conflicts with action %s.",
+                            StrRef(actions[other].name),
+                            StrRef(actions[other].keybinding_text),
+                            StrRef(action.name)
+                        );
+                        set_config_error(error, source, path, 1u, 1u, message, text);
+                        return false;
+                    }
+                }
+            }
+            return true;
+        }
+
         auto set_palette_color(EditorConfigPatch& patch, ConfigColorSlot slot, gui::Color color)
             -> void {
             patch.palette_mask |= color_slot_mask(slot);
@@ -503,7 +903,8 @@ namespace code_editor {
             return section.empty() || section.equals_ignore_ascii_case("editor") ||
                    section.equals_ignore_ascii_case("theme.ui") ||
                    section.equals_ignore_ascii_case("theme.syntax") ||
-                   section.equals_ignore_ascii_case("theme.mode");
+                   section.equals_ignore_ascii_case("theme.mode") ||
+                   section.starts_with_ignore_ascii_case("actions.");
         }
 
         auto
@@ -694,6 +1095,13 @@ namespace code_editor {
                 return true;
             }
 
+            StrRef action_key = {};
+            if (full_key.strip_prefix("actions.", &action_key)) {
+                return parse_action_config_value(
+                    action_key, value, patch, error, source, path, line, column, text
+                );
+            }
+
             char buffer[EDITOR_CONFIG_MESSAGE_CAPACITY] = {};
             StrRef const message =
                 fmt::bprintf(buffer, sizeof(buffer), "Unknown config key %s.", full_key);
@@ -778,7 +1186,9 @@ namespace code_editor {
                 line_number += 1u;
             }
 
-            return true;
+            return validate_action_list(
+                patch.actions, patch.action_count, path, source, error, text
+            );
         }
 
     } // namespace
@@ -855,6 +1265,10 @@ namespace code_editor {
                "# raster-policy = \"lcd-smooth\"\n"
                "# raster-policy = \"smooth\"\n"
                "\n"
+               "# [actions.build]\n"
+               "# keybinding = \"Ctrl+Shift+B\"\n"
+               "# command = \"build.bat\"\n"
+               "\n"
                "[theme.ui]\n"
                "# shell = \"#0d1116\"\n"
                "# panel = \"#12171e\"\n"
@@ -891,7 +1305,24 @@ namespace code_editor {
         error = {};
     }
 
+    auto upsert_editor_action(
+        EditorActionConfig* actions, size_t& count, EditorActionConfig const& source
+    ) -> void {
+        for (size_t index = 0u; index < count; ++index) {
+            if (StrRef(actions[index].name).equals_ignore_ascii_case(source.name)) {
+                actions[index] = source;
+                return;
+            }
+        }
+        if (count < EDITOR_ACTION_CAPACITY) {
+            actions[count++] = source;
+        }
+    }
+
     auto apply_editor_config_patch(EditorConfig& config, EditorConfigPatch const& patch) -> void {
+        for (size_t index = 0u; index < patch.action_count; ++index) {
+            upsert_editor_action(config.actions, config.action_count, patch.actions[index]);
+        }
         if (patch.has_font_size) {
             config.font_size = patch.font_size;
         }
@@ -917,6 +1348,9 @@ namespace code_editor {
 
     auto merge_editor_config_patch(EditorConfigPatch& target, EditorConfigPatch const& source)
         -> void {
+        for (size_t index = 0u; index < source.action_count; ++index) {
+            upsert_editor_action(target.actions, target.action_count, source.actions[index]);
+        }
         if (source.has_font_size) {
             target.font_size = source.font_size;
             target.has_font_size = true;
@@ -1014,6 +1448,18 @@ namespace code_editor {
                 break;
             }
         }
+    }
+
+    [[nodiscard]] auto validate_editor_config_actions(
+        EditorConfig const& config,
+        StrRef path,
+        EditorConfigErrorSource source,
+        EditorConfigError& error
+    ) -> bool {
+        clear_editor_config_error(error);
+        return validate_action_list(
+            config.actions, config.action_count, path, source, error, StrRef()
+        );
     }
 
     [[nodiscard]] auto parse_editor_config(

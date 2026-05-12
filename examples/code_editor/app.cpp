@@ -20,6 +20,7 @@
 #include <base/fmt.h>
 #include <base/memory.h>
 #include <base/slice.h>
+#include <base/string_buffer.h>
 #include <base/unicode.h>
 #include <cmath>
 #include <cstdio>
@@ -60,6 +61,23 @@ namespace code_editor {
     constexpr float CONFIG_ERROR_MESSAGE_LINE_HEIGHT_SCALE = 1.45f;
     constexpr float CONFIG_ERROR_MESSAGE_MIN_HEIGHT = 24.0f;
     constexpr float CONFIG_ERROR_EXCERPT_PADDING = 20.0f;
+    constexpr size_t ACTION_OUTPUT_CAPACITY = 64u * 1024u;
+    constexpr float ACTION_POPUP_MARGIN = 16.0f;
+    constexpr float ACTION_POPUP_MIN_WIDTH = 360.0f;
+    constexpr float ACTION_POPUP_MAX_WIDTH = 760.0f;
+    constexpr float ACTION_POPUP_MIN_HEIGHT = 220.0f;
+    constexpr float ACTION_POPUP_MAX_HEIGHT = 360.0f;
+    constexpr float ACTION_POPUP_HEADER_HEIGHT = 28.0f;
+    constexpr float ACTION_POPUP_SECTION_LABEL_HEIGHT = 18.0f;
+    constexpr float ACTION_POPUP_LINE_HEIGHT_SCALE = 1.35f;
+    constexpr float ACTION_POPUP_HOLD_SECONDS = 5.0f;
+    constexpr size_t ACTION_OUTPUT_LINE_CAPACITY = 2048u;
+
+    struct ActionOutputLine {
+        size_t offset = 0u;
+        size_t size = 0u;
+        bool stderr_output = false;
+    };
 
     struct RuntimeConfigState {
         EditorConfig base = {};
@@ -71,6 +89,40 @@ namespace code_editor {
         uint64_t global_write_stamp = 0u;
         uint64_t local_write_stamp = 0u;
         bool error_visible = false;
+    };
+
+    struct WorkspaceActionState {
+        PROCESS_INFORMATION process = {};
+        HANDLE stdout_read = nullptr;
+        HANDLE stderr_read = nullptr;
+        StringBuffer output_text = {};
+        ActionOutputLine* output_lines = nullptr;
+        gui::TextSelection output_selection = {};
+        gui::TextSelection command_selection = {};
+        gui::TextSelection return_selection = {};
+        char action_name[EDITOR_ACTION_NAME_CAPACITY] = {};
+        char command[EDITOR_ACTION_COMMAND_CAPACITY] = {};
+        size_t output_line_count = 0u;
+        size_t output_scroll_text_size = 0u;
+        size_t output_scroll_line_count = 0u;
+        int32_t return_code = 0;
+        float visible_seconds = 0.0f;
+        bool running = false;
+        bool visible = false;
+        bool user_focused = false;
+        bool output_line_open = false;
+        bool output_truncated = false;
+        bool output_scroll_truncated = false;
+        bool follow_tail = true;
+        bool read_stderr_next = false;
+    };
+
+    struct ActionPopupMetrics {
+        gui::Rect panel = {};
+        float width = 0.0f;
+        float height = 0.0f;
+        float body_height = 0.0f;
+        bool valid = false;
     };
 
     struct Runtime {
@@ -103,6 +155,7 @@ namespace code_editor {
         uint64_t file_drop_generation = 0u;
         float char_width = 8.0f;
         RuntimeConfigState config = {};
+        WorkspaceActionState action = {};
     };
 
     static auto log_render_result(char const* operation, render::Result result) -> void {
@@ -948,6 +1001,17 @@ namespace code_editor {
         }
 
         apply_editor_config_patch(effective, runtime.config.session_override);
+        EditorConfigError action_error = {};
+        StrRef const action_error_path =
+            local_stamp != 0u || global_stamp == 0u ? local_path : global_path;
+        EditorConfigErrorSource const action_error_source = local_stamp != 0u || global_stamp == 0u
+                                                                ? EditorConfigErrorSource::LOCAL
+                                                                : EditorConfigErrorSource::GLOBAL;
+        if (!validate_editor_config_actions(
+                effective, action_error_path, action_error_source, action_error
+            )) {
+            effective.action_count = 0u;
+        }
         runtime.config.effective = effective;
         apply_runtime_config(runtime);
         if (local_error.valid) {
@@ -955,6 +1019,9 @@ namespace code_editor {
             runtime.config.error_visible = true;
         } else if (global_error.valid) {
             runtime.config.error = global_error;
+            runtime.config.error_visible = true;
+        } else if (action_error.valid) {
+            runtime.config.error = action_error;
             runtime.config.error_visible = true;
         } else {
             clear_editor_config_error(runtime.config.error);
@@ -1341,10 +1408,724 @@ namespace code_editor {
         return text;
     }
 
+    auto close_handle(HANDLE* handle) -> void {
+        if (*handle != nullptr) {
+            CloseHandle(*handle);
+            *handle = nullptr;
+        }
+    }
+
+    auto close_workspace_action_process(WorkspaceActionState& action) -> void {
+        close_handle(&action.stdout_read);
+        close_handle(&action.stderr_read);
+        if (action.process.hProcess != nullptr) {
+            CloseHandle(action.process.hProcess);
+        }
+        if (action.process.hThread != nullptr) {
+            CloseHandle(action.process.hThread);
+        }
+        action.process = {};
+        action.running = false;
+    }
+
+    [[nodiscard]] auto create_action_pipe(HANDLE* out_read, HANDLE* out_write) -> bool {
+        SECURITY_ATTRIBUTES attributes = {};
+        attributes.nLength = sizeof(attributes);
+        attributes.bInheritHandle = TRUE;
+        if (!CreatePipe(out_read, out_write, &attributes, 0u)) {
+            return false;
+        }
+        if (!SetHandleInformation(*out_read, HANDLE_FLAG_INHERIT, 0u)) {
+            close_handle(out_read);
+            close_handle(out_write);
+            return false;
+        }
+        return true;
+    }
+
+    auto clear_action_output(WorkspaceActionState& action) -> void {
+        action.output_text.reset();
+        action.output_line_count = 0u;
+        action.output_scroll_text_size = 0u;
+        action.output_scroll_line_count = 0u;
+        action.output_line_open = false;
+        action.output_truncated = false;
+        action.output_scroll_truncated = false;
+        action.follow_tail = true;
+        action.read_stderr_next = false;
+        action.output_selection = {};
+    }
+
+    [[nodiscard]] auto append_action_output_line(WorkspaceActionState& action, bool stderr_output)
+        -> ActionOutputLine* {
+        if (action.output_line_count >= ACTION_OUTPUT_LINE_CAPACITY) {
+            action.output_truncated = true;
+            return nullptr;
+        }
+        ActionOutputLine* const line = action.output_lines + action.output_line_count;
+        *line = {
+            .offset = action.output_text.size(),
+            .stderr_output = stderr_output,
+        };
+        action.output_line_count += 1u;
+        action.output_line_open = true;
+        return line;
+    }
+
+    auto append_action_output(WorkspaceActionState& action, bool stderr_output, StrRef text)
+        -> void {
+        if (action.output_truncated) {
+            return;
+        }
+        for (char const ch : text) {
+            if (ch == '\r') {
+                continue;
+            }
+
+            if (!action.output_line_open || action.output_line_count == 0u ||
+                action.output_lines[action.output_line_count - 1u].stderr_output != stderr_output) {
+                if (append_action_output_line(action, stderr_output) == nullptr) {
+                    return;
+                }
+            }
+
+            if (ch == '\n') {
+                action.output_line_open = false;
+                continue;
+            }
+
+            if (action.output_text.size() >= ACTION_OUTPUT_CAPACITY) {
+                action.output_truncated = true;
+                return;
+            }
+            BASE_UNUSED(action.output_text.write_byte(ch));
+            action.output_lines[action.output_line_count - 1u].size += 1u;
+        }
+    }
+
+    auto fail_workspace_action_start(WorkspaceActionState& action, StrRef message) -> void {
+        append_action_output(action, true, message);
+        append_action_output(action, true, "\n");
+        action.return_code = -1;
+        action.visible = true;
+        action.user_focused = false;
+        action.visible_seconds = ACTION_POPUP_HOLD_SECONDS;
+        close_workspace_action_process(action);
+    }
+
+    [[nodiscard]] auto start_workspace_action(Runtime& runtime, EditorActionConfig const& config)
+        -> bool {
+        WorkspaceActionState& action = runtime.action;
+        if (action.running) {
+            action.visible = true;
+            show_editor_notification(runtime.editor, "A workspace action is already running.");
+            return false;
+        }
+
+        close_workspace_action_process(action);
+        clear_action_output(action);
+        action.command_selection = {};
+        action.return_selection = {};
+        action.return_code = 0;
+        action.visible_seconds = ACTION_POPUP_HOLD_SECONDS;
+        action.visible = true;
+        action.user_focused = false;
+        copy_cstr(action.action_name, sizeof(action.action_name), StrRef(config.name));
+        copy_cstr(action.command, sizeof(action.command), StrRef(config.command));
+
+        HANDLE stdout_read = nullptr;
+        HANDLE stdout_write = nullptr;
+        HANDLE stderr_read = nullptr;
+        HANDLE stderr_write = nullptr;
+        if (!create_action_pipe(&stdout_read, &stdout_write) ||
+            !create_action_pipe(&stderr_read, &stderr_write)) {
+            close_handle(&stdout_read);
+            close_handle(&stdout_write);
+            close_handle(&stderr_read);
+            close_handle(&stderr_write);
+            fail_workspace_action_start(action, "Failed to capture command output.");
+            return false;
+        }
+
+        ArenaTemp temp = begin_thread_temp_arena();
+        char command_buffer[EDITOR_ACTION_COMMAND_CAPACITY + 32u] = {};
+        StrRef const shell_command = fmt::bprintf(
+            command_buffer, sizeof(command_buffer), "cmd.exe /D /C %s", StrRef(config.command)
+        );
+        wchar_t* wide_command = nullptr;
+        int wide_command_count = 0;
+        wchar_t* wide_directory = nullptr;
+        int wide_directory_count = 0;
+        if (!base::utf8_to_wide(shell_command, *temp.arena(), wide_command, wide_command_count) ||
+            (!runtime.editor.save_root_path.empty() &&
+             !base::utf8_to_wide(
+                 runtime.editor.save_root_path, *temp.arena(), wide_directory, wide_directory_count
+             ))) {
+            close_handle(&stdout_read);
+            close_handle(&stdout_write);
+            close_handle(&stderr_read);
+            close_handle(&stderr_write);
+            fail_workspace_action_start(action, "Command or workspace path is not valid UTF-8.");
+            return false;
+        }
+
+        STARTUPINFOW startup = {};
+        startup.cb = sizeof(startup);
+        startup.dwFlags = STARTF_USESTDHANDLES;
+        startup.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+        if (startup.hStdInput == INVALID_HANDLE_VALUE) {
+            startup.hStdInput = nullptr;
+        }
+        startup.hStdOutput = stdout_write;
+        startup.hStdError = stderr_write;
+
+        BOOL const created = CreateProcessW(
+            nullptr,
+            wide_command,
+            nullptr,
+            nullptr,
+            TRUE,
+            CREATE_NO_WINDOW,
+            nullptr,
+            wide_directory,
+            &startup,
+            &action.process
+        );
+        close_handle(&stdout_write);
+        close_handle(&stderr_write);
+        if (!created) {
+            char message[128] = {};
+            StrRef const text = fmt::bprintf(
+                message,
+                sizeof(message),
+                "Failed to start command. GetLastError=%lu.",
+                GetLastError()
+            );
+            close_handle(&stdout_read);
+            close_handle(&stderr_read);
+            fail_workspace_action_start(action, text);
+            return false;
+        }
+
+        action.stdout_read = stdout_read;
+        action.stderr_read = stderr_read;
+        action.running = true;
+        return true;
+    }
+
+    [[nodiscard]] auto
+    read_action_pipe_once(WorkspaceActionState& action, HANDLE pipe, bool stderr_output) -> bool {
+        if (pipe == nullptr) {
+            return false;
+        }
+
+        DWORD available = 0u;
+        if (!PeekNamedPipe(pipe, nullptr, 0u, nullptr, &available, nullptr) || available == 0u) {
+            return false;
+        }
+
+        char buffer[4096] = {};
+        DWORD const read_size = std::min<DWORD>(available, static_cast<DWORD>(sizeof(buffer)));
+        DWORD bytes_read = 0u;
+        if (!ReadFile(pipe, buffer, read_size, &bytes_read, nullptr) || bytes_read == 0u) {
+            return false;
+        }
+        append_action_output(
+            action, stderr_output, StrRef(buffer, static_cast<size_t>(bytes_read))
+        );
+        action.read_stderr_next = !stderr_output;
+        return true;
+    }
+
+    auto read_action_output(WorkspaceActionState& action) -> void {
+        for (size_t index = 0u; index < 512u; ++index) {
+            bool const first_stderr = action.read_stderr_next;
+            bool const read = first_stderr
+                                  ? read_action_pipe_once(action, action.stderr_read, true) ||
+                                        read_action_pipe_once(action, action.stdout_read, false)
+                                  : read_action_pipe_once(action, action.stdout_read, false) ||
+                                        read_action_pipe_once(action, action.stderr_read, true);
+            if (!read) {
+                return;
+            }
+        }
+    }
+
+    auto poll_workspace_action(WorkspaceActionState& action, float delta_time) -> void {
+        if (action.running) {
+            read_action_output(action);
+
+            DWORD exit_code = STILL_ACTIVE;
+            if (GetExitCodeProcess(action.process.hProcess, &exit_code) &&
+                exit_code != STILL_ACTIVE) {
+                read_action_output(action);
+                action.return_code = static_cast<int32_t>(exit_code);
+                action.visible_seconds = ACTION_POPUP_HOLD_SECONDS;
+                close_workspace_action_process(action);
+            }
+        } else if (action.visible && !action.user_focused) {
+            action.visible_seconds -= delta_time;
+            if (action.visible_seconds <= 0.0f) {
+                action.visible = false;
+            }
+        }
+    }
+
+    [[nodiscard]] auto
+    action_keybinding_matches(EditorActionConfig const& action, gui::KeyEvent const& event)
+        -> bool {
+        gui::KeyMods const mods = static_cast<gui::KeyMods>(
+            event.mods &
+            (gui::KEY_MOD_SHIFT | gui::KEY_MOD_CTRL | gui::KEY_MOD_ALT | gui::KEY_MOD_SUPER)
+        );
+        return action.has_keybinding && event.kind == gui::KeyEventKind::PRESS &&
+               event.key == action.keybinding.key && mods == action.keybinding.mods;
+    }
+
+    [[nodiscard]] auto
+    handle_workspace_action_keybindings(Runtime& runtime, gui::InputState const& input) -> bool {
+        if (input.key_events == nullptr) {
+            return false;
+        }
+        for (size_t event_index = 0u; event_index < input.key_event_count; ++event_index) {
+            gui::KeyEvent const& event = input.key_events[event_index];
+            for (size_t action_index = 0u; action_index < runtime.config.effective.action_count;
+                 ++action_index) {
+                EditorActionConfig const& action = runtime.config.effective.actions[action_index];
+                if (action_keybinding_matches(action, event)) {
+                    BASE_UNUSED(start_workspace_action(runtime, action));
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    [[nodiscard]] auto rect_contains(gui::Rect rect, gui::Vec2 point) -> bool {
+        return point.x >= rect.min.x && point.x <= rect.max.x && point.y >= rect.min.y &&
+               point.y <= rect.max.y;
+    }
+
+    [[nodiscard]] auto action_popup_metrics(float client_width, float client_height)
+        -> ActionPopupMetrics {
+        if (client_width < 80.0f || client_height < 80.0f) {
+            return {};
+        }
+
+        float const width = std::clamp(
+            client_width - ACTION_POPUP_MARGIN * 2.0f,
+            ACTION_POPUP_MIN_WIDTH,
+            ACTION_POPUP_MAX_WIDTH
+        );
+        float const max_height =
+            std::min(ACTION_POPUP_MAX_HEIGHT, client_height - ACTION_POPUP_MARGIN * 2.0f);
+        if (max_height < ACTION_POPUP_MIN_HEIGHT) {
+            return {};
+        }
+        float const height = std::clamp(client_height * 0.38f, ACTION_POPUP_MIN_HEIGHT, max_height);
+
+        float const x = std::max(ACTION_POPUP_MARGIN, client_width - width - ACTION_POPUP_MARGIN);
+        float const y = std::max(ACTION_POPUP_MARGIN, client_height - height - ACTION_POPUP_MARGIN);
+        return {
+            .panel = {{x, y}, {x + width, y + height}},
+            .width = width,
+            .height = height,
+            .body_height = std::max(64.0f, height - ACTION_POPUP_HEADER_HEIGHT - 112.0f),
+            .valid = true,
+        };
+    }
+
+    [[nodiscard]] auto workspace_action_popup_hovered(
+        Runtime const& runtime, render::SizeU32 window_size, gui::Vec2 mouse_pos
+    ) -> bool {
+        if (!runtime.action.visible) {
+            return false;
+        }
+        ActionPopupMetrics const metrics = action_popup_metrics(
+            static_cast<float>(window_size.width), static_cast<float>(window_size.height)
+        );
+        return metrics.valid && rect_contains(metrics.panel, mouse_pos);
+    }
+
+    auto update_workspace_action_popup_focus(
+        WorkspaceActionState& action, bool hovered, gui::InputState const& input
+    ) -> void {
+        if (!action.visible || !hovered) {
+            return;
+        }
+        if (input.mouse_down[0u] || input.scroll_delta_y != 0.0f) {
+            action.user_focused = true;
+        }
+        if (input.scroll_delta_y > 0.0f) {
+            action.follow_tail = false;
+        }
+    }
+
+    [[nodiscard]] auto action_text_height(StrRef text, float line_height) -> float {
+        return std::max(
+            line_height, static_cast<float>(std::max<size_t>(1u, line_count(text))) * line_height
+        );
+    }
+
+    [[nodiscard]] auto action_output_copy_text(WorkspaceActionState const& action) -> StrRef {
+        if (action.output_line_count == 0u) {
+            return "(no output)";
+        }
+
+        size_t size = action.output_text.size() + action.output_line_count;
+        if (action.output_truncated) {
+            size += StrRef("(output truncated)").size() + 1u;
+        }
+
+        char* const text = arena_alloc<char>(thread_temp_arena(), size);
+        size_t written = 0u;
+        StrRef const output = action.output_text.str();
+        for (size_t index = 0u; index < action.output_line_count; ++index) {
+            ActionOutputLine const& line = action.output_lines[index];
+            if (line.size != 0u) {
+                std::memcpy(text + written, output.data() + line.offset, line.size);
+                written += line.size;
+            }
+            text[written++] = '\n';
+        }
+        if (action.output_truncated) {
+            StrRef const truncated = "(output truncated)";
+            std::memcpy(text + written, truncated.data(), truncated.size());
+            written += truncated.size();
+        }
+        return StrRef(text, written);
+    }
+
+    [[nodiscard]] auto action_output_changed_for_scroll(WorkspaceActionState const& action)
+        -> bool {
+        return action.output_scroll_text_size != action.output_text.size() ||
+               action.output_scroll_line_count != action.output_line_count ||
+               action.output_scroll_truncated != action.output_truncated;
+    }
+
+    auto mark_action_output_scrolled(WorkspaceActionState& action) -> void {
+        action.output_scroll_text_size = action.output_text.size();
+        action.output_scroll_line_count = action.output_line_count;
+        action.output_scroll_truncated = action.output_truncated;
+    }
+
+    [[nodiscard]] auto action_to_draw_rect(gui::Rect rect) -> draw::Rect {
+        return {{rect.min.x, rect.min.y}, {rect.max.x, rect.max.y}};
+    }
+
+    [[nodiscard]] auto action_output_line_height(Runtime const& runtime) -> float {
+        font_provider::Metrics metrics = {};
+        if (font_cache::font_valid(runtime.editor_font)) {
+            font_cache::metrics_from_font(runtime.editor_font, runtime.editor.font_size, metrics);
+            return std::ceil(metrics.ascent + metrics.descent + 4.0f);
+        }
+        return runtime.editor.font_size * 1.25f;
+    }
+
+    auto draw_action_output(
+        gui::Frame& ui,
+        Runtime& runtime,
+        gui::Id id,
+        WorkspaceActionState& action,
+        Palette const& palette,
+        float height
+    ) -> void {
+        ui.selectable_label(
+            id,
+            action_output_copy_text(action),
+            &action.output_selection,
+            {
+                .layout =
+                    {
+                        .width = gui::fill(),
+                        .height = gui::px(height),
+                        .padding = gui::insets(7.0f, 9.0f),
+                    },
+                .style =
+                    {
+                        .role = gui::StyleRole::TEXT,
+                        .background = gui::color_alpha(palette.shell, 0.34f),
+                        .foreground = palette.text,
+                        .border = gui::color_alpha(palette.border, 0.48f),
+                        .border_thickness = 1.0f,
+                        .radius = 5.0f,
+                        .font = runtime.editor_font,
+                        .font_size = runtime.editor.font_size,
+                    },
+                .debug_name = "workspace_action_output_body",
+            }
+        );
+    }
+
+    auto draw_workspace_action_stderr_overlay(
+        gui::Frame const& ui, Runtime& runtime, Palette const& palette
+    ) -> void {
+        WorkspaceActionState const& action = runtime.action;
+        if (!action.visible || action.output_line_count == 0u) {
+            return;
+        }
+
+        gui::Id const output_id = gui::id("workspace_action_output_body");
+        gui::BoxInfo const* const box = ui.find_box(output_id, gui::BoxKind::SELECTABLE_LABEL);
+        gui::ScrollState const scroll = ui.scroll_state(output_id);
+        if (box == nullptr || !scroll.valid) {
+            return;
+        }
+
+        gui::Rect clip = box->rect;
+        clip.min.x += box->layout.padding.left;
+        clip.min.y += box->layout.padding.top;
+        clip.max.x -= box->layout.padding.right;
+        clip.max.y -= box->layout.padding.bottom;
+        if (clip.max.x <= clip.min.x || clip.max.y <= clip.min.y) {
+            return;
+        }
+
+        draw::TextStyle style = {
+            .font = runtime.editor_font,
+            .size = runtime.editor.font_size,
+            .raster_policy = runtime.editor.raster_policy,
+            .color = to_draw_color(palette.preprocessor),
+        };
+        float const line_height = action_output_line_height(runtime);
+        float const x = box->rect.min.x + box->layout.padding.left - scroll.x;
+        float const y = box->rect.min.y + box->layout.padding.top - scroll.y;
+        StrRef const output = action.output_text.str();
+
+        draw::push_clip_rect(runtime.draw_context, action_to_draw_rect(clip));
+        for (size_t index = 0u; index < action.output_line_count; ++index) {
+            ActionOutputLine const& line = action.output_lines[index];
+            if (!line.stderr_output || line.size == 0u) {
+                continue;
+            }
+            float const line_y = y + line_height * static_cast<float>(index);
+            if (line_y + line_height < clip.min.y || line_y > clip.max.y) {
+                continue;
+            }
+            draw::draw_text(
+                runtime.draw_context,
+                {
+                    std::round(x),
+                    std::round(line_y - 2.0f),
+                },
+                style,
+                output.substr(line.offset, line.size),
+                nullptr
+            );
+        }
+        draw::pop_clip_rect(runtime.draw_context);
+    }
+
+    auto draw_action_section(
+        gui::Frame& ui,
+        Runtime& runtime,
+        gui::Id id,
+        StrRef title,
+        StrRef text,
+        gui::TextSelection* selection,
+        gui::Color color,
+        float content_width,
+        float line_height
+    ) -> void {
+        ui.label(
+            title,
+            {
+                .layout =
+                    {.width = gui::fill(), .height = gui::px(ACTION_POPUP_SECTION_LABEL_HEIGHT)},
+                .style = {.foreground = runtime.config.effective.palette.muted},
+            }
+        );
+        ui.selectable_label(
+            id,
+            text,
+            selection,
+            {
+                .layout =
+                    {
+                        .width = gui::px(content_width),
+                        .height = gui::px(action_text_height(text, line_height)),
+                        .word_wrap = true,
+                    },
+                .style = {
+                    .role = gui::StyleRole::TEXT,
+                    .foreground = color,
+                    .font = runtime.editor_font,
+                    .font_size = runtime.editor.font_size,
+                },
+            }
+        );
+    }
+
+    auto draw_workspace_action_popup(
+        gui::Frame& ui,
+        Runtime& runtime,
+        Palette const& palette,
+        float client_width,
+        float client_height
+    ) -> void {
+        WorkspaceActionState& action = runtime.action;
+        if (!action.visible) {
+            return;
+        }
+
+        ActionPopupMetrics const metrics = action_popup_metrics(client_width, client_height);
+        if (!metrics.valid) {
+            return;
+        }
+
+        bool close = false;
+        if (auto popup = ui.popup(
+                gui::id("workspace_action_popup"),
+                {
+                    .layout =
+                        {
+                            .width = gui::px(metrics.width),
+                            .height = gui::px(metrics.height),
+                            .margin =
+                                gui::insets(metrics.panel.min.y, 0.0f, 0.0f, metrics.panel.min.x),
+                            .padding = gui::insets(14.0f),
+                            .gap = 10.0f,
+                            .align_x = gui::Align::STRETCH,
+                        },
+                    .style =
+                        {
+                            .background = gui::color_alpha(palette.panel, 0.90f),
+                            .border = gui::color_alpha(palette.border, 0.72f),
+                            .border_thickness = 1.0f,
+                            .radius = 8.0f,
+                            .shadow =
+                                {
+                                    .offset = {0.0f, 10.0f},
+                                    .blur_radius = 24.0f,
+                                    .color = gui::rgba(0, 0, 0, 88),
+                                },
+                        },
+                    .debug_name = "workspace_action_popup",
+                }
+            )) {
+            if (auto header = ui.row(
+                    gui::id("workspace_action_header"),
+                    {
+                        .layout = {
+                            .width = gui::fill(),
+                            .height = gui::px(ACTION_POPUP_HEADER_HEIGHT),
+                            .gap = 8.0f,
+                            .align_y = gui::Align::CENTER,
+                        },
+                    }
+                )) {
+                StrRef const title =
+                    action.running
+                        ? fmt::tprintf("%s running", StrRef(action.action_name))
+                        : fmt::tprintf(
+                              "%s exited: %d", StrRef(action.action_name), action.return_code
+                          );
+                gui::Color const title_color = !action.running && action.return_code != 0
+                                                   ? palette.preprocessor
+                                                   : palette.text;
+                ui.label(
+                    title,
+                    {
+                        .layout = {.width = gui::fill(), .height = gui::fill()},
+                        .style = {.foreground = title_color, .font_size = runtime.editor.font_size},
+                    }
+                );
+                close =
+                    ui.button(
+                          gui::id("workspace_action_close"),
+                          "X",
+                          {
+                              .layout =
+                                  {
+                                      .width = gui::px(32.0f),
+                                      .height = gui::fill(),
+                                      .padding = gui::insets(0.0f, 8.0f),
+                                  },
+                              .style =
+                                  {
+                                      .background = gui::color_alpha(palette.panel_raised, 0.82f),
+                                      .foreground = palette.text,
+                                      .border = gui::color_alpha(palette.border, 0.8f),
+                                      .border_thickness = 1.0f,
+                                      .radius = 5.0f,
+                                      .font_size = runtime.editor.font_size,
+                                  },
+                          }
+                    )
+                        .activated;
+            }
+
+            if (auto command = ui.column(
+                    gui::id("workspace_action_command_block"),
+                    {
+                        .layout = {
+                            .width = gui::fill(),
+                            .height = gui::children(),
+                            .align_x = gui::Align::STRETCH,
+                        },
+                    }
+                )) {
+                float const content_width = std::max(1.0f, metrics.width - 28.0f);
+                float const line_height = runtime.editor.font_size * ACTION_POPUP_LINE_HEIGHT_SCALE;
+                draw_action_section(
+                    ui,
+                    runtime,
+                    gui::id("workspace_action_command"),
+                    "Command",
+                    StrRef(action.command),
+                    &action.command_selection,
+                    palette.text,
+                    content_width,
+                    line_height
+                );
+            }
+
+            gui::Id const output_id = gui::id("workspace_action_output_body");
+            bool const output_changed = action_output_changed_for_scroll(action);
+            if (action.follow_tail && output_changed) {
+                ui.scroll_to_end(output_id);
+            }
+            draw_action_output(ui, runtime, output_id, action, palette, metrics.body_height);
+            gui::ScrollState const scroll = ui.scroll_state(output_id);
+            if (scroll.valid) {
+                action.follow_tail = scroll.y >= scroll.max_y - 1.0f;
+            }
+            if (output_changed) {
+                mark_action_output_scrolled(action);
+            }
+
+            float const line_height = runtime.editor.font_size * ACTION_POPUP_LINE_HEIGHT_SCALE;
+            ui.selectable_label(
+                gui::id("workspace_action_return_code"),
+                action.running ? StrRef("Return code: (running)")
+                               : fmt::tprintf("Return code: %d", action.return_code),
+                &action.return_selection,
+                {
+                    .layout = {.width = gui::fill(), .height = gui::px(line_height)},
+                    .style =
+                        {
+                            .role = gui::StyleRole::TEXT,
+                            .foreground = !action.running && action.return_code != 0
+                                              ? palette.preprocessor
+                                              : palette.text,
+                            .font = runtime.editor_font,
+                            .font_size = runtime.editor.font_size,
+                        },
+                    .debug_name = "workspace_action_return_code",
+                }
+            );
+        }
+
+        if (close) {
+            action.visible = false;
+        }
+    }
+
     auto destroy_runtime(render::Context render_context, Runtime* runtime) -> void {
         if (runtime == nullptr) {
             return;
         }
+        close_workspace_action_process(runtime->action);
         if (gui::context_valid(runtime->ui_context)) {
             gui::destroy_context(runtime->ui_context);
         }
@@ -1414,6 +2195,11 @@ namespace code_editor {
         draw_desc.font_cache = runtime->cache;
         draw_desc.initial_command_capacity = 4096u;
         draw::create_context(arena, draw_desc, runtime->draw_context);
+        runtime->action.output_lines =
+            arena_alloc<ActionOutputLine>(arena, ACTION_OUTPUT_LINE_CAPACITY);
+        if (!runtime->action.output_text.init(ACTION_OUTPUT_CAPACITY, arena.resource())) {
+            return false;
+        }
         runtime->native_window = context.native_window;
         runtime->shared_tree_root_name = context.shared_tree_root_name;
         runtime->shared_tree_files = context.shared_tree_files;
@@ -1938,6 +2724,20 @@ namespace code_editor {
     ) -> gui::Frame {
         sync_git_worker_results(*runtime);
         reload_runtime_config(*runtime, false);
+        poll_workspace_action(runtime->action, delta_time);
+        bool const action_key_consumed = handle_workspace_action_keybindings(*runtime, input);
+        bool const action_popup_hovered =
+            workspace_action_popup_hovered(*runtime, window_size, input.mouse_pos);
+        update_workspace_action_popup_focus(runtime->action, action_popup_hovered, input);
+        gui::InputState editor_input = input;
+        if (action_key_consumed || action_popup_hovered) {
+            editor_input.scroll_delta_y = 0.0f;
+            editor_input.mouse_down[0u] = false;
+            editor_input.mouse_down[1u] = false;
+            editor_input.mouse_double_clicked[0u] = false;
+            editor_input.mouse_triple_clicked[0u] = false;
+            editor_input.key_event_count = 0u;
+        }
         update_editor_notification(runtime->editor, delta_time);
         sync_tree_operation_result(runtime->editor);
         if (files_changed) {
@@ -1953,12 +2753,12 @@ namespace code_editor {
                                  runtime->editor.flag(EditorFlag::FILE_DELETED_ON_DISK) ||
                                  runtime->editor.close_intent != EditorCloseIntent::NONE);
         bool const suppress_git_control_space =
-            !popup_open && git_control_space_input(runtime->editor, input);
+            !popup_open && git_control_space_input(runtime->editor, editor_input);
         if (!popup_open) {
             update_editor_lsp_document(runtime->editor);
             process_editor_input(
                 runtime->editor,
-                input,
+                editor_input,
                 {
                     .set_clipboard_text = set_windows_clipboard_text,
                     .get_clipboard_text = get_windows_clipboard_text,
@@ -1968,7 +2768,7 @@ namespace code_editor {
             update_editor_lsp_document(runtime->editor);
         }
         gui::InputState ui_input = input;
-        if (suppress_git_control_space) {
+        if (suppress_git_control_space || action_key_consumed) {
             ui_input.key_event_count = 0u;
         }
         submit_git_worker_requests(*runtime, window_size.height);
@@ -2021,6 +2821,13 @@ namespace code_editor {
             static_cast<float>(window_size.height),
             ui_input
         );
+        draw_workspace_action_popup(
+            ui,
+            *runtime,
+            palette,
+            static_cast<float>(window_size.width),
+            static_cast<float>(window_size.height)
+        );
         gui::end_frame(ui);
 
         draw::begin_frame(runtime->draw_context);
@@ -2049,7 +2856,7 @@ namespace code_editor {
                 ui,
                 search_open || runtime->editor.lsp_popup == EditorLspPopupKind::RENAME
                     ? gui::InputState{}
-                    : ui_input,
+                    : editor_input,
                 palette,
                 editor_selection_visible
             );
@@ -2065,6 +2872,7 @@ namespace code_editor {
             );
         }
         gui::render_frame_floating(ui, runtime->draw_context);
+        draw_workspace_action_stderr_overlay(ui, *runtime, palette);
         draw::end_frame(runtime->draw_context);
         write_code_editor_text_diagnostics(
             *runtime, window_size, palette, editor_selection_visible
@@ -2155,7 +2963,8 @@ namespace code_editor {
         frame_result.redraw_pending =
             frame_result.frame.redraw_requested() || module->runtime.editor.git_commits_loading ||
             module->runtime.editor.git_operation_pending || module->runtime.editor.tree_loading ||
-            module->runtime.editor.notification_visible ||
+            module->runtime.editor.notification_visible || module->runtime.action.running ||
+            module->runtime.action.visible ||
             editor_state_hash(module->runtime.editor) != state_hash_before;
         reset_thread_temp_arenas();
         return frame_result;

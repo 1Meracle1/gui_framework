@@ -12,9 +12,29 @@ namespace code_editor {
     inline constexpr size_t EDITOR_CONFIG_PATH_CAPACITY = 1024u;
     inline constexpr size_t EDITOR_CONFIG_MESSAGE_CAPACITY = 512u;
     inline constexpr size_t EDITOR_CONFIG_EXCERPT_CAPACITY = 1024u;
+    inline constexpr size_t EDITOR_ACTION_CAPACITY = 32u;
+    inline constexpr size_t EDITOR_ACTION_NAME_CAPACITY = 64u;
+    inline constexpr size_t EDITOR_ACTION_COMMAND_CAPACITY = 512u;
+    inline constexpr size_t EDITOR_ACTION_KEYBINDING_CAPACITY = 64u;
+
+    struct EditorActionKeyBinding {
+        gui::Key key = gui::Key::UNKNOWN;
+        gui::KeyMods mods = gui::KEY_MOD_NONE;
+    };
+
+    struct EditorActionConfig {
+        char name[EDITOR_ACTION_NAME_CAPACITY] = {};
+        char command[EDITOR_ACTION_COMMAND_CAPACITY] = {};
+        char keybinding_text[EDITOR_ACTION_KEYBINDING_CAPACITY] = {};
+        EditorActionKeyBinding keybinding = {};
+        bool has_command = false;
+        bool has_keybinding = false;
+    };
 
     struct EditorConfig {
         Palette palette = {};
+        EditorActionConfig actions[EDITOR_ACTION_CAPACITY] = {};
+        size_t action_count = 0u;
         gui::font_provider::RasterPolicy raster_policy = gui::font_provider::DEFAULT_RASTER_POLICY;
         float font_size = 12.0f;
         float notification_seconds = 5.0f;
@@ -25,6 +45,8 @@ namespace code_editor {
 
     struct EditorConfigPatch {
         Palette palette = {};
+        EditorActionConfig actions[EDITOR_ACTION_CAPACITY] = {};
+        size_t action_count = 0u;
         uint32_t palette_mask = 0u;
         gui::font_provider::RasterPolicy raster_policy = gui::font_provider::DEFAULT_RASTER_POLICY;
         float font_size = 0.0f;
@@ -66,6 +88,12 @@ namespace code_editor {
     auto apply_editor_config_patch(EditorConfig& config, EditorConfigPatch const& patch) -> void;
     auto merge_editor_config_patch(EditorConfigPatch& target, EditorConfigPatch const& source)
         -> void;
+    [[nodiscard]] auto validate_editor_config_actions(
+        EditorConfig const& config,
+        StrRef path,
+        EditorConfigErrorSource source,
+        EditorConfigError& error
+    ) -> bool;
     [[nodiscard]] auto parse_editor_config(
         StrRef text,
         StrRef path,
