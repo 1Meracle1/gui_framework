@@ -1713,6 +1713,30 @@ namespace code_editor {
         }
     }
 
+    [[nodiscard]] auto semantic_token_overlaps_range(
+        Slice<LspSemanticToken const> tokens,
+        size_t line_index,
+        size_t line_size,
+        size_t start,
+        size_t end
+    ) -> bool {
+        for (LspSemanticToken const& token : tokens) {
+            if (token.range.start.line > line_index) {
+                break;
+            }
+            if (token.kind == SyntaxTokenKind::TEXT || token.range.start.line != line_index ||
+                token.range.end.line != line_index) {
+                continue;
+            }
+            size_t const token_start = std::min(token.range.start.column, line_size);
+            size_t const token_end = std::min(token.range.end.column, line_size);
+            if (token_start < end && token_end > start) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     auto draw_syntax_line_with_inlay_hints(
         draw::Context context,
         font_cache::Font font,
@@ -1725,9 +1749,10 @@ namespace code_editor {
         float font_size,
         font_provider::RasterPolicy raster_policy,
         float char_width,
+        Slice<LspSemanticToken const> semantic_tokens,
         Slice<LspInlayHint const> hints
     ) -> void {
-        if (hints.empty()) {
+        if (semantic_tokens.empty() && hints.empty()) {
             draw_syntax_line(
                 context, font, tokenizer, palette, line, x, y, font_size, raster_policy, char_width
             );
@@ -1736,13 +1761,29 @@ namespace code_editor {
 
         draw::TextStyle style = {.font = font, .size = font_size, .raster_policy = raster_policy};
         StrRef const text = editor_line_text(line);
+        while (!semantic_tokens.empty() && semantic_tokens.front().range.start.line < line_index) {
+            semantic_tokens.remove_prefix(1u);
+        }
         size_t index = 0u;
         while (index < text.size()) {
             SyntaxToken const token = syntax_next_token(tokenizer, text, index);
-            style.color = to_draw_color(syntax_token_color(palette, token.kind));
-            draw_token_with_inlay_hints(
-                context, style, line, line_index, token.start, token.end, x, y, char_width, hints
-            );
+            if (!semantic_token_overlaps_range(
+                    semantic_tokens, line_index, line.size, token.start, token.end
+                )) {
+                style.color = to_draw_color(syntax_token_color(palette, token.kind));
+                draw_token_with_inlay_hints(
+                    context,
+                    style,
+                    line,
+                    line_index,
+                    token.start,
+                    token.end,
+                    x,
+                    y,
+                    char_width,
+                    hints
+                );
+            }
             index = token.end;
         }
     }
@@ -1926,17 +1967,20 @@ namespace code_editor {
             }
 
             draw::push_clip_rect(context, text_clip);
-            draw_syntax_line(
+            draw_syntax_line_with_inlay_hints(
                 context,
                 font,
                 tokenizer,
                 palette,
                 text_line,
+                line,
                 text_x,
                 y - 2.0f,
                 editor.font_size,
                 editor.raster_policy,
-                char_width
+                char_width,
+                semantic_tokens,
+                {}
             );
             draw_semantic_line(
                 context,
@@ -2918,6 +2962,7 @@ namespace code_editor {
                     editor.font_size,
                     editor.raster_policy,
                     char_width,
+                    semantic_tokens,
                     inlay_hints
                 );
             }

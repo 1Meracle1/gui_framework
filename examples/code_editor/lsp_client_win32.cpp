@@ -486,7 +486,7 @@ namespace code_editor {
             "\"lineFoldingOnly\":true},\"inlayHint\":{\"dynamicRegistration\":false},"
             "\"semanticTokens\":{\"dynamicRegistration\":false,"
             "\"requests\":{\"range\":false,\"full\":true},\"tokenTypes\":[\"namespace\","
-            "\"type\",\"class\",\"enum\",\"interface\",\"struct\",\"typeParameter\","
+            "\"type\",\"typeAlias\",\"class\",\"enum\",\"interface\",\"struct\",\"typeParameter\","
             "\"parameter\",\"variable\",\"property\",\"enumMember\",\"event\",\"function\","
             "\"method\",\"macro\",\"keyword\",\"modifier\",\"comment\",\"string\",\"number\","
             "\"regexp\",\"operator\",\"decorator\"],\"tokenModifiers\":[\"declaration\","
@@ -1251,9 +1251,9 @@ namespace code_editor {
         StrRef const type = type_index < client.semantic_token_types.size()
                                 ? client.semantic_token_types[type_index]
                                 : StrRef();
-        if (type == "type" || type == "class" || type == "enum" || type == "interface" ||
-            type == "struct" || type == "typeParameter" || type == "namespace" ||
-            type == "concept") {
+        if (type == "type" || type == "typeAlias" || type == "class" || type == "enum" ||
+            type == "interface" || type == "struct" || type == "typeParameter" ||
+            type == "namespace" || type == "concept") {
             return SyntaxTokenKind::TYPE;
         }
         if (type == "function" || type == "method") {
