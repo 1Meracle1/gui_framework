@@ -6029,6 +6029,34 @@ namespace code_editor {
         }
     }
 
+    [[nodiscard]] auto document_lsp_range(EditorState const& editor) -> LspRange {
+        size_t const last_line = editor_line_count(editor) - 1u;
+        return {
+            .start = {},
+            .end = {last_line, line_size(editor, last_line)},
+        };
+    }
+
+    auto request_lsp_inlay_hints(EditorState& editor) -> void {
+        if (!editor.inlay_hints_enabled ||
+            (editor.lsp_inlay_hints_requested_path == editor.current_file_path &&
+             editor.lsp_inlay_hints_requested_revision == editor.text.revision)) {
+            return;
+        }
+        send_lsp_request(
+            editor,
+            {
+                .kind = LspRequestKind::INLAY_HINTS,
+                .path = editor.current_file_path,
+                .range = document_lsp_range(editor),
+                .revision = editor.text.revision,
+            }
+        );
+        editor.lsp_inlay_hints_requested_path =
+            arena_copy_cstr(*editor.arena, editor.current_file_path);
+        editor.lsp_inlay_hints_requested_revision = editor.text.revision;
+    }
+
     auto close_editor_lsp_popup(EditorState& editor) -> void {
         editor.lsp_popup = EditorLspPopupKind::NONE;
         editor.lsp_selected = 0u;
@@ -6052,6 +6080,8 @@ namespace code_editor {
                 );
                 editor.lsp_synced_path = {};
                 editor.lsp_synced_revision = 0u;
+                editor.lsp_inlay_hints_requested_path = {};
+                editor.lsp_inlay_hints_requested_revision = 0u;
             }
             return;
         }
@@ -6064,6 +6094,11 @@ namespace code_editor {
         }
 
         if (!path_changed && editor.lsp_synced_revision == editor.text.revision) {
+            if (editor.inlay_hints_enabled &&
+                (editor.lsp_bridge->inlay_hints_path != editor.current_file_path ||
+                 editor.lsp_bridge->inlay_hints_revision != editor.text.revision)) {
+                request_lsp_inlay_hints(editor);
+            }
             return;
         }
 
@@ -6094,6 +6129,7 @@ namespace code_editor {
                 .revision = editor.text.revision,
             }
         );
+        request_lsp_inlay_hints(editor);
         editor.lsp_synced_path = arena_copy_cstr(*editor.arena, editor.current_file_path);
         editor.lsp_synced_revision = editor.text.revision;
     }
@@ -7335,6 +7371,7 @@ namespace code_editor {
         hash = hash_bytes(hash, &editor.view_kind, sizeof(editor.view_kind));
         hash =
             hash_bytes(hash, &editor.git_diff_side_by_side, sizeof(editor.git_diff_side_by_side));
+        hash = hash_bytes(hash, &editor.inlay_hints_enabled, sizeof(editor.inlay_hints_enabled));
         hash = hash_bytes(hash, &editor.scroll_x, sizeof(editor.scroll_x));
         hash = hash_bytes(hash, &editor.scroll_y, sizeof(editor.scroll_y));
         hash =

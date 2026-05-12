@@ -18,6 +18,7 @@ namespace code_editor {
         gui::font_provider::RasterPolicy raster_policy = gui::font_provider::DEFAULT_RASTER_POLICY;
         float font_size = 12.0f;
         bool sidebar_visible = false;
+        bool inlay_hints = true;
     };
 
     struct EditorConfigPatch {
@@ -26,9 +27,11 @@ namespace code_editor {
         gui::font_provider::RasterPolicy raster_policy = gui::font_provider::DEFAULT_RASTER_POLICY;
         float font_size = 0.0f;
         bool sidebar_visible = false;
+        bool inlay_hints = false;
         bool has_raster_policy = false;
         bool has_font_size = false;
         bool has_sidebar_visible = false;
+        bool has_inlay_hints = false;
     };
 
     enum class EditorConfigErrorSource : uint8_t {

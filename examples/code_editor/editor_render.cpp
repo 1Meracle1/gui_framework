@@ -38,6 +38,9 @@ namespace code_editor {
     inline constexpr float EDITOR_SPLIT_GAP = 6.0f;
     inline constexpr float EDITOR_SPLIT_MIN_RATIO = 0.08f;
     inline constexpr float EDITOR_SPLIT_MAX_RATIO = 0.92f;
+    inline constexpr float INLAY_HINT_PADDING_X = 4.0f;
+    inline constexpr float INLAY_HINT_PADDING_Y = 2.0f;
+    inline constexpr float INLAY_HINT_RADIUS = 3.0f;
 
     inline constexpr float OPEN_TAB_HEIGHT = 28.0f;
     inline constexpr float OPEN_TAB_GAP = 6.0f;
@@ -1578,6 +1581,172 @@ namespace code_editor {
         return editor.lsp_bridge->semantic_tokens;
     }
 
+    [[nodiscard]] auto inlay_hints_for_editor(EditorState const& editor)
+        -> Slice<LspInlayHint const> {
+        if (!editor.inlay_hints_enabled || editor.view_kind == EditorViewKind::GIT_DIFF ||
+            editor.lsp_bridge == nullptr ||
+            editor.lsp_bridge->inlay_hints_path != editor.current_file_path ||
+            editor.lsp_bridge->inlay_hints_revision != editor.text.revision) {
+            return {};
+        }
+        return editor.lsp_bridge->inlay_hints;
+    }
+
+    [[nodiscard]] auto inlay_hint_width(LspInlayHint const& hint, float char_width) -> float {
+        float width =
+            char_width * static_cast<float>(hint.label.size()) + 2.0f * INLAY_HINT_PADDING_X;
+        if (hint.padding_left) {
+            width += char_width;
+        }
+        if (hint.padding_right) {
+            width += char_width;
+        }
+        return width;
+    }
+
+    [[nodiscard]] auto inlay_shift_for_column(
+        Slice<LspInlayHint const> hints, size_t line, size_t column, float char_width
+    ) -> float {
+        float shift = 0.0f;
+        for (LspInlayHint const& hint : hints) {
+            if (hint.position.line > line) {
+                break;
+            }
+            if (hint.position.line == line && hint.position.column <= column) {
+                shift += inlay_hint_width(hint, char_width);
+            }
+        }
+        return shift;
+    }
+
+    [[nodiscard]] auto inlay_column_x(
+        Slice<LspInlayHint const> hints, size_t line, size_t column, float text_x, float char_width
+    ) -> float {
+        return text_x + char_width * static_cast<float>(column) +
+               inlay_shift_for_column(hints, line, column, char_width);
+    }
+
+    auto draw_token_with_inlay_hints(
+        draw::Context context,
+        draw::TextStyle style,
+        EditorLine const& line,
+        size_t line_index,
+        size_t start,
+        size_t end,
+        float x,
+        float y,
+        float char_width,
+        Slice<LspInlayHint const> hints
+    ) -> void {
+        size_t part_start = start;
+        while (part_start < end) {
+            size_t part_end = end;
+            for (LspInlayHint const& hint : hints) {
+                if (hint.position.line > line_index) {
+                    break;
+                }
+                if (hint.position.line == line_index && hint.position.column > part_start &&
+                    hint.position.column < part_end) {
+                    part_end = hint.position.column;
+                }
+            }
+            draw::draw_text(
+                context,
+                {std::round(inlay_column_x(hints, line_index, part_start, x, char_width)),
+                 std::round(y)},
+                style,
+                StrRef(line.text + part_start, part_end - part_start),
+                nullptr
+            );
+            part_start = part_end;
+        }
+    }
+
+    auto draw_inlay_hints_for_line(
+        draw::Context context,
+        font_cache::Font font,
+        Slice<LspInlayHint const> hints,
+        Palette const& palette,
+        size_t line,
+        float x,
+        float y,
+        float line_height,
+        float font_size,
+        font_provider::RasterPolicy raster_policy,
+        float char_width
+    ) -> void {
+        float shift = 0.0f;
+        for (LspInlayHint const& hint : hints) {
+            if (hint.position.line > line) {
+                break;
+            }
+            if (hint.position.line != line) {
+                continue;
+            }
+
+            float const hint_x = x + char_width * static_cast<float>(hint.position.column) + shift;
+            float const bg_x = hint_x + (hint.padding_left ? char_width : 0.0f);
+            float const bg_width =
+                char_width * static_cast<float>(hint.label.size()) + 2.0f * INLAY_HINT_PADDING_X;
+            draw::draw_rect_filled(
+                context,
+                {{std::round(bg_x), y + INLAY_HINT_PADDING_Y},
+                 {std::round(bg_x + bg_width), y + line_height - INLAY_HINT_PADDING_Y}},
+                to_draw_color(gui::color_alpha(palette.control_hovered, 0.72f)),
+                INLAY_HINT_RADIUS
+            );
+
+            draw::TextStyle style = {
+                .font = font,
+                .size = font_size,
+                .raster_policy = raster_policy,
+                .color = to_draw_color(palette.faint),
+            };
+            draw::draw_text(
+                context,
+                {std::round(bg_x + INLAY_HINT_PADDING_X), std::round(y)},
+                style,
+                hint.label,
+                nullptr
+            );
+            shift += inlay_hint_width(hint, char_width);
+        }
+    }
+
+    auto draw_syntax_line_with_inlay_hints(
+        draw::Context context,
+        font_cache::Font font,
+        SyntaxTokenizer tokenizer,
+        Palette const& palette,
+        EditorLine const& line,
+        size_t line_index,
+        float x,
+        float y,
+        float font_size,
+        font_provider::RasterPolicy raster_policy,
+        float char_width,
+        Slice<LspInlayHint const> hints
+    ) -> void {
+        if (hints.empty()) {
+            draw_syntax_line(
+                context, font, tokenizer, palette, line, x, y, font_size, raster_policy, char_width
+            );
+            return;
+        }
+
+        draw::TextStyle style = {.font = font, .size = font_size, .raster_policy = raster_policy};
+        StrRef const text = editor_line_text(line);
+        size_t index = 0u;
+        while (index < text.size()) {
+            SyntaxToken const token = syntax_next_token(tokenizer, text, index);
+            style.color = to_draw_color(syntax_token_color(palette, token.kind));
+            draw_token_with_inlay_hints(
+                context, style, line, line_index, token.start, token.end, x, y, char_width, hints
+            );
+            index = token.end;
+        }
+    }
+
     [[nodiscard]] auto sticky_scope_folding_ranges(EditorState const& editor)
         -> Slice<LspFoldingRange const> {
         if (editor.lsp_bridge == nullptr || editor.lsp_bridge->folding_ranges.empty()) {
@@ -1687,7 +1856,8 @@ namespace code_editor {
         float y,
         float font_size,
         font_provider::RasterPolicy raster_policy,
-        float char_width
+        float char_width,
+        Slice<LspInlayHint const> inlay_hints
     ) -> void;
 
     auto draw_sticky_scope_lines(
@@ -1779,7 +1949,8 @@ namespace code_editor {
                 y - 2.0f,
                 editor.font_size,
                 editor.raster_policy,
-                char_width
+                char_width,
+                {}
             );
             draw::pop_clip_rect(context);
         }
@@ -1796,7 +1967,8 @@ namespace code_editor {
         float y,
         float font_size,
         font_provider::RasterPolicy raster_policy,
-        float char_width
+        float char_width,
+        Slice<LspInlayHint const> inlay_hints
     ) -> void {
         draw::TextStyle style = {.font = font, .size = font_size, .raster_policy = raster_policy};
         for (LspSemanticToken const& token : tokens) {
@@ -1812,7 +1984,9 @@ namespace code_editor {
                 continue;
             }
             style.color = to_draw_color(syntax_token_color(palette, token.kind));
-            draw_token(context, style, line, start, end, x, y, char_width);
+            draw_token_with_inlay_hints(
+                context, style, line, line_index, start, end, x, y, char_width, inlay_hints
+            );
         }
     }
 
@@ -2150,7 +2324,8 @@ namespace code_editor {
         float number_x,
         float y,
         float line_height,
-        float char_width
+        float char_width,
+        Slice<LspInlayHint const> inlay_hints
     ) -> void {
         if (editor.view_kind == EditorViewKind::GIT_DIFF || editor.lsp_bridge == nullptr) {
             return;
@@ -2173,8 +2348,8 @@ namespace code_editor {
                 1.0f
             );
             if (end > start) {
-                float const x0 = text_x + char_width * static_cast<float>(start);
-                float const x1 = text_x + char_width * static_cast<float>(end);
+                float const x0 = inlay_column_x(inlay_hints, line, start, text_x, char_width);
+                float const x1 = inlay_column_x(inlay_hints, line, end, text_x, char_width);
                 if (x1 <= text_min_x) {
                     continue;
                 }
@@ -2200,7 +2375,8 @@ namespace code_editor {
         float line_height,
         float char_width,
         float max_x,
-        Palette const& palette
+        Palette const& palette,
+        Slice<LspInlayHint const> inlay_hints
     ) -> void {
         if (!selection.active || line < selection.start_line || line > selection.end_line) {
             return;
@@ -2221,12 +2397,15 @@ namespace code_editor {
             return;
         }
 
-        float const x0 =
-            selection.full_line ? text_x : text_x + char_width * static_cast<float>(start);
+        float const x0 = selection.full_line
+                             ? text_x
+                             : inlay_column_x(inlay_hints, line, start, text_x, char_width);
         float const x1 =
             selection.full_line
                 ? max_x
-                : text_x + char_width * static_cast<float>(end + (selects_newline ? 1u : 0u));
+                : inlay_column_x(
+                      inlay_hints, line, end + (selects_newline ? 1u : 0u), text_x, char_width
+                  );
         if (x0 >= max_x || x1 <= x0) {
             return;
         }
@@ -2272,12 +2451,13 @@ namespace code_editor {
         float text_x,
         float y,
         float line_height,
-        float char_width
+        float char_width,
+        Slice<LspInlayHint const> inlay_hints
     ) -> void {
         size_t const cursor_column = draw_cursor_column(editor, line, line_size, column);
-        float const cursor_x0 = std::round(text_x + char_width * static_cast<float>(cursor_column));
-        float const cursor_x1 =
-            std::round(text_x + char_width * static_cast<float>(cursor_column + 1u));
+        float const cursor_x0 =
+            std::round(inlay_column_x(inlay_hints, line, cursor_column, text_x, char_width));
+        float const cursor_x1 = std::round(cursor_x0 + char_width);
         draw::draw_rect_filled(
             context,
             {{cursor_x0, y}, {std::max(cursor_x0 + 1.0f, cursor_x1), y + line_height}},
@@ -2289,17 +2469,21 @@ namespace code_editor {
     auto draw_editor_insert_cursor(
         draw::Context context,
         Palette const& palette,
-        size_t line,
+        size_t visible_line,
+        size_t source_line,
         size_t column,
         float text_x,
         float content_min_y,
         float content_max_y,
         float scroll_y,
         float line_height,
-        float char_width
+        float char_width,
+        Slice<LspInlayHint const> inlay_hints
     ) -> void {
-        float const cursor_x = std::round(text_x + char_width * static_cast<float>(column));
-        float const cursor_y = content_min_y + static_cast<float>(line) * line_height - scroll_y;
+        float const cursor_x =
+            std::round(inlay_column_x(inlay_hints, source_line, column, text_x, char_width));
+        float const cursor_y =
+            content_min_y + static_cast<float>(visible_line) * line_height - scroll_y;
         if (cursor_y + line_height < content_min_y || cursor_y >= content_max_y) {
             return;
         }
@@ -2586,6 +2770,7 @@ namespace code_editor {
         EditorSelectionRange const selection = editor_selection_range(editor);
         SyntaxTokenizer const tokenizer = syntax_tokenizer_for_file_name(editor.current_file_name);
         Slice<LspSemanticToken const> const semantic_tokens = semantic_tokens_for_editor(editor);
+        Slice<LspInlayHint const> const inlay_hints = inlay_hints_for_editor(editor);
         Slice<EditorGitLineChange const> const git_line_changes = current_git_line_changes(editor);
         size_t visible_line = first_line;
         size_t line = editor_visible_line_at(editor, visible_line);
@@ -2648,7 +2833,8 @@ namespace code_editor {
                     line_height,
                     char_width,
                     content.max.x,
-                    palette
+                    palette,
+                    inlay_hints
                 );
                 for (size_t index = 0u; index < editor.extra_cursors.size(); ++index) {
                     draw_editor_selection(
@@ -2661,7 +2847,8 @@ namespace code_editor {
                         line_height,
                         char_width,
                         content.max.x,
-                        palette
+                        palette,
+                        inlay_hints
                     );
                 }
             }
@@ -2677,7 +2864,8 @@ namespace code_editor {
                     text_x,
                     y,
                     line_height,
-                    char_width
+                    char_width,
+                    inlay_hints
                 );
             }
             if (selection_visible && !editor.flag(EditorFlag::INSERT_MODE)) {
@@ -2694,7 +2882,8 @@ namespace code_editor {
                             text_x,
                             y,
                             line_height,
-                            char_width
+                            char_width,
+                            inlay_hints
                         );
                     }
                 }
@@ -2717,17 +2906,19 @@ namespace code_editor {
                     editor.git_diff_side_by_side
                 );
             } else {
-                draw_syntax_line(
+                draw_syntax_line_with_inlay_hints(
                     draw_context,
                     editor_font,
                     tokenizer,
                     palette,
                     text_line,
+                    line,
                     text_x,
                     y - 2.0f,
                     editor.font_size,
                     editor.raster_policy,
-                    char_width
+                    char_width,
+                    inlay_hints
                 );
             }
             draw_semantic_line(
@@ -2739,6 +2930,20 @@ namespace code_editor {
                 line,
                 text_x,
                 y - 2.0f,
+                editor.font_size,
+                editor.raster_policy,
+                char_width,
+                inlay_hints
+            );
+            draw_inlay_hints_for_line(
+                draw_context,
+                editor_font,
+                inlay_hints,
+                palette,
+                line,
+                text_x,
+                y - 2.0f,
+                line_height,
                 editor.font_size,
                 editor.raster_policy,
                 char_width
@@ -2753,7 +2958,9 @@ namespace code_editor {
                 };
                 draw::draw_text(
                     draw_context,
-                    {std::round(text_x + char_width * static_cast<float>(text_line.size + 1u)),
+                    {std::round(
+                         inlay_column_x(inlay_hints, line, text_line.size + 1u, text_x, char_width)
+                     ),
                      std::round(y - 2.0f)},
                     fold_style,
                     fmt::tprintf("... %zu", hidden_count),
@@ -2771,7 +2978,8 @@ namespace code_editor {
                 line_number_x,
                 y,
                 line_height,
-                char_width
+                char_width,
+                inlay_hints
             );
             y += line_height;
             visible_line += 1u;
@@ -2784,13 +2992,15 @@ namespace code_editor {
                 draw_context,
                 palette,
                 editor_visible_line_index(editor, editor.cursor_line),
+                editor.cursor_line,
                 editor.cursor_column,
                 text_x,
                 content.min.y,
                 content.max.y,
                 editor.scroll_y,
                 line_height,
-                char_width
+                char_width,
+                inlay_hints
             );
             for (size_t index = 0u; index < editor.extra_cursors.size(); ++index) {
                 EditorCursor const cursor = editor.extra_cursors[index];
@@ -2798,13 +3008,15 @@ namespace code_editor {
                     draw_context,
                     palette,
                     editor_visible_line_index(editor, cursor.line),
+                    cursor.line,
                     cursor.column,
                     text_x,
                     content.min.y,
                     content.max.y,
                     editor.scroll_y,
                     line_height,
-                    char_width
+                    char_width,
+                    inlay_hints
                 );
             }
             draw::pop_clip_rect(draw_context);

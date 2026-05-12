@@ -553,6 +553,18 @@ namespace code_editor {
                 patch.has_sidebar_visible = true;
                 return true;
             }
+            if (full_key.equals_ignore_ascii_case("editor.inlay-hints")) {
+                bool inlay_hints = false;
+                if (!parse_bool_value(value, inlay_hints)) {
+                    set_value_error(
+                        error, source, path, line, column, full_key, "true or false", text
+                    );
+                    return false;
+                }
+                patch.inlay_hints = inlay_hints;
+                patch.has_inlay_hints = true;
+                return true;
+            }
             if (full_key.equals_ignore_ascii_case("editor.raster-policy")) {
                 gui::font_provider::RasterPolicy raster_policy =
                     gui::font_provider::DEFAULT_RASTER_POLICY;
@@ -793,6 +805,7 @@ namespace code_editor {
                "[editor]\n"
                "# font-size = 12\n"
                "# sidebar-visible = true\n"
+               "# inlay-hints = true\n"
                "# raster-policy = \"lcd-smooth\"\n"
                "# raster-policy = \"smooth\"\n"
                "\n"
@@ -839,6 +852,9 @@ namespace code_editor {
         if (patch.has_sidebar_visible) {
             config.sidebar_visible = patch.sidebar_visible;
         }
+        if (patch.has_inlay_hints) {
+            config.inlay_hints = patch.inlay_hints;
+        }
         if (patch.has_raster_policy) {
             config.raster_policy = patch.raster_policy;
         }
@@ -856,6 +872,10 @@ namespace code_editor {
         if (source.has_sidebar_visible) {
             target.sidebar_visible = source.sidebar_visible;
             target.has_sidebar_visible = true;
+        }
+        if (source.has_inlay_hints) {
+            target.inlay_hints = source.inlay_hints;
+            target.has_inlay_hints = true;
         }
         if (source.has_raster_policy) {
             target.raster_policy = source.raster_policy;

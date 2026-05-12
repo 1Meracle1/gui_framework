@@ -438,6 +438,7 @@ namespace code_editor {
         uint64_t git_commit_load_generation = 0u;
         size_t pending_line_number = 0u;
         uint64_t lsp_synced_revision = 0u;
+        uint64_t lsp_inlay_hints_requested_revision = 0u;
         uint64_t lsp_seen_completions_generation = 0u;
         uint64_t lsp_seen_hover_generation = 0u;
         uint64_t lsp_seen_locations_generation = 0u;
@@ -446,6 +447,7 @@ namespace code_editor {
         uint64_t lsp_seen_text_edits_generation = 0u;
         uint64_t lsp_seen_folding_ranges_generation = 0u;
         StrRef lsp_synced_path = {};
+        StrRef lsp_inlay_hints_requested_path = {};
         StrRef git_status_text = {};
         StrRef git_error_text = {};
         StrRef git_current_branch = {};
@@ -505,6 +507,7 @@ namespace code_editor {
         bool tree_operation_pending = false;
         bool git_root_checked = false;
         bool git_diff_side_by_side = true;
+        bool inlay_hints_enabled = true;
         float git_loading_phase = 0.0f;
         EditorViewKind view_kind = EditorViewKind::TEXT;
         EditorSavePathError save_path_error = EditorSavePathError::NONE;

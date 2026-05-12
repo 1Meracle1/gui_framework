@@ -94,7 +94,7 @@ namespace {
     }
 
     struct LspRequestCapture {
-        code_editor::LspEditorRequest requests[8] = {};
+        code_editor::LspEditorRequest requests[16] = {};
         size_t count = 0u;
     };
 
@@ -2501,17 +2501,17 @@ namespace {
 
         send_text(editor, " s");
 
-        TEST_EXPECT(context, capture.count == 4u);
+        TEST_EXPECT(context, capture.count == 5u);
         TEST_EXPECT(
-            context, capture.requests[3u].kind == code_editor::LspRequestKind::DOCUMENT_SYMBOL
+            context, capture.requests[4u].kind == code_editor::LspRequestKind::DOCUMENT_SYMBOL
         );
 
         send_text(editor, " ");
         send_text(editor, "S", gui::KEY_MOD_SHIFT);
 
-        TEST_EXPECT(context, capture.count == 5u);
+        TEST_EXPECT(context, capture.count == 6u);
         TEST_EXPECT(
-            context, capture.requests[4u].kind == code_editor::LspRequestKind::WORKSPACE_SYMBOL
+            context, capture.requests[5u].kind == code_editor::LspRequestKind::WORKSPACE_SYMBOL
         );
     }
 
@@ -2776,13 +2776,13 @@ namespace {
         TEST_EXPECT(
             context, code_editor::editor_line_text(code_editor::editor_line(editor, 0u)) == "a"
         );
-        TEST_EXPECT(context, capture.count == 4u);
-        TEST_EXPECT(context, capture.requests[3u].kind == code_editor::LspRequestKind::COMPLETION);
-        TEST_EXPECT(context, capture.requests[3u].position.line == 0u);
-        TEST_EXPECT(context, capture.requests[3u].position.column == 1u);
+        TEST_EXPECT(context, capture.count == 5u);
+        TEST_EXPECT(context, capture.requests[4u].kind == code_editor::LspRequestKind::COMPLETION);
+        TEST_EXPECT(context, capture.requests[4u].position.line == 0u);
+        TEST_EXPECT(context, capture.requests[4u].position.column == 1u);
     }
 
-    TEST_CASE(editor_lsp_document_sync_requests_semantic_tokens) {
+    TEST_CASE(editor_lsp_document_sync_requests_background_lsp_features) {
         Arena arena = {};
         arena.init();
 
@@ -2799,7 +2799,7 @@ namespace {
 
         code_editor::update_editor_lsp_document(editor);
 
-        TEST_EXPECT(context, capture.count == 3u);
+        TEST_EXPECT(context, capture.count == 4u);
         TEST_EXPECT(context, capture.requests[0u].kind == code_editor::LspRequestKind::DID_OPEN);
         TEST_EXPECT(
             context, capture.requests[1u].kind == code_editor::LspRequestKind::SEMANTIC_TOKENS
@@ -2809,19 +2809,53 @@ namespace {
             context, capture.requests[2u].kind == code_editor::LspRequestKind::FOLDING_RANGE
         );
         TEST_EXPECT(context, capture.requests[2u].revision == editor.text.revision);
+        TEST_EXPECT(context, capture.requests[3u].kind == code_editor::LspRequestKind::INLAY_HINTS);
+        TEST_EXPECT(context, capture.requests[3u].range.start.line == 0u);
+        TEST_EXPECT(context, capture.requests[3u].range.end.line == 0u);
+        TEST_EXPECT(context, capture.requests[3u].range.end.column == 13u);
+        TEST_EXPECT(context, capture.requests[3u].revision == editor.text.revision);
 
         code_editor::text_buffer_insert(
             editor.text, code_editor::text_buffer_size(editor.text), "\n"
         );
         code_editor::update_editor_lsp_document(editor);
 
-        TEST_EXPECT(context, capture.count == 6u);
-        TEST_EXPECT(context, capture.requests[3u].kind == code_editor::LspRequestKind::DID_CHANGE);
+        TEST_EXPECT(context, capture.count == 8u);
+        TEST_EXPECT(context, capture.requests[4u].kind == code_editor::LspRequestKind::DID_CHANGE);
         TEST_EXPECT(
-            context, capture.requests[4u].kind == code_editor::LspRequestKind::SEMANTIC_TOKENS
+            context, capture.requests[5u].kind == code_editor::LspRequestKind::SEMANTIC_TOKENS
         );
         TEST_EXPECT(
-            context, capture.requests[5u].kind == code_editor::LspRequestKind::FOLDING_RANGE
+            context, capture.requests[6u].kind == code_editor::LspRequestKind::FOLDING_RANGE
+        );
+        TEST_EXPECT(context, capture.requests[7u].kind == code_editor::LspRequestKind::INLAY_HINTS);
+    }
+
+    TEST_CASE(editor_lsp_document_sync_skips_disabled_inlay_hints) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "int main() {}");
+        editor.current_file_name = "main.cpp";
+        editor.current_file_path = "C:\\repo\\main.cpp";
+        editor.inlay_hints_enabled = false;
+
+        code_editor::LspBridge bridge = {.status = code_editor::LspStatusKind::READY};
+        LspRequestCapture capture = {};
+        editor.lsp_bridge = &bridge;
+        editor.lsp_send_request = capture_lsp_request;
+        editor.lsp_user_data = &capture;
+
+        code_editor::update_editor_lsp_document(editor);
+
+        TEST_EXPECT(context, capture.count == 3u);
+        TEST_EXPECT(context, capture.requests[0u].kind == code_editor::LspRequestKind::DID_OPEN);
+        TEST_EXPECT(
+            context, capture.requests[1u].kind == code_editor::LspRequestKind::SEMANTIC_TOKENS
+        );
+        TEST_EXPECT(
+            context, capture.requests[2u].kind == code_editor::LspRequestKind::FOLDING_RANGE
         );
     }
 

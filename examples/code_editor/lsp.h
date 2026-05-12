@@ -40,6 +40,7 @@ namespace code_editor {
         WORKSPACE_SYMBOL,
         SEMANTIC_TOKENS,
         FOLDING_RANGE,
+        INLAY_HINTS,
     };
 
     enum class LspDiagnosticSeverity : uint8_t {
@@ -126,6 +127,14 @@ namespace code_editor {
         size_t end_line = 0u;
     };
 
+    struct LspInlayHint {
+        LspPosition position = {};
+        StrRef label = {};
+        uint32_t kind = 0u;
+        bool padding_left = false;
+        bool padding_right = false;
+    };
+
     struct LspBridge {
         LspStatusKind status = LspStatusKind::OFF;
         StrRef server_name = {};
@@ -138,14 +147,17 @@ namespace code_editor {
         Slice<LspTextEdit> text_edits = {};
         Slice<LspSemanticToken> semantic_tokens = {};
         Slice<LspFoldingRange> folding_ranges = {};
+        Slice<LspInlayHint> inlay_hints = {};
         LspHover hover = {};
         StrRef progress_text = {};
         StrRef semantic_tokens_path = {};
         StrRef folding_ranges_path = {};
+        StrRef inlay_hints_path = {};
         LspRequestKind locations_kind = LspRequestKind::NONE;
         LspRequestKind symbols_kind = LspRequestKind::NONE;
         uint64_t semantic_tokens_revision = 0u;
         uint64_t folding_ranges_revision = 0u;
+        uint64_t inlay_hints_revision = 0u;
         bool progress_active = false;
         uint64_t status_generation = 0u;
         uint64_t progress_generation = 0u;
@@ -158,6 +170,7 @@ namespace code_editor {
         uint64_t text_edits_generation = 0u;
         uint64_t semantic_tokens_generation = 0u;
         uint64_t folding_ranges_generation = 0u;
+        uint64_t inlay_hints_generation = 0u;
     };
 
     struct LspEditorRequest {

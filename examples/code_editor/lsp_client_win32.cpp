@@ -48,6 +48,7 @@ namespace code_editor {
         client.bridge.text_edits = client.text_edits.slice();
         client.bridge.semantic_tokens = client.semantic_tokens.slice();
         client.bridge.folding_ranges = client.folding_ranges.slice();
+        client.bridge.inlay_hints = client.inlay_hints.slice();
     }
 
     auto set_status(LspClient& client, LspStatusKind kind, StrRef text) -> void {
@@ -482,7 +483,8 @@ namespace code_editor {
             "\"definition\":{},\"declaration\":{},"
             "\"references\":{},\"rename\":{},\"formatting\":{},\"codeAction\":{},"
             "\"documentSymbol\":{},\"foldingRange\":{\"dynamicRegistration\":false,"
-            "\"lineFoldingOnly\":true},\"semanticTokens\":{\"dynamicRegistration\":false,"
+            "\"lineFoldingOnly\":true},\"inlayHint\":{\"dynamicRegistration\":false},"
+            "\"semanticTokens\":{\"dynamicRegistration\":false,"
             "\"requests\":{\"range\":false,\"full\":true},\"tokenTypes\":[\"namespace\","
             "\"type\",\"class\",\"enum\",\"interface\",\"struct\",\"typeParameter\","
             "\"parameter\",\"variable\",\"property\",\"enumMember\",\"event\",\"function\","
@@ -514,6 +516,7 @@ namespace code_editor {
             !client.text_edits.init(64u, client.result_arena.resource()) ||
             !client.semantic_tokens.init(512u, client.result_arena.resource()) ||
             !client.folding_ranges.init(128u, client.result_arena.resource()) ||
+            !client.inlay_hints.init(256u, client.result_arena.resource()) ||
             !client.semantic_token_types.init(32u, client.result_arena.resource())) {
             return false;
         }
@@ -581,6 +584,8 @@ namespace code_editor {
         client.symbols = {};
         client.text_edits = {};
         client.semantic_tokens = {};
+        client.folding_ranges = {};
+        client.inlay_hints = {};
         client.semantic_token_types = {};
         client.framer.bytes = {};
         client.result_arena.destroy();
@@ -753,9 +758,12 @@ namespace code_editor {
         }
         client.semantic_tokens_supported = false;
         client.folding_ranges_supported = false;
+        client.inlay_hints_supported = false;
         LspJsonValue const* const capabilities = lsp_json_object_get(result, "capabilities");
         client.folding_ranges_supported =
             lsp_json_object_get(capabilities, "foldingRangeProvider") != nullptr;
+        client.inlay_hints_supported =
+            lsp_json_object_get(capabilities, "inlayHintProvider") != nullptr;
         LspJsonValue const* const provider =
             lsp_json_object_get(capabilities, "semanticTokensProvider");
         LspJsonValue const* const token_types =
@@ -1391,6 +1399,83 @@ namespace code_editor {
         bridge_refresh(client);
     }
 
+    [[nodiscard]] auto parse_inlay_hint_label(LspClient& client, LspJsonValue const* value)
+        -> StrRef {
+        StrRef label = {};
+        if (lsp_json_string(value, label)) {
+            return copy_result(client, label);
+        }
+        if (value == nullptr || value->kind != LspJsonKind::ARRAY) {
+            return {};
+        }
+
+        StringBuffer buffer = {};
+        BASE_UNUSED(buffer.init(128u, client.result_arena.resource()));
+        for (LspJsonValue const* part : value->array) {
+            StrRef text = {};
+            if (json_member_string(part, "value", text)) {
+                BASE_UNUSED(buffer.write_string(text));
+            }
+        }
+        return buffer.empty() ? StrRef() : copy_result(client, buffer.str());
+    }
+
+    auto parse_inlay_hints_response(
+        LspClient& client, LspJsonValue const* result, LspClientPendingRequest const& pending
+    ) -> void {
+        if (pending.path != client.current_path || pending.revision != client.current_revision) {
+            return;
+        }
+
+        client.inlay_hints.clear();
+        client.bridge.inlay_hints_path = copy_result(client, pending.path);
+        client.bridge.inlay_hints_revision = pending.revision;
+
+        StrRef const doc_text = current_doc_text(client, pending.path);
+        if (result != nullptr && result->kind == LspJsonKind::ARRAY) {
+            for (LspJsonValue const* item : result->array) {
+                LspPosition position = {};
+                if (!parse_position(lsp_json_object_get(item, "position"), position)) {
+                    continue;
+                }
+                position = lsp_position_utf16_to_byte(doc_text, position);
+
+                StrRef const label =
+                    parse_inlay_hint_label(client, lsp_json_object_get(item, "label"));
+                if (label.empty()) {
+                    continue;
+                }
+
+                size_t kind = 0u;
+                bool padding_left = false;
+                bool padding_right = false;
+                BASE_UNUSED(json_member_size(item, "kind", kind));
+                BASE_UNUSED(json_member_bool(item, "paddingLeft", padding_left));
+                BASE_UNUSED(json_member_bool(item, "paddingRight", padding_right));
+                BASE_UNUSED(client.inlay_hints.push_back({
+                    .position = position,
+                    .label = label,
+                    .kind = static_cast<uint32_t>(kind),
+                    .padding_left = padding_left,
+                    .padding_right = padding_right,
+                }));
+            }
+        }
+        if (client.inlay_hints.size() > 1u) {
+            std::stable_sort(
+                client.inlay_hints.begin(), client.inlay_hints.end(), [](auto lhs, auto rhs) {
+                    if (lhs.position.line != rhs.position.line) {
+                        return lhs.position.line < rhs.position.line;
+                    }
+                    return lhs.position.column < rhs.position.column;
+                }
+            );
+        }
+
+        client.bridge.inlay_hints_generation += 1u;
+        bridge_refresh(client);
+    }
+
     auto send_initialized(LspClient& client) -> void {
         send_notification_json(client, "initialized", "{}");
         set_status(
@@ -1442,6 +1527,9 @@ namespace code_editor {
             break;
         case LspRequestKind::FOLDING_RANGE:
             parse_folding_ranges_response(client, result, pending);
+            break;
+        case LspRequestKind::INLAY_HINTS:
+            parse_inlay_hints_response(client, result, pending);
             break;
         default:
             break;
@@ -1787,6 +1875,29 @@ namespace code_editor {
         );
     }
 
+    auto send_inlay_hints_request(LspClient& client, LspEditorRequest const& request) -> void {
+        if (!client.inlay_hints_supported) {
+            return;
+        }
+        ArenaTemp temp = begin_thread_temp_arena();
+        StringBuffer params = {};
+        BASE_UNUSED(params.init(512u, temp.arena()->resource()));
+        BASE_UNUSED(params.write_string("{\"textDocument\":{\"uri\":"));
+        lsp_json_write_escaped_string(params, client.current_uri);
+        BASE_UNUSED(params.write_string("},\"range\":"));
+        write_range(params, client.current_text, request.range);
+        BASE_UNUSED(params.write_byte('}'));
+        send_request_json(
+            client,
+            LspRequestKind::INLAY_HINTS,
+            request.path,
+            "textDocument/inlayHint",
+            params.str(),
+            {},
+            request.revision
+        );
+    }
+
     auto lsp_client_send_editor_request(void* user_data, LspEditorRequest const& request) -> void {
         auto* const client = static_cast<LspClient*>(user_data);
         if (client == nullptr || !client->started) {
@@ -1840,6 +1951,9 @@ namespace code_editor {
             break;
         case LspRequestKind::FOLDING_RANGE:
             send_folding_range_request(*client, request);
+            break;
+        case LspRequestKind::INLAY_HINTS:
+            send_inlay_hints_request(*client, request);
             break;
         default:
             break;

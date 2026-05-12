@@ -68,6 +68,7 @@ namespace code_editor {
         Vec<LspTextEdit> text_edits = {};
         Vec<LspSemanticToken> semantic_tokens = {};
         Vec<LspFoldingRange> folding_ranges = {};
+        Vec<LspInlayHint> inlay_hints = {};
         Vec<StrRef> semantic_token_types = {};
         StrRef root_path = {};
         StrRef compile_commands_dir = {};
@@ -80,6 +81,7 @@ namespace code_editor {
         bool initialized = false;
         bool semantic_tokens_supported = false;
         bool folding_ranges_supported = false;
+        bool inlay_hints_supported = false;
     };
 
     [[nodiscard]] auto lsp_client_init(LspClient& client) -> bool;

@@ -840,6 +840,7 @@ namespace code_editor {
     auto apply_runtime_config(Runtime& runtime) -> void {
         runtime.editor.font_size = runtime.config.effective.font_size;
         runtime.editor.raster_policy = runtime.config.effective.raster_policy;
+        runtime.editor.inlay_hints_enabled = runtime.config.effective.inlay_hints;
         set_filesystem_panel_visible(runtime.editor, runtime.config.effective.sidebar_visible);
     }
 
@@ -1427,6 +1428,7 @@ namespace code_editor {
             .raster_policy = runtime->editor.raster_policy,
             .font_size = runtime->editor.font_size,
             .sidebar_visible = runtime->editor.flag(EditorFlag::SIDEBAR_VISIBLE),
+            .inlay_hints = runtime->editor.inlay_hints_enabled,
         };
         runtime->config.effective = runtime->config.base;
         reload_runtime_config(*runtime, true);
