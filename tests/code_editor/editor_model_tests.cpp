@@ -456,6 +456,53 @@ namespace {
         TEST_EXPECT(context, editor.cursor_line == 130u);
     }
 
+    TEST_CASE(editor_insert_enter_copies_line_indent) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, " \talpha");
+        editor.set_flag(EditorFlag::INSERT_MODE, true);
+        editor.cursor_column = 4u;
+        editor.preferred_column = 4u;
+
+        press_key(editor, gui::Key::ENTER);
+
+        TEST_EXPECT(context, code_editor::editor_line_count(editor) == 2u);
+        TEST_EXPECT(
+            context, code_editor::editor_line_text(code_editor::editor_line(editor, 0u)) == " \tal"
+        );
+        TEST_EXPECT(
+            context, code_editor::editor_line_text(code_editor::editor_line(editor, 1u)) == " \tpha"
+        );
+        TEST_EXPECT(context, editor.cursor_line == 1u);
+        TEST_EXPECT(context, editor.cursor_column == 2u);
+    }
+
+    TEST_CASE(editor_insert_enter_inside_indent_does_not_duplicate_indent) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "    value");
+        editor.set_flag(EditorFlag::INSERT_MODE, true);
+        editor.cursor_column = 2u;
+        editor.preferred_column = 2u;
+
+        press_key(editor, gui::Key::ENTER);
+
+        TEST_EXPECT(context, code_editor::editor_line_count(editor) == 2u);
+        TEST_EXPECT(
+            context, code_editor::editor_line_text(code_editor::editor_line(editor, 0u)) == "  "
+        );
+        TEST_EXPECT(
+            context,
+            code_editor::editor_line_text(code_editor::editor_line(editor, 1u)) == "    value"
+        );
+        TEST_EXPECT(context, editor.cursor_line == 1u);
+        TEST_EXPECT(context, editor.cursor_column == 4u);
+    }
+
     TEST_CASE(editor_ctrl_alt_down_adds_cursor_for_insert_text) {
         Arena arena = {};
         arena.init();
@@ -1856,6 +1903,35 @@ namespace {
         TEST_EXPECT(context, above.cursor_line == 1u);
         TEST_EXPECT(
             context, code_editor::editor_line_text(code_editor::editor_line(above, 1u)).empty()
+        );
+    }
+
+    TEST_CASE(editor_normal_open_line_keys_copy_line_indent) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState below = {};
+        code_editor::init_editor(arena, below, "root\n \tchild\nend");
+        below.cursor_line = 1u;
+        send_text(below, "o");
+
+        TEST_EXPECT(context, below.flag(EditorFlag::INSERT_MODE));
+        TEST_EXPECT(context, below.cursor_line == 2u);
+        TEST_EXPECT(context, below.cursor_column == 2u);
+        TEST_EXPECT(
+            context, code_editor::editor_line_text(code_editor::editor_line(below, 2u)) == " \t"
+        );
+
+        code_editor::EditorState above = {};
+        code_editor::init_editor(arena, above, "root\n\tchild\nend");
+        above.cursor_line = 1u;
+        send_text(above, "O");
+
+        TEST_EXPECT(context, above.flag(EditorFlag::INSERT_MODE));
+        TEST_EXPECT(context, above.cursor_line == 1u);
+        TEST_EXPECT(context, above.cursor_column == 1u);
+        TEST_EXPECT(
+            context, code_editor::editor_line_text(code_editor::editor_line(above, 1u)) == "\t"
         );
     }
 

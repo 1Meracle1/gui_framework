@@ -132,6 +132,15 @@ namespace code_editor {
         return text_buffer_line_text(line);
     }
 
+    [[nodiscard]] auto line_indent(Arena& arena, EditorState const& editor, size_t line) -> StrRef {
+        StrRef const text = editor_line_text(editor_line(editor, line));
+        size_t size = 0u;
+        while (size < text.size() && (text[size] == ' ' || text[size] == '\t')) {
+            size += 1u;
+        }
+        return arena_copy_str(arena, text.prefix(size));
+    }
+
     auto insert_line(EditorState& editor, size_t line, StrRef text) -> void {
         size_t const insert_at = std::min(line, editor_line_count(editor));
         bool const append = insert_at == editor_line_count(editor);
@@ -3428,6 +3437,28 @@ namespace code_editor {
         store_cursors(editor, cursors, count, true);
     }
 
+    auto insert_indented_newline_at_all_cursors(EditorState& editor) -> void {
+        ArenaTemp temp = begin_thread_temp_arena();
+        EditorCursorEdit* const cursors =
+            arena_alloc<EditorCursorEdit>(*temp.arena(), cursor_edit_count(editor));
+        size_t const count = collect_cursors(editor, cursors);
+        sort_cursors_by_offset(cursors, count, true);
+        for (size_t index = 0u; index < count; ++index) {
+            size_t const offset = cursors[index].offset;
+            EditorTextPosition const position = text_buffer_offset_to_position(editor.text, offset);
+            StrRef const indent = line_indent(*temp.arena(), editor, position.line);
+            StrRef const inserted_indent = indent.prefix(std::min(position.column, indent.size()));
+            if (!inserted_indent.empty()) {
+                text_buffer_insert(editor.text, offset, inserted_indent);
+            }
+            text_buffer_insert(editor.text, offset, "\n");
+            adjust_inserted_offsets(cursors, index, offset, inserted_indent.size() + 1u);
+            cursors[index].offset = offset + indent.size() + 1u;
+            cursors[index].preferred_column = indent.size();
+        }
+        store_cursors(editor, cursors, count, true);
+    }
+
     auto backspace_at_all_cursors(EditorState& editor) -> void {
         ArenaTemp temp = begin_thread_temp_arena();
         EditorCursorEdit* const cursors =
@@ -3527,6 +3558,37 @@ namespace code_editor {
         set_cursor(editor, editor.cursor_line + 1u, 0u);
     }
 
+    auto insert_indented_newline(EditorState& editor) -> void {
+        if (has_extra_cursors(editor) && editor.flag(EditorFlag::SELECTION_ACTIVE)) {
+            insert_newline(editor);
+            return;
+        }
+        if (has_extra_cursors(editor)) {
+            insert_indented_newline_at_all_cursors(editor);
+            return;
+        }
+
+        ArenaTemp temp = begin_thread_temp_arena();
+        EditorSelectionRange const selection = editor_selection_range(editor);
+        EditorPosition const start = selection.active
+                                          ? EditorPosition{
+                                                selection.start_line,
+                                                selection.start_column,
+                                            }
+                                          : cursor_position(editor);
+        StrRef const indent = line_indent(*temp.arena(), editor, start.line);
+        StrRef const inserted_indent = indent.prefix(std::min(start.column, indent.size()));
+
+        (void)erase_selection(editor);
+        size_t const line = editor.cursor_line;
+        size_t const offset = position_offset(editor, cursor_position(editor));
+        if (!inserted_indent.empty()) {
+            text_buffer_insert(editor.text, offset, inserted_indent);
+        }
+        text_buffer_insert(editor.text, offset, "\n");
+        set_cursor(editor, line + 1u, indent.size());
+    }
+
     auto backspace(EditorState& editor) -> void {
         if (has_extra_cursors(editor) && !editor.flag(EditorFlag::SELECTION_ACTIVE)) {
             backspace_at_all_cursors(editor);
@@ -3614,10 +3676,12 @@ namespace code_editor {
         clear_selection(editor);
     }
 
-    auto open_line(EditorState& editor, size_t line) -> void {
+    auto open_line(EditorState& editor, size_t line, size_t indent_line) -> void {
         clear_extra_cursors(editor);
         size_t const insert_at = std::min(line, editor_line_count(editor));
-        insert_line(editor, insert_at, "");
+        ArenaTemp temp = begin_thread_temp_arena();
+        StrRef const indent = line_indent(*temp.arena(), editor, indent_line);
+        insert_line(editor, insert_at, indent);
         editor.set_flag(EditorFlag::INSERT_MODE, true);
         editor.set_flag(EditorFlag::PENDING_LEADER, false);
         editor.set_flag(EditorFlag::PENDING_WINDOW, false);
@@ -3628,7 +3692,7 @@ namespace code_editor {
         editor.set_flag(EditorFlag::PENDING_Z, false);
         editor.pending_line_number = 0u;
         editor.set_flag(EditorFlag::PENDING_LINE_NUMBER_ACTIVE, false);
-        set_cursor(editor, insert_at, 0u);
+        set_cursor(editor, insert_at, indent.size());
     }
 
     auto zoom_font(EditorState& editor, float amount) -> void {
@@ -5812,12 +5876,17 @@ namespace code_editor {
             open_line(
                 editor,
                 selection.active ? selection_last_line(editor, selection) + 1u
-                                 : editor.cursor_line + 1u
+                                 : editor.cursor_line + 1u,
+                selection.active ? selection_last_line(editor, selection) : editor.cursor_line
             );
             break;
         case 'O':
             save_editor_undo(editor);
-            open_line(editor, selection.active ? selection.start_line : editor.cursor_line);
+            open_line(
+                editor,
+                selection.active ? selection.start_line : editor.cursor_line,
+                selection.active ? selection.start_line : editor.cursor_line
+            );
             break;
         case 'r':
             editor.set_flag(EditorFlag::PENDING_R, true);
@@ -7044,7 +7113,7 @@ namespace code_editor {
             switch (event.key) {
             case gui::Key::ENTER:
                 save_editor_undo(editor);
-                insert_newline(editor);
+                insert_indented_newline(editor);
                 break;
             case gui::Key::TAB:
                 save_editor_undo(editor);
