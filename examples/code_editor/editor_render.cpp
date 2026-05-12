@@ -4964,6 +4964,24 @@ namespace code_editor {
         if (commit_button.activated) {
             submit_git_commit(editor);
         }
+        if (editor.git_pending_push_count != 0u) {
+            bool const push_enabled = !editor.git_operation_pending &&
+                                      editor.git_operation_state == GitOperationState::NONE;
+            gui::BoxDesc push_desc = button_desc;
+            push_desc.style.background = push_enabled ? palette.cursor : palette.panel;
+            push_desc.style.foreground = push_enabled ? palette.text : palette.faint;
+            push_desc.style.border = push_enabled ? palette.cursor : palette.border;
+            push_desc.flags = push_enabled ? gui::BOX_FLAG_NONE : gui::BOX_FLAG_DISABLED;
+            gui::Signal const push = ui.button(
+                gui::id("git_push_changes"),
+                fmt::tprintf("Push (%zu)", editor.git_pending_push_count),
+                push_desc
+            );
+            sync_git_control_focus(editor, push);
+            if (push.activated) {
+                editor.git_request = {.kind = GitRequestKind::PUSH};
+            }
+        }
     }
 
     [[nodiscard]] auto git_operation_label(GitOperationState state) -> StrRef {
@@ -5086,8 +5104,7 @@ namespace code_editor {
                                     editor.git_operation_state == GitOperationState::NONE;
             bool const pull_visible = editor.git_operation_state == GitOperationState::NONE &&
                                       editor.git_pending_pull_count != 0u;
-            bool const push_visible = editor.git_pending_push_count != 0u;
-            if (pull_visible || push_visible) {
+            if (pull_visible) {
                 gui::BoxDesc const sync_desc = {
                     .layout =
                         {
@@ -5115,17 +5132,6 @@ namespace code_editor {
                     sync_git_control_focus(editor, pull);
                     if (pull.activated) {
                         editor.git_request = {.kind = GitRequestKind::PULL};
-                    }
-                }
-                if (push_visible) {
-                    gui::Signal const push = ui.button(
-                        gui::id("git_push_changes"),
-                        fmt::tprintf("Push (%zu)", editor.git_pending_push_count),
-                        sync_desc
-                    );
-                    sync_git_control_focus(editor, push);
-                    if (push.activated) {
-                        editor.git_request = {.kind = GitRequestKind::PUSH};
                     }
                 }
             }
