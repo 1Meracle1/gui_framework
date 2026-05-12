@@ -58,6 +58,10 @@ $commit_popup_release_png = Join-Path $artifact_dir '20_git_panel_commit_popup_r
 $commit_popup_release_frame = Join-Path $artifact_dir '20_git_panel_commit_popup_release_frame.json'
 $second_commit_popup_png = Join-Path $artifact_dir '21_git_panel_second_commit_popup.png'
 $second_commit_popup_frame = Join-Path $artifact_dir '21_git_panel_second_commit_popup_frame.json'
+$third_commit_popup_png = Join-Path $artifact_dir '22_git_panel_third_commit_popup.png'
+$third_commit_popup_frame = Join-Path $artifact_dir '22_git_panel_third_commit_popup_frame.json'
+$fourth_commit_popup_png = Join-Path $artifact_dir '23_git_panel_fourth_commit_popup.png'
+$fourth_commit_popup_frame = Join-Path $artifact_dir '23_git_panel_fourth_commit_popup_frame.json'
 Remove-Item -Force @(
     $launch_png, $launch_frame, $git_png, $git_crop_png, $git_frame,
     $branches_png, $branches_crop_png, $branches_frame,
@@ -70,7 +74,9 @@ Remove-Item -Force @(
     $commit_popup_png, $commit_popup_frame,
     $commit_popup_drag_png, $commit_popup_drag_frame,
     $commit_popup_release_png, $commit_popup_release_frame,
-    $second_commit_popup_png, $second_commit_popup_frame
+    $second_commit_popup_png, $second_commit_popup_frame,
+    $third_commit_popup_png, $third_commit_popup_frame,
+    $fourth_commit_popup_png, $fourth_commit_popup_frame
 ) -ErrorAction SilentlyContinue
 
 function Save-GitMilestone(
@@ -98,6 +104,34 @@ function Click-GitText([string]$text, [string]$frame_path, [int]$x_offset = 8) {
     $y = [int](([double]$box.rect.min_y + [double]$box.rect.max_y) * 0.5)
     Send-ReproClick $x $y
     return $box
+}
+
+function Hover-GitCommit([string]$frame_path, [int]$index) {
+    $frame = Read-ReproFrame $frame_path
+    $commits = @($frame.boxes | Where-Object { $_.debug_name -eq 'git_commit_graph' } |
+        Sort-Object { [double]$_.rect.min_y })
+    if ($commits.Count -le $index) {
+        throw "Expected Git commit graph row not found: $index"
+    }
+    $box = $commits[$index]
+    $x = [int]([double]$box.rect.max_x + 70.0)
+    $y = [int](([double]$box.rect.min_y + [double]$box.rect.max_y) * 0.5)
+    Send-ReproMouseMove $x $y $false
+    return $box
+}
+
+function Assert-GitPopupOverlaysSearch([string]$frame_path, [string]$label) {
+    $popup = Assert-ReproBoxVisible 'git_commit_popup' $frame_path
+    $search = Assert-ReproFrameTextContains 'Search commits' $frame_path
+    $height = [double]$popup.rect.max_y - [double]$popup.rect.min_y
+    if ($height -lt 64.0) {
+        throw "Expected $label popup to have usable height, got $height"
+    }
+    $overlaps = [double]$popup.rect.min_y -lt [double]$search.rect.max_y -and
+        [double]$popup.rect.max_y -gt [double]$search.rect.min_y
+    if (!$overlaps) {
+        throw "Expected $label popup to overlay Search commits"
+    }
 }
 
 try {
@@ -141,9 +175,7 @@ try {
             'graph_crop_png' `
             $graph_crop_png
 
-        $graph_label = Assert-ReproFrameTextContains 'Graph' $graph_frame
-        $first_commit_y = [int]([double]$graph_label.rect.max_y + 12.0)
-        Send-ReproMouseMove 128 $first_commit_y $false
+        Hover-GitCommit $graph_frame 0 | Out-Null
         Start-Sleep -Milliseconds 900
         Save-GitMilestone `
             'commit_popup' `
@@ -152,6 +184,7 @@ try {
             'commit_popup_frame' `
             $commit_popup_frame `
             'git_commit_popup'
+        Assert-GitPopupOverlaysSearch $commit_popup_frame 'first commit'
 
         $popup = Assert-ReproBoxVisible 'git_commit_popup' $commit_popup_frame
         $popup_x = [int](([double]$popup.rect.min_x + [double]$popup.rect.max_x) * 0.5)
@@ -179,7 +212,7 @@ try {
             'commit_popup_release_frame' `
             $commit_popup_release_frame `
             'filesystem_surface'
-        Send-ReproMouseMove 128 ($first_commit_y + 24) $false
+        Hover-GitCommit $commit_popup_release_frame 1 | Out-Null
         Start-Sleep -Milliseconds 900
         Save-GitMilestone `
             'second_commit_popup' `
@@ -188,6 +221,30 @@ try {
             'second_commit_popup_frame' `
             $second_commit_popup_frame `
             'git_commit_popup'
+        Assert-GitPopupOverlaysSearch $second_commit_popup_frame 'second commit'
+
+        Hover-GitCommit $graph_frame 2 | Out-Null
+        Start-Sleep -Milliseconds 900
+        Save-GitMilestone `
+            'third_commit_popup' `
+            'third_commit_popup_png' `
+            $third_commit_popup_png `
+            'third_commit_popup_frame' `
+            $third_commit_popup_frame `
+            'git_commit_popup'
+        Assert-GitPopupOverlaysSearch $third_commit_popup_frame 'third commit'
+
+        Hover-GitCommit $graph_frame 3 | Out-Null
+        Start-Sleep -Milliseconds 900
+        Save-GitMilestone `
+            'fourth_commit_popup' `
+            'fourth_commit_popup_png' `
+            $fourth_commit_popup_png `
+            'fourth_commit_popup_frame' `
+            $fourth_commit_popup_frame `
+            'git_commit_popup'
+        Assert-GitPopupOverlaysSearch $fourth_commit_popup_frame 'fourth commit'
+
         $status = if (Test-ReproExited) { 'exited' } else { 'survived' }
         Set-ReproStatus $status
         return

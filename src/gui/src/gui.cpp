@@ -2892,14 +2892,14 @@ namespace gui {
                     Rect const anchor =
                         box_rect(impl, child.popup_anchor_id, child.popup_anchor_rect);
                     float const available_above =
-                        std::max(0.0f, anchor.min.y - bounds.min.y - child.popup_anchor_gap);
+                        std::max(0.0f, anchor.min.y - root_bounds.min.y - child.popup_anchor_gap);
                     child_size.y = std::min(child_size.y, available_above);
                     float x = anchor.min.x + child.popup_anchor_offset_x;
                     float y = anchor.min.y - child.popup_anchor_gap - child_size.y;
                     float const max_x =
                         std::max(root_bounds.min.x, root_bounds.max.x - child_size.x);
                     x = std::clamp(x, root_bounds.min.x, max_x);
-                    y = std::max(bounds.min.y, y);
+                    y = std::max(root_bounds.min.y, y);
                     layout_node(impl, child_index, {{x, y}, {x + child_size.x, y + child_size.y}});
                     child.hover_rect = child.rect;
                     child.hover_rect.max.y = std::max(child.hover_rect.max.y, anchor.min.y);
