@@ -232,7 +232,9 @@ namespace code_editor {
         TreeOperationResult* shared_tree_operation_result = nullptr;
         LspBridge const* lsp_bridge = nullptr;
         LspSendEditorRequestFn lsp_send_request = nullptr;
+        LspControlFn lsp_control = nullptr;
         void* lsp_user_data = nullptr;
+        void* lsp_control_user_data = nullptr;
         bool* app_close_requested = nullptr;
         bool* app_close_confirmed = nullptr;
         bool initial_sidebar_visible = false;

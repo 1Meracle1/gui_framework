@@ -94,7 +94,9 @@ namespace code_editor {
         SpscQueue<GitWorkResult>* shared_git_results = nullptr;
         LspBridge const* lsp_bridge = nullptr;
         LspSendEditorRequestFn lsp_send_request = nullptr;
+        LspControlFn lsp_control = nullptr;
         void* lsp_user_data = nullptr;
+        void* lsp_control_user_data = nullptr;
         bool* app_close_requested = nullptr;
         bool* app_close_confirmed = nullptr;
         uint64_t file_change_generation = 0u;
@@ -870,6 +872,8 @@ namespace code_editor {
         runtime.editor.font_size = runtime.config.effective.font_size;
         runtime.editor.raster_policy = runtime.config.effective.raster_policy;
         runtime.editor.inlay_hints_enabled = runtime.config.effective.inlay_hints;
+        runtime.editor.notification_seconds = runtime.config.effective.notification_seconds;
+        runtime.editor.notification_right = runtime.config.effective.notification_right;
         set_filesystem_panel_visible(runtime.editor, runtime.config.effective.sidebar_visible);
     }
 
@@ -1420,14 +1424,18 @@ namespace code_editor {
         runtime->shared_git_results = context.shared_git_results;
         runtime->lsp_bridge = context.lsp_bridge;
         runtime->lsp_send_request = context.lsp_send_request;
+        runtime->lsp_control = context.lsp_control;
         runtime->lsp_user_data = context.lsp_user_data;
+        runtime->lsp_control_user_data = context.lsp_control_user_data;
         runtime->app_close_requested = context.app_close_requested;
         runtime->app_close_confirmed = context.app_close_confirmed;
         init_editor(arena, runtime->editor, context.initial_text);
         runtime->editor.lsp_bridge = runtime->lsp_bridge;
         runtime->editor.external_lsp_bridge = runtime->lsp_bridge;
         runtime->editor.lsp_send_request = runtime->lsp_send_request;
+        runtime->editor.lsp_control = runtime->lsp_control;
         runtime->editor.lsp_user_data = runtime->lsp_user_data;
+        runtime->editor.lsp_control_user_data = runtime->lsp_control_user_data;
         runtime->editor.shared_tree_operation_request = context.shared_tree_operation_request;
         runtime->editor.shared_tree_operation_result = context.shared_tree_operation_result;
         if (context.shared_tree_operation_result != nullptr) {
@@ -1458,8 +1466,10 @@ namespace code_editor {
             .palette = {},
             .raster_policy = runtime->editor.raster_policy,
             .font_size = runtime->editor.font_size,
+            .notification_seconds = runtime->editor.notification_seconds,
             .sidebar_visible = runtime->editor.flag(EditorFlag::SIDEBAR_VISIBLE),
             .inlay_hints = runtime->editor.inlay_hints_enabled,
+            .notification_right = runtime->editor.notification_right,
         };
         runtime->config.effective = runtime->config.base;
         reload_runtime_config(*runtime, true);
@@ -1928,6 +1938,7 @@ namespace code_editor {
     ) -> gui::Frame {
         sync_git_worker_results(*runtime);
         reload_runtime_config(*runtime, false);
+        update_editor_notification(runtime->editor, delta_time);
         sync_tree_operation_result(runtime->editor);
         if (files_changed) {
             update_open_file_changes(runtime->editor);
@@ -2144,6 +2155,7 @@ namespace code_editor {
         frame_result.redraw_pending =
             frame_result.frame.redraw_requested() || module->runtime.editor.git_commits_loading ||
             module->runtime.editor.git_operation_pending || module->runtime.editor.tree_loading ||
+            module->runtime.editor.notification_visible ||
             editor_state_hash(module->runtime.editor) != state_hash_before;
         reset_thread_temp_arenas();
         return frame_result;

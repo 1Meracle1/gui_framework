@@ -43,6 +43,12 @@ namespace code_editor {
         INLAY_HINTS,
     };
 
+    enum class LspControlKind : uint8_t {
+        START,
+        STOP,
+        RESTART,
+    };
+
     enum class LspDiagnosticSeverity : uint8_t {
         ERROR_DIAGNOSTIC = 1u,
         WARNING = 2u,
@@ -185,6 +191,9 @@ namespace code_editor {
 
     using LspSendEditorRequestFn = auto (*)(void* user_data, LspEditorRequest const& request)
         -> void;
+    using LspControlFn =
+        auto (*)(void* user_data, LspControlKind kind, StrRef path, char* message, size_t capacity)
+            -> bool;
 
     using LspJsonKind = encoding::JsonKind;
     using LspJsonMember = encoding::JsonMember;

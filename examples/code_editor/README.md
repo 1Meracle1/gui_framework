@@ -267,6 +267,9 @@ references, symbols, code actions, and global-search result pickers.
 | `config-open` | `co` | Open the active config file, preferring the local override before the global config. |
 | `config-reload` | `cr` | Reload global and local config files and reapply session overrides. |
 | `set` | `cfg` | Apply a session config override, for example `set editor.font-size=14`. |
+| `lsp-start` | `lson` | Start the language server for the current file. |
+| `lsp-stop` | `lsoff` | Stop the language server for the current file. |
+| `lsp-restart` | `lsr` | Restart the language server for the current file. |
 
 ## Git Sidebar
 

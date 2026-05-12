@@ -34,6 +34,9 @@ namespace code_editor {
         {"config-open", "co", "Open the active config file: local override first, then global."},
         {"config-reload", "cr", "Reload global/local config files and reapply session overrides."},
         {"set", "cfg", "Apply a session override, for example set editor.font-size=14."},
+        {"lsp-start", "lson", "Start the language server for the current file."},
+        {"lsp-stop", "lsoff", "Stop the language server for the current file."},
+        {"lsp-restart", "lsr", "Restart the language server for the current file."},
     };
 
     struct EditorPosition;
@@ -4450,6 +4453,24 @@ namespace code_editor {
         editor.command_text[0u] = '\0';
     }
 
+    auto show_editor_notification(EditorState& editor, StrRef text) -> void {
+        size_t const size = text.copy_to(editor.notification_text, NOTIFICATION_TEXT_CAPACITY - 1u);
+        editor.notification_text[size] = '\0';
+        editor.notification_time = editor.notification_seconds;
+        editor.notification_visible = size != 0u;
+    }
+
+    auto update_editor_notification(EditorState& editor, float delta_time) -> void {
+        if (!editor.notification_visible) {
+            return;
+        }
+        editor.notification_time -= delta_time;
+        if (editor.notification_time <= 0.0f) {
+            editor.notification_visible = false;
+            editor.notification_text[0u] = '\0';
+        }
+    }
+
     auto select_command_match(EditorState& editor) -> void {
         ParsedCommandLine const command = parse_command_line(editor_command_text(editor));
         if (command.name.empty()) {
@@ -4707,6 +4728,25 @@ namespace code_editor {
         editor.config_request_text[editor.config_request_text_size] = '\0';
     }
 
+    auto request_lsp_control(EditorState& editor, LspControlKind kind) -> void {
+        if (editor.view_kind == EditorViewKind::GIT_DIFF || editor.current_file_path.empty()) {
+            show_editor_notification(editor, "No file selected for language server control.");
+            return;
+        }
+        if (editor.lsp_control == nullptr) {
+            show_editor_notification(editor, "Language server control is unavailable.");
+            return;
+        }
+
+        char message[NOTIFICATION_TEXT_CAPACITY] = {};
+        BASE_UNUSED(editor.lsp_control(
+            editor.lsp_control_user_data, kind, editor.current_file_path, message, sizeof(message)
+        ));
+        show_editor_notification(
+            editor, message[0u] != '\0' ? StrRef(message) : StrRef("Language server command sent.")
+        );
+    }
+
     auto run_editor_command(EditorState& editor, size_t index, StrRef args) -> void {
         switch (index) {
         case 0u:
@@ -4781,6 +4821,15 @@ namespace code_editor {
             break;
         case 23u:
             set_config_request(editor, EditorConfigRequestKind::OVERRIDE, args);
+            break;
+        case 24u:
+            request_lsp_control(editor, LspControlKind::START);
+            break;
+        case 25u:
+            request_lsp_control(editor, LspControlKind::STOP);
+            break;
+        case 26u:
+            request_lsp_control(editor, LspControlKind::RESTART);
             break;
         default:
             break;
@@ -7672,6 +7721,9 @@ namespace code_editor {
         hash = hash_bytes(hash, &editor.command_text_size, sizeof(editor.command_text_size));
         hash = hash_bytes(hash, &editor.command_selected, sizeof(editor.command_selected));
         hash = hash_bytes(hash, editor.command_text, editor.command_text_size);
+        hash = hash_bytes(hash, &editor.notification_visible, sizeof(editor.notification_visible));
+        hash = hash_bytes(hash, &editor.notification_right, sizeof(editor.notification_right));
+        hash = hash_bytes(hash, editor.notification_text, cstr_len(editor.notification_text));
         hash =
             hash_bytes(hash, &editor.text_search_text_size, sizeof(editor.text_search_text_size));
         hash = hash_bytes(

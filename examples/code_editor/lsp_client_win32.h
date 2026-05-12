@@ -86,6 +86,7 @@ namespace code_editor {
 
     [[nodiscard]] auto lsp_client_init(LspClient& client) -> bool;
     auto lsp_client_shutdown(LspClient& client) -> void;
+    [[nodiscard]] auto lsp_client_stop(LspClient& client) -> bool;
     [[nodiscard]] auto lsp_client_start(LspClient& client, StrRef root_path, StrRef source_path)
         -> bool;
     auto lsp_client_poll(LspClient& client) -> void;

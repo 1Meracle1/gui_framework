@@ -159,6 +159,19 @@ namespace code_editor {
             return true;
         }
 
+        [[nodiscard]] auto parse_notification_position(StrRef value, bool& out_right) -> bool {
+            value = unquote(value);
+            if (value.equals_ignore_ascii_case("bottom-right")) {
+                out_right = true;
+                return true;
+            }
+            if (value.equals_ignore_ascii_case("bottom-left")) {
+                out_right = false;
+                return true;
+            }
+            return false;
+        }
+
         [[nodiscard]] auto hex_value(char ch, uint8_t& out_value) -> bool {
             if (ch >= '0' && ch <= '9') {
                 out_value = static_cast<uint8_t>(ch - '0');
@@ -553,6 +566,37 @@ namespace code_editor {
                 patch.has_sidebar_visible = true;
                 return true;
             }
+            if (full_key.equals_ignore_ascii_case("editor.notification-position")) {
+                bool notification_right = true;
+                if (!parse_notification_position(value, notification_right)) {
+                    set_value_error(
+                        error,
+                        source,
+                        path,
+                        line,
+                        column,
+                        full_key,
+                        "\"bottom-left\" or \"bottom-right\"",
+                        text
+                    );
+                    return false;
+                }
+                patch.notification_right = notification_right;
+                patch.has_notification_right = true;
+                return true;
+            }
+            if (full_key.equals_ignore_ascii_case("editor.notification-seconds")) {
+                float seconds = 0.0f;
+                if (!parse_float_value(value, seconds) || seconds <= 0.0f || seconds > 60.0f) {
+                    set_value_error(
+                        error, source, path, line, column, full_key, "> 0 and <= 60", text
+                    );
+                    return false;
+                }
+                patch.notification_seconds = seconds;
+                patch.has_notification_seconds = true;
+                return true;
+            }
             if (full_key.equals_ignore_ascii_case("editor.inlay-hints")) {
                 bool inlay_hints = false;
                 if (!parse_bool_value(value, inlay_hints)) {
@@ -805,6 +849,8 @@ namespace code_editor {
                "[editor]\n"
                "# font-size = 12\n"
                "# sidebar-visible = true\n"
+               "# notification-position = \"bottom-right\"\n"
+               "# notification-seconds = 5\n"
                "# inlay-hints = true\n"
                "# raster-policy = \"lcd-smooth\"\n"
                "# raster-policy = \"smooth\"\n"
@@ -852,6 +898,12 @@ namespace code_editor {
         if (patch.has_sidebar_visible) {
             config.sidebar_visible = patch.sidebar_visible;
         }
+        if (patch.has_notification_seconds) {
+            config.notification_seconds = patch.notification_seconds;
+        }
+        if (patch.has_notification_right) {
+            config.notification_right = patch.notification_right;
+        }
         if (patch.has_inlay_hints) {
             config.inlay_hints = patch.inlay_hints;
         }
@@ -872,6 +924,14 @@ namespace code_editor {
         if (source.has_sidebar_visible) {
             target.sidebar_visible = source.sidebar_visible;
             target.has_sidebar_visible = true;
+        }
+        if (source.has_notification_seconds) {
+            target.notification_seconds = source.notification_seconds;
+            target.has_notification_seconds = true;
+        }
+        if (source.has_notification_right) {
+            target.notification_right = source.notification_right;
+            target.has_notification_right = true;
         }
         if (source.has_inlay_hints) {
             target.inlay_hints = source.inlay_hints;

@@ -43,6 +43,7 @@ namespace code_editor {
     inline constexpr size_t LSP_RENAME_TEXT_CAPACITY = 128u;
     inline constexpr size_t SAVE_PATH_TEXT_CAPACITY = 1024u;
     inline constexpr size_t COMMAND_TEXT_CAPACITY = 256u;
+    inline constexpr size_t NOTIFICATION_TEXT_CAPACITY = 256u;
     inline constexpr size_t TEXT_SEARCH_TEXT_CAPACITY = 256u;
     inline constexpr size_t GIT_SEARCH_TEXT_CAPACITY = 128u;
     inline constexpr size_t GIT_COMMIT_POPUP_NONE = static_cast<size_t>(-1);
@@ -392,6 +393,8 @@ namespace code_editor {
         EditorSelectionMode selection_mode = EditorSelectionMode::NONE;
         gui::font_provider::RasterPolicy raster_policy = gui::font_provider::DEFAULT_RASTER_POLICY;
         float font_size = EDITOR_FONT_SIZE;
+        float notification_seconds = 5.0f;
+        float notification_time = 0.0f;
         float scroll_x = 0.0f;
         float scroll_y = 0.0f;
         float sidebar_width_percent = SIDEBAR_DEFAULT_WIDTH_PERCENT;
@@ -401,6 +404,7 @@ namespace code_editor {
         char save_path_text[SAVE_PATH_TEXT_CAPACITY] = {};
         char command_text[COMMAND_TEXT_CAPACITY] = {};
         char config_request_text[COMMAND_TEXT_CAPACITY] = {};
+        char notification_text[NOTIFICATION_TEXT_CAPACITY] = {};
         char text_search_text[TEXT_SEARCH_TEXT_CAPACITY] = {};
         char git_branch_search_text[GIT_SEARCH_TEXT_CAPACITY] = {};
         char git_commit_search_text[GIT_SEARCH_TEXT_CAPACITY] = {};
@@ -458,7 +462,9 @@ namespace code_editor {
         LspBridge const* external_lsp_bridge = nullptr;
         LspBridge const* lsp_bridge = nullptr;
         LspSendEditorRequestFn lsp_send_request = nullptr;
+        LspControlFn lsp_control = nullptr;
         void* lsp_user_data = nullptr;
+        void* lsp_control_user_data = nullptr;
         TreeOperationRequest* shared_tree_operation_request = nullptr;
         TreeOperationResult* shared_tree_operation_result = nullptr;
         char lsp_rename_text[LSP_RENAME_TEXT_CAPACITY] = {};
@@ -509,6 +515,8 @@ namespace code_editor {
         bool git_commit_load_more_requested = false;
         bool git_commit_popup_keyboard = false;
         bool git_commit_popup_mouse_known = false;
+        bool notification_visible = false;
+        bool notification_right = true;
         bool git_error_visible = false;
         bool tree_operation_pending = false;
         bool git_root_checked = false;
@@ -575,6 +583,8 @@ namespace code_editor {
     auto open_editor_global_search(EditorState& editor) -> void;
     auto close_jump_list(EditorState& editor) -> void;
     auto clear_command_line(EditorState& editor) -> void;
+    auto show_editor_notification(EditorState& editor, StrRef text) -> void;
+    auto update_editor_notification(EditorState& editor, float delta_time) -> void;
     auto select_command_match(EditorState& editor) -> void;
     auto complete_command_line(EditorState& editor) -> void;
     auto run_command_line(EditorState& editor) -> void;

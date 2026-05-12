@@ -55,6 +55,9 @@ namespace code_editor {
     inline constexpr size_t TEXT_DRAW_CHUNK_SIZE = 4096u;
     inline constexpr float COMMAND_OVERLAY_HEIGHT = 88.0f;
     inline constexpr float COMMAND_LIST_HEIGHT = 30.0f;
+    inline constexpr float NOTIFICATION_MARGIN = 18.0f;
+    inline constexpr float NOTIFICATION_WIDTH = 390.0f;
+    inline constexpr float NOTIFICATION_HEIGHT = 82.0f;
     inline constexpr size_t STICKY_SCOPE_MAX_LINES = 5u;
     inline constexpr char OVERWRITE_FILE_KEY = 'o';
     inline constexpr char RELOAD_FILE_KEY = 'r';
@@ -10195,6 +10198,104 @@ namespace code_editor {
         }
     }
 
+    auto draw_editor_notification(
+        gui::Frame& ui,
+        EditorState& editor,
+        Palette const& palette,
+        float client_width,
+        float client_height
+    ) -> void {
+        if (!editor.notification_visible) {
+            return;
+        }
+
+        float const width =
+            std::max(1.0f, std::min(NOTIFICATION_WIDTH, client_width - NOTIFICATION_MARGIN * 2.0f));
+        float const left =
+            editor.notification_right
+                ? std::max(NOTIFICATION_MARGIN, client_width - width - NOTIFICATION_MARGIN)
+                : NOTIFICATION_MARGIN;
+        float const top = std::max(
+            NOTIFICATION_MARGIN, client_height - NOTIFICATION_HEIGHT - NOTIFICATION_MARGIN
+        );
+        if (auto popup = ui.popup(
+                gui::id("editor_notification_popup"),
+                {
+                    .layout =
+                        {
+                            .width = gui::px(width),
+                            .height = gui::px(NOTIFICATION_HEIGHT),
+                            .margin = gui::insets(top, 0.0f, 0.0f, left),
+                            .padding = gui::insets(12.0f),
+                            .gap = 8.0f,
+                            .align_x = gui::Align::STRETCH,
+                        },
+                    .style =
+                        {
+                            .background = gui::color_alpha(palette.panel_raised, 0.96f),
+                            .border = gui::color_alpha(palette.cursor, 0.82f),
+                            .border_thickness = 1.0f,
+                            .radius = 7.0f,
+                            .shadow =
+                                {
+                                    .offset = {0.0f, 12.0f},
+                                    .blur_radius = 28.0f,
+                                    .spread = 1.0f,
+                                    .color = gui::rgba(0, 0, 0, 118),
+                                },
+                        },
+                    .debug_name = "editor_notification_popup",
+                }
+            )) {
+            if (auto header = ui.row(
+                    gui::id("editor_notification_header"),
+                    {
+                        .layout = {
+                            .width = gui::fill(),
+                            .height = gui::px(20.0f),
+                            .gap = 8.0f,
+                            .align_y = gui::Align::CENTER,
+                        },
+                    }
+                )) {
+                ui.label(
+                    "Language server",
+                    {
+                        .layout = {.width = gui::text(), .height = gui::fill()},
+                        .style = {.foreground = palette.text, .font_size = editor.font_size},
+                    }
+                );
+                ui.spacer({.layout = {.width = gui::fill(), .height = gui::px(1.0f)}});
+                if (ui.button(
+                          gui::id("editor_notification_close"),
+                          "x",
+                          {
+                              .layout = {.width = gui::px(24.0f), .height = gui::px(20.0f)},
+                              .style =
+                                  {
+                                      .background = gui::color_alpha(palette.panel, 0.72f),
+                                      .foreground = palette.muted,
+                                      .border = gui::color_alpha(palette.border, 0.6f),
+                                      .border_thickness = 1.0f,
+                                      .radius = 4.0f,
+                                      .font_size = editor.font_size,
+                                  },
+                          }
+                    )
+                        .activated) {
+                    editor.notification_visible = false;
+                }
+            }
+            ui.label(
+                StrRef(editor.notification_text),
+                {
+                    .layout = {.width = gui::fill(), .height = gui::fill(), .word_wrap = true},
+                    .style = {.foreground = palette.muted, .font_size = editor.font_size},
+                }
+            );
+        }
+    }
+
     auto draw_editor_ui(
         gui::Frame& ui,
         EditorState& editor,
@@ -10585,6 +10686,7 @@ namespace code_editor {
             draw_lsp_hover_popup(ui, editor_font, editor, char_width, palette, input);
         }
         draw_lsp_rename_popup(ui, editor, palette, char_width, client_width, client_height);
+        draw_editor_notification(ui, editor, palette, client_width, client_height);
     }
 
 } // namespace code_editor

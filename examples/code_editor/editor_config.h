@@ -17,8 +17,10 @@ namespace code_editor {
         Palette palette = {};
         gui::font_provider::RasterPolicy raster_policy = gui::font_provider::DEFAULT_RASTER_POLICY;
         float font_size = 12.0f;
+        float notification_seconds = 5.0f;
         bool sidebar_visible = false;
         bool inlay_hints = true;
+        bool notification_right = true;
     };
 
     struct EditorConfigPatch {
@@ -26,12 +28,16 @@ namespace code_editor {
         uint32_t palette_mask = 0u;
         gui::font_provider::RasterPolicy raster_policy = gui::font_provider::DEFAULT_RASTER_POLICY;
         float font_size = 0.0f;
+        float notification_seconds = 0.0f;
         bool sidebar_visible = false;
         bool inlay_hints = false;
+        bool notification_right = true;
         bool has_raster_policy = false;
         bool has_font_size = false;
+        bool has_notification_seconds = false;
         bool has_sidebar_visible = false;
         bool has_inlay_hints = false;
+        bool has_notification_right = false;
     };
 
     enum class EditorConfigErrorSource : uint8_t {

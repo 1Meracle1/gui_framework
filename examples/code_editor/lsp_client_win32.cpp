@@ -8,6 +8,7 @@
 #include <base/string_buffer.h>
 #include <base/unicode.h>
 #include <cstring>
+#include <new>
 
 namespace code_editor {
 
@@ -588,6 +589,13 @@ namespace code_editor {
         client.message_arena.destroy();
         client.document_arena.destroy();
         client.arena.destroy();
+    }
+
+    [[nodiscard]] auto lsp_client_stop(LspClient& client) -> bool {
+        lsp_client_shutdown(client);
+        client.~LspClient();
+        new (&client) LspClient();
+        return lsp_client_init(client);
     }
 
     auto read_pipe_messages(LspClient& client) -> void;

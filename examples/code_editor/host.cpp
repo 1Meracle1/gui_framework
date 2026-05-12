@@ -184,6 +184,109 @@ namespace code_editor {
         }
     }
 
+    struct LspControlContext {
+        LspClient* client = nullptr;
+        StrRef root_path = {};
+        StrRef source_path = {};
+    };
+
+    auto copy_message(char* buffer, size_t capacity, StrRef text) -> void {
+        if (capacity == 0u) {
+            return;
+        }
+        size_t const size = text.copy_to(buffer, capacity - 1u);
+        buffer[size] = '\0';
+    }
+
+    auto lsp_control_start(
+        LspControlContext& control, StrRef success, StrRef failure, char* message, size_t capacity
+    ) -> bool {
+        if (control.client == nullptr) {
+            copy_message(message, capacity, "Language server control is unavailable.");
+            return false;
+        }
+        if (control.client->started) {
+            copy_message(message, capacity, "Language server is already running.");
+            return true;
+        }
+        if (control.client->bridge.status == LspStatusKind::FAILED &&
+            !lsp_client_stop(*control.client)) {
+            copy_message(message, capacity, "Language server start failed: reset failed.");
+            return false;
+        }
+        bool const ok = lsp_client_start(*control.client, control.root_path, control.source_path);
+        if (ok) {
+            copy_message(message, capacity, success);
+            return true;
+        }
+
+        char buffer[128] = {};
+        StrRef const status = control.client->bridge.status_text.empty()
+                                  ? StrRef("unknown error")
+                                  : control.client->bridge.status_text;
+        copy_message(
+            message, capacity, fmt::bprintf(buffer, sizeof(buffer), "%s: %s.", failure, status)
+        );
+        return false;
+    }
+
+    [[nodiscard]] auto
+    lsp_control(void* user_data, LspControlKind kind, StrRef path, char* message, size_t capacity)
+        -> bool {
+        BASE_UNUSED(path);
+        auto* const control = static_cast<LspControlContext*>(user_data);
+        if (control == nullptr || control->client == nullptr) {
+            copy_message(message, capacity, "Language server control is unavailable.");
+            return false;
+        }
+
+        if (kind == LspControlKind::START) {
+            return lsp_control_start(
+                *control,
+                "Language server started.",
+                "Language server start failed",
+                message,
+                capacity
+            );
+        }
+        if (kind == LspControlKind::STOP) {
+            if (!control->client->started) {
+                if (control->client->bridge.status != LspStatusKind::OFF) {
+                    bool const ok = lsp_client_stop(*control->client);
+                    copy_message(
+                        message,
+                        capacity,
+                        ok ? StrRef("Language server stopped.")
+                           : StrRef("Language server failed to stop cleanly.")
+                    );
+                    return ok;
+                }
+                copy_message(message, capacity, "Language server is already stopped.");
+                return true;
+            }
+            bool const ok = lsp_client_stop(*control->client);
+            copy_message(
+                message,
+                capacity,
+                ok ? StrRef("Language server stopped.")
+                   : StrRef("Language server failed to stop cleanly.")
+            );
+            return ok;
+        }
+
+        if (!lsp_client_stop(*control->client)) {
+            copy_message(message, capacity, "Language server restart failed.");
+            return false;
+        }
+        return lsp_control_start(
+            *control,
+            "Language server restarted.",
+            "Language server restart failed",
+            message,
+            capacity
+        );
+    }
+
     [[nodiscard]] auto lsp_generation_sum(LspBridge const* bridge) -> uint64_t {
         if (bridge == nullptr) {
             return 0u;
@@ -2758,6 +2861,11 @@ namespace code_editor {
                 lsp_client_start(lsp_client, launch.save_root_path, CODE_EDITOR_SOURCE_DIR)
             );
         }
+        LspControlContext lsp_control_context = {
+            .client = lsp_initialized ? &lsp_client : nullptr,
+            .root_path = launch.save_root_path,
+            .source_path = CODE_EDITOR_SOURCE_DIR,
+        };
 #if BASE_DEBUG
         gui::HotReloadOverlay hot_reload_overlay = {};
         gui::HotReloadOverlayState hot_reload_overlay_state = {};
@@ -2779,7 +2887,9 @@ namespace code_editor {
             .shared_tree_operation_result = &launch.tree_operation_result,
             .lsp_bridge = lsp_initialized ? lsp_client_bridge(lsp_client) : nullptr,
             .lsp_send_request = lsp_initialized ? lsp_client_send_editor_request : nullptr,
+            .lsp_control = lsp_initialized ? lsp_control : nullptr,
             .lsp_user_data = lsp_initialized ? &lsp_client : nullptr,
+            .lsp_control_user_data = lsp_initialized ? &lsp_control_context : nullptr,
             .app_close_requested = &app_state.close_requested,
             .app_close_confirmed = &app_state.close_confirmed,
             .initial_sidebar_visible = launch.initial_sidebar_visible,
