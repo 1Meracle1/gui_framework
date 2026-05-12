@@ -124,6 +124,28 @@ namespace {
         TEST_EXPECT(context, text_token.end == cpp_line.size());
     }
 
+    TEST_CASE(cpp_pair_detection_ignores_escaped_strings_and_comments) {
+        code_editor::SyntaxTokenizer const tokenizer = code_editor::cpp_syntax_tokenizer();
+        StrRef const line = "auto text = \"\\)\"; value[0]; // {";
+        code_editor::SyntaxPair pair = {};
+
+        TEST_EXPECT(context, !code_editor::syntax_pair_at(tokenizer, line, line.find(')'), pair));
+
+        size_t const open_bracket = line.find('[');
+        TEST_EXPECT(context, code_editor::syntax_pair_at(tokenizer, line, open_bracket, pair));
+        TEST_EXPECT(context, pair.open == '[');
+        TEST_EXPECT(context, pair.close == ']');
+        TEST_EXPECT(context, pair.direction == 1);
+
+        size_t const close_bracket = line.find(']');
+        TEST_EXPECT(context, code_editor::syntax_pair_at(tokenizer, line, close_bracket, pair));
+        TEST_EXPECT(context, pair.open == '[');
+        TEST_EXPECT(context, pair.close == ']');
+        TEST_EXPECT(context, pair.direction == -1);
+
+        TEST_EXPECT(context, !code_editor::syntax_pair_at(tokenizer, line, line.find('{'), pair));
+    }
+
     TEST_CASE(json_tokenizer_classifies_common_tokens) {
         code_editor::SyntaxTokenizer const tokenizer = code_editor::json_syntax_tokenizer();
         StrRef const line = "\"enabled\": true, \"count\": -12.5e+2";
@@ -157,6 +179,25 @@ namespace {
         code_editor::SyntaxToken const token =
             code_editor::syntax_next_token(tokenizer, "null", 0u);
         TEST_EXPECT(context, token.kind == code_editor::SyntaxTokenKind::KEYWORD);
+    }
+
+    TEST_CASE(json_pair_detection_ignores_escaped_strings) {
+        code_editor::SyntaxTokenizer const tokenizer = code_editor::json_syntax_tokenizer();
+        StrRef const line = "{\"text\":\"\\]\",\"items\":[1]}";
+        code_editor::SyntaxPair pair = {};
+
+        size_t const string_bracket = line.find(']');
+        TEST_EXPECT(context, !code_editor::syntax_pair_at(tokenizer, line, string_bracket, pair));
+
+        size_t const open_bracket = line.find('[', string_bracket + 1u);
+        TEST_EXPECT(context, code_editor::syntax_pair_at(tokenizer, line, open_bracket, pair));
+        TEST_EXPECT(context, pair.open == '[');
+        TEST_EXPECT(context, pair.close == ']');
+        TEST_EXPECT(context, pair.direction == 1);
+
+        code_editor::SyntaxTokenizer const text_tokenizer =
+            code_editor::syntax_tokenizer_for_file_name("notes.txt");
+        TEST_EXPECT(context, !code_editor::syntax_pair_at(text_tokenizer, "value[0]", 5u, pair));
     }
 
 } // namespace

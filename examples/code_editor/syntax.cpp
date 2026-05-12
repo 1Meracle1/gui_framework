@@ -21,6 +21,56 @@ namespace code_editor {
         return token;
     }
 
+    [[nodiscard]] auto syntax_pair_for_char(char ch, SyntaxPair& out_pair) -> bool {
+        switch (ch) {
+        case '(':
+            out_pair = {.open = '(', .close = ')', .direction = 1};
+            return true;
+        case ')':
+            out_pair = {.open = '(', .close = ')', .direction = -1};
+            return true;
+        case '{':
+            out_pair = {.open = '{', .close = '}', .direction = 1};
+            return true;
+        case '}':
+            out_pair = {.open = '{', .close = '}', .direction = -1};
+            return true;
+        case '[':
+            out_pair = {.open = '[', .close = ']', .direction = 1};
+            return true;
+        case ']':
+            out_pair = {.open = '[', .close = ']', .direction = -1};
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    [[nodiscard]] auto syntax_pair_for_token(
+        SyntaxTokenizer tokenizer, SyntaxTokenKind kind, char ch, SyntaxPair& out_pair
+    ) -> bool {
+        return tokenizer.match_pairs && kind == SyntaxTokenKind::PUNCTUATION &&
+               syntax_pair_for_char(ch, out_pair);
+    }
+
+    [[nodiscard]] auto
+    syntax_pair_at(SyntaxTokenizer tokenizer, StrRef line, size_t index, SyntaxPair& out_pair)
+        -> bool {
+        if (!tokenizer.match_pairs || index >= line.size()) {
+            return false;
+        }
+
+        size_t token_index = 0u;
+        while (token_index < line.size()) {
+            SyntaxToken const token = syntax_next_token(tokenizer, line, token_index);
+            if (index < token.end) {
+                return syntax_pair_for_token(tokenizer, token.kind, line[index], out_pair);
+            }
+            token_index = token.end;
+        }
+        return false;
+    }
+
     [[nodiscard]] auto cpp_file_name(StrRef file_name) -> bool {
         return file_name.ends_with_ignore_ascii_case(".c") ||
                file_name.ends_with_ignore_ascii_case(".cc") ||

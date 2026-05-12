@@ -2463,6 +2463,199 @@ namespace code_editor {
         );
     }
 
+    struct SyntaxPairPosition {
+        size_t line = 0u;
+        size_t column = 0u;
+    };
+
+    struct SyntaxPairMatch {
+        SyntaxPairPosition first = {};
+        SyntaxPairPosition second = {};
+        bool active = false;
+    };
+
+    [[nodiscard]] auto same_syntax_pair(SyntaxPair lhs, SyntaxPair rhs) -> bool {
+        return lhs.open == rhs.open && lhs.close == rhs.close;
+    }
+
+    [[nodiscard]] auto cursor_syntax_pair(
+        EditorState const& editor,
+        SyntaxTokenizer tokenizer,
+        SyntaxPairPosition& out_position,
+        SyntaxPair& out_pair
+    ) -> bool {
+        if (editor.view_kind == EditorViewKind::GIT_DIFF ||
+            editor.cursor_line >= editor_line_count(editor)) {
+            return false;
+        }
+
+        StrRef const line = editor_line_text(editor_line(editor, editor.cursor_line));
+        size_t const column = std::min(editor.cursor_column, line.size());
+        if (column < line.size() && syntax_pair_at(tokenizer, line, column, out_pair)) {
+            out_position = {editor.cursor_line, column};
+            return true;
+        }
+        if (column > 0u && syntax_pair_at(tokenizer, line, column - 1u, out_pair)) {
+            out_position = {editor.cursor_line, column - 1u};
+            return true;
+        }
+        return false;
+    }
+
+    [[nodiscard]] auto find_forward_syntax_pair(
+        EditorState const& editor,
+        SyntaxTokenizer tokenizer,
+        SyntaxPairPosition start,
+        SyntaxPair pair,
+        SyntaxPairPosition& out_position
+    ) -> bool {
+        size_t depth = 0u;
+        size_t const line_count = editor_line_count(editor);
+        for (size_t line_index = start.line; line_index < line_count; ++line_index) {
+            StrRef const line = editor_line_text(editor_line(editor, line_index));
+            size_t token_index = 0u;
+            while (token_index < line.size()) {
+                SyntaxToken const token = syntax_next_token(tokenizer, line, token_index);
+                for (size_t column = token.start; column < token.end; ++column) {
+                    if (line_index == start.line && column <= start.column) {
+                        continue;
+                    }
+                    SyntaxPair candidate = {};
+                    if (!syntax_pair_for_token(tokenizer, token.kind, line[column], candidate) ||
+                        !same_syntax_pair(candidate, pair)) {
+                        continue;
+                    }
+                    if (candidate.direction > 0) {
+                        depth += 1u;
+                    } else if (depth == 0u) {
+                        out_position = {line_index, column};
+                        return true;
+                    } else {
+                        depth -= 1u;
+                    }
+                }
+                token_index = token.end;
+            }
+        }
+        return false;
+    }
+
+    [[nodiscard]] auto find_backward_syntax_pair(
+        EditorState const& editor,
+        SyntaxTokenizer tokenizer,
+        SyntaxPairPosition end,
+        SyntaxPair pair,
+        SyntaxPairPosition& out_position
+    ) -> bool {
+        ArenaTemp temp = begin_thread_temp_arena();
+        Vec<SyntaxPairPosition> stack = {};
+        bool ok = stack.init(16u, temp.arena()->resource());
+        DEBUG_ASSERT(ok);
+        for (size_t line_index = 0u; ok && line_index <= end.line; ++line_index) {
+            StrRef const line = editor_line_text(editor_line(editor, line_index));
+            size_t token_index = 0u;
+            while (token_index < line.size()) {
+                SyntaxToken const token = syntax_next_token(tokenizer, line, token_index);
+                if (line_index == end.line && token.start >= end.column) {
+                    break;
+                }
+                for (size_t column = token.start; column < token.end; ++column) {
+                    if (line_index == end.line && column >= end.column) {
+                        break;
+                    }
+                    SyntaxPair candidate = {};
+                    if (!syntax_pair_for_token(tokenizer, token.kind, line[column], candidate) ||
+                        !same_syntax_pair(candidate, pair)) {
+                        continue;
+                    }
+                    if (candidate.direction > 0) {
+                        ok = stack.push_back({line_index, column});
+                        DEBUG_ASSERT(ok);
+                    } else if (!stack.empty()) {
+                        ok = stack.resize(stack.size() - 1u);
+                        DEBUG_ASSERT(ok);
+                    }
+                }
+                token_index = token.end;
+            }
+        }
+        if (ok && !stack.empty()) {
+            out_position = stack[stack.size() - 1u];
+            return true;
+        }
+        return false;
+    }
+
+    [[nodiscard]] auto find_syntax_pair_match(
+        EditorState const& editor, SyntaxTokenizer tokenizer, SyntaxPairMatch& out_match
+    ) -> bool {
+        SyntaxPairPosition anchor = {};
+        SyntaxPair pair = {};
+        if (!cursor_syntax_pair(editor, tokenizer, anchor, pair)) {
+            return false;
+        }
+
+        SyntaxPairPosition other = {};
+        bool const found = pair.direction > 0
+                               ? find_forward_syntax_pair(editor, tokenizer, anchor, pair, other)
+                               : find_backward_syntax_pair(editor, tokenizer, anchor, pair, other);
+        if (!found) {
+            return false;
+        }
+        out_match = pair.direction > 0 ? SyntaxPairMatch{anchor, other, true}
+                                       : SyntaxPairMatch{other, anchor, true};
+        return true;
+    }
+
+    auto draw_syntax_pair_position(
+        draw::Context context,
+        SyntaxPairPosition position,
+        size_t line,
+        float text_x,
+        float y,
+        float line_height,
+        float char_width,
+        Palette const& palette,
+        Slice<LspInlayHint const> inlay_hints
+    ) -> void {
+        if (position.line != line) {
+            return;
+        }
+        float const x0 = inlay_column_x(inlay_hints, line, position.column, text_x, char_width);
+        draw::Rect const rect = {
+            {std::round(x0), std::round(y + 2.0f)},
+            {std::round(x0 + char_width), std::round(y + line_height - 2.0f)},
+        };
+        draw::draw_rect_filled(
+            context, rect, to_draw_color(gui::color_alpha(palette.cursor, 0.10f)), 1.0f
+        );
+        draw::draw_rect(
+            context, rect, to_draw_color(gui::color_alpha(palette.text, 0.75f)), 1.0f, 1.0f
+        );
+    }
+
+    auto draw_syntax_pair_match(
+        draw::Context context,
+        SyntaxPairMatch match,
+        size_t line,
+        float text_x,
+        float y,
+        float line_height,
+        float char_width,
+        Palette const& palette,
+        Slice<LspInlayHint const> inlay_hints
+    ) -> void {
+        if (!match.active) {
+            return;
+        }
+        draw_syntax_pair_position(
+            context, match.first, line, text_x, y, line_height, char_width, palette, inlay_hints
+        );
+        draw_syntax_pair_position(
+            context, match.second, line, text_x, y, line_height, char_width, palette, inlay_hints
+        );
+    }
+
     [[nodiscard]] auto
     draw_cursor_column(EditorState const& editor, size_t line, size_t line_size, size_t column)
         -> size_t {
@@ -2818,6 +3011,10 @@ namespace code_editor {
         Slice<LspSemanticToken const> const semantic_tokens = semantic_tokens_for_editor(editor);
         Slice<LspInlayHint const> const inlay_hints = inlay_hints_for_editor(editor);
         Slice<EditorGitLineChange const> const git_line_changes = current_git_line_changes(editor);
+        SyntaxPairMatch syntax_pair_match = {};
+        if (selection_visible) {
+            BASE_UNUSED(find_syntax_pair_match(editor, tokenizer, syntax_pair_match));
+        }
         size_t visible_line = first_line;
         size_t line = editor_visible_line_at(editor, visible_line);
         while (visible_line < line_count && y < content.max.y) {
@@ -2994,6 +3191,17 @@ namespace code_editor {
                 editor.font_size,
                 editor.raster_policy,
                 char_width
+            );
+            draw_syntax_pair_match(
+                draw_context,
+                syntax_pair_match,
+                line,
+                text_x,
+                y,
+                line_height,
+                char_width,
+                palette,
+                inlay_hints
             );
             size_t const hidden_count = fold.hidden_line_count;
             if (hidden_count != 0u) {

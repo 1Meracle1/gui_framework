@@ -160,7 +160,7 @@ namespace code_editor {
     }
 
     [[nodiscard]] auto cpp_syntax_tokenizer() -> SyntaxTokenizer {
-        return {.next_token = cpp_next_token};
+        return {.next_token = cpp_next_token, .match_pairs = true};
     }
 
 } // namespace code_editor

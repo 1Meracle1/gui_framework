@@ -49,7 +49,7 @@ namespace code_editor {
     }
 
     [[nodiscard]] auto json_syntax_tokenizer() -> SyntaxTokenizer {
-        return {.next_token = json_next_token};
+        return {.next_token = json_next_token, .match_pairs = true};
     }
 
 } // namespace code_editor

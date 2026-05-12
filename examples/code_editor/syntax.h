@@ -28,10 +28,23 @@ namespace code_editor {
 
     struct SyntaxTokenizer {
         SyntaxNextTokenFn next_token = nullptr;
+        bool match_pairs = false;
+    };
+
+    struct SyntaxPair {
+        char open = '\0';
+        char close = '\0';
+        int8_t direction = 0;
     };
 
     [[nodiscard]] auto syntax_next_token(SyntaxTokenizer tokenizer, StrRef line, size_t index)
         -> SyntaxToken;
+    [[nodiscard]] auto syntax_pair_for_token(
+        SyntaxTokenizer tokenizer, SyntaxTokenKind kind, char ch, SyntaxPair& out_pair
+    ) -> bool;
+    [[nodiscard]] auto
+    syntax_pair_at(SyntaxTokenizer tokenizer, StrRef line, size_t index, SyntaxPair& out_pair)
+        -> bool;
     [[nodiscard]] auto syntax_tokenizer_for_file_name(StrRef file_name) -> SyntaxTokenizer;
     [[nodiscard]] auto cpp_syntax_tokenizer() -> SyntaxTokenizer;
     [[nodiscard]] auto json_syntax_tokenizer() -> SyntaxTokenizer;
