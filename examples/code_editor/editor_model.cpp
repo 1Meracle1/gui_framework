@@ -2978,6 +2978,18 @@ namespace code_editor {
                position.column == line_size(editor, position.line);
     }
 
+    enum class TextRunKind : uint8_t {
+        SPACE,
+        WORD,
+        PUNCTUATION,
+        EMPTY_LINE,
+    };
+
+    [[nodiscard]] auto text_word_byte(uint8_t ch) -> bool {
+        return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') ||
+               ch == '_' || ch >= 0x80u;
+    }
+
     [[nodiscard]] auto previous_position(EditorState const& editor, EditorPosition position)
         -> EditorPosition {
         position = clamp_position(editor, position);
@@ -3009,34 +3021,85 @@ namespace code_editor {
             return false;
         }
         uint8_t const ch = static_cast<uint8_t>(line.text[position.column]);
-        return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') ||
-               ch == '_' || ch >= 0x80u;
+        return text_word_byte(ch);
     }
 
-    [[nodiscard]] auto text_non_space_char(EditorState const& editor, EditorPosition position)
-        -> bool {
+    [[nodiscard]] auto text_editor_word_kind(EditorState const& editor, EditorPosition position)
+        -> TextRunKind {
+        return text_word_char(editor, position) ? TextRunKind::WORD : TextRunKind::SPACE;
+    }
+
+    [[nodiscard]] auto text_small_word_kind(
+        EditorState const& editor, EditorPosition position, bool empty_line_is_word
+    ) -> TextRunKind {
         position = clamp_position(editor, position);
         EditorLine const& line = editor_line(editor, position.line);
-        return position.column < line.size &&
-               static_cast<uint8_t>(line.text[position.column]) > ' ';
+        if (line.size == 0u && position.column == 0u && empty_line_is_word) {
+            return TextRunKind::EMPTY_LINE;
+        }
+        if (position.column >= line.size) {
+            return TextRunKind::SPACE;
+        }
+        uint8_t const ch = static_cast<uint8_t>(line.text[position.column]);
+        if (ch <= ' ') {
+            return TextRunKind::SPACE;
+        }
+        return text_word_byte(ch) ? TextRunKind::WORD : TextRunKind::PUNCTUATION;
     }
 
-    [[nodiscard]] auto previous_run_start_position(
+    [[nodiscard]] auto
+    text_big_word_kind(EditorState const& editor, EditorPosition position, bool empty_line_is_word)
+        -> TextRunKind {
+        position = clamp_position(editor, position);
+        EditorLine const& line = editor_line(editor, position.line);
+        if (line.size == 0u && position.column == 0u && empty_line_is_word) {
+            return TextRunKind::EMPTY_LINE;
+        }
+        if (position.column >= line.size ||
+            static_cast<uint8_t>(line.text[position.column]) <= ' ') {
+            return TextRunKind::SPACE;
+        }
+        return TextRunKind::WORD;
+    }
+
+    [[nodiscard]] auto
+    text_small_word_start_kind(EditorState const& editor, EditorPosition position) -> TextRunKind {
+        return text_small_word_kind(editor, position, true);
+    }
+
+    [[nodiscard]] auto text_small_word_end_kind(EditorState const& editor, EditorPosition position)
+        -> TextRunKind {
+        return text_small_word_kind(editor, position, false);
+    }
+
+    [[nodiscard]] auto text_big_word_start_kind(EditorState const& editor, EditorPosition position)
+        -> TextRunKind {
+        return text_big_word_kind(editor, position, true);
+    }
+
+    [[nodiscard]] auto text_big_word_end_kind(EditorState const& editor, EditorPosition position)
+        -> TextRunKind {
+        return text_big_word_kind(editor, position, false);
+    }
+
+    [[nodiscard]] auto previous_kind_run_start_position(
         EditorState const& editor,
         EditorPosition position,
-        bool (*run_char)(EditorState const&, EditorPosition)
+        TextRunKind (*run_kind)(EditorState const&, EditorPosition)
     ) -> EditorPosition {
         position = clamp_position(editor, position);
+        TextRunKind kind = TextRunKind::SPACE;
         while (!at_text_begin(position)) {
             EditorPosition const previous = previous_position(editor, position);
-            if (run_char(editor, previous)) {
+            kind = run_kind(editor, previous);
+            if (kind != TextRunKind::SPACE) {
                 break;
             }
             position = previous;
         }
-        while (!at_text_begin(position)) {
+        while (kind != TextRunKind::SPACE && !at_text_begin(position)) {
             EditorPosition const previous = previous_position(editor, position);
-            if (!run_char(editor, previous)) {
+            if (run_kind(editor, previous) != kind) {
                 break;
             }
             position = previous;
@@ -3044,79 +3107,113 @@ namespace code_editor {
         return position;
     }
 
-    [[nodiscard]] auto next_run_start_position(
+    [[nodiscard]] auto next_kind_run_start_position(
         EditorState const& editor,
         EditorPosition position,
-        bool (*run_char)(EditorState const&, EditorPosition)
+        TextRunKind (*run_kind)(EditorState const&, EditorPosition)
     ) -> EditorPosition {
         position = clamp_position(editor, position);
-        while (!at_text_end(editor, position) && run_char(editor, position)) {
-            position = next_position(editor, position);
+        TextRunKind const kind = run_kind(editor, position);
+        if (kind != TextRunKind::SPACE) {
+            while (!at_text_end(editor, position) && run_kind(editor, position) == kind) {
+                position = next_position(editor, position);
+            }
         }
-        while (!at_text_end(editor, position) && !run_char(editor, position)) {
+        while (!at_text_end(editor, position) && run_kind(editor, position) == TextRunKind::SPACE) {
             position = next_position(editor, position);
         }
         return position;
     }
 
-    [[nodiscard]] auto next_run_end_position(
+    [[nodiscard]] auto next_kind_run_end_position(
         EditorState const& editor,
         EditorPosition position,
-        bool (*run_char)(EditorState const&, EditorPosition)
+        TextRunKind (*run_kind)(EditorState const&, EditorPosition)
     ) -> EditorPosition {
         EditorPosition const original = clamp_position(editor, position);
         position = original;
-        if (!at_text_end(editor, position) && run_char(editor, position)) {
+        TextRunKind kind = run_kind(editor, position);
+        if (kind != TextRunKind::SPACE) {
             EditorPosition const next = next_position(editor, position);
-            if (at_text_end(editor, next) || !run_char(editor, next)) {
+            if (at_text_end(editor, next) || run_kind(editor, next) != kind) {
                 position = next;
             }
         }
-        while (!at_text_end(editor, position) && !run_char(editor, position)) {
+        while (!at_text_end(editor, position) && run_kind(editor, position) == TextRunKind::SPACE) {
             position = next_position(editor, position);
         }
         if (at_text_end(editor, position)) {
             return original;
         }
 
+        kind = run_kind(editor, position);
         EditorPosition result = position;
-        while (!at_text_end(editor, position) && run_char(editor, position)) {
+        while (!at_text_end(editor, position) && run_kind(editor, position) == kind) {
             result = position;
             position = next_position(editor, position);
         }
         return result;
     }
 
+    [[nodiscard]] auto
+    previous_editor_word_position(EditorState const& editor, EditorPosition position)
+        -> EditorPosition {
+        return previous_kind_run_start_position(editor, position, text_editor_word_kind);
+    }
+
+    [[nodiscard]] auto next_editor_word_position(EditorState const& editor, EditorPosition position)
+        -> EditorPosition {
+        return next_kind_run_start_position(editor, position, text_editor_word_kind);
+    }
+
     [[nodiscard]] auto previous_word_position(EditorState const& editor, EditorPosition position)
         -> EditorPosition {
-        return previous_run_start_position(editor, position, text_word_char);
+        return previous_kind_run_start_position(editor, position, text_small_word_start_kind);
     }
 
     [[nodiscard]] auto next_word_position(EditorState const& editor, EditorPosition position)
         -> EditorPosition {
-        return next_run_start_position(editor, position, text_word_char);
+        return next_kind_run_start_position(editor, position, text_small_word_start_kind);
     }
 
     [[nodiscard]] auto next_word_end_position(EditorState const& editor, EditorPosition position)
         -> EditorPosition {
-        return next_run_end_position(editor, position, text_word_char);
+        return next_kind_run_end_position(editor, position, text_small_word_end_kind);
     }
 
     [[nodiscard]] auto
     previous_big_word_position(EditorState const& editor, EditorPosition position)
         -> EditorPosition {
-        return previous_run_start_position(editor, position, text_non_space_char);
+        return previous_kind_run_start_position(editor, position, text_big_word_start_kind);
     }
 
     [[nodiscard]] auto next_big_word_position(EditorState const& editor, EditorPosition position)
         -> EditorPosition {
-        return next_run_start_position(editor, position, text_non_space_char);
+        return next_kind_run_start_position(editor, position, text_big_word_start_kind);
     }
 
     [[nodiscard]] auto
     next_big_word_end_position(EditorState const& editor, EditorPosition position)
         -> EditorPosition {
-        return next_run_end_position(editor, position, text_non_space_char);
+        return next_kind_run_end_position(editor, position, text_big_word_end_kind);
+    }
+
+    auto move_editor_word_left(EditorState& editor, bool select) -> void {
+        if (has_extra_cursors(editor)) {
+            move_all_cursors_by(editor, previous_editor_word_position, select);
+            return;
+        }
+        move_cursor_to(
+            editor, previous_editor_word_position(editor, cursor_position(editor)), select
+        );
+    }
+
+    auto move_editor_word_right(EditorState& editor, bool select) -> void {
+        if (has_extra_cursors(editor)) {
+            move_all_cursors_by(editor, next_editor_word_position, select);
+            return;
+        }
+        move_cursor_to(editor, next_editor_word_position(editor, cursor_position(editor)), select);
     }
 
     auto move_word_left(EditorState& editor, bool select) -> void {
@@ -3656,7 +3753,9 @@ namespace code_editor {
             return;
         }
         erase_range(
-            editor, previous_word_position(editor, cursor_position(editor)), cursor_position(editor)
+            editor,
+            previous_editor_word_position(editor, cursor_position(editor)),
+            cursor_position(editor)
         );
     }
 
@@ -3668,7 +3767,9 @@ namespace code_editor {
             return;
         }
         erase_range(
-            editor, cursor_position(editor), next_word_position(editor, cursor_position(editor))
+            editor,
+            cursor_position(editor),
+            next_editor_word_position(editor, cursor_position(editor))
         );
     }
 
@@ -6008,22 +6109,34 @@ namespace code_editor {
             }
             break;
         case 'w':
-            move_word_right(editor, select);
+            for (size_t index = 0u; index < count; ++index) {
+                move_word_right(editor, select);
+            }
             break;
         case 'b':
-            move_word_left(editor, select);
+            for (size_t index = 0u; index < count; ++index) {
+                move_word_left(editor, select);
+            }
             break;
         case 'e':
-            move_word_end(editor, select);
+            for (size_t index = 0u; index < count; ++index) {
+                move_word_end(editor, select);
+            }
             break;
         case 'W':
-            move_big_word_right(editor, select);
+            for (size_t index = 0u; index < count; ++index) {
+                move_big_word_right(editor, select);
+            }
             break;
         case 'B':
-            move_big_word_left(editor, select);
+            for (size_t index = 0u; index < count; ++index) {
+                move_big_word_left(editor, select);
+            }
             break;
         case 'E':
-            move_big_word_end(editor, select);
+            for (size_t index = 0u; index < count; ++index) {
+                move_big_word_end(editor, select);
+            }
             break;
         case 'g':
             editor.set_flag(EditorFlag::PENDING_G, true);
@@ -6108,14 +6221,16 @@ namespace code_editor {
     [[nodiscard]] auto can_backspace_word(EditorState const& editor) -> bool {
         return editor.flag(EditorFlag::SELECTION_ACTIVE) ||
                !same_position(
-                   previous_word_position(editor, cursor_position(editor)), cursor_position(editor)
+                   previous_editor_word_position(editor, cursor_position(editor)),
+                   cursor_position(editor)
                );
     }
 
     [[nodiscard]] auto can_delete_word(EditorState const& editor) -> bool {
         return editor.flag(EditorFlag::SELECTION_ACTIVE) ||
                !same_position(
-                   next_word_position(editor, cursor_position(editor)), cursor_position(editor)
+                   next_editor_word_position(editor, cursor_position(editor)),
+                   cursor_position(editor)
                );
     }
 
@@ -6866,7 +6981,7 @@ namespace code_editor {
                 return true;
             }
             if (word) {
-                move_word_left(editor, select);
+                move_editor_word_left(editor, select);
             } else {
                 move_left(editor, select);
             }
@@ -6876,7 +6991,7 @@ namespace code_editor {
                 return true;
             }
             if (word) {
-                move_word_right(editor, select);
+                move_editor_word_right(editor, select);
             } else {
                 move_right(editor, select);
             }

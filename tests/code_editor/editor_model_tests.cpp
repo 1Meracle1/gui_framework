@@ -1737,22 +1737,53 @@ namespace {
         arena.init();
 
         code_editor::EditorState editor = {};
-        code_editor::init_editor(arena, editor, "one two_three + four");
+        code_editor::init_editor(arena, editor, "one.two + four");
 
+        send_text(editor, "w");
+        TEST_EXPECT(context, editor.cursor_column == 3u);
         send_text(editor, "w");
         TEST_EXPECT(context, editor.cursor_column == 4u);
         send_text(editor, "e");
-        TEST_EXPECT(context, editor.cursor_column == 12u);
+        TEST_EXPECT(context, editor.cursor_column == 6u);
+        send_text(editor, "e");
+        TEST_EXPECT(context, editor.cursor_column == 8u);
         send_text(editor, "b");
         TEST_EXPECT(context, editor.cursor_column == 4u);
+        send_text(editor, "b");
+        TEST_EXPECT(context, editor.cursor_column == 3u);
         send_text(editor, "W");
-        TEST_EXPECT(context, editor.cursor_column == 14u);
+        TEST_EXPECT(context, editor.cursor_column == 8u);
         send_text(editor, "E");
-        TEST_EXPECT(context, editor.cursor_column == 19u);
+        TEST_EXPECT(context, editor.cursor_column == 13u);
         send_text(editor, "B");
-        TEST_EXPECT(context, editor.cursor_column == 16u);
+        TEST_EXPECT(context, editor.cursor_column == 10u);
         send_text(editor, "B");
-        TEST_EXPECT(context, editor.cursor_column == 14u);
+        TEST_EXPECT(context, editor.cursor_column == 8u);
+    }
+
+    TEST_CASE(editor_normal_word_keys_stop_on_empty_lines) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "one\n\ntwo");
+
+        send_text(editor, "w");
+        TEST_EXPECT(context, editor.cursor_line == 1u);
+        TEST_EXPECT(context, editor.cursor_column == 0u);
+        send_text(editor, "w");
+        TEST_EXPECT(context, editor.cursor_line == 2u);
+        TEST_EXPECT(context, editor.cursor_column == 0u);
+        send_text(editor, "b");
+        TEST_EXPECT(context, editor.cursor_line == 1u);
+        TEST_EXPECT(context, editor.cursor_column == 0u);
+        send_text(editor, "b");
+        TEST_EXPECT(context, editor.cursor_line == 0u);
+        TEST_EXPECT(context, editor.cursor_column == 0u);
+        send_text(editor, "w");
+        send_text(editor, "e");
+        TEST_EXPECT(context, editor.cursor_line == 2u);
+        TEST_EXPECT(context, editor.cursor_column == 2u);
     }
 
     TEST_CASE(editor_normal_count_prefix_repeats_hjkl_motions) {
@@ -1775,6 +1806,25 @@ namespace {
         send_text(editor, "2k");
         TEST_EXPECT(context, editor.cursor_line == 0u);
         TEST_EXPECT(context, editor.cursor_column == 1u);
+    }
+
+    TEST_CASE(editor_normal_count_prefix_repeats_word_motions) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "one.two + four");
+
+        send_text(editor, "2w");
+        TEST_EXPECT(context, editor.cursor_column == 4u);
+        send_text(editor, "2e");
+        TEST_EXPECT(context, editor.cursor_column == 8u);
+        send_text(editor, "2b");
+        TEST_EXPECT(context, editor.cursor_column == 3u);
+        send_text(editor, "2W");
+        TEST_EXPECT(context, editor.cursor_column == 10u);
+        send_text(editor, "2B");
+        TEST_EXPECT(context, editor.cursor_column == 0u);
     }
 
     TEST_CASE(editor_normal_v_selects_characters) {

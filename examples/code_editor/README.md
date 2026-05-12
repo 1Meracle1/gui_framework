@@ -75,8 +75,8 @@ characters, `_`, `.`, `>`, or `:` also requests LSP completion.
 | --- | --- |
 | `h`, `j`, `k`, `l` | Move left, down, up, or right. |
 | `<number> h/j/k/l` | Move by that many characters or lines, for example `5 j`. |
-| `w`, `b`, `e` | Move to the next word, previous word, or end of word. |
-| `W`, `B`, `E` | Move by big-word boundaries. Big words use broader whitespace-separated spans. |
+| `w`, `b`, `e` | Move to the next word start, previous word start, or next word end. Words are identifier runs or punctuation runs. |
+| `W`, `B`, `E` | Move by big-word boundaries. Big words are whitespace-separated spans. |
 | `0` | Move to the start of the current line. |
 | `$` | Move to the end of the current line. |
 | `g g` | Move to the start of the buffer. |
@@ -305,8 +305,9 @@ change, paste, replace, indentation, and LSP actions are ignored.
 | `Up`, `Down`, `k`, `j` | Move one visible line up or down. |
 | `Home`, `0` | Move to the start of the current diff row. |
 | `End`, `$` | Move to the end of the current diff row. |
-| `Ctrl+Left`, `Ctrl+Right`, `w`, `b`, `e` | Move by normal word boundaries. |
-| `W`, `B`, `E` | Move by big-word boundaries. |
+| `Ctrl+Left`, `Ctrl+Right` | Move by editor word boundaries. |
+| `w`, `b`, `e` | Move by normal word boundaries. Words are identifier runs or punctuation runs. |
+| `W`, `B`, `E` | Move by big-word boundaries. Big words are whitespace-separated spans. |
 | `Ctrl+Home`, `g g` | Move to the start of the diff. |
 | `Ctrl+End`, `G` | Move to the last diff row. Number prefixes such as `42 G` are not used in diff view. |
 | `z z` | Center the cursor row in the focused split. |
