@@ -1784,7 +1784,6 @@ namespace code_editor {
         if (path_is_directory(full_path)) {
             launch.save_root_path = path;
             launch.tree_root_name = arena_copy_str(arena, path_leaf(path));
-            launch.initial_sidebar_visible = true;
             launch.initial_tree_refresh = true;
             return true;
         }

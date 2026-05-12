@@ -3111,8 +3111,8 @@ namespace {
 
         TEST_EXPECT(context, editor.flag(EditorFlag::SIDEBAR_VISIBLE));
         TEST_EXPECT(context, code_editor::editor_split_leaf_count(editor) == 2u);
-        TEST_EXPECT(context, editor.split_nodes[editor.root_split].ratio > 0.15f);
-        TEST_EXPECT(context, editor.split_nodes[editor.root_split].ratio < 0.20f);
+        TEST_EXPECT(context, editor.split_nodes[editor.root_split].ratio > 0.30f);
+        TEST_EXPECT(context, editor.split_nodes[editor.root_split].ratio < 0.35f);
 
         size_t const filesystem = editor.split_nodes[editor.root_split].first;
         size_t const code = editor.split_nodes[editor.root_split].second;
