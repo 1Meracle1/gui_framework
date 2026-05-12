@@ -7372,6 +7372,9 @@ namespace code_editor {
         hash =
             hash_bytes(hash, &editor.git_operation_pending, sizeof(editor.git_operation_pending));
         hash = hash_bytes(
+            hash, &editor.git_pending_operation_kind, sizeof(editor.git_pending_operation_kind)
+        );
+        hash = hash_bytes(
             hash,
             &editor.git_commit_load_more_requested,
             sizeof(editor.git_commit_load_more_requested)

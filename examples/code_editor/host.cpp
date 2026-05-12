@@ -1782,6 +1782,17 @@ namespace code_editor {
                result.branches.init(0u, arena.resource());
     }
 
+    [[nodiscard]] auto load_git_status_path_result(
+        Arena& arena, StrRef root, StrRef path, GitWorkResult& result, StrRef& message
+    ) -> bool {
+        StrRef status_message = {};
+        if (git_load_status_path(arena, root, path, result.status_items, status_message)) {
+            return true;
+        }
+        message = status_message;
+        return false;
+    }
+
     [[nodiscard]] auto execute_git_work(Arena& arena, GitWorkRequest const& request)
         -> GitWorkResult {
         GitWorkResult result = {
@@ -1830,13 +1841,15 @@ namespace code_editor {
             );
             break;
         case GitWorkKind::STAGE:
-            result.ok = git_stage_path(arena, root, request.path, message);
+            result.ok = git_stage_path(arena, root, request.path, message) &&
+                        load_git_status_path_result(arena, root, request.path, result, message);
             break;
         case GitWorkKind::STAGE_ALL:
             result.ok = git_stage_all(arena, root, message);
             break;
         case GitWorkKind::UNSTAGE:
-            result.ok = git_unstage_path(arena, root, request.path, message);
+            result.ok = git_unstage_path(arena, root, request.path, message) &&
+                        load_git_status_path_result(arena, root, request.path, result, message);
             break;
         case GitWorkKind::UNSTAGE_ALL:
             result.ok = git_unstage_all(arena, root, message);

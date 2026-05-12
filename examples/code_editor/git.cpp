@@ -1244,6 +1244,24 @@ namespace code_editor {
         return ok;
     }
 
+    auto git_load_status_path(
+        Arena& arena, StrRef root, StrRef path, Vec<GitStatusItem>& out, StrRef& message
+    ) -> bool {
+        GitRunResult const result = run_git(
+            arena,
+            root,
+            command_with_path(arena, "status --porcelain=v1 -z --untracked-files=all", path),
+            false
+        );
+        if (!result.ok) {
+            set_message(result.output, "git status failed.", message);
+            return false;
+        }
+        bool const ok = parse_git_status(arena, result.output, out);
+        message = ok ? StrRef() : StrRef("Failed to parse git status.");
+        return ok;
+    }
+
     auto git_load_branches(
         Arena& arena, StrRef root, Vec<GitBranch>& out, StrRef& current, StrRef& message
     ) -> bool {

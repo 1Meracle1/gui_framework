@@ -3147,6 +3147,14 @@ namespace code_editor {
                rect.max.y > clip.min.y;
     }
 
+    [[nodiscard]] auto git_inset_rect(gui::Rect rect, float inset) -> gui::Rect {
+        rect.min.x += inset;
+        rect.min.y += inset;
+        rect.max.x -= inset;
+        rect.max.y -= inset;
+        return rect;
+    }
+
     auto draw_git_graph_segment(
         draw::Context context,
         Palette const& palette,
@@ -3235,6 +3243,103 @@ namespace code_editor {
         }
     }
 
+    [[nodiscard]] auto point_on_circle(draw::Vec2 center, float radius, float angle) -> draw::Vec2 {
+        return {
+            center.x + static_cast<float>(std::cos(angle)) * radius,
+            center.y + static_cast<float>(std::sin(angle)) * radius,
+        };
+    }
+
+    auto draw_git_loading_arc(
+        draw::Context context,
+        draw::Vec2 center,
+        float radius,
+        float start_angle,
+        float end_angle,
+        gui::Color color,
+        float thickness
+    ) -> void {
+        draw::path_clear(context);
+        draw::path_arc_to(context, center, radius, start_angle, end_angle, 36);
+        draw::path_stroke(context, to_draw_color(color), false, thickness);
+        draw::path_clear(context);
+    }
+
+    [[nodiscard]] auto git_operation_loading_overlay_visible(EditorState const& editor) -> bool {
+        if (!editor.git_operation_pending || !editor.flag(EditorFlag::SIDEBAR_VISIBLE) ||
+            editor.sidebar_tab != EditorSidebarTab::GIT) {
+            return false;
+        }
+        switch (editor.git_pending_operation_kind) {
+        case GitWorkKind::NONE:
+        case GitWorkKind::COMMIT_PAGE:
+        case GitWorkKind::COMMIT_FILES:
+        case GitWorkKind::OPEN_STATUS_DIFF:
+        case GitWorkKind::OPEN_COMMIT_DIFF:
+            return false;
+        default:
+            return true;
+        }
+    }
+
+    auto draw_git_loading_overlay_surface(
+        draw::Context context,
+        gui::Frame const& ui,
+        EditorState const& editor,
+        Palette const& palette
+    ) -> void {
+        if (!git_operation_loading_overlay_visible(editor)) {
+            return;
+        }
+
+        gui::Rect clip_rect = {};
+        for (size_t box_index = 0u; box_index < ui.box_info_count(); ++box_index) {
+            gui::BoxInfo const* const box = ui.box_info(box_index);
+            if (box != nullptr && box->kind == gui::BoxKind::SCROLL_PANEL &&
+                box->debug_name == "filesystem_surface") {
+                clip_rect = git_inset_rect(box->rect, 2.0f);
+                break;
+            }
+        }
+        if (clip_rect.max.x <= clip_rect.min.x || clip_rect.max.y <= clip_rect.min.y) {
+            return;
+        }
+
+        draw::Rect const clip = to_draw_rect(clip_rect);
+        draw::draw_rect_filled(
+            context, clip, to_draw_color(gui::color_alpha(palette.panel, 0.88f)), 4.0f
+        );
+        draw::push_clip_rect(context, clip);
+
+        draw::Vec2 const center = {
+            (clip_rect.min.x + clip_rect.max.x) * 0.5f,
+            (clip_rect.min.y + clip_rect.max.y) * 0.5f,
+        };
+        constexpr float PI = 3.14159265359f;
+        float const radius = 24.0f;
+        float const start = editor.git_loading_phase * PI * 2.0f - PI * 0.5f;
+        float const end = start + PI * 1.45f;
+        draw::draw_circle(
+            context,
+            center,
+            radius,
+            to_draw_color(gui::color_alpha(palette.border, 0.66f)),
+            4.0f,
+            64
+        );
+        draw_git_loading_arc(
+            context, center, radius, start, end, gui::color_alpha(palette.cursor, 0.98f), 4.6f
+        );
+        draw::draw_circle_filled(
+            context,
+            point_on_circle(center, radius, end),
+            4.4f,
+            to_draw_color(gui::color_alpha(palette.cursor, 0.98f)),
+            16
+        );
+        draw::pop_clip_rect(context);
+    }
+
     auto draw_tree_edit_cursor(
         draw::Context context,
         gui::Frame const& ui,
@@ -3256,6 +3361,7 @@ namespace code_editor {
     ) -> void {
         draw_deleted_open_file_tab_marks(draw_context, ui, editor, palette);
         draw_git_graph_overlay(draw_context, ui, editor, palette);
+        draw_git_loading_overlay_surface(draw_context, ui, editor, palette);
         size_t const initial_focus = editor.focused_split;
         size_t target_focus = initial_focus;
         draw_editor_split_surface(
@@ -4104,16 +4210,6 @@ namespace code_editor {
                     }
                 )) {
                 BASE_UNUSED(actions);
-                bool const operation_paused = editor.git_operation_state != GitOperationState::NONE;
-                bool const mutating_enabled = !editor.git_operation_pending && !operation_paused;
-                gui::BoxDesc action_desc = control_desc;
-                action_desc.layout.width = gui::fill();
-                action_desc.flags = mutating_enabled ? gui::BOX_FLAG_NONE : gui::BOX_FLAG_DISABLED;
-                if (!mutating_enabled) {
-                    action_desc.style.background = palette.panel;
-                    action_desc.style.foreground = palette.faint;
-                    action_desc.style.border = gui::color_alpha(palette.border, 0.6f);
-                }
                 refresh_desc.layout.width = gui::fill();
                 refresh_desc.flags =
                     editor.git_operation_pending ? gui::BOX_FLAG_DISABLED : gui::BOX_FLAG_NONE;
@@ -4131,24 +4227,6 @@ namespace code_editor {
                 sync_git_control_focus(editor, fetch);
                 if (fetch.activated) {
                     editor.git_request = {.kind = GitRequestKind::FETCH};
-                }
-                StrRef const pull_text =
-                    editor.git_pending_pull_count == 0u
-                        ? StrRef("Pull")
-                        : fmt::tprintf("Pull %zu", editor.git_pending_pull_count);
-                gui::Signal const pull = ui.button(gui::id("git_pull"), pull_text, action_desc);
-                sync_git_control_focus(editor, pull);
-                if (pull.activated) {
-                    editor.git_request = {.kind = GitRequestKind::PULL};
-                }
-                StrRef const push_text =
-                    editor.git_pending_push_count == 0u
-                        ? StrRef("Push")
-                        : fmt::tprintf("Push %zu", editor.git_pending_push_count);
-                gui::Signal const push = ui.button(gui::id("git_push"), push_text, action_desc);
-                sync_git_control_focus(editor, push);
-                if (push.activated) {
-                    editor.git_request = {.kind = GitRequestKind::PUSH};
                 }
             }
         }
@@ -4389,16 +4467,11 @@ namespace code_editor {
         }
         editor.git_text_editing |= input.text_edit_active;
         editor.git_commit_text_focused = input.focused;
-        bool const sync_pending = editor.git_operation_state == GitOperationState::NONE &&
-                                  editor.git_pending_pull_count != 0u;
         bool const commit_enabled = git_commit_ready(editor);
-        if (input.activated && sync_pending) {
-            editor.git_request = {.kind = GitRequestKind::PULL};
-        } else if (input.activated && commit_enabled) {
+        if (input.activated && commit_enabled) {
             submit_git_commit(editor);
         }
 
-        bool const button_enabled = sync_pending ? !editor.git_operation_pending : commit_enabled;
         gui::BoxDesc const button_desc = {
             .layout =
                 {
@@ -4409,26 +4482,19 @@ namespace code_editor {
                 },
             .style =
                 {
-                    .background = button_enabled ? palette.cursor : palette.panel,
-                    .foreground = button_enabled ? palette.text : palette.faint,
-                    .border = button_enabled ? palette.cursor : palette.border,
+                    .background = commit_enabled ? palette.cursor : palette.panel,
+                    .foreground = commit_enabled ? palette.text : palette.faint,
+                    .border = commit_enabled ? palette.cursor : palette.border,
                     .border_thickness = 1.0f,
                     .radius = 4.0f,
                     .font_size = editor.font_size,
                 },
-            .flags = button_enabled ? gui::BOX_FLAG_NONE : gui::BOX_FLAG_DISABLED,
+            .flags = commit_enabled ? gui::BOX_FLAG_NONE : gui::BOX_FLAG_DISABLED,
         };
-        StrRef const button_text =
-            sync_pending ? fmt::tprintf("Sync Changes (%zu)", editor.git_pending_pull_count)
-                         : StrRef("Commit");
         gui::Signal const commit_button =
-            ui.button(gui::id("git_inline_commit"), button_text, button_desc);
+            ui.button(gui::id("git_inline_commit"), "Commit", button_desc);
         sync_git_control_focus(editor, commit_button);
         if (commit_button.activated) {
-            if (sync_pending) {
-                editor.git_request = {.kind = GitRequestKind::PULL};
-                return;
-            }
             submit_git_commit(editor);
         }
     }
@@ -4549,6 +4615,53 @@ namespace code_editor {
                 }
             )) {
             BASE_UNUSED(panel);
+            bool const can_mutate = !editor.git_operation_pending &&
+                                    editor.git_operation_state == GitOperationState::NONE;
+            bool const pull_visible = editor.git_operation_state == GitOperationState::NONE &&
+                                      editor.git_pending_pull_count != 0u;
+            bool const push_visible = editor.git_pending_push_count != 0u;
+            if (pull_visible || push_visible) {
+                gui::BoxDesc const sync_desc = {
+                    .layout =
+                        {
+                            .width = gui::fill(),
+                            .height = gui::px(28.0f),
+                            .padding = gui::insets(0.0f, 10.0f),
+                        },
+                    .style =
+                        {
+                            .background = can_mutate ? palette.cursor : palette.panel,
+                            .foreground = can_mutate ? palette.text : palette.faint,
+                            .border = can_mutate ? palette.cursor : palette.border,
+                            .border_thickness = 1.0f,
+                            .radius = 4.0f,
+                            .font_size = editor.font_size,
+                        },
+                    .flags = can_mutate ? gui::BOX_FLAG_NONE : gui::BOX_FLAG_DISABLED,
+                };
+                if (pull_visible) {
+                    gui::Signal const pull = ui.button(
+                        gui::id("git_pull_changes"),
+                        fmt::tprintf("Pull (%zu)", editor.git_pending_pull_count),
+                        sync_desc
+                    );
+                    sync_git_control_focus(editor, pull);
+                    if (pull.activated) {
+                        editor.git_request = {.kind = GitRequestKind::PULL};
+                    }
+                }
+                if (push_visible) {
+                    gui::Signal const push = ui.button(
+                        gui::id("git_push_changes"),
+                        fmt::tprintf("Push (%zu)", editor.git_pending_push_count),
+                        sync_desc
+                    );
+                    sync_git_control_focus(editor, push);
+                    if (push.activated) {
+                        editor.git_request = {.kind = GitRequestKind::PUSH};
+                    }
+                }
+            }
             gui::Signal const ref_input = draw_git_text_input(
                 ui,
                 gui::id("git_action_ref_box"),
@@ -4667,7 +4780,7 @@ namespace code_editor {
                         {
                             .width = row_width > 0.0f ? gui::px(row_width) : gui::fill(),
                             .height = gui::px(24.0f),
-                            .padding = gui::insets(0.0f, 6.0f, 0.0f, 0.0f),
+                            .padding = gui::insets(0.0f, 6.0f, 0.0f, 6.0f),
                             .gap = 4.0f,
                             .align_y = gui::Align::CENTER,
                         },
@@ -5448,7 +5561,8 @@ namespace code_editor {
                 editor.git_commit_popup_keyboard = false;
                 editor.git_commit_popup_mouse_known = false;
             }
-            if (signal.hovered && editor.git_commit_popup != commit_index) {
+            if (signal.hovered && !editor.git_commits_loading &&
+                editor.git_commit_popup != commit_index) {
                 editor.git_commit_popup = commit_index;
                 editor.git_commit_popup_selection = {};
                 editor.git_commit_popup_keyboard = false;
@@ -5508,8 +5622,10 @@ namespace code_editor {
                 }
             );
         }
-        bool const open_popup = editor.git_commit_popup == commit_index;
-        if (open_popup || editor.git_commit_popup == GIT_COMMIT_POPUP_NONE) {
+        bool const open_popup =
+            !editor.git_commits_loading && editor.git_commit_popup == commit_index;
+        if (!editor.git_commits_loading &&
+            (open_popup || editor.git_commit_popup == GIT_COMMIT_POPUP_NONE)) {
             bool const popup_hovered = draw_git_commit_popup(
                 ui,
                 editor,
@@ -5697,41 +5813,58 @@ namespace code_editor {
         return 0.24f + pulse * 0.62f;
     }
 
-    auto draw_git_loading_row(
-        gui::Frame& ui, EditorState const& editor, Palette const& palette, float row_width
+    auto draw_git_graph_rows(
+        gui::Frame& ui,
+        EditorState& editor,
+        Palette const& palette,
+        size_t row_index,
+        float row_width,
+        float graph_width,
+        bool focused,
+        GitGraphVirtualRange range,
+        gui::InputState const& input
     ) -> void {
-        if (auto row = ui.row(
-                gui::id("git_loading_row"),
+        if (auto overlay = ui.overlay(
+                gui::id("git_graph_rows"),
                 {
                     .layout = {
                         .width = row_width > 0.0f ? gui::px(row_width) : gui::fill(),
-                        .height = gui::px(GIT_ROW_HEIGHT),
-                        .padding = gui::insets(0.0f, 6.0f),
-                        .gap = 6.0f,
-                        .align_y = gui::Align::CENTER,
+                        .height = gui::children(),
                     },
                 }
             )) {
-            BASE_UNUSED(row);
-            ui.label(
-                "Loading commits",
-                {
-                    .layout = {.width = gui::text(), .height = gui::fill()},
-                    .style = {.foreground = palette.muted, .font_size = editor.font_size},
+            BASE_UNUSED(overlay);
+            if (auto rows = ui.column(
+                    gui::id("git_graph_row_content"),
+                    {.layout = {.width = gui::fill(), .height = gui::children()}}
+                )) {
+                BASE_UNUSED(rows);
+                if (git_any_commit_open(editor)) {
+                    draw_open_git_commit_graph(
+                        ui,
+                        editor,
+                        palette,
+                        row_index,
+                        row_width,
+                        graph_width,
+                        focused,
+                        range,
+                        input
+                    );
+                } else {
+                    draw_closed_git_commit_graph(
+                        ui,
+                        editor,
+                        palette,
+                        row_index,
+                        row_width,
+                        graph_width,
+                        focused,
+                        range,
+                        input
+                    );
                 }
-            );
-            for (size_t index = 0u; index < 3u; ++index) {
-                ui.spacer({
-                    .layout = {.width = gui::px(5.0f), .height = gui::px(5.0f)},
-                    .style = {
-                        .background = gui::color_alpha(
-                            palette.cursor, loading_alpha(editor.git_loading_phase, index)
-                        ),
-                        .radius = 2.5f,
-                    },
-                });
             }
-            ui.spacer({.layout = {.width = gui::fill(), .height = gui::px(1.0f)}});
         }
     }
 
@@ -5998,22 +6131,9 @@ namespace code_editor {
             if (!git_commit_search_query(editor).empty()) {
                 range = {.first = 0u, .end = editor.git_commits.size()};
             }
-            if (git_any_commit_open(editor)) {
-                draw_open_git_commit_graph(
-                    ui, editor, palette, row_index, row_width, graph_width, focused, range, input
-                );
-            } else {
-                draw_closed_git_commit_graph(
-                    ui, editor, palette, row_index, row_width, graph_width, focused, range, input
-                );
-            }
-        }
-        if (editor.git_commits_loading) {
-            draw_git_loading_row(ui, editor, palette, row_width);
-        }
-
-        if (!editor.git_status_text.empty()) {
-            draw_git_label(ui, editor, palette, editor.git_status_text, palette.preprocessor);
+            draw_git_graph_rows(
+                ui, editor, palette, row_index, row_width, graph_width, focused, range, input
+            );
         }
     }
 

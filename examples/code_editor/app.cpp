@@ -249,6 +249,26 @@ namespace code_editor {
         }
     }
 
+    [[nodiscard]] auto git_status_item_matches_path(GitStatusItem const& item, StrRef path)
+        -> bool {
+        return item.path == path || item.old_path == path;
+    }
+
+    auto replace_git_status_path(EditorState& editor, GitWorkResult const& result) -> void {
+        for (size_t index = 0u; index < editor.git_status_items.size();) {
+            if (git_status_item_matches_path(editor.git_status_items[index], result.path)) {
+                editor.git_status_items.ordered_remove(index);
+            } else {
+                index += 1u;
+            }
+        }
+        for (GitStatusItem const& item : result.status_items) {
+            BASE_UNUSED(
+                editor.git_status_items.push_back(copy_git_status_item(*editor.arena, item))
+            );
+        }
+    }
+
     auto copy_git_branches(EditorState& editor, Vec<GitBranch> const& branches) -> void {
         editor.git_branches.clear();
         for (GitBranch const& branch : branches) {
@@ -292,6 +312,7 @@ namespace code_editor {
 
     auto apply_git_refresh_result(EditorState& editor, GitWorkResult const& result) -> void {
         editor.git_operation_pending = false;
+        editor.git_pending_operation_kind = GitWorkKind::NONE;
         editor.git_refresh_requested = false;
         editor.git_log_refresh_requested = false;
         if (editor.arena == nullptr) {
@@ -349,6 +370,7 @@ namespace code_editor {
 
     auto append_git_commit_files(EditorState& editor, GitWorkResult const& result) -> void {
         editor.git_operation_pending = false;
+        editor.git_pending_operation_kind = GitWorkKind::NONE;
         if (editor.arena == nullptr) {
             return;
         }
@@ -371,6 +393,7 @@ namespace code_editor {
 
     auto apply_git_action_result(EditorState& editor, GitWorkResult const& result) -> void {
         editor.git_operation_pending = false;
+        editor.git_pending_operation_kind = GitWorkKind::NONE;
         if (editor.arena == nullptr) {
             return;
         }
@@ -400,6 +423,11 @@ namespace code_editor {
 
         if (result.kind == GitWorkKind::CHECKOUT_BRANCH) {
             editor.git_branches_open = false;
+        }
+        if (result.kind == GitWorkKind::STAGE || result.kind == GitWorkKind::UNSTAGE) {
+            replace_git_status_path(editor, result);
+            set_git_status_text(editor, result.message);
+            return;
         }
         set_git_status_text(editor, result.message);
         editor.git_refresh_requested = true;
@@ -502,6 +530,7 @@ namespace code_editor {
             return false;
         }
         runtime.editor.git_operation_pending = true;
+        runtime.editor.git_pending_operation_kind = request.kind;
         set_git_status_text(runtime.editor, status_text);
         return true;
     }
@@ -1898,8 +1927,9 @@ namespace code_editor {
             ui_input.key_event_count = 0u;
         }
         submit_git_worker_requests(*runtime, window_size.height);
-        if (runtime->editor.git_commits_loading || runtime->editor.tree_loading) {
-            runtime->editor.git_loading_phase += delta_time * 3.0f;
+        if (runtime->editor.git_commits_loading || runtime->editor.git_operation_pending ||
+            runtime->editor.tree_loading) {
+            runtime->editor.git_loading_phase += delta_time * 1.35f;
             while (runtime->editor.git_loading_phase >= 1.0f) {
                 runtime->editor.git_loading_phase -= 1.0f;
             }

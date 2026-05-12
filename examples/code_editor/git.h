@@ -223,6 +223,9 @@ namespace code_editor {
         -> bool;
     [[nodiscard]] auto
     git_load_status(Arena& arena, StrRef root, Vec<GitStatusItem>& out, StrRef& message) -> bool;
+    [[nodiscard]] auto git_load_status_path(
+        Arena& arena, StrRef root, StrRef path, Vec<GitStatusItem>& out, StrRef& message
+    ) -> bool;
     [[nodiscard]] auto git_load_branches(
         Arena& arena, StrRef root, Vec<GitBranch>& out, StrRef& current, StrRef& message
     ) -> bool;

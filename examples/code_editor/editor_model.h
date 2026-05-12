@@ -469,6 +469,7 @@ namespace code_editor {
         EditorSidebarTab sidebar_tab = EditorSidebarTab::FILES;
         TreeEditMode tree_edit_mode = TreeEditMode::NONE;
         GitOperationState git_operation_state = GitOperationState::NONE;
+        GitWorkKind git_pending_operation_kind = GitWorkKind::NONE;
         GitRequest git_request = {};
         bool lsp_rename_text_selected = false;
         bool file_search_mouse_known = false;
