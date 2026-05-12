@@ -240,7 +240,7 @@ namespace ui_api_testbed {
         GlobalUnlock(handle);
         CloseClipboard();
         runtime->clipboard_text.reset();
-        BASE_UNUSED(runtime->clipboard_text.write_bytes(text, static_cast<size_t>(byte_count)));
+        runtime->clipboard_text.write_bytes(text, static_cast<size_t>(byte_count));
         runtime->clipboard_sequence = sequence;
         runtime->clipboard_valid = true;
         return {text, static_cast<size_t>(byte_count)};
@@ -338,11 +338,11 @@ namespace ui_api_testbed {
             },
             runtime->ui_context
         );
-        BASE_UNUSED(runtime->state.multiline_text_buffer.write_string(
+        runtime->state.multiline_text_buffer.write_string(
             "Editable multiline textEditable multiline textEditable multiline textEditable "
             "multiline textEditable multiline textEditable multiline textEditable multiline "
             "textEditable multiline text\nPress Enter for a new line\nTab inserts four spaces"
-        ));
+        );
         return true;
     }
 
@@ -525,9 +525,9 @@ namespace ui_api_testbed {
         gui::draw::Context draw_context = {};
         gui::draw::create_context(arena, {}, draw_context);
 
-        BASE_UNUSED(state.multiline_text_buffer.write_string(
+        state.multiline_text_buffer.write_string(
             "Editable multiline text\nPress Enter for a new line\nTab inserts four spaces"
-        ));
+        );
         int texture_storage = 0;
         TestbedTextures textures = {};
         textures.disk = {{&texture_storage}, {2.0f, 2.0f}};

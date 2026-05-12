@@ -2264,7 +2264,7 @@ namespace code_editor {
                 files.data() + begin, files.data() + end, trailing_count * sizeof(FileTreeEntry)
             );
         }
-        BASE_UNUSED(files.resize(files.size() - count));
+        files.resize(files.size() - count);
     }
 
     [[nodiscard]] auto tree_path_matches_or_contains(StrRef path, StrRef prefix) -> bool {

@@ -213,7 +213,7 @@ class StableHashMap final {
     StableHashMap(Hasher hasher, KeyEqual equal, MemoryResource* resource)
         : m_hasher(std::move(hasher)), m_equal(std::move(equal)), m_resource(resource) {}
 
-    [[nodiscard]] auto init(size_t capacity, MemoryResource* resource) -> bool {
+    auto init(size_t capacity, MemoryResource* resource) -> bool {
         m_entries = {};
         m_buckets = nullptr;
         m_bucket_capacity = 0u;
@@ -234,7 +234,7 @@ class StableHashMap final {
         return reserve(capacity);
     }
 
-    [[nodiscard]] auto copy_from(StableHashMap const& other, MemoryResource* resource) -> bool {
+    auto copy_from(StableHashMap const& other, MemoryResource* resource) -> bool {
         if (this == &other) {
             return true;
         }
@@ -259,7 +259,7 @@ class StableHashMap final {
         return true;
     }
 
-    [[nodiscard]] auto init(std::initializer_list<Pair> pairs, MemoryResource* resource) -> bool {
+    auto init(std::initializer_list<Pair> pairs, MemoryResource* resource) -> bool {
         if (!init(pairs.size(), resource)) {
             return false;
         }
@@ -284,7 +284,7 @@ class StableHashMap final {
         clear();
     }
 
-    [[nodiscard]] auto reserve(size_t new_capacity) -> bool {
+    auto reserve(size_t new_capacity) -> bool {
         if (m_bucket_capacity >= new_capacity) {
             return true;
         }
@@ -324,8 +324,7 @@ class StableHashMap final {
         return insert_new(key, value);
     }
 
-    [[nodiscard]] auto erase(Key const& key, Key* old_key = nullptr, Value* old_value = nullptr)
-        -> bool {
+    auto erase(Key const& key, Key* old_key = nullptr, Value* old_value = nullptr) -> bool {
         size_t bucket_index = stable_hash_map_detail::NPOS;
         if (!find_bucket_index(key, &bucket_index)) {
             return false;

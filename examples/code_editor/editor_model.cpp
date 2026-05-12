@@ -2360,7 +2360,7 @@ namespace code_editor {
             editor.folded_ranges[count] = existing;
             count += 1u;
         }
-        BASE_UNUSED(editor.folded_ranges.resize(count));
+        editor.folded_ranges.resize(count);
         bool const ok = editor.folded_ranges.push_back(range);
         DEBUG_ASSERT(ok);
         (void)ok;
@@ -2460,7 +2460,7 @@ namespace code_editor {
         editor.folded_revision = editor.text.revision;
         for (size_t index = 0u; index < count; ++index) {
             if (!editor_line_hidden(editor, folds[index].start_line)) {
-                BASE_UNUSED(editor.folded_ranges.push_back(folds[index]));
+                editor.folded_ranges.push_back(folds[index]);
             }
         }
     }
@@ -6390,11 +6390,11 @@ namespace code_editor {
 
         ArenaTemp temp = begin_thread_temp_arena();
         Vec<LspTextEdit> sorted = {};
-        BASE_UNUSED(sorted.init(edits.size(), temp.arena()->resource()));
+        sorted.init(edits.size(), temp.arena()->resource());
         for (LspTextEdit const& edit : edits) {
             if ((edit.path.empty() || edit.path == editor.current_file_path) &&
                 lsp_range_valid(edit.range)) {
-                BASE_UNUSED(sorted.push_back(edit));
+                sorted.push_back(edit);
             }
         }
         if (sorted.empty()) {
@@ -6465,7 +6465,7 @@ namespace code_editor {
                                       ? editor.jump_cursor
                                       : editor.jumps.size() - 1u;
             if (cursor + 1u < editor.jumps.size()) {
-                BASE_UNUSED(editor.jumps.resize(cursor + 1u));
+                editor.jumps.resize(cursor + 1u);
             }
             if (same_editor_jump(
                     editor.jumps[editor.jumps.size() - 1u], name, path, line, column
@@ -6622,20 +6622,20 @@ namespace code_editor {
         };
 
         Vec<EditorLspCompletionEdit> edits = {};
-        BASE_UNUSED(edits.init(item.additional_edits.size() + 1u, temp.arena()->resource()));
+        edits.init(item.additional_edits.size() + 1u, temp.arena()->resource());
         for (LspTextEdit const& edit : item.additional_edits) {
             if (completion_edit_path_matches(editor, edit) && lsp_range_valid(edit.range)) {
-                BASE_UNUSED(edits.push_back({edit, false}));
+                edits.push_back({edit, false});
             }
         }
-        BASE_UNUSED(edits.push_back({
+        edits.push_back({
             {
                 .path = editor.current_file_path,
                 .range = primary_range,
                 .new_text = insert_text,
             },
             true,
-        }));
+        });
 
         std::sort(edits.begin(), edits.end(), [](auto const& a, auto const& b) {
             if (a.edit.range.start.line != b.edit.range.start.line) {

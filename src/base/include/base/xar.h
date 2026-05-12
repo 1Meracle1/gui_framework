@@ -222,7 +222,7 @@ template <typename T, size_t SHIFT> class XarArray final {
     XarArray() = default;
     explicit XarArray(MemoryResource* resource) : m_resource(resource) {}
 
-    [[nodiscard]] auto init(MemoryResource* resource) -> bool {
+    auto init(MemoryResource* resource) -> bool {
         m_chunks = {};
         m_len = 0u;
         DEBUG_ASSERT(resource != nullptr);
@@ -233,7 +233,7 @@ template <typename T, size_t SHIFT> class XarArray final {
         return true;
     }
 
-    [[nodiscard]] auto copy_from(XarArray const& other, MemoryResource* resource) -> bool {
+    auto copy_from(XarArray const& other, MemoryResource* resource) -> bool {
         if (this == &other) {
             return true;
         }
@@ -333,15 +333,15 @@ template <typename T, size_t SHIFT> class XarArray final {
         xar_detail::copy_value(get_ptr_unsafe(index), &value);
     }
 
-    [[nodiscard]] auto push_back(T const& value) -> bool {
+    auto push_back(T const& value) -> bool {
         return push_back_and_get_ptr(value) != nullptr;
     }
 
-    [[nodiscard]] auto append(T const& value) -> bool {
+    auto append(T const& value) -> bool {
         return push_back(value);
     }
 
-    [[nodiscard]] auto push_back_elems(std::span<T const> values) -> size_t {
+    auto push_back_elems(std::span<T const> values) -> size_t {
         size_t added = 0u;
         for (T const& value : values) {
             if (!push_back(value)) {
@@ -352,23 +352,23 @@ template <typename T, size_t SHIFT> class XarArray final {
         return added;
     }
 
-    [[nodiscard]] auto push_back_elems(std::initializer_list<T> values) -> size_t {
+    auto push_back_elems(std::initializer_list<T> values) -> size_t {
         return push_back_elems(std::span<T const>(values.begin(), values.size()));
     }
 
-    template <size_t N> [[nodiscard]] auto push_back_elems(T const (&values)[N]) -> size_t {
+    template <size_t N> auto push_back_elems(T const (&values)[N]) -> size_t {
         return push_back_elems(std::span<T const>(values, N));
     }
 
-    [[nodiscard]] auto append(std::span<T const> values) -> size_t {
+    auto append(std::span<T const> values) -> size_t {
         return push_back_elems(values);
     }
 
-    [[nodiscard]] auto append(std::initializer_list<T> values) -> size_t {
+    auto append(std::initializer_list<T> values) -> size_t {
         return push_back_elems(values);
     }
 
-    template <size_t N> [[nodiscard]] auto append(T const (&values)[N]) -> size_t {
+    template <size_t N> auto append(T const (&values)[N]) -> size_t {
         return push_back_elems(values);
     }
 
@@ -557,13 +557,13 @@ template <typename T, size_t SHIFT> class XarFreelistArray final {
     XarFreelistArray() = default;
     explicit XarFreelistArray(MemoryResource* resource) : m_array(resource) {}
 
-    [[nodiscard]] auto init(MemoryResource* resource) -> bool {
+    auto init(MemoryResource* resource) -> bool {
         m_array = {};
         m_freelist = nullptr;
         return m_array.init(resource);
     }
 
-    [[nodiscard]] auto copy_from(XarFreelistArray const& other, MemoryResource* resource) -> bool {
+    auto copy_from(XarFreelistArray const& other, MemoryResource* resource) -> bool {
         if (this == &other) {
             return true;
         }

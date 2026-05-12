@@ -16,7 +16,7 @@ template <typename T> class SpscQueue final {
 
     SpscQueue() = default;
 
-    [[nodiscard]] auto init(size_t capacity, MemoryResource* resource) -> bool {
+    auto init(size_t capacity, MemoryResource* resource) -> bool {
         *this = {};
         DEBUG_ASSERT(resource != nullptr);
         if (capacity == 0u || resource == nullptr) {

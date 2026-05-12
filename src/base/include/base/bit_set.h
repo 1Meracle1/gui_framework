@@ -12,12 +12,14 @@
 template <typename Element, size_t COUNT, Element FIRST = Element{}, typename Word = uint64_t>
 class BitSet final {
   public:
-    static_assert(std::is_enum_v<Element> ||
-                      (std::is_integral_v<Element> && !std::is_same_v<Element, bool>),
-                  "BitSet element type must be an enum or integer type");
-    static_assert(std::is_integral_v<Word> && std::is_unsigned_v<Word> &&
-                      !std::is_same_v<Word, bool>,
-                  "BitSet word type must be an unsigned integer type");
+    static_assert(
+        std::is_enum_v<Element> || (std::is_integral_v<Element> && !std::is_same_v<Element, bool>),
+        "BitSet element type must be an enum or integer type"
+    );
+    static_assert(
+        std::is_integral_v<Word> && std::is_unsigned_v<Word> && !std::is_same_v<Word, bool>,
+        "BitSet word type must be an unsigned integer type"
+    );
 
     using Value = Element;
     using WordType = Word;
@@ -124,7 +126,7 @@ class BitSet final {
         return other.is_subset_of(*this);
     }
 
-    [[nodiscard]] constexpr auto add(Element value) -> bool {
+    constexpr auto add(Element value) -> bool {
         size_t index = 0u;
         if (!index_of(value, &index)) {
             return false;
@@ -135,11 +137,11 @@ class BitSet final {
 
     constexpr auto add(std::initializer_list<Element> values) -> void {
         for (Element value : values) {
-            BASE_UNUSED(add(value));
+            add(value);
         }
     }
 
-    [[nodiscard]] constexpr auto remove(Element value) -> bool {
+    constexpr auto remove(Element value) -> bool {
         size_t index = 0u;
         if (!index_of(value, &index)) {
             return false;
@@ -148,7 +150,7 @@ class BitSet final {
         return true;
     }
 
-    [[nodiscard]] constexpr auto toggle(Element value) -> bool {
+    constexpr auto toggle(Element value) -> bool {
         size_t index = 0u;
         if (!index_of(value, &index)) {
             return false;
@@ -157,7 +159,7 @@ class BitSet final {
         return true;
     }
 
-    [[nodiscard]] constexpr auto set(Element value, bool enabled = true) -> bool {
+    constexpr auto set(Element value, bool enabled = true) -> bool {
         return enabled ? add(value) : remove(value);
     }
 

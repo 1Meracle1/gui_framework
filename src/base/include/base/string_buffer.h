@@ -8,18 +8,18 @@ class StringBuffer final {
   public:
     StringBuffer() = default;
 
-    [[nodiscard]] auto init(size_t capacity, MemoryResource* resource) -> bool;
-    [[nodiscard]] auto copy_from(StringBuffer const& other, MemoryResource* resource) -> bool;
+    auto init(size_t capacity, MemoryResource* resource) -> bool;
+    auto copy_from(StringBuffer const& other, MemoryResource* resource) -> bool;
     auto init_with_backing(char* backing, size_t capacity) -> void;
 
     auto reset() -> void;
     auto reserve(size_t capacity) -> void;
-    [[nodiscard]] auto resize(size_t size, char fill = '\0') -> bool;
+    auto resize(size_t size, char fill = '\0') -> bool;
 
-    [[nodiscard]] auto write_byte(char value) -> size_t;
-    [[nodiscard]] auto write_bytes(void const* data, size_t size) -> size_t;
-    [[nodiscard]] auto write_string(StrRef text) -> size_t;
-    [[nodiscard]] auto write_fill(char value, size_t count) -> size_t;
+    auto write_byte(char value) -> size_t;
+    auto write_bytes(void const* data, size_t size) -> size_t;
+    auto write_string(StrRef text) -> size_t;
+    auto write_fill(char value, size_t count) -> size_t;
 
     [[nodiscard]] auto pop_byte() -> char;
     [[nodiscard]] auto c_str() -> char const*;

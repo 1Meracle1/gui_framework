@@ -79,14 +79,14 @@ namespace {
 
     auto write_utf8(StringBuffer& buffer, uint32_t codepoint) -> void {
         if (codepoint <= 0x7fu) {
-            BASE_UNUSED(buffer.write_byte(static_cast<char>(codepoint)));
+            buffer.write_byte(static_cast<char>(codepoint));
         } else if (codepoint <= 0x7ffu) {
-            BASE_UNUSED(buffer.write_byte(static_cast<char>(0xc0u | (codepoint >> 6u))));
-            BASE_UNUSED(buffer.write_byte(static_cast<char>(0x80u | (codepoint & 0x3fu))));
+            buffer.write_byte(static_cast<char>(0xc0u | (codepoint >> 6u)));
+            buffer.write_byte(static_cast<char>(0x80u | (codepoint & 0x3fu)));
         } else {
-            BASE_UNUSED(buffer.write_byte(static_cast<char>(0xe0u | (codepoint >> 12u))));
-            BASE_UNUSED(buffer.write_byte(static_cast<char>(0x80u | ((codepoint >> 6u) & 0x3fu))));
-            BASE_UNUSED(buffer.write_byte(static_cast<char>(0x80u | (codepoint & 0x3fu))));
+            buffer.write_byte(static_cast<char>(0xe0u | (codepoint >> 12u)));
+            buffer.write_byte(static_cast<char>(0x80u | ((codepoint >> 6u) & 0x3fu)));
+            buffer.write_byte(static_cast<char>(0x80u | (codepoint & 0x3fu)));
         }
     }
 
@@ -109,11 +109,11 @@ namespace {
                 }
 
                 StringBuffer buffer = {};
-                BASE_UNUSED(buffer.init(raw.size() + 1u, parser.arena->resource()));
+                buffer.init(raw.size() + 1u, parser.arena->resource());
                 for (size_t index = 0u; index < raw.size(); ++index) {
                     char const c = raw[index];
                     if (c != '\\' || index + 1u >= raw.size()) {
-                        BASE_UNUSED(buffer.write_byte(c));
+                        buffer.write_byte(c);
                         continue;
                     }
                     char const e = raw[++index];
@@ -121,22 +121,22 @@ namespace {
                     case '"':
                     case '\\':
                     case '/':
-                        BASE_UNUSED(buffer.write_byte(e));
+                        buffer.write_byte(e);
                         break;
                     case 'b':
-                        BASE_UNUSED(buffer.write_byte('\b'));
+                        buffer.write_byte('\b');
                         break;
                     case 'f':
-                        BASE_UNUSED(buffer.write_byte('\f'));
+                        buffer.write_byte('\f');
                         break;
                     case 'n':
-                        BASE_UNUSED(buffer.write_byte('\n'));
+                        buffer.write_byte('\n');
                         break;
                     case 'r':
-                        BASE_UNUSED(buffer.write_byte('\r'));
+                        buffer.write_byte('\r');
                         break;
                     case 't':
-                        BASE_UNUSED(buffer.write_byte('\t'));
+                        buffer.write_byte('\t');
                         break;
                     case 'u': {
                         uint32_t codepoint = 0u;
@@ -147,7 +147,7 @@ namespace {
                         }
                     } break;
                     default:
-                        BASE_UNUSED(buffer.write_byte(e));
+                        buffer.write_byte(e);
                         break;
                     }
                 }

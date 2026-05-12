@@ -34,10 +34,10 @@ namespace {
 
     constexpr auto make_constexpr_small_array() -> SmallArray<int, 4u> {
         SmallArray<int, 4u> values;
-        BASE_UNUSED(values.push_back(10));
-        BASE_UNUSED(values.push_back(20));
+        values.push_back(10);
+        values.push_back(20);
         values.consume(1u);
-        BASE_UNUSED(values.inject_at(15, 1u));
+        values.inject_at(15, 1u);
         return values;
     }
 
@@ -74,9 +74,9 @@ namespace {
 
     constexpr auto make_constexpr_bit_set() -> DirectionSet {
         DirectionSet values;
-        BASE_UNUSED(values.add(Direction::NORTH));
-        BASE_UNUSED(values.add(Direction::WEST));
-        BASE_UNUSED(values.toggle(Direction::NORTH));
+        values.add(Direction::NORTH);
+        values.add(Direction::WEST);
+        values.toggle(Direction::NORTH);
         return values;
     }
 

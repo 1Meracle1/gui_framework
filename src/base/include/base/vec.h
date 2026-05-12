@@ -76,7 +76,7 @@ template <typename T> class Vec final {
     Vec() = default;
     explicit Vec(MemoryResource* resource) : m_resource(resource) {}
 
-    [[nodiscard]] auto init(size_t capacity, MemoryResource* resource) -> bool {
+    auto init(size_t capacity, MemoryResource* resource) -> bool {
         *this = {};
         DEBUG_ASSERT(resource != nullptr);
         if (resource == nullptr) {
@@ -86,7 +86,7 @@ template <typename T> class Vec final {
         return reserve(capacity);
     }
 
-    [[nodiscard]] auto copy_from(Vec const& other, MemoryResource* resource) -> bool {
+    auto copy_from(Vec const& other, MemoryResource* resource) -> bool {
         if (this == &other) {
             return true;
         }
@@ -106,7 +106,7 @@ template <typename T> class Vec final {
         clear();
     }
 
-    [[nodiscard]] auto reserve(size_t capacity) -> bool {
+    auto reserve(size_t capacity) -> bool {
         if (capacity <= m_cap) {
             return true;
         }
@@ -117,14 +117,14 @@ template <typename T> class Vec final {
         return reallocate(capacity);
     }
 
-    [[nodiscard]] auto shrink(size_t capacity) -> bool {
+    auto shrink(size_t capacity) -> bool {
         if (capacity >= m_cap) {
             return false;
         }
         return reallocate(capacity);
     }
 
-    [[nodiscard]] auto resize(size_t size, T const& fill = {}) -> bool {
+    auto resize(size_t size, T const& fill = {}) -> bool {
         if (!reserve(size)) {
             return false;
         }
@@ -136,7 +136,7 @@ template <typename T> class Vec final {
         return true;
     }
 
-    [[nodiscard]] auto non_zero_resize(size_t size) -> bool {
+    auto non_zero_resize(size_t size) -> bool {
         if (!reserve(size)) {
             return false;
         }
@@ -144,11 +144,11 @@ template <typename T> class Vec final {
         return true;
     }
 
-    [[nodiscard]] auto push_back(T const& value) -> bool {
+    auto push_back(T const& value) -> bool {
         return push_back_and_get_ptr(value) != nullptr;
     }
 
-    [[nodiscard]] auto append(T const& value) -> bool {
+    auto append(T const& value) -> bool {
         return push_back(value);
     }
 
@@ -174,19 +174,19 @@ template <typename T> class Vec final {
         return ptr;
     }
 
-    [[nodiscard]] auto push_back_elems(Slice<T const> values) -> size_t {
+    auto push_back_elems(Slice<T const> values) -> size_t {
         return append(values);
     }
 
-    [[nodiscard]] auto push_back_elems(std::initializer_list<T> values) -> size_t {
+    auto push_back_elems(std::initializer_list<T> values) -> size_t {
         return append(values);
     }
 
-    template <size_t N> [[nodiscard]] auto push_back_elems(T const (&values)[N]) -> size_t {
+    template <size_t N> auto push_back_elems(T const (&values)[N]) -> size_t {
         return append(Slice<T const>(values, N));
     }
 
-    [[nodiscard]] auto append(Slice<T const> values) -> size_t {
+    auto append(Slice<T const> values) -> size_t {
         if (values.empty()) {
             return 0u;
         }
@@ -203,11 +203,11 @@ template <typename T> class Vec final {
         return values.size();
     }
 
-    [[nodiscard]] auto append(std::initializer_list<T> values) -> size_t {
+    auto append(std::initializer_list<T> values) -> size_t {
         return append(Slice<T const>(values.begin(), values.size()));
     }
 
-    template <size_t N> [[nodiscard]] auto append(T const (&values)[N]) -> size_t {
+    template <size_t N> auto append(T const (&values)[N]) -> size_t {
         return append(Slice<T const>(values, N));
     }
 

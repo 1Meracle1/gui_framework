@@ -904,12 +904,12 @@ namespace code_editor {
 
     [[nodiscard]] auto git_diff_virtual_path(Arena& arena, StrRef title) -> StrRef {
         StringBuffer path = {};
-        BASE_UNUSED(path.init(title.size() + 16u, arena.resource()));
-        BASE_UNUSED(path.write_string("gitdiff:"));
+        path.init(title.size() + 16u, arena.resource());
+        path.write_string("gitdiff:");
         for (char ch : title) {
-            BASE_UNUSED(path.write_byte(ch == '\\' || ch == '/' ? '_' : ch));
+            path.write_byte(ch == '\\' || ch == '/' ? '_' : ch);
         }
-        BASE_UNUSED(path.write_string(".diff"));
+        path.write_string(".diff");
         return arena_copy_cstr(arena, path.str());
     }
 
@@ -5419,36 +5419,36 @@ namespace code_editor {
         if (commit.changed_file_count == 0u) {
             return;
         }
-        BASE_UNUSED(text.write_string(
+        text.write_string(
             fmt::tprintf(
                 "%zu file%s changed",
                 commit.changed_file_count,
                 commit.changed_file_count == 1u ? "" : "s"
             )
-        ));
+        );
         if (git_commit_popup_stats_tail(commit)) {
-            BASE_UNUSED(text.write_byte(','));
+            text.write_byte(',');
         }
         if (commit.insertion_count != 0u) {
-            BASE_UNUSED(text.write_string(
+            text.write_string(
                 fmt::tprintf(
                     " %zu insertion%s(+)",
                     commit.insertion_count,
                     commit.insertion_count == 1u ? "" : "s"
                 )
-            ));
+            );
             if (commit.deletion_count != 0u) {
-                BASE_UNUSED(text.write_byte(','));
+                text.write_byte(',');
             }
         }
         if (commit.deletion_count != 0u) {
-            BASE_UNUSED(text.write_string(
+            text.write_string(
                 fmt::tprintf(
                     " %zu deletion%s(-)",
                     commit.deletion_count,
                     commit.deletion_count == 1u ? "" : "s"
                 )
-            ));
+            );
         }
     }
 
@@ -5472,9 +5472,9 @@ namespace code_editor {
 
     auto append_git_commit_popup_line(StringBuffer& text, StrRef line) -> void {
         if (!text.empty()) {
-            BASE_UNUSED(text.write_byte('\n'));
+            text.write_byte('\n');
         }
-        BASE_UNUSED(text.write_string(line));
+        text.write_string(line);
     }
 
     auto append_git_commit_popup_message(StringBuffer& text, GitCommit const& commit) -> void {
@@ -5504,25 +5504,25 @@ namespace code_editor {
             line_count += 1u;
         }
         if (offset < commit.body.size()) {
-            BASE_UNUSED(text.write_string("\n..."));
+            text.write_string("\n...");
         }
     }
 
     [[nodiscard]] auto git_commit_popup_text(Arena& arena, GitCommit const& commit) -> StrRef {
         StringBuffer text = {};
-        BASE_UNUSED(text.init(512u + commit.body.size() + commit.refs.size(), arena.resource()));
-        BASE_UNUSED(text.write_string(git_commit_popup_header(commit)));
+        text.init(512u + commit.body.size() + commit.refs.size(), arena.resource());
+        text.write_string(git_commit_popup_header(commit));
         append_git_commit_popup_message(text, commit);
         if (commit.changed_file_count != 0u) {
-            BASE_UNUSED(text.write_byte('\n'));
+            text.write_byte('\n');
             append_git_commit_popup_stats(text, commit);
         }
 
-        BASE_UNUSED(text.write_byte('\n'));
-        BASE_UNUSED(text.write_string(commit.short_oid));
+        text.write_byte('\n');
+        text.write_string(commit.short_oid);
         if (!commit.refs.empty()) {
-            BASE_UNUSED(text.write_byte(' '));
-            BASE_UNUSED(text.write_string(commit.refs));
+            text.write_byte(' ');
+            text.write_string(commit.refs);
         }
         return text.str();
     }
@@ -5588,7 +5588,7 @@ namespace code_editor {
         }
         Arena& arena = thread_temp_arena();
         StringBuffer text = {};
-        BASE_UNUSED(text.init(128u, arena.resource()));
+        text.init(128u, arena.resource());
         append_git_commit_popup_stats(text, commit);
         if (auto overlay = ui.overlay(
                 gui::id("git_commit_popup_stats"),
@@ -5700,7 +5700,7 @@ namespace code_editor {
     ) -> void {
         Arena& arena = thread_temp_arena();
         StringBuffer normal = {};
-        BASE_UNUSED(normal.init(256u + commit.body.size(), arena.resource()));
+        normal.init(256u + commit.body.size(), arena.resource());
         append_git_commit_popup_line(normal, commit.summary);
         size_t part_index = 0u;
 

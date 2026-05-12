@@ -371,7 +371,7 @@ class HashMap final {
     HashMap(Hasher hasher, KeyEqual equal, MemoryResource* resource)
         : m_hasher(std::move(hasher)), m_equal(std::move(equal)), m_resource(resource) {}
 
-    [[nodiscard]] auto init(size_t capacity, MemoryResource* resource) -> bool {
+    auto init(size_t capacity, MemoryResource* resource) -> bool {
         m_data = 0u;
         m_len = 0u;
         DEBUG_ASSERT(resource != nullptr);
@@ -387,7 +387,7 @@ class HashMap final {
         return reserve(capacity);
     }
 
-    [[nodiscard]] auto copy_from(HashMap const& other, MemoryResource* resource) -> bool {
+    auto copy_from(HashMap const& other, MemoryResource* resource) -> bool {
         if (this == &other) {
             return true;
         }
@@ -409,7 +409,7 @@ class HashMap final {
         return true;
     }
 
-    [[nodiscard]] auto init(std::initializer_list<Pair> pairs, MemoryResource* resource) -> bool {
+    auto init(std::initializer_list<Pair> pairs, MemoryResource* resource) -> bool {
         if (!init(pairs.size(), resource)) {
             return false;
         }
@@ -433,7 +433,7 @@ class HashMap final {
         clear();
     }
 
-    [[nodiscard]] auto reserve(size_t new_capacity) -> bool {
+    auto reserve(size_t new_capacity) -> bool {
         size_t const old_capacity = capacity();
         if (old_capacity >= new_capacity) {
             return true;
@@ -518,8 +518,7 @@ class HashMap final {
         return InsertResult{inserted.key, inserted.value, inserted.value != nullptr};
     }
 
-    [[nodiscard]] auto erase(Key const& key, Key* old_key = nullptr, Value* old_value = nullptr)
-        -> bool {
+    auto erase(Key const& key, Key* old_key = nullptr, Value* old_value = nullptr) -> bool {
         size_t index = 0u;
         if (!find_index(key, &index)) {
             return false;

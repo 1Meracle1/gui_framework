@@ -79,21 +79,21 @@ namespace code_editor {
 
         ArenaTemp temp = begin_thread_temp_arena();
         StringBuffer buffer = {};
-        BASE_UNUSED(buffer.init(title.size() + message.size() + 64u, temp.arena()->resource()));
+        buffer.init(title.size() + message.size() + 64u, temp.arena()->resource());
         if (!title.empty()) {
-            BASE_UNUSED(buffer.write_string(title));
+            buffer.write_string(title);
         }
         if (!title.empty() && !message.empty()) {
-            BASE_UNUSED(buffer.write_string(": "));
+            buffer.write_string(": ");
         }
         if (!message.empty()) {
-            BASE_UNUSED(buffer.write_string(message));
+            buffer.write_string(message);
         } else if (title.empty()) {
-            BASE_UNUSED(buffer.write_string(active ? "working" : "idle"));
+            buffer.write_string(active ? "working" : "idle");
         }
         if (has_percentage) {
-            BASE_UNUSED(buffer.write_string(" "));
-            BASE_UNUSED(buffer.write_string(fmt::tprintf("%zu%%", percentage)));
+            buffer.write_string(" ");
+            buffer.write_string(fmt::tprintf("%zu%%", percentage));
         }
 
         client.bridge.progress_text = arena_copy_cstr(client.result_arena, buffer.str());
@@ -134,12 +134,12 @@ namespace code_editor {
 
     [[nodiscard]] auto path_join(Arena& arena, StrRef lhs, StrRef rhs) -> StrRef {
         StringBuffer buffer = {};
-        BASE_UNUSED(buffer.init(lhs.size() + rhs.size() + 2u, arena.resource()));
-        BASE_UNUSED(buffer.write_string(lhs));
+        buffer.init(lhs.size() + rhs.size() + 2u, arena.resource());
+        buffer.write_string(lhs);
         if (!lhs.empty() && !lhs.ends_with('\\') && !lhs.ends_with('/')) {
-            BASE_UNUSED(buffer.write_byte('\\'));
+            buffer.write_byte('\\');
         }
-        BASE_UNUSED(buffer.write_string(rhs));
+        buffer.write_string(rhs);
         return arena_copy_cstr(arena, buffer.str());
     }
 
@@ -284,7 +284,7 @@ namespace code_editor {
             if (!io.backlog.empty()) {
                 io.bytes = io.backlog;
                 io.backlog = {};
-                BASE_UNUSED(io.backlog.init(4096u, client.arena.resource()));
+                io.backlog.init(4096u, client.arena.resource());
             }
         }
         if (io.offset == io.bytes.size()) {
@@ -332,7 +332,7 @@ namespace code_editor {
         }
         ArenaTemp temp = begin_thread_temp_arena();
         StringBuffer message = {};
-        BASE_UNUSED(message.init(json.size() + 64u, temp.arena()->resource()));
+        message.init(json.size() + 64u, temp.arena()->resource());
         if (!lsp_write_json_rpc_message(message, json)) {
             return;
         }
@@ -355,13 +355,13 @@ namespace code_editor {
         uint64_t revision = 0u
     ) -> int32_t {
         int32_t const id = client.next_id++;
-        BASE_UNUSED(client.pending.push_back({
+        client.pending.push_back({
             .id = id,
             .kind = kind,
             .path = arena_copy_cstr(client.arena, path),
             .position = position,
             .revision = revision,
-        }));
+        });
         return id;
     }
 
@@ -378,40 +378,38 @@ namespace code_editor {
 
     auto write_position(StringBuffer& json, StrRef text, LspPosition position) -> void {
         LspPosition const utf16 = lsp_position_byte_to_utf16(text, position);
-        BASE_UNUSED(json.write_string("{\"line\":"));
-        BASE_UNUSED(json.write_string(fmt::tprintf("%zu", utf16.line)));
-        BASE_UNUSED(json.write_string(",\"character\":"));
-        BASE_UNUSED(json.write_string(fmt::tprintf("%zu", utf16.column)));
-        BASE_UNUSED(json.write_byte('}'));
+        json.write_string("{\"line\":");
+        json.write_string(fmt::tprintf("%zu", utf16.line));
+        json.write_string(",\"character\":");
+        json.write_string(fmt::tprintf("%zu", utf16.column));
+        json.write_byte('}');
     }
 
     auto write_range(StringBuffer& json, StrRef text, LspRange range) -> void {
-        BASE_UNUSED(json.write_string("{\"start\":"));
+        json.write_string("{\"start\":");
         write_position(json, text, range.start);
-        BASE_UNUSED(json.write_string(",\"end\":"));
+        json.write_string(",\"end\":");
         write_position(json, text, range.end);
-        BASE_UNUSED(json.write_byte('}'));
+        json.write_byte('}');
     }
 
     auto write_diagnostic(StringBuffer& json, StrRef text, LspDiagnostic const& diagnostic)
         -> void {
-        BASE_UNUSED(json.write_string("{\"range\":"));
+        json.write_string("{\"range\":");
         write_range(json, text, diagnostic.range);
-        BASE_UNUSED(json.write_string(",\"severity\":"));
-        BASE_UNUSED(
-            json.write_string(fmt::tprintf("%u", static_cast<uint32_t>(diagnostic.severity)))
-        );
+        json.write_string(",\"severity\":");
+        json.write_string(fmt::tprintf("%u", static_cast<uint32_t>(diagnostic.severity)));
         if (!diagnostic.code.empty()) {
-            BASE_UNUSED(json.write_string(",\"code\":"));
+            json.write_string(",\"code\":");
             lsp_json_write_escaped_string(json, diagnostic.code);
         }
         if (!diagnostic.source.empty()) {
-            BASE_UNUSED(json.write_string(",\"source\":"));
+            json.write_string(",\"source\":");
             lsp_json_write_escaped_string(json, diagnostic.source);
         }
-        BASE_UNUSED(json.write_string(",\"message\":"));
+        json.write_string(",\"message\":");
         lsp_json_write_escaped_string(json, diagnostic.message);
-        BASE_UNUSED(json.write_byte('}'));
+        json.write_byte('}');
     }
 
     [[nodiscard]] auto lsp_range_intersects(LspRange lhs, LspRange rhs) -> bool {
@@ -422,9 +420,9 @@ namespace code_editor {
         StringBuffer& json, LspClient& client, LspEditorRequest const& request
     ) -> void {
         StrRef const uri = client.current_uri;
-        BASE_UNUSED(json.write_string("\"textDocument\":{\"uri\":"));
+        json.write_string("\"textDocument\":{\"uri\":");
         lsp_json_write_escaped_string(json, uri);
-        BASE_UNUSED(json.write_string("},\"position\":"));
+        json.write_string("},\"position\":");
         write_position(json, client.current_text, request.position);
     }
 
@@ -440,26 +438,26 @@ namespace code_editor {
         int32_t const id = next_id(client, kind, path, position, revision);
         ArenaTemp temp = begin_thread_temp_arena();
         StringBuffer json = {};
-        BASE_UNUSED(json.init(params.size() + 256u, temp.arena()->resource()));
-        BASE_UNUSED(json.write_string("{\"jsonrpc\":\"2.0\",\"id\":"));
-        BASE_UNUSED(json.write_string(fmt::tprintf("%d", id)));
-        BASE_UNUSED(json.write_string(",\"method\":"));
+        json.init(params.size() + 256u, temp.arena()->resource());
+        json.write_string("{\"jsonrpc\":\"2.0\",\"id\":");
+        json.write_string(fmt::tprintf("%d", id));
+        json.write_string(",\"method\":");
         lsp_json_write_escaped_string(json, method);
-        BASE_UNUSED(json.write_string(",\"params\":"));
-        BASE_UNUSED(json.write_string(params));
-        BASE_UNUSED(json.write_byte('}'));
+        json.write_string(",\"params\":");
+        json.write_string(params);
+        json.write_byte('}');
         write_json(client, json.str());
     }
 
     auto send_notification_json(LspClient& client, StrRef method, StrRef params) -> void {
         ArenaTemp temp = begin_thread_temp_arena();
         StringBuffer json = {};
-        BASE_UNUSED(json.init(params.size() + 192u, temp.arena()->resource()));
-        BASE_UNUSED(json.write_string("{\"jsonrpc\":\"2.0\",\"method\":"));
+        json.init(params.size() + 192u, temp.arena()->resource());
+        json.write_string("{\"jsonrpc\":\"2.0\",\"method\":");
         lsp_json_write_escaped_string(json, method);
-        BASE_UNUSED(json.write_string(",\"params\":"));
-        BASE_UNUSED(json.write_string(params));
-        BASE_UNUSED(json.write_byte('}'));
+        json.write_string(",\"params\":");
+        json.write_string(params);
+        json.write_byte('}');
         write_json(client, json.str());
     }
 
@@ -468,14 +466,12 @@ namespace code_editor {
         ArenaTemp temp = begin_thread_temp_arena();
         StrRef const root_uri = lsp_path_to_file_uri(*temp.arena(), client.root_path);
         StringBuffer json = {};
-        BASE_UNUSED(json.init(4096u, temp.arena()->resource()));
-        BASE_UNUSED(json.write_string("{\"jsonrpc\":\"2.0\",\"id\":"));
-        BASE_UNUSED(json.write_string(fmt::tprintf("%d", id)));
-        BASE_UNUSED(json.write_string(
-            ",\"method\":\"initialize\",\"params\":{\"processId\":null,\"rootUri\":"
-        ));
+        json.init(4096u, temp.arena()->resource());
+        json.write_string("{\"jsonrpc\":\"2.0\",\"id\":");
+        json.write_string(fmt::tprintf("%d", id));
+        json.write_string(",\"method\":\"initialize\",\"params\":{\"processId\":null,\"rootUri\":");
         lsp_json_write_escaped_string(json, root_uri);
-        BASE_UNUSED(json.write_string(
+        json.write_string(
             ",\"capabilities\":{\"window\":{\"workDoneProgress\":true},\"textDocument\":{"
             "\"synchronization\":{\"didSave\":false},\"completion\":{\"completionItem\":{"
             "\"snippetSupport\":true,\"insertReplaceSupport\":true},\"completionList\":{"
@@ -495,7 +491,7 @@ namespace code_editor {
             "\"overlappingTokenSupport\":false,\"multilineTokenSupport\":false}},"
             "\"workspace\":{\"symbol\":{}}},"
             "\"trace\":\"off\"}}"
-        ));
+        );
         write_json(client, json.str());
     }
 
@@ -636,12 +632,12 @@ namespace code_editor {
 
         ArenaTemp temp = begin_thread_temp_arena();
         StringBuffer command = {};
-        BASE_UNUSED(command.init(1024u, temp.arena()->resource()));
-        BASE_UNUSED(command.write_string("clangd --background-index"));
+        command.init(1024u, temp.arena()->resource());
+        command.write_string("clangd --background-index");
         if (!client.compile_commands_dir.empty()) {
-            BASE_UNUSED(command.write_string(" --compile-commands-dir=\""));
-            BASE_UNUSED(command.write_string(client.compile_commands_dir));
-            BASE_UNUSED(command.write_byte('"'));
+            command.write_string(" --compile-commands-dir=\"");
+            command.write_string(client.compile_commands_dir);
+            command.write_byte('"');
         }
 
         wchar_t* const wide_command = make_wide(*temp.arena(), command.str());
@@ -775,9 +771,9 @@ namespace code_editor {
         for (LspJsonValue const* item : token_types->array) {
             StrRef token_type = {};
             if (lsp_json_string(item, token_type)) {
-                BASE_UNUSED(client.semantic_token_types.push_back(
+                client.semantic_token_types.push_back(
                     arena_copy_cstr(client.result_arena, token_type)
-                ));
+                );
             }
         }
         client.semantic_tokens_supported = !client.semantic_token_types.empty();
@@ -837,7 +833,7 @@ namespace code_editor {
         for (LspJsonValue const* item : value->array) {
             LspTextEdit edit = {};
             if (parse_text_edit(client, item, path, edit)) {
-                BASE_UNUSED(edits.push_back(edit));
+                edits.push_back(edit);
             }
         }
     }
@@ -914,14 +910,14 @@ namespace code_editor {
             BASE_UNUSED(json_member_string(item, "code", code));
             BASE_UNUSED(json_member_string(item, "source", source));
             BASE_UNUSED(json_member_size(item, "severity", severity));
-            BASE_UNUSED(client.diagnostics.push_back({
+            client.diagnostics.push_back({
                 .path = copy_result(client, path),
                 .range = !doc_text.empty() ? lsp_range_utf16_to_byte(doc_text, range) : range,
                 .severity = static_cast<LspDiagnosticSeverity>(severity),
                 .code = copy_result(client, code),
                 .source = copy_result(client, source),
                 .message = copy_result(client, message),
-            }));
+            });
         }
         client.bridge.diagnostics_generation += 1u;
         bridge_refresh(client);
@@ -998,7 +994,7 @@ namespace code_editor {
 
         ArenaTemp temp = begin_thread_temp_arena();
         Vec<LspTextEdit> additional_edits = {};
-        BASE_UNUSED(additional_edits.init(4u, temp.arena()->resource()));
+        additional_edits.init(4u, temp.arena()->resource());
         size_t const limit = std::min<size_t>(items->array.size(), 64u);
         for (size_t index = 0u; index < limit; ++index) {
             LspJsonValue const* const item = items->array[index];
@@ -1045,7 +1041,7 @@ namespace code_editor {
                 client, additional_edits, lsp_json_object_get(item, "additionalTextEdits"), path
             );
             completion.additional_edits = copy_edits_to_slice(client, additional_edits);
-            BASE_UNUSED(client.completions.push_back(completion));
+            client.completions.push_back(completion);
         }
         client.bridge.completions_generation += 1u;
         bridge_refresh(client);
@@ -1056,13 +1052,13 @@ namespace code_editor {
             return;
         }
         if (value->kind == LspJsonKind::STRING) {
-            BASE_UNUSED(buffer.write_string(value->string));
+            buffer.write_string(value->string);
             return;
         }
         if (value->kind == LspJsonKind::OBJECT) {
             StrRef text = {};
             if (json_member_string(value, "value", text)) {
-                BASE_UNUSED(buffer.write_string(text));
+                buffer.write_string(text);
             }
         }
     }
@@ -1076,11 +1072,11 @@ namespace code_editor {
         LspJsonValue const* const contents = lsp_json_object_get(result, "contents");
         ArenaTemp temp = begin_thread_temp_arena();
         StringBuffer text = {};
-        BASE_UNUSED(text.init(1024u, temp.arena()->resource()));
+        text.init(1024u, temp.arena()->resource());
         if (contents != nullptr && contents->kind == LspJsonKind::ARRAY) {
             for (size_t index = 0u; index < contents->array.size(); ++index) {
                 if (index != 0u) {
-                    BASE_UNUSED(text.write_string("\n"));
+                    text.write_string("\n");
                 }
                 append_marked_string(text, contents->array[index]);
             }
@@ -1114,10 +1110,10 @@ namespace code_editor {
             !lsp_position_less(range.end, pending.position)) {
             return;
         }
-        BASE_UNUSED(client.locations.push_back({
+        client.locations.push_back({
             .path = copy_result(client, path),
             .range = range,
-        }));
+        });
     }
 
     auto parse_locations_response(
@@ -1167,18 +1163,18 @@ namespace code_editor {
             }
             BASE_UNUSED(json_member_string(item, "kind", kind));
             Vec<LspTextEdit> edits = {};
-            BASE_UNUSED(edits.init(8u, client.result_arena.resource()));
+            edits.init(8u, client.result_arena.resource());
             append_workspace_edit(client, edits, lsp_json_object_get(item, "edit"));
             LspJsonValue const* const arguments = lsp_json_object_get(item, "arguments");
             if (arguments != nullptr && arguments->kind == LspJsonKind::ARRAY &&
                 !arguments->array.empty()) {
                 append_workspace_edit(client, edits, arguments->array[0u]);
             }
-            BASE_UNUSED(client.code_actions.push_back({
+            client.code_actions.push_back({
                 .title = copy_result(client, title),
                 .kind = copy_result(client, kind),
                 .edits = copy_edits_to_slice(client, edits),
-            }));
+            });
         }
         client.bridge.code_actions_generation += 1u;
         bridge_refresh(client);
@@ -1213,7 +1209,7 @@ namespace code_editor {
             selection_range = range;
         }
         StrRef const doc_text = current_doc_text(client, path);
-        BASE_UNUSED(client.symbols.push_back({
+        client.symbols.push_back({
             .path = copy_result(client, path),
             .name = copy_result(client, name),
             .detail = copy_result(client, detail),
@@ -1222,7 +1218,7 @@ namespace code_editor {
                                    ? lsp_range_utf16_to_byte(doc_text, selection_range)
                                    : selection_range,
             .kind = static_cast<uint32_t>(kind),
-        }));
+        });
 
         LspJsonValue const* const children = lsp_json_object_get(item, "children");
         if (children != nullptr && children->kind == LspJsonKind::ARRAY) {
@@ -1350,10 +1346,10 @@ namespace code_editor {
                     }
                 }
                 if (range.end.column > range.start.column) {
-                    BASE_UNUSED(client.semantic_tokens.push_back({
+                    client.semantic_tokens.push_back({
                         .range = range,
                         .kind = semantic_token_kind(client, type_index),
-                    }));
+                    });
                 }
             }
         }
@@ -1381,7 +1377,7 @@ namespace code_editor {
                     !json_member_size(item, "endLine", end_line) || end_line <= start_line) {
                     continue;
                 }
-                BASE_UNUSED(client.folding_ranges.push_back({start_line, end_line}));
+                client.folding_ranges.push_back({start_line, end_line});
             }
         }
         if (client.folding_ranges.size() > 1u) {
@@ -1410,11 +1406,11 @@ namespace code_editor {
         }
 
         StringBuffer buffer = {};
-        BASE_UNUSED(buffer.init(128u, client.result_arena.resource()));
+        buffer.init(128u, client.result_arena.resource());
         for (LspJsonValue const* part : value->array) {
             StrRef text = {};
             if (json_member_string(part, "value", text)) {
-                BASE_UNUSED(buffer.write_string(text));
+                buffer.write_string(text);
             }
         }
         return buffer.empty() ? StrRef() : copy_result(client, buffer.str());
@@ -1452,13 +1448,13 @@ namespace code_editor {
                 BASE_UNUSED(json_member_size(item, "kind", kind));
                 BASE_UNUSED(json_member_bool(item, "paddingLeft", padding_left));
                 BASE_UNUSED(json_member_bool(item, "paddingRight", padding_right));
-                BASE_UNUSED(client.inlay_hints.push_back({
+                client.inlay_hints.push_back({
                     .position = position,
                     .label = label,
                     .kind = static_cast<uint32_t>(kind),
                     .padding_left = padding_left,
                     .padding_right = padding_right,
-                }));
+                });
             }
         }
         if (client.inlay_hints.size() > 1u) {
@@ -1675,18 +1671,16 @@ namespace code_editor {
 
         ArenaTemp temp = begin_thread_temp_arena();
         StringBuffer params = {};
-        BASE_UNUSED(
-            params.init(request.text.size() + request.path.size() + 256u, temp.arena()->resource())
-        );
-        BASE_UNUSED(params.write_string("{\"textDocument\":{\"uri\":"));
+        params.init(request.text.size() + request.path.size() + 256u, temp.arena()->resource());
+        params.write_string("{\"textDocument\":{\"uri\":");
         lsp_json_write_escaped_string(params, client.current_uri);
-        BASE_UNUSED(params.write_string(",\"languageId\":\"cpp\",\"version\":"));
-        BASE_UNUSED(params.write_string(
+        params.write_string(",\"languageId\":\"cpp\",\"version\":");
+        params.write_string(
             fmt::tprintf("%llu", static_cast<unsigned long long>(request.revision))
-        ));
-        BASE_UNUSED(params.write_string(",\"text\":"));
+        );
+        params.write_string(",\"text\":");
         lsp_json_write_escaped_string(params, request.text);
-        BASE_UNUSED(params.write_string("}}"));
+        params.write_string("}}");
         send_notification_json(client, "textDocument/didOpen", params.str());
     }
 
@@ -1703,18 +1697,16 @@ namespace code_editor {
 
         ArenaTemp temp = begin_thread_temp_arena();
         StringBuffer params = {};
-        BASE_UNUSED(
-            params.init(request.text.size() + request.path.size() + 256u, temp.arena()->resource())
-        );
-        BASE_UNUSED(params.write_string("{\"textDocument\":{\"uri\":"));
+        params.init(request.text.size() + request.path.size() + 256u, temp.arena()->resource());
+        params.write_string("{\"textDocument\":{\"uri\":");
         lsp_json_write_escaped_string(params, client.current_uri);
-        BASE_UNUSED(params.write_string(",\"version\":"));
-        BASE_UNUSED(params.write_string(
+        params.write_string(",\"version\":");
+        params.write_string(
             fmt::tprintf("%llu", static_cast<unsigned long long>(request.revision))
-        ));
-        BASE_UNUSED(params.write_string("},\"contentChanges\":[{\"text\":"));
+        );
+        params.write_string("},\"contentChanges\":[{\"text\":");
         lsp_json_write_escaped_string(params, request.text);
-        BASE_UNUSED(params.write_string("}]}"));
+        params.write_string("}]}");
         send_notification_json(client, "textDocument/didChange", params.str());
     }
 
@@ -1722,10 +1714,10 @@ namespace code_editor {
         ArenaTemp temp = begin_thread_temp_arena();
         StrRef const uri = lsp_path_to_file_uri(*temp.arena(), request.path);
         StringBuffer params = {};
-        BASE_UNUSED(params.init(uri.size() + 96u, temp.arena()->resource()));
-        BASE_UNUSED(params.write_string("{\"textDocument\":{\"uri\":"));
+        params.init(uri.size() + 96u, temp.arena()->resource());
+        params.write_string("{\"textDocument\":{\"uri\":");
         lsp_json_write_escaped_string(params, uri);
-        BASE_UNUSED(params.write_string("}}"));
+        params.write_string("}}");
         send_notification_json(client, "textDocument/didClose", params.str());
     }
 
@@ -1734,13 +1726,13 @@ namespace code_editor {
     ) -> void {
         ArenaTemp temp = begin_thread_temp_arena();
         StringBuffer params = {};
-        BASE_UNUSED(params.init(512u, temp.arena()->resource()));
-        BASE_UNUSED(params.write_byte('{'));
+        params.init(512u, temp.arena()->resource());
+        params.write_byte('{');
         write_text_document_position_params(params, client, request);
         if (kind == LspRequestKind::REFERENCES) {
-            BASE_UNUSED(params.write_string(",\"context\":{\"includeDeclaration\":false}"));
+            params.write_string(",\"context\":{\"includeDeclaration\":false}");
         }
-        BASE_UNUSED(params.write_byte('}'));
+        params.write_byte('}');
         send_request_json(
             client, kind, request.path, method, params.str(), request.position, request.revision
         );
@@ -1749,12 +1741,12 @@ namespace code_editor {
     auto send_rename_request(LspClient& client, LspEditorRequest const& request) -> void {
         ArenaTemp temp = begin_thread_temp_arena();
         StringBuffer params = {};
-        BASE_UNUSED(params.init(768u, temp.arena()->resource()));
-        BASE_UNUSED(params.write_byte('{'));
+        params.init(768u, temp.arena()->resource());
+        params.write_byte('{');
         write_text_document_position_params(params, client, request);
-        BASE_UNUSED(params.write_string(",\"newName\":"));
+        params.write_string(",\"newName\":");
         lsp_json_write_escaped_string(params, request.new_name);
-        BASE_UNUSED(params.write_byte('}'));
+        params.write_byte('}');
         send_request_json(
             client, LspRequestKind::RENAME, request.path, "textDocument/rename", params.str()
         );
@@ -1763,10 +1755,10 @@ namespace code_editor {
     auto send_formatting_request(LspClient& client, LspEditorRequest const& request) -> void {
         ArenaTemp temp = begin_thread_temp_arena();
         StringBuffer params = {};
-        BASE_UNUSED(params.init(512u, temp.arena()->resource()));
-        BASE_UNUSED(params.write_string("{\"textDocument\":{\"uri\":"));
+        params.init(512u, temp.arena()->resource());
+        params.write_string("{\"textDocument\":{\"uri\":");
         lsp_json_write_escaped_string(params, client.current_uri);
-        BASE_UNUSED(params.write_string("},\"options\":{\"tabSize\":4,\"insertSpaces\":true}}"));
+        params.write_string("},\"options\":{\"tabSize\":4,\"insertSpaces\":true}}");
         send_request_json(
             client,
             LspRequestKind::FORMATTING,
@@ -1779,12 +1771,12 @@ namespace code_editor {
     auto send_code_action_request(LspClient& client, LspEditorRequest const& request) -> void {
         ArenaTemp temp = begin_thread_temp_arena();
         StringBuffer params = {};
-        BASE_UNUSED(params.init(1024u, temp.arena()->resource()));
-        BASE_UNUSED(params.write_string("{\"textDocument\":{\"uri\":"));
+        params.init(1024u, temp.arena()->resource());
+        params.write_string("{\"textDocument\":{\"uri\":");
         lsp_json_write_escaped_string(params, client.current_uri);
-        BASE_UNUSED(params.write_string("},\"range\":"));
+        params.write_string("},\"range\":");
         write_range(params, client.current_text, request.range);
-        BASE_UNUSED(params.write_string(",\"context\":{\"diagnostics\":["));
+        params.write_string(",\"context\":{\"diagnostics\":[");
         bool first = true;
         for (LspDiagnostic const& diagnostic : client.diagnostics) {
             if (diagnostic.path != request.path ||
@@ -1792,12 +1784,12 @@ namespace code_editor {
                 continue;
             }
             if (!first) {
-                BASE_UNUSED(params.write_byte(','));
+                params.write_byte(',');
             }
             write_diagnostic(params, client.current_text, diagnostic);
             first = false;
         }
-        BASE_UNUSED(params.write_string("]}}"));
+        params.write_string("]}}");
         send_request_json(
             client,
             LspRequestKind::CODE_ACTION,
@@ -1810,10 +1802,10 @@ namespace code_editor {
     auto send_document_symbol_request(LspClient& client, LspEditorRequest const& request) -> void {
         ArenaTemp temp = begin_thread_temp_arena();
         StringBuffer params = {};
-        BASE_UNUSED(params.init(256u, temp.arena()->resource()));
-        BASE_UNUSED(params.write_string("{\"textDocument\":{\"uri\":"));
+        params.init(256u, temp.arena()->resource());
+        params.write_string("{\"textDocument\":{\"uri\":");
         lsp_json_write_escaped_string(params, client.current_uri);
-        BASE_UNUSED(params.write_string("}}"));
+        params.write_string("}}");
         send_request_json(
             client,
             LspRequestKind::DOCUMENT_SYMBOL,
@@ -1826,8 +1818,8 @@ namespace code_editor {
     auto send_workspace_symbol_request(LspClient& client, LspEditorRequest const& request) -> void {
         ArenaTemp temp = begin_thread_temp_arena();
         StringBuffer params = {};
-        BASE_UNUSED(params.init(32u, temp.arena()->resource()));
-        BASE_UNUSED(params.write_string("{\"query\":\"\"}"));
+        params.init(32u, temp.arena()->resource());
+        params.write_string("{\"query\":\"\"}");
         send_request_json(
             client, LspRequestKind::WORKSPACE_SYMBOL, request.path, "workspace/symbol", params.str()
         );
@@ -1839,10 +1831,10 @@ namespace code_editor {
         }
         ArenaTemp temp = begin_thread_temp_arena();
         StringBuffer params = {};
-        BASE_UNUSED(params.init(256u, temp.arena()->resource()));
-        BASE_UNUSED(params.write_string("{\"textDocument\":{\"uri\":"));
+        params.init(256u, temp.arena()->resource());
+        params.write_string("{\"textDocument\":{\"uri\":");
         lsp_json_write_escaped_string(params, client.current_uri);
-        BASE_UNUSED(params.write_string("}}"));
+        params.write_string("}}");
         send_request_json(
             client,
             LspRequestKind::SEMANTIC_TOKENS,
@@ -1860,10 +1852,10 @@ namespace code_editor {
         }
         ArenaTemp temp = begin_thread_temp_arena();
         StringBuffer params = {};
-        BASE_UNUSED(params.init(256u, temp.arena()->resource()));
-        BASE_UNUSED(params.write_string("{\"textDocument\":{\"uri\":"));
+        params.init(256u, temp.arena()->resource());
+        params.write_string("{\"textDocument\":{\"uri\":");
         lsp_json_write_escaped_string(params, client.current_uri);
-        BASE_UNUSED(params.write_string("}}"));
+        params.write_string("}}");
         send_request_json(
             client,
             LspRequestKind::FOLDING_RANGE,
@@ -1881,12 +1873,12 @@ namespace code_editor {
         }
         ArenaTemp temp = begin_thread_temp_arena();
         StringBuffer params = {};
-        BASE_UNUSED(params.init(512u, temp.arena()->resource()));
-        BASE_UNUSED(params.write_string("{\"textDocument\":{\"uri\":"));
+        params.init(512u, temp.arena()->resource());
+        params.write_string("{\"textDocument\":{\"uri\":");
         lsp_json_write_escaped_string(params, client.current_uri);
-        BASE_UNUSED(params.write_string("},\"range\":"));
+        params.write_string("},\"range\":");
         write_range(params, client.current_text, request.range);
-        BASE_UNUSED(params.write_byte('}'));
+        params.write_byte('}');
         send_request_json(
             client,
             LspRequestKind::INLAY_HINTS,

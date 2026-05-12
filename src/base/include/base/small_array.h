@@ -151,7 +151,7 @@ template <typename T, size_t N> struct SmallArray {
         len = std::min(length, CAPACITY);
     }
 
-    [[nodiscard]] constexpr auto push_back(T const& item) -> bool {
+    constexpr auto push_back(T const& item) -> bool {
         if (len >= CAPACITY) {
             return false;
         }
@@ -161,7 +161,7 @@ template <typename T, size_t N> struct SmallArray {
         return true;
     }
 
-    [[nodiscard]] constexpr auto push_front(T const& item) -> bool {
+    constexpr auto push_front(T const& item) -> bool {
         return inject_at(item, 0u);
     }
 
@@ -222,7 +222,7 @@ template <typename T, size_t N> struct SmallArray {
         resize(0u);
     }
 
-    [[nodiscard]] constexpr auto push_back_elems(std::span<T const> items) -> bool {
+    constexpr auto push_back_elems(std::span<T const> items) -> bool {
         if (items.size() > space()) {
             return false;
         }
@@ -234,15 +234,15 @@ template <typename T, size_t N> struct SmallArray {
         return true;
     }
 
-    [[nodiscard]] constexpr auto push_back_elems(std::initializer_list<T> items) -> bool {
+    constexpr auto push_back_elems(std::initializer_list<T> items) -> bool {
         return push_back_elems(std::span<T const>(items.begin(), items.size()));
     }
 
-    template <size_t M> [[nodiscard]] constexpr auto push_back_elems(T const (&items)[M]) -> bool {
+    template <size_t M> constexpr auto push_back_elems(T const (&items)[M]) -> bool {
         return push_back_elems(std::span<T const>(items, M));
     }
 
-    [[nodiscard]] constexpr auto inject_at(T const& item, size_t index) -> bool {
+    constexpr auto inject_at(T const& item, size_t index) -> bool {
         if (len >= CAPACITY || index > len) {
             return false;
         }
@@ -255,35 +255,35 @@ template <typename T, size_t N> struct SmallArray {
         return true;
     }
 
-    [[nodiscard]] constexpr auto append_elem(T const& item) -> bool {
+    constexpr auto append_elem(T const& item) -> bool {
         return push_back(item);
     }
 
-    [[nodiscard]] constexpr auto append_elems(std::span<T const> items) -> bool {
+    constexpr auto append_elems(std::span<T const> items) -> bool {
         return push_back_elems(items);
     }
 
-    [[nodiscard]] constexpr auto append_elems(std::initializer_list<T> items) -> bool {
+    constexpr auto append_elems(std::initializer_list<T> items) -> bool {
         return push_back_elems(items);
     }
 
-    template <size_t M> [[nodiscard]] constexpr auto append_elems(T const (&items)[M]) -> bool {
+    template <size_t M> constexpr auto append_elems(T const (&items)[M]) -> bool {
         return push_back_elems(items);
     }
 
-    [[nodiscard]] constexpr auto append(T const& item) -> bool {
+    constexpr auto append(T const& item) -> bool {
         return push_back(item);
     }
 
-    [[nodiscard]] constexpr auto append(std::span<T const> items) -> bool {
+    constexpr auto append(std::span<T const> items) -> bool {
         return push_back_elems(items);
     }
 
-    [[nodiscard]] constexpr auto append(std::initializer_list<T> items) -> bool {
+    constexpr auto append(std::initializer_list<T> items) -> bool {
         return push_back_elems(items);
     }
 
-    template <size_t M> [[nodiscard]] constexpr auto append(T const (&items)[M]) -> bool {
+    template <size_t M> constexpr auto append(T const (&items)[M]) -> bool {
         return push_back_elems(items);
     }
 };

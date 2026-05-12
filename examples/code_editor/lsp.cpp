@@ -154,7 +154,7 @@ namespace code_editor {
     };
 
     auto snippet_write_byte(SnippetBuilder& builder, char ch) -> void {
-        BASE_UNUSED(builder.text.write_byte(ch));
+        builder.text.write_byte(ch);
         if (ch == '\n') {
             builder.position.line += 1u;
             builder.position.column = 0u;
@@ -345,7 +345,7 @@ namespace code_editor {
 
     [[nodiscard]] auto lsp_expand_snippet(Arena& arena, StrRef snippet) -> LspSnippetExpansion {
         SnippetBuilder builder = {};
-        BASE_UNUSED(builder.text.init(snippet.size() + 1u, arena.resource()));
+        builder.text.init(snippet.size() + 1u, arena.resource());
         size_t index = 0u;
         snippet_parse_text(builder, snippet, index, '\0');
 
@@ -397,8 +397,8 @@ namespace code_editor {
         });
 
         StringBuffer buffer = {};
-        BASE_UNUSED(buffer.init(text.size() + 1024u, arena.resource()));
-        BASE_UNUSED(buffer.write_string(text));
+        buffer.init(text.size() + 1024u, arena.resource());
+        buffer.write_string(text);
         for (size_t index = 0u; index < count; ++index) {
             LspTextEdit const& edit = sorted[index];
             size_t const start = lsp_offset_from_position(buffer.str(), edit.range.start);
@@ -409,10 +409,10 @@ namespace code_editor {
 
             size_t const new_size = buffer.size() - (end - start) + edit.new_text.size();
             StringBuffer next = {};
-            BASE_UNUSED(next.init(new_size + 1u, arena.resource()));
-            BASE_UNUSED(next.write_bytes(buffer.data(), start));
-            BASE_UNUSED(next.write_string(edit.new_text));
-            BASE_UNUSED(next.write_bytes(buffer.data() + end, buffer.size() - end));
+            next.init(new_size + 1u, arena.resource());
+            next.write_bytes(buffer.data(), start);
+            next.write_string(edit.new_text);
+            next.write_bytes(buffer.data() + end, buffer.size() - end);
             buffer = next;
             next = {};
         }
@@ -440,19 +440,19 @@ namespace code_editor {
 
     auto write_uri_byte(StringBuffer& buffer, uint8_t byte) -> void {
         char constexpr HEX[] = "0123456789ABCDEF";
-        BASE_UNUSED(buffer.write_byte('%'));
-        BASE_UNUSED(buffer.write_byte(HEX[byte >> 4u]));
-        BASE_UNUSED(buffer.write_byte(HEX[byte & 0x0fu]));
+        buffer.write_byte('%');
+        buffer.write_byte(HEX[byte >> 4u]);
+        buffer.write_byte(HEX[byte & 0x0fu]);
     }
 
     [[nodiscard]] auto lsp_path_to_file_uri(Arena& arena, StrRef path) -> StrRef {
         StringBuffer buffer = {};
-        BASE_UNUSED(buffer.init(path.size() * 3u + 16u, arena.resource()));
-        BASE_UNUSED(buffer.write_string("file:///"));
+        buffer.init(path.size() * 3u + 16u, arena.resource());
+        buffer.write_string("file:///");
         for (char ch : path) {
             char const out = ch == '\\' ? '/' : ch;
             if (uri_unreserved(out)) {
-                BASE_UNUSED(buffer.write_byte(out));
+                buffer.write_byte(out);
             } else {
                 write_uri_byte(buffer, static_cast<uint8_t>(out));
             }
@@ -469,7 +469,7 @@ namespace code_editor {
         }
 
         StringBuffer buffer = {};
-        BASE_UNUSED(buffer.init(text.size() + 1u, arena.resource()));
+        buffer.init(text.size() + 1u, arena.resource());
         for (size_t index = 0u; index < text.size(); ++index) {
             char ch = text[index];
             if (ch == '%' && index + 2u < text.size()) {
@@ -482,43 +482,43 @@ namespace code_editor {
             } else if (ch == '/') {
                 ch = '\\';
             }
-            BASE_UNUSED(buffer.write_byte(ch));
+            buffer.write_byte(ch);
         }
         return arena_copy_cstr(arena, buffer.str());
     }
 
     auto lsp_json_write_escaped_string(StringBuffer& buffer, StrRef text) -> void {
-        BASE_UNUSED(buffer.write_byte('"'));
+        buffer.write_byte('"');
         for (char ch : text) {
             switch (ch) {
             case '\\':
-                BASE_UNUSED(buffer.write_string("\\\\"));
+                buffer.write_string("\\\\");
                 break;
             case '"':
-                BASE_UNUSED(buffer.write_string("\\\""));
+                buffer.write_string("\\\"");
                 break;
             case '\n':
-                BASE_UNUSED(buffer.write_string("\\n"));
+                buffer.write_string("\\n");
                 break;
             case '\r':
-                BASE_UNUSED(buffer.write_string("\\r"));
+                buffer.write_string("\\r");
                 break;
             case '\t':
-                BASE_UNUSED(buffer.write_string("\\t"));
+                buffer.write_string("\\t");
                 break;
             default:
                 if (static_cast<uint8_t>(ch) < 0x20u) {
-                    BASE_UNUSED(buffer.write_string("\\u00"));
+                    buffer.write_string("\\u00");
                     char constexpr HEX[] = "0123456789abcdef";
-                    BASE_UNUSED(buffer.write_byte(HEX[static_cast<uint8_t>(ch) >> 4u]));
-                    BASE_UNUSED(buffer.write_byte(HEX[static_cast<uint8_t>(ch) & 0x0fu]));
+                    buffer.write_byte(HEX[static_cast<uint8_t>(ch) >> 4u]);
+                    buffer.write_byte(HEX[static_cast<uint8_t>(ch) & 0x0fu]);
                 } else {
-                    BASE_UNUSED(buffer.write_byte(ch));
+                    buffer.write_byte(ch);
                 }
                 break;
             }
         }
-        BASE_UNUSED(buffer.write_byte('"'));
+        buffer.write_byte('"');
     }
 
     auto lsp_write_json_rpc_message(StringBuffer& buffer, StrRef json) -> bool {
@@ -528,10 +528,10 @@ namespace code_editor {
         if (result.ec != std::errc{}) {
             return false;
         }
-        BASE_UNUSED(buffer.write_string("Content-Length: "));
-        BASE_UNUSED(buffer.write_bytes(header, static_cast<size_t>(result.ptr - header)));
-        BASE_UNUSED(buffer.write_string("\r\n\r\n"));
-        BASE_UNUSED(buffer.write_string(json));
+        buffer.write_string("Content-Length: ");
+        buffer.write_bytes(header, static_cast<size_t>(result.ptr - header));
+        buffer.write_string("\r\n\r\n");
+        buffer.write_string(json);
         return true;
     }
 
@@ -607,7 +607,7 @@ namespace code_editor {
         if (remaining != 0u) {
             std::memmove(framer.bytes.data(), framer.bytes.data() + payload + length, remaining);
         }
-        BASE_UNUSED(framer.bytes.resize(remaining));
+        framer.bytes.resize(remaining);
         return true;
     }
 

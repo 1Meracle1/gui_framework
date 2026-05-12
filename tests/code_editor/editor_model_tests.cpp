@@ -28,7 +28,7 @@ namespace {
 
     auto append_lines(StringBuffer& buffer, size_t count) -> void {
         for (size_t index = 0u; index < count; ++index) {
-            (void)buffer.write_string("line\n");
+            buffer.write_string("line\n");
         }
     }
 

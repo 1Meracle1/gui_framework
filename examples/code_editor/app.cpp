@@ -275,9 +275,7 @@ namespace code_editor {
     auto copy_git_status_items(EditorState& editor, Vec<GitStatusItem> const& items) -> void {
         editor.git_status_items.clear();
         for (GitStatusItem const& item : items) {
-            BASE_UNUSED(
-                editor.git_status_items.push_back(copy_git_status_item(*editor.arena, item))
-            );
+            editor.git_status_items.push_back(copy_git_status_item(*editor.arena, item));
         }
     }
 
@@ -295,16 +293,14 @@ namespace code_editor {
             }
         }
         for (GitStatusItem const& item : result.status_items) {
-            BASE_UNUSED(
-                editor.git_status_items.push_back(copy_git_status_item(*editor.arena, item))
-            );
+            editor.git_status_items.push_back(copy_git_status_item(*editor.arena, item));
         }
     }
 
     auto copy_git_branches(EditorState& editor, Vec<GitBranch> const& branches) -> void {
         editor.git_branches.clear();
         for (GitBranch const& branch : branches) {
-            BASE_UNUSED(editor.git_branches.push_back(copy_git_branch(*editor.arena, branch)));
+            editor.git_branches.push_back(copy_git_branch(*editor.arena, branch));
         }
     }
 
@@ -315,7 +311,7 @@ namespace code_editor {
         editor.git_commit_popup_keyboard = false;
         editor.git_commit_popup_mouse_known = false;
         for (GitCommit const& commit : commits) {
-            BASE_UNUSED(editor.git_commits.push_back(copy_git_commit(*editor.arena, commit)));
+            editor.git_commits.push_back(copy_git_commit(*editor.arena, commit));
         }
         layout_git_commit_graph(editor.git_commits);
     }
@@ -390,9 +386,7 @@ namespace code_editor {
 
         size_t const append_count = std::min(result.commits.size(), result.count);
         for (size_t index = 0u; index < append_count; ++index) {
-            BASE_UNUSED(
-                editor.git_commits.push_back(copy_git_commit(*editor.arena, result.commits[index]))
-            );
+            editor.git_commits.push_back(copy_git_commit(*editor.arena, result.commits[index]));
         }
         layout_git_commit_graph(editor.git_commits);
         editor.git_commits_more = result.commits.size() > result.count;
@@ -415,9 +409,7 @@ namespace code_editor {
         }
         if (!git_commit_files_loaded(editor, result.commit_oid)) {
             for (GitCommitFile const& file : result.commit_files) {
-                BASE_UNUSED(
-                    editor.git_commit_files.push_back(copy_git_commit_file(*editor.arena, file))
-                );
+                editor.git_commit_files.push_back(copy_git_commit_file(*editor.arena, file));
             }
         }
         set_git_status_text(editor, {});

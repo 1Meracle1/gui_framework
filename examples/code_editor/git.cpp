@@ -27,21 +27,21 @@ namespace code_editor {
         }
 
         auto write_shell_arg(StringBuffer& command, StrRef text) -> void {
-            BASE_UNUSED(command.write_byte('"'));
+            command.write_byte('"');
             for (char ch : text) {
                 if (ch == '"') {
-                    BASE_UNUSED(command.write_string("\\\""));
+                    command.write_string("\\\"");
                 } else {
-                    BASE_UNUSED(command.write_byte(ch));
+                    command.write_byte(ch);
                 }
             }
-            BASE_UNUSED(command.write_byte('"'));
+            command.write_byte('"');
         }
 
         [[nodiscard]] auto run_capture(Arena& arena, StrRef command_text, bool allow_diff_exit)
             -> GitRunResult {
             StringBuffer output = {};
-            BASE_UNUSED(output.init(0u, arena.resource()));
+            output.init(0u, arena.resource());
 #if defined(_WIN32)
             std::FILE* pipe = _popen(arena_copy_cstr(arena, command_text).data(), "rb");
 #else
@@ -55,7 +55,7 @@ namespace code_editor {
             while (true) {
                 size_t const read = std::fread(buffer, 1u, sizeof(buffer), pipe);
                 if (read != 0u) {
-                    BASE_UNUSED(output.write_bytes(buffer, read));
+                    output.write_bytes(buffer, read);
                 }
                 if (read < sizeof(buffer)) {
                     if (std::feof(pipe) != 0) {
@@ -78,18 +78,18 @@ namespace code_editor {
         }
 
         auto write_git_command(StringBuffer& command, StrRef root) -> void {
-            BASE_UNUSED(command.write_string("git -C "));
+            command.write_string("git -C ");
             write_shell_arg(command, root);
-            BASE_UNUSED(command.write_byte(' '));
+            command.write_byte(' ');
         }
 
         [[nodiscard]] auto run_git(Arena& arena, StrRef root, StrRef args, bool allow_diff_exit)
             -> GitRunResult {
             StringBuffer command = {};
-            BASE_UNUSED(command.init(256u + root.size() + args.size(), arena.resource()));
+            command.init(256u + root.size() + args.size(), arena.resource());
             write_git_command(command, root);
-            BASE_UNUSED(command.write_string(args));
-            BASE_UNUSED(command.write_string(" 2>&1"));
+            command.write_string(args);
+            command.write_string(" 2>&1");
             return run_capture(arena, command.str(), allow_diff_exit);
         }
 
@@ -112,12 +112,12 @@ namespace code_editor {
                 return path;
             }
             StringBuffer result = {};
-            BASE_UNUSED(result.init(root.size() + path.size() + 2u, arena.resource()));
-            BASE_UNUSED(result.write_string(root));
+            result.init(root.size() + path.size() + 2u, arena.resource());
+            result.write_string(root);
             if (!root.ends_with('/') && !root.ends_with('\\')) {
-                BASE_UNUSED(result.write_byte('/'));
+                result.write_byte('/');
             }
-            BASE_UNUSED(result.write_string(path));
+            result.write_string(path);
             return result.str();
         }
 
@@ -168,28 +168,28 @@ namespace code_editor {
 
         [[nodiscard]] auto command_with_path(Arena& arena, StrRef first, StrRef path) -> StrRef {
             StringBuffer command = {};
-            BASE_UNUSED(command.init(first.size() + path.size() + 16u, arena.resource()));
-            BASE_UNUSED(command.write_string(first));
-            BASE_UNUSED(command.write_string(" -- "));
+            command.init(first.size() + path.size() + 16u, arena.resource());
+            command.write_string(first);
+            command.write_string(" -- ");
             write_shell_arg(command, path);
             return command.str();
         }
 
         [[nodiscard]] auto absolute_git_path(Arena& arena, StrRef root, StrRef path) -> StrRef {
             StringBuffer result = {};
-            BASE_UNUSED(result.init(root.size() + path.size() + 2u, arena.resource()));
-            BASE_UNUSED(result.write_string(root));
+            result.init(root.size() + path.size() + 2u, arena.resource());
+            result.write_string(root);
             if (!root.ends_with('/') && !root.ends_with('\\')) {
-                BASE_UNUSED(result.write_byte('/'));
+                result.write_byte('/');
             }
             for (char ch : path) {
-                BASE_UNUSED(result.write_byte(ch == '\\' ? '/' : ch));
+                result.write_byte(ch == '\\' ? '/' : ch);
             }
             return result.str();
         }
 
         auto write_commit_message_args(StringBuffer& args, StrRef message) -> void {
-            BASE_UNUSED(args.write_string("commit"));
+            args.write_string("commit");
             size_t line_start = 0u;
             while (line_start <= message.size()) {
                 size_t line_end = message.find('\n', line_start);
@@ -200,7 +200,7 @@ namespace code_editor {
                 if (line.ends_with('\r')) {
                     line.remove_suffix(1u);
                 }
-                BASE_UNUSED(args.write_string(" -m "));
+                args.write_string(" -m ");
                 write_shell_arg(args, line);
                 if (line_end == message.size()) {
                     break;
@@ -211,9 +211,9 @@ namespace code_editor {
 
         [[nodiscard]] auto command_with_ref(Arena& arena, StrRef first, StrRef ref) -> StrRef {
             StringBuffer command = {};
-            BASE_UNUSED(command.init(first.size() + ref.size() + 8u, arena.resource()));
-            BASE_UNUSED(command.write_string(first));
-            BASE_UNUSED(command.write_byte(' '));
+            command.init(first.size() + ref.size() + 8u, arena.resource());
+            command.write_string(first);
+            command.write_byte(' ');
             write_shell_arg(command, ref);
             return command.str();
         }
@@ -391,8 +391,8 @@ namespace code_editor {
             });
             DEBUG_ASSERT(row != nullptr);
             if (row != nullptr) {
-                BASE_UNUSED(row->left_spans.init(0u, arena.resource()));
-                BASE_UNUSED(row->right_spans.init(0u, arena.resource()));
+                row->left_spans.init(0u, arena.resource());
+                row->right_spans.init(0u, arena.resource());
             }
             return row;
         }
@@ -418,7 +418,7 @@ namespace code_editor {
 
         auto write_line_number(StringBuffer& out, size_t line) -> void {
             if (line == 0u) {
-                BASE_UNUSED(out.write_string("     "));
+                out.write_string("     ");
             } else {
                 BASE_UNUSED(fmt::format(&out, "%5zu", line));
             }
@@ -433,29 +433,29 @@ namespace code_editor {
             StrRef right
         ) -> void {
             write_line_number(out, left_line);
-            BASE_UNUSED(out.write_byte(' '));
-            BASE_UNUSED(out.write_byte(left.empty() && left_line == 0u ? ' ' : marker));
-            BASE_UNUSED(out.write_byte(' '));
-            BASE_UNUSED(out.write_string(left));
-            BASE_UNUSED(out.write_string(" | "));
+            out.write_byte(' ');
+            out.write_byte(left.empty() && left_line == 0u ? ' ' : marker);
+            out.write_byte(' ');
+            out.write_string(left);
+            out.write_string(" | ");
             write_line_number(out, right_line);
-            BASE_UNUSED(out.write_byte(' '));
-            BASE_UNUSED(out.write_byte(right.empty() && right_line == 0u ? ' ' : marker));
-            BASE_UNUSED(out.write_byte(' '));
-            BASE_UNUSED(out.write_string(right));
-            BASE_UNUSED(out.write_byte('\n'));
+            out.write_byte(' ');
+            out.write_byte(right.empty() && right_line == 0u ? ' ' : marker);
+            out.write_byte(' ');
+            out.write_string(right);
+            out.write_byte('\n');
         }
 
         auto write_unified_line(
             StringBuffer& out, char marker, size_t old_line, size_t new_line, StrRef text
         ) -> void {
-            BASE_UNUSED(out.write_byte(marker));
+            out.write_byte(marker);
             write_line_number(out, old_line);
-            BASE_UNUSED(out.write_byte(' '));
+            out.write_byte(' ');
             write_line_number(out, new_line);
-            BASE_UNUSED(out.write_string("  "));
-            BASE_UNUSED(out.write_string(text));
-            BASE_UNUSED(out.write_byte('\n'));
+            out.write_string("  ");
+            out.write_string(text);
+            out.write_byte('\n');
         }
 
         [[nodiscard]] auto unified_file_header_visible(StrRef line) -> bool {
@@ -1158,18 +1158,18 @@ namespace code_editor {
     auto git_render_diff_document(Arena& arena, GitDiffDocument const& doc, bool side_by_side)
         -> StrRef {
         StringBuffer out = {};
-        BASE_UNUSED(out.init(0u, arena.resource()));
+        out.init(0u, arena.resource());
         if (side_by_side && !doc.title.empty()) {
-            BASE_UNUSED(out.write_string(doc.title));
-            BASE_UNUSED(out.write_string("\n\n"));
+            out.write_string(doc.title);
+            out.write_string("\n\n");
         }
         for (GitDiffRow const& row : doc.rows) {
             if (row.kind == GitDiffRowKind::FILE_HEADER ||
                 row.kind == GitDiffRowKind::HUNK_HEADER) {
                 if (side_by_side || row.kind == GitDiffRowKind::HUNK_HEADER ||
                     unified_file_header_visible(row.left_text)) {
-                    BASE_UNUSED(out.write_string(row.left_text));
-                    BASE_UNUSED(out.write_byte('\n'));
+                    out.write_string(row.left_text);
+                    out.write_byte('\n');
                 }
                 continue;
             }
@@ -1217,10 +1217,10 @@ namespace code_editor {
 
     auto git_discover_root(Arena& arena, StrRef path, StrRef& root, StrRef& message) -> bool {
         StringBuffer command = {};
-        BASE_UNUSED(command.init(path.size() + 80u, arena.resource()));
-        BASE_UNUSED(command.write_string("git -C "));
+        command.init(path.size() + 80u, arena.resource());
+        command.write_string("git -C ");
         write_shell_arg(command, path);
-        BASE_UNUSED(command.write_string(" rev-parse --show-toplevel 2>&1"));
+        command.write_string(" rev-parse --show-toplevel 2>&1");
         GitRunResult const result = run_capture(arena, command.str(), false);
         if (!result.ok) {
             set_message(result.output, "Not a Git repository.", message);
@@ -1432,7 +1432,7 @@ namespace code_editor {
 
     auto git_commit(Arena& arena, StrRef root, StrRef message_text, StrRef& message) -> bool {
         StringBuffer args = {};
-        BASE_UNUSED(args.init(message_text.size() + 16u, arena.resource()));
+        args.init(message_text.size() + 16u, arena.resource());
         write_commit_message_args(args, message_text);
         GitRunResult const result = run_git(arena, root, args.str(), false);
         set_message(result.output, result.ok ? "Committed." : "git commit failed.", message);
@@ -1542,8 +1542,8 @@ namespace code_editor {
 
     auto git_checkout_branch(Arena& arena, StrRef root, StrRef branch, StrRef& message) -> bool {
         StringBuffer args = {};
-        BASE_UNUSED(args.init(branch.size() + 16u, arena.resource()));
-        BASE_UNUSED(args.write_string("checkout "));
+        args.init(branch.size() + 16u, arena.resource());
+        args.write_string("checkout ");
         write_shell_arg(args, branch);
         GitRunResult const result = run_git(arena, root, args.str(), false);
         set_message(
@@ -1556,22 +1556,16 @@ namespace code_editor {
         Arena& arena, StrRef root, GitStatusScope scope, StrRef path, StrRef& patch, StrRef& message
     ) -> bool {
         StringBuffer args = {};
-        BASE_UNUSED(args.init(path.size() + root.size() + 128u, arena.resource()));
+        args.init(path.size() + root.size() + 128u, arena.resource());
         if (scope == GitStatusScope::STAGED) {
-            BASE_UNUSED(args.write_string(
-                "diff --cached --find-renames --src-prefix=a/ --dst-prefix=b/ -- "
-            ));
+            args.write_string("diff --cached --find-renames --src-prefix=a/ --dst-prefix=b/ -- ");
             write_shell_arg(args, path);
         } else if (scope == GitStatusScope::UNTRACKED) {
             StrRef const absolute = absolute_git_path(arena, root, path);
-            BASE_UNUSED(
-                args.write_string("diff --no-index --src-prefix=a/ --dst-prefix=b/ -- /dev/null ")
-            );
+            args.write_string("diff --no-index --src-prefix=a/ --dst-prefix=b/ -- /dev/null ");
             write_shell_arg(args, absolute);
         } else {
-            BASE_UNUSED(
-                args.write_string("diff --find-renames --src-prefix=a/ --dst-prefix=b/ -- ")
-            );
+            args.write_string("diff --find-renames --src-prefix=a/ --dst-prefix=b/ -- ");
             write_shell_arg(args, path);
         }
         GitRunResult const result = run_git(arena, root, args.str(), true);
@@ -1588,21 +1582,19 @@ namespace code_editor {
         Arena& arena, StrRef root, StrRef commit_oid, StrRef path, StrRef& patch, StrRef& message
     ) -> bool {
         StringBuffer args = {};
-        BASE_UNUSED(args.init(commit_oid.size() + path.size() + 128u, arena.resource()));
-        BASE_UNUSED(args.write_string("diff --find-renames --src-prefix=a/ --dst-prefix=b/ "));
-        BASE_UNUSED(args.write_string(commit_oid));
-        BASE_UNUSED(args.write_string("^1 "));
-        BASE_UNUSED(args.write_string(commit_oid));
-        BASE_UNUSED(args.write_string(" -- "));
+        args.init(commit_oid.size() + path.size() + 128u, arena.resource());
+        args.write_string("diff --find-renames --src-prefix=a/ --dst-prefix=b/ ");
+        args.write_string(commit_oid);
+        args.write_string("~1 ");
+        args.write_string(commit_oid);
+        args.write_string(" -- ");
         write_shell_arg(args, path);
         GitRunResult result = run_git(arena, root, args.str(), true);
         if (!result.ok) {
             args.reset();
-            BASE_UNUSED(
-                args.write_string("show --format= --find-renames --src-prefix=a/ --dst-prefix=b/ ")
-            );
-            BASE_UNUSED(args.write_string(commit_oid));
-            BASE_UNUSED(args.write_string(" -- "));
+            args.write_string("show --format= --find-renames --src-prefix=a/ --dst-prefix=b/ ");
+            args.write_string(commit_oid);
+            args.write_string(" -- ");
             write_shell_arg(args, path);
             result = run_git(arena, root, args.str(), true);
         }

@@ -174,9 +174,7 @@ namespace gui {
             },
             impl->ui_context
         );
-        BASE_UNUSED(impl->log_text.init(
-            HOT_RELOAD_LOG_CAPACITY + HOT_RELOAD_LOG_LINE_COUNT, arena.resource()
-        ));
+        impl->log_text.init(HOT_RELOAD_LOG_CAPACITY + HOT_RELOAD_LOG_LINE_COUNT, arena.resource());
         return true;
     }
 
@@ -291,12 +289,12 @@ namespace gui {
     auto update_hot_reload_log_text(HotReloadOverlayImpl* impl, HotReloadStatus overlay) -> void {
         impl->log_text.reset();
         if (overlay.truncated) {
-            BASE_UNUSED(impl->log_text.write_string("output truncated\n"));
+            impl->log_text.write_string("output truncated\n");
         }
         for (size_t index = 0u; index < overlay.line_count; ++index) {
             HotReloadLogLine const& line = overlay.lines[index];
-            BASE_UNUSED(impl->log_text.write_bytes(overlay.text + line.offset, line.size));
-            BASE_UNUSED(impl->log_text.write_byte('\n'));
+            impl->log_text.write_bytes(overlay.text + line.offset, line.size);
+            impl->log_text.write_byte('\n');
         }
     }
 
