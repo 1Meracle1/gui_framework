@@ -1755,6 +1755,28 @@ namespace {
         TEST_EXPECT(context, editor.cursor_column == 14u);
     }
 
+    TEST_CASE(editor_normal_count_prefix_repeats_hjkl_motions) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "abcd\nefgh\nijkl\nmnop");
+
+        send_text(editor, "2j");
+        TEST_EXPECT(context, editor.cursor_line == 2u);
+        TEST_EXPECT(context, editor.cursor_column == 0u);
+
+        send_text(editor, "3l");
+        TEST_EXPECT(context, editor.cursor_column == 3u);
+
+        send_text(editor, "2h");
+        TEST_EXPECT(context, editor.cursor_column == 1u);
+
+        send_text(editor, "2k");
+        TEST_EXPECT(context, editor.cursor_line == 0u);
+        TEST_EXPECT(context, editor.cursor_column == 1u);
+    }
+
     TEST_CASE(editor_normal_v_selects_characters) {
         Arena arena = {};
         arena.init();

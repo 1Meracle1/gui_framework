@@ -5776,6 +5776,7 @@ namespace code_editor {
         }
         clear_pending_line_number(editor);
 
+        size_t const count = has_line_number ? line_number : 1u;
         bool const select = visual_selecting(editor);
         EditorSelectionRange const selection = editor_selection_range(editor);
         switch (ch) {
@@ -5808,16 +5809,24 @@ namespace code_editor {
             editor.set_flag(EditorFlag::PENDING_LEADER, true);
             break;
         case 'h':
-            move_left(editor, select);
+            for (size_t index = 0u; index < count; ++index) {
+                move_left(editor, select);
+            }
             break;
         case 'j':
-            move_vertical(editor, 1, select);
+            for (size_t index = 0u; index < count; ++index) {
+                move_vertical(editor, 1, select);
+            }
             break;
         case 'k':
-            move_vertical(editor, -1, select);
+            for (size_t index = 0u; index < count; ++index) {
+                move_vertical(editor, -1, select);
+            }
             break;
         case 'l':
-            move_right(editor, select);
+            for (size_t index = 0u; index < count; ++index) {
+                move_right(editor, select);
+            }
             break;
         case 'v':
             set_visual_mode(editor, EditorSelectionMode::CHARACTER);

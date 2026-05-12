@@ -74,13 +74,14 @@ characters, `_`, `.`, `>`, or `:` also requests LSP completion.
 | Key | Action |
 | --- | --- |
 | `h`, `j`, `k`, `l` | Move left, down, up, or right. |
+| `<number> h/j/k/l` | Move by that many characters or lines, for example `5 j`. |
 | `w`, `b`, `e` | Move to the next word, previous word, or end of word. |
 | `W`, `B`, `E` | Move by big-word boundaries. Big words use broader whitespace-separated spans. |
 | `0` | Move to the start of the current line. |
 | `$` | Move to the end of the current line. |
 | `g g` | Move to the start of the buffer. |
 | `G` | Move to the last line of the buffer. |
-| `<number> G` | Move to a 1-based line number, for example `42 G`. The number prefix is only used by `G`. |
+| `<number> G` | Move to a 1-based line number, for example `42 G`. |
 | `z z` | Center the cursor line in the focused split. |
 
 ## Normal Mode Selection
