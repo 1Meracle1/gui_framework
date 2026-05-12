@@ -342,7 +342,9 @@ namespace code_editor {
         editor.git_operation_pending = false;
         editor.git_pending_operation_kind = GitWorkKind::NONE;
         editor.git_refresh_requested = false;
-        editor.git_log_refresh_requested = false;
+        if (result.log_loaded) {
+            editor.git_log_refresh_requested = false;
+        }
         if (editor.arena == nullptr) {
             return;
         }
@@ -455,9 +457,10 @@ namespace code_editor {
         }
         set_git_status_text(editor, result.message);
         editor.git_refresh_requested = true;
-        if (result.kind == GitWorkKind::COMMIT || result.kind == GitWorkKind::PULL ||
-            result.kind == GitWorkKind::MERGE_BRANCH || result.kind == GitWorkKind::REBASE_BRANCH ||
-            result.kind == GitWorkKind::CHERRY_PICK || result.kind == GitWorkKind::MERGE_ABORT ||
+        if (result.kind == GitWorkKind::COMMIT || result.kind == GitWorkKind::PUSH ||
+            result.kind == GitWorkKind::PULL || result.kind == GitWorkKind::MERGE_BRANCH ||
+            result.kind == GitWorkKind::REBASE_BRANCH || result.kind == GitWorkKind::CHERRY_PICK ||
+            result.kind == GitWorkKind::MERGE_ABORT ||
             result.kind == GitWorkKind::REBASE_CONTINUE ||
             result.kind == GitWorkKind::REBASE_ABORT ||
             result.kind == GitWorkKind::CHERRY_PICK_CONTINUE ||
@@ -615,7 +618,9 @@ namespace code_editor {
 
         size_t const git_log_limit = git_log_limit_for_window_height(window_height);
         editor.git_refresh_requested = false;
-        editor.git_log_refresh_requested = false;
+        if (load_log) {
+            editor.git_log_refresh_requested = false;
+        }
         editor.git_status_items.clear();
         editor.git_branches.clear();
         if (load_log) {
