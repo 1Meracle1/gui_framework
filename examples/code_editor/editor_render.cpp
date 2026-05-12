@@ -1726,30 +1726,6 @@ namespace code_editor {
         }
     }
 
-    [[nodiscard]] auto semantic_token_overlaps_range(
-        Slice<LspSemanticToken const> tokens,
-        size_t line_index,
-        size_t line_size,
-        size_t start,
-        size_t end
-    ) -> bool {
-        for (LspSemanticToken const& token : tokens) {
-            if (token.range.start.line > line_index) {
-                break;
-            }
-            if (token.kind == SyntaxTokenKind::TEXT || token.range.start.line != line_index ||
-                token.range.end.line != line_index) {
-                continue;
-            }
-            size_t const token_start = std::min(token.range.start.column, line_size);
-            size_t const token_end = std::min(token.range.end.column, line_size);
-            if (token_start < end && token_end > start) {
-                return true;
-            }
-        }
-        return false;
-    }
-
     auto draw_syntax_line_with_inlay_hints(
         draw::Context context,
         font_cache::Font font,
@@ -1780,21 +1756,34 @@ namespace code_editor {
         size_t index = 0u;
         while (index < text.size()) {
             SyntaxToken const token = syntax_next_token(tokenizer, text, index);
-            if (!semantic_token_overlaps_range(
-                    semantic_tokens, line_index, line.size, token.start, token.end
-                )) {
-                style.color = to_draw_color(syntax_token_color(palette, token.kind));
+            style.color = to_draw_color(syntax_token_color(palette, token.kind));
+            size_t start = token.start;
+            for (LspSemanticToken const& semantic : semantic_tokens) {
+                if (semantic.range.start.line > line_index || start >= token.end) {
+                    break;
+                }
+                if (semantic.kind == SyntaxTokenKind::TEXT ||
+                    semantic.range.start.line != line_index ||
+                    semantic.range.end.line != line_index) {
+                    continue;
+                }
+                size_t const semantic_start = std::min(semantic.range.start.column, line.size);
+                size_t const semantic_end = std::min(semantic.range.end.column, line.size);
+                if (semantic_end <= start) {
+                    continue;
+                }
+                if (semantic_start >= token.end) {
+                    break;
+                }
+                size_t const end = std::min(semantic_start, token.end);
                 draw_token_with_inlay_hints(
-                    context,
-                    style,
-                    line,
-                    line_index,
-                    token.start,
-                    token.end,
-                    x,
-                    y,
-                    char_width,
-                    hints
+                    context, style, line, line_index, start, end, x, y, char_width, hints
+                );
+                start = std::min(semantic_end, token.end);
+            }
+            if (start < token.end) {
+                draw_token_with_inlay_hints(
+                    context, style, line, line_index, start, token.end, x, y, char_width, hints
                 );
             }
             index = token.end;
