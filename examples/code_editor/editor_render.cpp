@@ -3701,6 +3701,7 @@ namespace code_editor {
         draw_git_graph_overlay(draw_context, ui, editor, palette);
         draw_git_loading_overlay_surface(draw_context, ui, editor, palette);
         size_t const initial_focus = editor.focused_split;
+        size_t const last_code_split = editor.last_code_split;
         size_t target_focus = initial_focus;
         draw_editor_split_surface(
             draw_context,
@@ -3716,6 +3717,12 @@ namespace code_editor {
             selection_visible
         );
         focus_editor_split(editor, target_focus);
+        if (target_focus < editor.split_nodes.size() &&
+            editor_split_pane_kind(editor, target_focus) == EditorPaneKind::CODE) {
+            editor.last_code_split = target_focus;
+        } else {
+            editor.last_code_split = last_code_split;
+        }
         draw_tree_edit_cursor(draw_context, ui, ui_font, editor, palette);
         draw_command_overlay(draw_context, editor_font, editor, ui, palette);
         draw_lsp_overlay(draw_context, editor_font, editor, char_width, ui, palette);

@@ -12,6 +12,7 @@
 #include "editor_config.h"
 #include "editor_model.h"
 #include "editor_render.h"
+#include "editor_session_state.h"
 #include "editor_theme.h"
 #include "git.h"
 
@@ -138,6 +139,7 @@ namespace code_editor {
         draw::Renderer draw_renderer = {};
         gui::Context ui_context = {};
         EditorState editor = {};
+        StrRef state_cache_path = {};
         void* native_window = nullptr;
         StrRef const* shared_tree_root_name = nullptr;
         Slice<FileTreeEntry>* shared_tree_files = nullptr;
@@ -155,6 +157,7 @@ namespace code_editor {
         bool* app_close_confirmed = nullptr;
         uint64_t file_change_generation = 0u;
         uint64_t file_drop_generation = 0u;
+        uint64_t session_state_hash = 0u;
         float char_width = 8.0f;
         RuntimeConfigState config = {};
         WorkspaceActionState action = {};
@@ -2241,6 +2244,7 @@ namespace code_editor {
         runtime->shared_file_drop_request = context.shared_file_drop_request;
         runtime->shared_git_requests = context.shared_git_requests;
         runtime->shared_git_results = context.shared_git_results;
+        runtime->state_cache_path = context.state_cache_path;
         runtime->lsp_bridge = context.lsp_bridge;
         runtime->lsp_send_request = context.lsp_send_request;
         runtime->lsp_control = context.lsp_control;
@@ -2299,6 +2303,8 @@ namespace code_editor {
                 focus_editor_split(runtime->editor, filesystem);
             }
         }
+        BASE_UNUSED(load_editor_session_state(runtime->editor, runtime->state_cache_path));
+        runtime->session_state_hash = editor_state_hash(runtime->editor);
         runtime->char_width = std::max(
             1.0f, font_cache::text_advance(runtime->editor_font, runtime->editor.font_size, "M")
         );
@@ -2962,6 +2968,9 @@ namespace code_editor {
         }
         auto const* const context = static_cast<ModuleRuntimeContext const*>(user_data);
         auto* const module = static_cast<ModuleRuntime*>(storage);
+        BASE_UNUSED(
+            save_editor_session_state(module->runtime.editor, module->runtime.state_cache_path)
+        );
         destroy_runtime(context->render_context, &module->runtime);
         module->~ModuleRuntime();
     }
@@ -2995,12 +3004,18 @@ namespace code_editor {
             module->runtime.draw_renderer, render_context, pass_desc, module->runtime.draw_context
         );
         frame_result.draw_counts = draw_command_counts(module->runtime.draw_context);
+        uint64_t const state_hash_after = editor_state_hash(module->runtime.editor);
+        if (state_hash_after != module->runtime.session_state_hash) {
+            BASE_UNUSED(
+                save_editor_session_state(module->runtime.editor, module->runtime.state_cache_path)
+            );
+            module->runtime.session_state_hash = state_hash_after;
+        }
         frame_result.redraw_pending =
             frame_result.frame.redraw_requested() || module->runtime.editor.git_commits_loading ||
             module->runtime.editor.git_operation_pending || module->runtime.editor.tree_loading ||
             module->runtime.editor.notification_visible || module->runtime.action.running ||
-            module->runtime.action.visible ||
-            editor_state_hash(module->runtime.editor) != state_hash_before;
+            module->runtime.action.visible || state_hash_after != state_hash_before;
         reset_thread_temp_arenas();
         return frame_result;
     }

@@ -220,6 +220,7 @@ namespace code_editor {
         StrRef initial_file_path = {};
         StrRef tree_root_name = {};
         StrRef save_root_path = {};
+        StrRef state_cache_path = {};
         Slice<FileTreeEntry> tree_files = {};
         StrRef const* shared_tree_root_name = nullptr;
         Slice<FileTreeEntry>* shared_tree_files = nullptr;

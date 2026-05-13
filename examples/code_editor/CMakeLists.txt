@@ -8,6 +8,8 @@ set(CODE_EDITOR_RELOAD_SOURCES
     editor_model.h
     editor_render.cpp
     editor_render.h
+    editor_session_state.cpp
+    editor_session_state.h
     editor_theme.cpp
     editor_theme.h
     git.cpp

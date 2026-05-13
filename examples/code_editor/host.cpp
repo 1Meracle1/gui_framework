@@ -147,6 +147,7 @@ namespace code_editor {
         StrRef tree_root_name = {};
         StrRef save_root_path = {};
         StrRef window_cache_path = {};
+        StrRef state_cache_path = {};
         Arena tree_arenas[2] = {};
         Arena tree_history_arena = {};
         Vec<FileTreeEntry> tree_files = {};
@@ -1051,7 +1052,8 @@ namespace code_editor {
         return true;
     }
 
-    [[nodiscard]] auto window_cache_path(Arena& arena, StrRef key) -> StrRef {
+    [[nodiscard]] auto cache_file_path(Arena& arena, StrRef key, StrRef prefix, StrRef extension)
+        -> StrRef {
         char root[MAX_PATH * 4] = {};
         DWORD const root_size =
             GetEnvironmentVariableA("LOCALAPPDATA", root, static_cast<DWORD>(sizeof(root)));
@@ -1078,16 +1080,25 @@ namespace code_editor {
         char path[MAX_PATH * 4] = {};
         size_t path_size = 0u;
         if (!append_buffer(path, sizeof(path), path_size, StrRef(directory)) ||
-            !append_buffer(path, sizeof(path), path_size, "\\window_")) {
+            !append_buffer(path, sizeof(path), path_size, "\\") ||
+            !append_buffer(path, sizeof(path), path_size, prefix)) {
             return {};
         }
         char* out = path + path_size;
         append_hex_u64(out, cache_key_hash(key));
         path_size += 16u;
-        if (!append_buffer(path, sizeof(path), path_size, ".txt")) {
+        if (!append_buffer(path, sizeof(path), path_size, extension)) {
             return {};
         }
         return arena_copy_cstr(arena, StrRef(path, path_size));
+    }
+
+    [[nodiscard]] auto window_cache_path(Arena& arena, StrRef key) -> StrRef {
+        return cache_file_path(arena, key, "window_", ".txt");
+    }
+
+    [[nodiscard]] auto state_cache_path(Arena& arena, StrRef key) -> StrRef {
+        return cache_file_path(arena, key, "state_", ".bin");
     }
 
     [[nodiscard]] auto read_cached_window_rect(StrRef path, RECT& out_rect) -> bool {
@@ -1992,6 +2003,7 @@ namespace code_editor {
         if (initial_path.empty()) {
             launch.save_root_path = current_directory_cstr(arena);
             launch.window_cache_path = window_cache_path(arena, launch.save_root_path);
+            launch.state_cache_path = state_cache_path(arena, launch.save_root_path);
             launch.tree_root_name = arena_copy_str(arena, path_leaf(launch.save_root_path));
             launch.initial_tree_refresh = true;
             return true;
@@ -2004,6 +2016,7 @@ namespace code_editor {
 
         StrRef const path = path_without_trailing_slash(full_path);
         launch.window_cache_path = window_cache_path(arena, path);
+        launch.state_cache_path = state_cache_path(arena, path);
         if (path_is_directory(full_path)) {
             launch.save_root_path = path;
             launch.tree_root_name = arena_copy_str(arena, path_leaf(path));
@@ -2996,6 +3009,7 @@ namespace code_editor {
             .initial_file_path = launch.initial_file_path,
             .tree_root_name = launch.tree_root_name,
             .save_root_path = launch.save_root_path,
+            .state_cache_path = launch.state_cache_path,
             .tree_files = launch.tree_files.slice(),
             .shared_file_drop_request = &app_state.file_drop_request,
             .shared_tree_operation_request = &launch.tree_operation_request,

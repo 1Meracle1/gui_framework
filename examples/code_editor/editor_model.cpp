@@ -7869,6 +7869,10 @@ namespace code_editor {
         hash = hash_bytes(
             hash, &editor.git_commit_text_focused, sizeof(editor.git_commit_text_focused)
         );
+        StrRef const git_commit_text = editor.git_commit_text.str();
+        size_t const git_commit_text_size = git_commit_text.size();
+        hash = hash_bytes(hash, &git_commit_text_size, sizeof(git_commit_text_size));
+        hash = hash_bytes(hash, git_commit_text.data(), git_commit_text.size());
         hash = hash_bytes(
             hash, &editor.git_branch_search_focused, sizeof(editor.git_branch_search_focused)
         );
