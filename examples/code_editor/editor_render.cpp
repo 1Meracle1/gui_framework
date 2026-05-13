@@ -67,6 +67,16 @@ namespace code_editor {
     inline constexpr char GIT_BRANCH_ICON[] = "\xEE\xA9\xA8";
     inline constexpr char GIT_REFRESH_ICON[] = "\xEE\x9C\xAC";
     inline constexpr char GIT_FETCH_ICON[] = "\xE2\x86\x93";
+    inline constexpr char FILE_MENU_ICON[] = "\xEE\xAE\x94";
+    inline constexpr char ACTIVITY_FILES_ICON[] = "\xEE\xAB\xB0";
+    inline constexpr float FILE_MENU_POPUP_WIDTH = 190.0f;
+    inline constexpr float FILE_MENU_ROW_HEIGHT = 28.0f;
+    inline constexpr float ACTIVITY_BAR_WIDTH = 42.0f;
+    inline constexpr float ACTIVITY_BAR_PADDING_Y = 6.0f;
+    inline constexpr float ACTIVITY_BUTTON_SIZE = 32.0f;
+    inline constexpr float ACTIVITY_BUTTON_GAP = 6.0f;
+    inline constexpr float ACTIVITY_TOOLTIP_LEFT = ACTIVITY_BAR_WIDTH + 12.0f;
+    inline constexpr float ACTIVITY_TOOLTIP_TOP = 40.0f + 10.0f + ACTIVITY_BAR_PADDING_Y;
     inline constexpr float GIT_PANEL_PADDING_Y = 6.0f;
     inline constexpr float GIT_BRANCH_LIST_TOP = 30.0f;
     inline constexpr float GIT_BRANCH_ROW_HEIGHT = 24.0f;
@@ -86,6 +96,12 @@ namespace code_editor {
     inline constexpr float GIT_BRANCH_ROW_PADDING_X = 7.0f;
     inline constexpr float GIT_BRANCH_ROW_GAP = 2.0f;
     inline constexpr float GIT_BRANCH_LIST_PADDING = 3.0f;
+
+    struct ActivityBarSignals {
+        gui::Signal file_menu = {};
+        gui::Signal files = {};
+        gui::Signal git = {};
+    };
 
     [[nodiscard]] auto sidebar_width(EditorState const& editor, float client_width) -> float {
         float const width = std::clamp(
@@ -7026,6 +7042,22 @@ namespace code_editor {
         editor.set_flag(EditorFlag::CLOSE_APP_CONFIRMED, true);
     }
 
+    [[nodiscard]] auto request_open_folder(EditorState& editor) -> bool {
+        editor.set_flag(EditorFlag::CLOSE_APP_REQUESTED, false);
+        if (editor.flag(EditorFlag::SAVE_PATH_OPEN) ||
+            editor.close_intent != EditorCloseIntent::NONE) {
+            return false;
+        }
+        size_t index = 0u;
+        if (first_dirty_open_file_index(editor, index)) {
+            focus_open_file_index(editor, index);
+            editor.close_intent = EditorCloseIntent::OPEN_FOLDER;
+            return true;
+        }
+        editor.set_flag(EditorFlag::OPEN_FOLDER_CONFIRMED, true);
+        return true;
+    }
+
     auto request_close_current_file(EditorState& editor, bool force) -> void {
         if (!force && editor_focused_pane_kind(editor) == EditorPaneKind::CODE &&
             editor.flag(EditorFlag::DIRTY)) {
@@ -7053,6 +7085,8 @@ namespace code_editor {
             close_current_file(editor);
         } else if (intent == EditorCloseIntent::APP) {
             request_close_app(editor);
+        } else if (intent == EditorCloseIntent::OPEN_FOLDER) {
+            BASE_UNUSED(request_open_folder(editor));
         }
     }
 
@@ -9035,6 +9069,101 @@ namespace code_editor {
         return false;
     }
 
+    [[nodiscard]] auto draw_file_menu_item(
+        gui::Frame& ui, EditorState const& editor, Palette const& palette, gui::Id id, StrRef text
+    ) -> gui::Signal {
+        gui::TextSelection selection = {};
+        return ui.selectable_label(
+            id,
+            text,
+            &selection,
+            {
+                .layout =
+                    {
+                        .width = gui::fill(),
+                        .height = gui::px(FILE_MENU_ROW_HEIGHT),
+                        .padding = gui::insets(0.0f, 10.0f),
+                    },
+                .style = {
+                    .role = gui::StyleRole::CONTROL,
+                    .foreground = palette.text,
+                    .border = gui::rgba(0, 0, 0, 0),
+                    .border_thickness = 0.0f,
+                    .radius = 4.0f,
+                    .font_size = editor.font_size,
+                },
+            }
+        );
+    }
+
+    auto request_file_menu_open_folder(EditorState& editor) -> void {
+        editor.set_flag(EditorFlag::OPEN_FOLDER_PICKER_REQUESTED, true);
+    }
+
+    auto draw_file_menu_popup(
+        gui::Frame& ui,
+        EditorState& editor,
+        Palette const& palette,
+        gui::Signal file_button,
+        gui::InputState const& input
+    ) -> void {
+        if (!editor.file_menu_open) {
+            return;
+        }
+
+        bool close = key_pressed(input, gui::Key::ESCAPE);
+        float const left =
+            file_button.rect.max.x > 0.0f ? file_button.rect.max.x + 6.0f : ACTIVITY_TOOLTIP_LEFT;
+        float const top =
+            file_button.rect.max.y > 0.0f ? file_button.rect.min.y : ACTIVITY_TOOLTIP_TOP;
+        if (auto popup = ui.popup(
+                gui::id("file_menu_popup"),
+                {
+                    .layout =
+                        {
+                            .width = gui::px(FILE_MENU_POPUP_WIDTH),
+                            .height = gui::children(),
+                            .margin = gui::insets(top, 0.0f, 0.0f, left),
+                            .padding = gui::insets(5.0f),
+                            .gap = 2.0f,
+                            .align_x = gui::Align::STRETCH,
+                        },
+                    .style =
+                        {
+                            .background = palette.panel_raised,
+                            .border = palette.border,
+                            .border_thickness = 1.0f,
+                            .radius = 6.0f,
+                            .shadow =
+                                {
+                                    .offset = {0.0f, 12.0f},
+                                    .blur_radius = 28.0f,
+                                    .spread = 1.0f,
+                                    .color = gui::rgba(0, 0, 0, 118),
+                                },
+                        },
+                    .debug_name = "file_menu_popup",
+                }
+            )) {
+            gui::Signal const popup_signal = popup.signal();
+            if (draw_file_menu_item(ui, editor, palette, gui::id("file_menu_new_file"), "New File")
+                    .clicked_left) {
+                open_new_scratch_file(editor);
+                close = true;
+            }
+            if (draw_file_menu_item(
+                    ui, editor, palette, gui::id("file_menu_open_folder"), "Open Folder..."
+                )
+                    .clicked_left) {
+                request_file_menu_open_folder(editor);
+                close = true;
+            }
+            close = close || (input.mouse_down[0u] && !file_button.hovered &&
+                              !point_in_rect(popup_signal.rect, input.mouse_pos));
+        }
+        editor.file_menu_open = !close;
+    }
+
     [[nodiscard]] auto save_path_error_text(EditorSavePathError error) -> StrRef {
         switch (error) {
         case EditorSavePathError::EMPTY:
@@ -9804,6 +9933,8 @@ namespace code_editor {
             close_current_file(editor, true);
             if (intent == EditorCloseIntent::APP) {
                 request_close_app(editor);
+            } else if (intent == EditorCloseIntent::OPEN_FOLDER) {
+                BASE_UNUSED(request_open_folder(editor));
             }
         } else if (save && editor.current_file_path.empty()) {
             open_save_path_popup(editor);
@@ -10252,6 +10383,176 @@ namespace code_editor {
         }
     }
 
+    [[nodiscard]] auto draw_activity_button(
+        gui::Frame& ui,
+        EditorState const& editor,
+        Palette const& palette,
+        font_cache::Font icon_font,
+        gui::Id id,
+        StrRef icon,
+        StrRef debug_name,
+        bool selected
+    ) -> gui::Signal {
+        return ui.button(
+            id,
+            icon,
+            {
+                .layout =
+                    {
+                        .width = gui::px(ACTIVITY_BUTTON_SIZE),
+                        .height = gui::px(ACTIVITY_BUTTON_SIZE),
+                    },
+                .style =
+                    {
+                        .role = gui::StyleRole::NONE,
+                        .background = selected ? palette.panel_raised : gui::rgba(0, 0, 0, 0),
+                        .foreground = selected ? palette.text : palette.muted,
+                        .border = selected ? palette.cursor : gui::rgba(0, 0, 0, 0),
+                        .border_thickness = selected ? 1.0f : 0.0f,
+                        .radius = 5.0f,
+                        .font = icon_font,
+                        .font_size = editor_scaled_font_size(editor, 16.0f),
+                    },
+                .debug_name = debug_name,
+            }
+        );
+    }
+
+    [[nodiscard]] auto draw_activity_bar(
+        gui::Frame& ui, EditorState& editor, font_cache::Font icon_font, Palette const& palette
+    ) -> ActivityBarSignals {
+        ActivityBarSignals signals = {};
+        if (auto bar = ui.column(
+                gui::id("activity_bar"),
+                {
+                    .layout =
+                        {
+                            .width = gui::px(ACTIVITY_BAR_WIDTH),
+                            .height = gui::fill(),
+                            .padding = gui::insets(ACTIVITY_BAR_PADDING_Y, 5.0f),
+                            .gap = ACTIVITY_BUTTON_GAP,
+                            .align_x = gui::Align::CENTER,
+                        },
+                    .style =
+                        {
+                            .background = palette.panel,
+                            .border = palette.border,
+                            .border_thickness = 1.0f,
+                            .radius = 8.0f,
+                        },
+                    .debug_name = "activity_bar",
+                }
+            )) {
+            BASE_UNUSED(bar);
+            bool const files_selected = editor.flag(EditorFlag::SIDEBAR_VISIBLE) &&
+                                        editor.sidebar_tab == EditorSidebarTab::FILES;
+            bool const git_selected = editor.flag(EditorFlag::SIDEBAR_VISIBLE) &&
+                                      editor.sidebar_tab == EditorSidebarTab::GIT;
+            signals.file_menu = draw_activity_button(
+                ui,
+                editor,
+                palette,
+                icon_font,
+                gui::id("activity_file_menu"),
+                FILE_MENU_ICON,
+                "activity_file_menu",
+                editor.file_menu_open
+            );
+            if (signals.file_menu.activated) {
+                editor.file_menu_open = !editor.file_menu_open;
+            }
+            signals.files = draw_activity_button(
+                ui,
+                editor,
+                palette,
+                icon_font,
+                gui::id("activity_files"),
+                ACTIVITY_FILES_ICON,
+                "activity_files",
+                files_selected
+            );
+            if (signals.files.activated) {
+                editor.file_menu_open = false;
+                open_files_sidebar(editor);
+            }
+            signals.git = draw_activity_button(
+                ui,
+                editor,
+                palette,
+                icon_font,
+                gui::id("activity_git"),
+                GIT_BRANCH_ICON,
+                "activity_git",
+                git_selected
+            );
+            if (signals.git.activated) {
+                editor.file_menu_open = false;
+                open_git_sidebar(editor);
+            }
+        }
+        return signals;
+    }
+
+    auto draw_activity_tooltip(
+        gui::Frame& ui,
+        EditorState const& editor,
+        Palette const& palette,
+        gui::Signal signal,
+        StrRef text,
+        size_t index
+    ) -> void {
+        if (auto tooltip = ui.hover_popup(
+                gui::id(gui::id("activity_tooltip"), index),
+                signal,
+                {
+                    .layout =
+                        {
+                            .width = gui::children(),
+                            .height = gui::children(),
+                            .margin = gui::insets(
+                                ACTIVITY_TOOLTIP_TOP +
+                                    static_cast<float>(index) *
+                                        (ACTIVITY_BUTTON_SIZE + ACTIVITY_BUTTON_GAP),
+                                0.0f,
+                                0.0f,
+                                ACTIVITY_TOOLTIP_LEFT
+                            ),
+                            .padding = gui::insets(6.0f, 8.0f),
+                            .align_y = gui::Align::CENTER,
+                        },
+                    .style = {
+                        .background = palette.panel_raised,
+                        .foreground = palette.text,
+                        .border = palette.border,
+                        .border_thickness = 1.0f,
+                        .radius = 5.0f,
+                    },
+                }
+            )) {
+            BASE_UNUSED(tooltip);
+            ui.label(
+                text,
+                {
+                    .layout = {.width = gui::text(), .height = gui::text()},
+                    .style = {.foreground = palette.text, .font_size = editor.font_size},
+                }
+            );
+        }
+    }
+
+    auto draw_activity_tooltips(
+        gui::Frame& ui,
+        EditorState const& editor,
+        Palette const& palette,
+        ActivityBarSignals const& signals
+    ) -> void {
+        if (!editor.file_menu_open) {
+            draw_activity_tooltip(ui, editor, palette, signals.file_menu, "File", 0u);
+        }
+        draw_activity_tooltip(ui, editor, palette, signals.files, "Files", 1u);
+        draw_activity_tooltip(ui, editor, palette, signals.git, "Git", 2u);
+    }
+
     auto draw_editor_notification(
         gui::Frame& ui,
         EditorState& editor,
@@ -10388,6 +10689,9 @@ namespace code_editor {
         if (editor.flag(EditorFlag::CLOSE_APP_REQUESTED)) {
             request_close_app(editor);
         }
+        if (editor.flag(EditorFlag::OPEN_FOLDER_SELECTED) && request_open_folder(editor)) {
+            editor.set_flag(EditorFlag::OPEN_FOLDER_SELECTED, false);
+        }
         if (editor.file_search_open_file != FILE_SEARCH_NO_FILE) {
             size_t const tree_file_index = editor.file_search_open_file;
             editor.file_search_open_file = FILE_SEARCH_NO_FILE;
@@ -10420,6 +10724,7 @@ namespace code_editor {
         gui::Color const mode_color =
             editor.flag(EditorFlag::INSERT_MODE) ? palette.mode_insert : palette.mode_normal;
 
+        ActivityBarSignals activity_signals = {};
         if (auto shell = ui.column(
                 gui::id("app_shell"),
                 {
@@ -10507,10 +10812,12 @@ namespace code_editor {
                         .layout = {
                             .width = gui::fill(),
                             .height = gui::fill(),
+                            .gap = 6.0f,
                             .align_y = gui::Align::STRETCH,
                         },
                     }
                 )) {
+                activity_signals = draw_activity_bar(ui, editor, branch_icon_font, palette);
                 draw_editor_split_ui(
                     ui,
                     editor,
@@ -10525,6 +10832,8 @@ namespace code_editor {
                     !picker_open
                 );
             }
+            draw_file_menu_popup(ui, editor, palette, activity_signals.file_menu, input);
+            draw_activity_tooltips(ui, editor, palette, activity_signals);
 
             if (auto bottom = ui.scroll_panel(
                     gui::id("bottom_bar"),

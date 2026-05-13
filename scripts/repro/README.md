@@ -18,6 +18,7 @@ steps.
 
 - `code_editor_symbols_repro.ps1`
 - `code_editor_action_output_repro.ps1`
+- `code_editor_file_menu_repro.ps1`
 - `code_editor_git_panel_repro.ps1`
 - `code_editor_goto_line_repro.ps1`
 - `code_editor_text_rendering_repro.ps1`

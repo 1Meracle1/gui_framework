@@ -146,6 +146,7 @@ namespace code_editor {
         bool const* shared_tree_loading = nullptr;
         uint64_t const* shared_file_change_generation = nullptr;
         FileDropRequest const* shared_file_drop_request = nullptr;
+        OpenFolderRequest* shared_open_folder_request = nullptr;
         SpscQueue<GitWorkRequest>* shared_git_requests = nullptr;
         SpscQueue<GitWorkResult>* shared_git_results = nullptr;
         LspBridge const* lsp_bridge = nullptr;
@@ -157,6 +158,7 @@ namespace code_editor {
         bool* app_close_confirmed = nullptr;
         uint64_t file_change_generation = 0u;
         uint64_t file_drop_generation = 0u;
+        uint64_t open_folder_selected_generation = 0u;
         uint64_t session_state_hash = 0u;
         float char_width = 8.0f;
         RuntimeConfigState config = {};
@@ -253,6 +255,33 @@ namespace code_editor {
 
         focus_editor_split(runtime.editor, split);
         return editor_open_path(runtime.editor, path);
+    }
+
+    auto sync_open_folder_selection(Runtime& runtime) -> void {
+        OpenFolderRequest const* const request = runtime.shared_open_folder_request;
+        if (request == nullptr ||
+            request->selected_generation == runtime.open_folder_selected_generation) {
+            return;
+        }
+        runtime.open_folder_selected_generation = request->selected_generation;
+        runtime.editor.set_flag(EditorFlag::OPEN_FOLDER_SELECTED, true);
+    }
+
+    auto submit_open_folder_requests(Runtime& runtime) -> void {
+        OpenFolderRequest* const request = runtime.shared_open_folder_request;
+        bool const picker = runtime.editor.flag(EditorFlag::OPEN_FOLDER_PICKER_REQUESTED);
+        bool const confirmed = runtime.editor.flag(EditorFlag::OPEN_FOLDER_CONFIRMED);
+        runtime.editor.set_flag(EditorFlag::OPEN_FOLDER_PICKER_REQUESTED, false);
+        runtime.editor.set_flag(EditorFlag::OPEN_FOLDER_CONFIRMED, false);
+        if (request == nullptr) {
+            return;
+        }
+        if (picker) {
+            request->pick_generation += 1u;
+        }
+        if (confirmed) {
+            request->confirmed_generation += 1u;
+        }
     }
 
     auto copy_cstr(char* buffer, size_t capacity, StrRef text) -> void {
@@ -2249,6 +2278,7 @@ namespace code_editor {
         runtime->shared_tree_loading = context.shared_tree_loading;
         runtime->shared_file_change_generation = context.shared_file_change_generation;
         runtime->shared_file_drop_request = context.shared_file_drop_request;
+        runtime->shared_open_folder_request = context.shared_open_folder_request;
         runtime->shared_git_requests = context.shared_git_requests;
         runtime->shared_git_results = context.shared_git_results;
         runtime->state_cache_path = context.state_cache_path;
@@ -2259,6 +2289,10 @@ namespace code_editor {
         runtime->lsp_control_user_data = context.lsp_control_user_data;
         runtime->app_close_requested = context.app_close_requested;
         runtime->app_close_confirmed = context.app_close_confirmed;
+        if (runtime->shared_open_folder_request != nullptr) {
+            runtime->open_folder_selected_generation =
+                runtime->shared_open_folder_request->selected_generation;
+        }
         init_editor(arena, runtime->editor, context.initial_text);
         runtime->editor.lsp_bridge = runtime->lsp_bridge;
         runtime->editor.external_lsp_bridge = runtime->lsp_bridge;
@@ -2795,6 +2829,7 @@ namespace code_editor {
             runtime->editor.set_flag(EditorFlag::CLOSE_APP_REQUESTED, true);
             *runtime->app_close_requested = false;
         }
+        sync_open_folder_selection(*runtime);
         bool const popup_open = editor_focused_pane_kind(runtime->editor) == EditorPaneKind::CODE &&
                                 (runtime->editor.flag(EditorFlag::EXTERNAL_CHANGE_PENDING) ||
                                  runtime->editor.flag(EditorFlag::FILE_DELETED_ON_DISK) ||
@@ -2860,6 +2895,7 @@ namespace code_editor {
             runtime->char_width,
             ui_input
         );
+        submit_open_folder_requests(*runtime);
         draw_config_error_popup(
             ui,
             *runtime,

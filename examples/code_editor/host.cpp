@@ -32,6 +32,8 @@
 #include <gui/input_win32.h>
 #include <render/render.h>
 #include <shellapi.h>
+#include <shlobj.h>
+#include <shobjidl.h>
 #include <windows.h>
 #endif
 
@@ -106,9 +108,12 @@ namespace code_editor {
         gui::InputState input = {};
         gui::KeyMods posted_key_mods = gui::KEY_MOD_NONE;
         FileDropRequest file_drop_request = {};
+        OpenFolderRequest open_folder_request = {};
         gui::KeyEvent key_events[MAX_KEY_EVENTS_PER_FRAME] = {};
         gui::Vec2 last_click_pos = {};
         uint64_t last_click_ticks = 0u;
+        uint64_t open_folder_pick_generation = 0u;
+        uint64_t open_folder_confirmed_generation = 0u;
         uint32_t click_count = 0u;
         bool close_requested = false;
         bool close_confirmed = false;
@@ -1395,6 +1400,68 @@ namespace code_editor {
         DWORD const size = GetCurrentDirectoryA(static_cast<DWORD>(sizeof(buffer)), buffer);
         return size != 0u && size < sizeof(buffer) ? arena_copy_cstr(arena, StrRef(buffer, size))
                                                    : StrRef();
+    }
+
+    [[nodiscard]] auto choose_workspace_folder(HWND owner, Arena& arena, StrRef& out_path) -> bool {
+        HRESULT const init_result =
+            CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+        if (FAILED(init_result) && init_result != RPC_E_CHANGED_MODE) {
+            return false;
+        }
+
+        IFileOpenDialog* dialog = nullptr;
+        HRESULT hr = CoCreateInstance(
+            CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog)
+        );
+        if (FAILED(hr)) {
+            if (SUCCEEDED(init_result)) {
+                CoUninitialize();
+            }
+            return false;
+        }
+
+        DWORD options = 0u;
+        BASE_UNUSED(dialog->GetOptions(&options));
+        BASE_UNUSED(dialog->SetOptions(
+            options | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST | FOS_NOCHANGEDIR
+        ));
+        BASE_UNUSED(dialog->SetTitle(L"Open Folder in Current Window"));
+        hr = dialog->Show(owner);
+        IShellItem* item = nullptr;
+        if (SUCCEEDED(hr)) {
+            hr = dialog->GetResult(&item);
+        }
+
+        PWSTR wide_path = nullptr;
+        if (SUCCEEDED(hr)) {
+            hr = item->GetDisplayName(SIGDN_FILESYSPATH, &wide_path);
+        }
+        if (item != nullptr) {
+            item->Release();
+        }
+        dialog->Release();
+        if (SUCCEEDED(init_result)) {
+            CoUninitialize();
+        }
+
+        int const wide_size = SUCCEEDED(hr) && wide_path != nullptr ? lstrlenW(wide_path) : 0;
+        StrRef path = {};
+        if (wide_size == 0 || !base::wide_to_utf8(wide_path, wide_size, arena, path)) {
+            CoTaskMemFree(wide_path);
+            return false;
+        }
+        CoTaskMemFree(wide_path);
+        out_path = path_without_trailing_slash(path);
+        return !out_path.empty();
+    }
+
+    [[nodiscard]] auto copy_open_folder_path(OpenFolderRequest& request, StrRef path) -> bool {
+        if (path.empty() || path.size() >= FILE_DROP_PATH_CAPACITY) {
+            return false;
+        }
+        std::memcpy(request.path, path.data(), path.size());
+        request.path[path.size()] = '\0';
+        return true;
     }
 
     [[nodiscard]] auto child_path_cstr(Arena& arena, StrRef directory, StrRef name) -> StrRef {
@@ -2799,6 +2866,225 @@ namespace code_editor {
         return true;
     }
 
+    auto reset_launch(LaunchDesc& launch) -> void {
+        launch.tree_arenas[0u].destroy();
+        launch.tree_arenas[1u].destroy();
+        launch.tree_history_arena.destroy();
+        launch.~LaunchDesc();
+        new (&launch) LaunchDesc{};
+    }
+
+    auto fill_module_context(
+        ModuleRuntimeContext& context,
+        render::Context render_context,
+        AppState& app_state,
+        LaunchDesc& launch,
+        LspClient& lsp_client,
+        LspControlContext& lsp_control_context,
+        bool lsp_initialized,
+        bool watching_files
+    ) -> void {
+        context = {
+            .render_context = render_context,
+            .native_window = app_state.hwnd,
+            .initial_text = launch.initial_text,
+            .initial_file_name = launch.initial_file_name,
+            .initial_file_path = launch.initial_file_path,
+            .tree_root_name = launch.tree_root_name,
+            .save_root_path = launch.save_root_path,
+            .state_cache_path = launch.state_cache_path,
+            .tree_files = launch.tree_files.slice(),
+            .shared_file_drop_request = &app_state.file_drop_request,
+            .shared_open_folder_request = &app_state.open_folder_request,
+            .shared_tree_operation_request = &launch.tree_operation_request,
+            .shared_tree_operation_result = &launch.tree_operation_result,
+            .lsp_bridge = lsp_initialized ? lsp_client_bridge(lsp_client) : nullptr,
+            .lsp_send_request = lsp_initialized ? lsp_client_send_editor_request : nullptr,
+            .lsp_control = lsp_initialized ? lsp_control : nullptr,
+            .lsp_user_data = lsp_initialized ? &lsp_client : nullptr,
+            .lsp_control_user_data = lsp_initialized ? &lsp_control_context : nullptr,
+            .app_close_requested = &app_state.close_requested,
+            .app_close_confirmed = &app_state.close_confirmed,
+            .initial_sidebar_visible = launch.initial_sidebar_visible,
+        };
+        context.shared_tree_root_name = &context.tree_root_name;
+        context.shared_tree_files = &context.tree_files;
+        context.shared_tree_loading = &launch.tree_loading;
+        context.shared_file_change_generation =
+            watching_files ? &launch.file_change_generation : nullptr;
+        context.shared_git_requests = &launch.worker.git_requests;
+        context.shared_git_results = &launch.worker.git_results;
+    }
+
+    auto stop_workspace(
+        LaunchDesc& launch,
+        gui::HotReloadAppModule& module,
+        gui::HotReloadDesc const& module_desc,
+        LspClient& lsp_client,
+        bool& lsp_initialized
+    ) -> void {
+        destroy_background_worker(launch.worker);
+        close_directory_watcher(launch.tree_watcher);
+        gui::destroy_hot_reload_app_module(&module, module_desc);
+        if (lsp_initialized) {
+            lsp_client_shutdown(lsp_client);
+            lsp_initialized = false;
+        }
+    }
+
+    [[nodiscard]] auto start_workspace(
+        Arena& app_arena,
+        render::Context render_context,
+        render::SizeU32 window_size,
+        AppState& app_state,
+        LaunchDesc& launch,
+        LspClient& lsp_client,
+        bool& lsp_initialized,
+        LspControlContext& lsp_control_context,
+        ModuleRuntimeContext& module_context,
+        gui::HotReloadAppModule& module,
+        gui::HotReloadDesc& module_desc
+    ) -> bool {
+        app_state.window_cache_path = launch.window_cache_path;
+        app_state.close_requested = false;
+        app_state.close_confirmed = false;
+        launch.git_log_limit = git_log_limit_for_window_height(window_size.height);
+        bool const watching_files =
+            open_directory_watcher(launch.save_root_path, launch.tree_watcher);
+        lsp_initialized = lsp_client_init(lsp_client);
+        lsp_control_context = {
+            .client = lsp_initialized ? &lsp_client : nullptr,
+            .root_path = launch.save_root_path,
+            .source_path = CODE_EDITOR_SOURCE_DIR,
+        };
+        fill_module_context(
+            module_context,
+            render_context,
+            app_state,
+            launch,
+            lsp_client,
+            lsp_control_context,
+            lsp_initialized,
+            watching_files
+        );
+        module_desc = hot_reload_desc(&module_context);
+#if BASE_DEBUG
+        bool const module_loaded = gui::load_hot_reload_app_module(&module, module_desc, nullptr);
+#else
+        bool const module_loaded =
+            gui::load_hot_reload_app_module(&module, module_desc, code_editor_module_api());
+#endif
+        if (!module_loaded) {
+            close_directory_watcher(launch.tree_watcher);
+            if (lsp_initialized) {
+                lsp_client_shutdown(lsp_client);
+                lsp_initialized = false;
+            }
+            return false;
+        }
+
+        if (!create_background_worker(app_arena, launch.worker)) {
+            gui::destroy_hot_reload_app_module(&module, module_desc);
+            close_directory_watcher(launch.tree_watcher);
+            if (lsp_initialized) {
+                lsp_client_shutdown(lsp_client);
+                lsp_initialized = false;
+            }
+            return false;
+        }
+        if (launch.initial_tree_refresh) {
+            BASE_UNUSED(request_launch_tree_refresh(launch));
+        }
+        return true;
+    }
+
+    [[nodiscard]] auto restart_workspace(
+        Arena& app_arena,
+        AppState& app_state,
+        render::Context render_context,
+        render::Window render_window,
+        LaunchDesc& launch,
+        LspClient& lsp_client,
+        bool& lsp_initialized,
+        LspControlContext& lsp_control_context,
+        ModuleRuntimeContext& module_context,
+        gui::HotReloadAppModule& module,
+        gui::HotReloadDesc& module_desc,
+        StrRef path
+    ) -> bool {
+        save_window_rect(app_state.hwnd, app_state.window_cache_path);
+        stop_workspace(launch, module, module_desc, lsp_client, lsp_initialized);
+        reset_launch(launch);
+        if (!prepare_launch(app_arena, path, launch)) {
+            return false;
+        }
+        if (!start_workspace(
+                app_arena,
+                render_context,
+                render::window_size(render_window),
+                app_state,
+                launch,
+                lsp_client,
+                lsp_initialized,
+                lsp_control_context,
+                module_context,
+                module,
+                module_desc
+            )) {
+            return false;
+        }
+        app_state.last_frame = {};
+        app_state.mouse_hit_id = {};
+        app_state.redraw_pending = true;
+        return true;
+    }
+
+    [[nodiscard]] auto process_open_folder_request(
+        Arena& app_arena,
+        AppState& app_state,
+        render::Context render_context,
+        render::Window render_window,
+        LaunchDesc& launch,
+        LspClient& lsp_client,
+        bool& lsp_initialized,
+        LspControlContext& lsp_control_context,
+        ModuleRuntimeContext& module_context,
+        gui::HotReloadAppModule& module,
+        gui::HotReloadDesc& module_desc
+    ) -> bool {
+        OpenFolderRequest& request = app_state.open_folder_request;
+        if (request.pick_generation != app_state.open_folder_pick_generation) {
+            app_state.open_folder_pick_generation = request.pick_generation;
+            StrRef path = {};
+            if (choose_workspace_folder(app_state.hwnd, app_arena, path) &&
+                !path.equals_ignore_ascii_case(launch.save_root_path) &&
+                copy_open_folder_path(request, path)) {
+                request.selected_generation += 1u;
+                app_state.redraw_pending = true;
+            }
+        }
+
+        if (request.confirmed_generation == app_state.open_folder_confirmed_generation) {
+            return true;
+        }
+        app_state.open_folder_confirmed_generation = request.confirmed_generation;
+        StrRef const path(request.path, cstr_len(request.path));
+        return restart_workspace(
+            app_arena,
+            app_state,
+            render_context,
+            render_window,
+            launch,
+            lsp_client,
+            lsp_initialized,
+            lsp_control_context,
+            module_context,
+            module,
+            module_desc,
+            path
+        );
+    }
+
     auto run_windowed(RunOptions const& options) -> int {
         Arena app_arena = {};
         app_arena.init();
@@ -2847,15 +3133,9 @@ namespace code_editor {
             return 1;
         }
 
-        bool const watching_files =
-            open_directory_watcher(launch.save_root_path, launch.tree_watcher);
         LspClient lsp_client = {};
-        bool const lsp_initialized = lsp_client_init(lsp_client);
-        LspControlContext lsp_control_context = {
-            .client = lsp_initialized ? &lsp_client : nullptr,
-            .root_path = launch.save_root_path,
-            .source_path = CODE_EDITOR_SOURCE_DIR,
-        };
+        bool lsp_initialized = false;
+        LspControlContext lsp_control_context = {};
 #if BASE_DEBUG
         gui::HotReloadOverlay hot_reload_overlay = {};
         gui::HotReloadOverlayState hot_reload_overlay_state = {};
@@ -2863,81 +3143,33 @@ namespace code_editor {
             app_arena, render_context, app_state.hwnd, &hot_reload_overlay
         );
 #endif
-        ModuleRuntimeContext module_context = {
-            .render_context = render_context,
-            .native_window = app_state.hwnd,
-            .initial_text = launch.initial_text,
-            .initial_file_name = launch.initial_file_name,
-            .initial_file_path = launch.initial_file_path,
-            .tree_root_name = launch.tree_root_name,
-            .save_root_path = launch.save_root_path,
-            .state_cache_path = launch.state_cache_path,
-            .tree_files = launch.tree_files.slice(),
-            .shared_file_drop_request = &app_state.file_drop_request,
-            .shared_tree_operation_request = &launch.tree_operation_request,
-            .shared_tree_operation_result = &launch.tree_operation_result,
-            .lsp_bridge = lsp_initialized ? lsp_client_bridge(lsp_client) : nullptr,
-            .lsp_send_request = lsp_initialized ? lsp_client_send_editor_request : nullptr,
-            .lsp_control = lsp_initialized ? lsp_control : nullptr,
-            .lsp_user_data = lsp_initialized ? &lsp_client : nullptr,
-            .lsp_control_user_data = lsp_initialized ? &lsp_control_context : nullptr,
-            .app_close_requested = &app_state.close_requested,
-            .app_close_confirmed = &app_state.close_confirmed,
-            .initial_sidebar_visible = launch.initial_sidebar_visible,
-        };
-        module_context.shared_tree_root_name = &module_context.tree_root_name;
-        module_context.shared_tree_files = &module_context.tree_files;
-        module_context.shared_tree_loading = &launch.tree_loading;
-        module_context.shared_file_change_generation =
-            watching_files ? &launch.file_change_generation : nullptr;
-        module_context.shared_git_requests = &launch.worker.git_requests;
-        module_context.shared_git_results = &launch.worker.git_results;
+        ModuleRuntimeContext module_context = {};
         gui::HotReloadDesc module_desc = hot_reload_desc(&module_context);
         gui::HotReloadAppModule module = {};
         gui::init_hot_reload_app_module(&module, module_desc, app_arena);
-#if BASE_DEBUG
-        bool const module_loaded = gui::load_hot_reload_app_module(&module, module_desc, nullptr);
-#else
-        bool const module_loaded =
-            gui::load_hot_reload_app_module(&module, module_desc, code_editor_module_api());
-#endif
-        if (!module_loaded) {
-            gui::destroy_hot_reload_app_module(&module, module_desc);
-#if BASE_DEBUG
-            if (hot_reload_overlay_ready) {
-                gui::destroy_hot_reload_overlay(render_context, &hot_reload_overlay);
-            }
-#endif
-            if (lsp_initialized) {
-                lsp_client_shutdown(lsp_client);
-            }
-            close_directory_watcher(launch.tree_watcher);
-            render::destroy_window(render_window);
-            render::destroy_context(render_context);
-            destroy_testbed_window(&app_state);
-            global_app_state = nullptr;
-            return 1;
-        }
-
-        if (!create_background_worker(app_arena, launch.worker)) {
-            gui::destroy_hot_reload_app_module(&module, module_desc);
+        if (!start_workspace(
+                app_arena,
+                render_context,
+                window_desc.size,
+                app_state,
+                launch,
+                lsp_client,
+                lsp_initialized,
+                lsp_control_context,
+                module_context,
+                module,
+                module_desc
+            )) {
 #if BASE_DEBUG
             if (hot_reload_overlay_ready) {
                 gui::destroy_hot_reload_overlay(render_context, &hot_reload_overlay);
             }
 #endif
-            if (lsp_initialized) {
-                lsp_client_shutdown(lsp_client);
-            }
-            close_directory_watcher(launch.tree_watcher);
             render::destroy_window(render_window);
             render::destroy_context(render_context);
             destroy_testbed_window(&app_state);
             global_app_state = nullptr;
             return 1;
-        }
-        if (launch.initial_tree_refresh) {
-            BASE_UNUSED(request_launch_tree_refresh(launch));
         }
 
         uint64_t previous_ticks = GetTickCount64();
@@ -3125,19 +3357,29 @@ namespace code_editor {
                 log_render_result("render::present_window", result);
                 break;
             }
+            if (!process_open_folder_request(
+                    app_arena,
+                    app_state,
+                    render_context,
+                    render_window,
+                    launch,
+                    lsp_client,
+                    lsp_initialized,
+                    lsp_control_context,
+                    module_context,
+                    module,
+                    module_desc
+                )) {
+                break;
+            }
         }
 
-        destroy_background_worker(launch.worker);
-        close_directory_watcher(launch.tree_watcher);
-        gui::destroy_hot_reload_app_module(&module, module_desc);
+        stop_workspace(launch, module, module_desc, lsp_client, lsp_initialized);
 #if BASE_DEBUG
         if (hot_reload_overlay_ready) {
             gui::destroy_hot_reload_overlay(render_context, &hot_reload_overlay);
         }
 #endif
-        if (lsp_initialized) {
-            lsp_client_shutdown(lsp_client);
-        }
         render::destroy_window(render_window);
         render::destroy_context(render_context);
         save_window_rect(app_state.hwnd, launch.window_cache_path);

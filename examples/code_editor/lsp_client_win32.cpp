@@ -644,12 +644,12 @@ namespace code_editor {
         client.message_arena.destroy();
         client.document_arena.destroy();
         client.arena.destroy();
+        client.~LspClient();
+        new (&client) LspClient();
     }
 
     [[nodiscard]] auto lsp_client_stop(LspClient& client) -> bool {
         lsp_client_shutdown(client);
-        client.~LspClient();
-        new (&client) LspClient();
         return lsp_client_init(client);
     }
 

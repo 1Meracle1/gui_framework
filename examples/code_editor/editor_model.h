@@ -119,6 +119,7 @@ namespace code_editor {
         NONE,
         BUFFER,
         APP,
+        OPEN_FOLDER,
     };
 
     enum class EditorViewKind : uint8_t {
@@ -329,6 +330,9 @@ namespace code_editor {
         CLOSE_CURRENT_FORCE_REQUESTED,
         CLOSE_APP_REQUESTED,
         CLOSE_APP_CONFIRMED,
+        OPEN_FOLDER_PICKER_REQUESTED,
+        OPEN_FOLDER_SELECTED,
+        OPEN_FOLDER_CONFIRMED,
         PANE_LOADED,
         SELECTION_ACTIVE,
         MOUSE_SELECTING,
@@ -520,6 +524,7 @@ namespace code_editor {
         bool git_commit_load_more_requested = false;
         bool git_commit_popup_keyboard = false;
         bool git_commit_popup_mouse_known = false;
+        bool file_menu_open = false;
         bool git_publish_open = false;
         bool git_branch_publishable = false;
         bool notification_visible = false;
@@ -557,6 +562,7 @@ namespace code_editor {
     auto open_save_path_popup(EditorState& editor) -> void;
     auto close_save_path_popup(EditorState& editor) -> void;
     auto ensure_filesystem_panel(EditorState& editor) -> void;
+    auto open_files_sidebar(EditorState& editor) -> void;
     auto open_git_sidebar(EditorState& editor) -> void;
     auto open_git_publish_popup(EditorState& editor) -> void;
     auto close_git_publish_popup(EditorState& editor) -> void;

@@ -111,6 +111,13 @@ namespace code_editor {
         uint64_t generation = 0u;
     };
 
+    struct OpenFolderRequest {
+        char path[FILE_DROP_PATH_CAPACITY] = {};
+        uint64_t pick_generation = 0u;
+        uint64_t selected_generation = 0u;
+        uint64_t confirmed_generation = 0u;
+    };
+
     inline constexpr size_t TREE_OPERATION_PATH_CAPACITY = 2048u;
 
     enum class TreeOperationKind : uint8_t {
@@ -231,6 +238,7 @@ namespace code_editor {
         bool const* shared_tree_loading = nullptr;
         uint64_t const* shared_file_change_generation = nullptr;
         FileDropRequest const* shared_file_drop_request = nullptr;
+        OpenFolderRequest* shared_open_folder_request = nullptr;
         SpscQueue<GitWorkRequest>* shared_git_requests = nullptr;
         SpscQueue<GitWorkResult>* shared_git_results = nullptr;
         TreeOperationRequest* shared_tree_operation_request = nullptr;
