@@ -3829,6 +3829,19 @@ namespace code_editor {
         return is_ascii_alphanumeric(ch) || ch == '_' || ch == '.' || ch == '>' || ch == ':';
     }
 
+    [[nodiscard]] auto key_event_waits_for_text(gui::KeyEvent const& event) -> bool {
+        if ((event.mods & (gui::KEY_MOD_CTRL | gui::KEY_MOD_ALT | gui::KEY_MOD_SUPER)) != 0u) {
+            return false;
+        }
+        uint16_t const key = static_cast<uint16_t>(event.key);
+        return (key >= static_cast<uint16_t>(gui::Key::A) &&
+                key <= static_cast<uint16_t>(gui::Key::Z)) ||
+               (key >= static_cast<uint16_t>(gui::Key::NUM_0) &&
+                key <= static_cast<uint16_t>(gui::Key::NUM_9)) ||
+               event.key == gui::Key::PLUS || event.key == gui::Key::MINUS ||
+               event.key == gui::Key::SLASH;
+    }
+
     [[nodiscard]] auto editor_file_search_text(EditorState const& editor) -> StrRef {
         return StrRef(editor.file_search_text, editor.file_search_text_size);
     }
@@ -7130,7 +7143,7 @@ namespace code_editor {
             );
             return;
         }
-        if (!editor.flag(EditorFlag::INSERT_MODE)) {
+        if (!editor.flag(EditorFlag::INSERT_MODE) && !key_event_waits_for_text(event)) {
             clear_pending_line_number(editor);
         }
         if (focused_pane_kind(editor) == EditorPaneKind::FILESYSTEM) {

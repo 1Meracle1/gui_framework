@@ -1820,6 +1820,26 @@ namespace {
         TEST_EXPECT(context, editor.cursor_column == 1u);
     }
 
+    TEST_CASE(editor_normal_count_prefix_survives_printable_keydown) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState repeat = {};
+        code_editor::init_editor(arena, repeat, "one\ntwo\nthree\nfour");
+        send_text(repeat, "2");
+        press_key(repeat, gui::Key::J);
+        send_text(repeat, "j");
+        TEST_EXPECT(context, repeat.cursor_line == 2u);
+
+        code_editor::EditorState go_to = {};
+        code_editor::init_editor(arena, go_to, "one\ntwo\nthree\nfour");
+        send_text(go_to, "3");
+        press_key(go_to, gui::Key::G, gui::KEY_MOD_SHIFT);
+        send_text(go_to, "G", gui::KEY_MOD_SHIFT);
+        TEST_EXPECT(context, go_to.cursor_line == 2u);
+        TEST_EXPECT(context, go_to.cursor_column == 0u);
+    }
+
     TEST_CASE(editor_normal_count_prefix_repeats_word_motions) {
         Arena arena = {};
         arena.init();
