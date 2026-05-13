@@ -102,7 +102,7 @@ namespace code_editor {
         client.bridge.progress_generation += 1u;
     }
 
-    [[nodiscard]] auto path_exists(StrRef path) -> bool {
+    [[nodiscard]] static auto path_exists(StrRef path) -> bool {
         if (path.empty()) {
             return false;
         }

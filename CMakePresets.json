@@ -40,6 +40,7 @@
       "displayName": "Windows MSVC Debug",
       "inherits": "windows-msvc-base",
       "cacheVariables": {
+        "CMAKE_CONFIGURATION_TYPES": "Debug",
         "CMAKE_VS_GLOBALS": "VcpkgEnabled=false",
         "CMAKE_MSVC_DEBUG_INFORMATION_FORMAT": "Embedded"
       }
@@ -47,7 +48,10 @@
     {
       "name": "windows-msvc-release",
       "displayName": "Windows MSVC Release",
-      "inherits": "windows-msvc-base"
+      "inherits": "windows-msvc-base",
+      "cacheVariables": {
+        "CMAKE_CONFIGURATION_TYPES": "Release"
+      }
     },
     {
       "name": "windows-msvc-strict",

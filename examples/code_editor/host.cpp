@@ -638,7 +638,7 @@ namespace code_editor {
         fmt::eprintf("%s failed: %s\n", operation, render::result_name(result));
     }
 
-    [[nodiscard]] auto open_read_file(StrRef path) -> std::FILE* {
+    [[nodiscard]] static auto open_read_file(StrRef path) -> std::FILE* {
         std::FILE* file = nullptr;
 #if defined(_MSC_VER)
         if (fopen_s(&file, path.data(), "rb") != 0) {
@@ -1442,7 +1442,7 @@ namespace code_editor {
         return StrRef(buffer, size);
     }
 
-    auto copy_tree_operation_path(char* target, StrRef source) -> void {
+    static auto copy_tree_operation_path(char* target, StrRef source) -> void {
         size_t const size = std::min(source.size(), TREE_OPERATION_PATH_CAPACITY - 1u);
         if (size != 0u) {
             std::memcpy(target, source.data(), size);
@@ -2173,7 +2173,7 @@ namespace code_editor {
         worker.results = {};
     }
 
-    [[nodiscard]] auto git_log_limit_for_window_height(uint32_t height) -> size_t {
+    [[nodiscard]] static auto git_log_limit_for_window_height(uint32_t height) -> size_t {
         size_t const rows = (static_cast<size_t>(height) + 23u) / 24u;
         return std::max(GIT_LOG_MIN_LIMIT, rows);
     }
