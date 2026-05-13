@@ -4,11 +4,22 @@
 #include <base/config.h>
 #include <base/fmt.h>
 #include <base/string_buffer.h>
+#if defined(_WIN32)
+#include <base/unicode.h>
+#endif
 #include <charconv>
 #include <cstdio>
 #include <cstring>
 #include <sys/stat.h>
-#if !defined(_WIN32)
+#if defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
 #include <sys/wait.h>
 #endif
 
@@ -38,15 +49,112 @@ namespace code_editor {
             command.write_byte('"');
         }
 
+#if defined(_WIN32)
+        [[nodiscard]] auto handle_valid(HANDLE handle) -> bool {
+            return handle != nullptr && handle != INVALID_HANDLE_VALUE;
+        }
+
+        auto close_handle(HANDLE* handle) -> void {
+            if (handle_valid(*handle)) {
+                CloseHandle(*handle);
+            }
+            *handle = nullptr;
+        }
+
+        [[nodiscard]] auto create_capture_pipe(HANDLE* out_read, HANDLE* out_write) -> bool {
+            SECURITY_ATTRIBUTES attributes = {};
+            attributes.nLength = sizeof(attributes);
+            attributes.bInheritHandle = TRUE;
+            if (!CreatePipe(out_read, out_write, &attributes, 0u)) {
+                return false;
+            }
+            if (!SetHandleInformation(*out_read, HANDLE_FLAG_INHERIT, 0u)) {
+                close_handle(out_read);
+                close_handle(out_write);
+                return false;
+            }
+            return true;
+        }
+
+        [[nodiscard]] auto
+        run_capture_windows(Arena& arena, StrRef command_text, StringBuffer& output, int& exit_code)
+            -> bool {
+            HANDLE output_read = nullptr;
+            HANDLE output_write = nullptr;
+            if (!create_capture_pipe(&output_read, &output_write)) {
+                return false;
+            }
+
+            StringBuffer shell_command = {};
+            shell_command.init(command_text.size() + 16u, arena.resource());
+            shell_command.write_string("cmd.exe /D /C ");
+            shell_command.write_string(command_text);
+
+            wchar_t* wide_command = nullptr;
+            int wide_command_count = 0;
+            if (!base::utf8_to_wide(shell_command.str(), arena, wide_command, wide_command_count)) {
+                close_handle(&output_read);
+                close_handle(&output_write);
+                return false;
+            }
+
+            STARTUPINFOW startup = {};
+            startup.cb = sizeof(startup);
+            startup.dwFlags = STARTF_USESTDHANDLES;
+            startup.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+            if (startup.hStdInput == INVALID_HANDLE_VALUE) {
+                startup.hStdInput = nullptr;
+            }
+            startup.hStdOutput = output_write;
+            startup.hStdError = output_write;
+
+            PROCESS_INFORMATION process = {};
+            BOOL const created = CreateProcessW(
+                nullptr,
+                wide_command,
+                nullptr,
+                nullptr,
+                TRUE,
+                CREATE_NO_WINDOW,
+                nullptr,
+                nullptr,
+                &startup,
+                &process
+            );
+            close_handle(&output_write);
+            if (!created) {
+                close_handle(&output_read);
+                return false;
+            }
+
+            char buffer[4096] = {};
+            DWORD read = 0u;
+            while (ReadFile(output_read, buffer, sizeof(buffer), &read, nullptr) && read != 0u) {
+                output.write_bytes(buffer, read);
+            }
+            close_handle(&output_read);
+
+            WaitForSingleObject(process.hProcess, INFINITE);
+            DWORD process_exit_code = 1u;
+            BASE_UNUSED(GetExitCodeProcess(process.hProcess, &process_exit_code));
+            CloseHandle(process.hThread);
+            CloseHandle(process.hProcess);
+            exit_code = static_cast<int>(process_exit_code);
+            return true;
+        }
+#endif
+
         [[nodiscard]] auto run_capture(Arena& arena, StrRef command_text, bool allow_diff_exit)
             -> GitRunResult {
             StringBuffer output = {};
             output.init(0u, arena.resource());
 #if defined(_WIN32)
-            std::FILE* pipe = _popen(arena_copy_cstr(arena, command_text).data(), "rb");
+            int exit_code = 1;
+            if (!run_capture_windows(arena, command_text, output, exit_code)) {
+                return {.output = "Failed to start git.", .exit_code = -1, .ok = false};
+            }
 #else
             std::FILE* pipe = popen(arena_copy_cstr(arena, command_text).data(), "r");
-#endif
             if (pipe == nullptr) {
                 return {.output = "Failed to start git.", .exit_code = -1, .ok = false};
             }
@@ -67,9 +175,6 @@ namespace code_editor {
                 }
             }
 
-#if defined(_WIN32)
-            int const exit_code = _pclose(pipe);
-#else
             int const status = pclose(pipe);
             int const exit_code = WIFEXITED(status) ? WEXITSTATUS(status) : status;
 #endif
@@ -91,6 +196,20 @@ namespace code_editor {
             command.write_string(args);
             command.write_string(" 2>&1");
             return run_capture(arena, command.str(), allow_diff_exit);
+        }
+
+        [[nodiscard]] auto copy_tracked_path(Arena& arena, StrRef path) -> StrRef {
+            char* const out = arena_alloc<char>(arena, path.size() + 1u);
+            for (size_t index = 0u; index < path.size(); ++index) {
+                char const ch = path[index];
+#if defined(_WIN32)
+                out[index] = ch == '/' ? '\\' : ch;
+#else
+                out[index] = ch;
+#endif
+            }
+            out[path.size()] = '\0';
+            return StrRef(out, path.size());
         }
 
         [[nodiscard]] auto git_has_upstream(Arena& arena, StrRef root) -> bool {
@@ -1237,6 +1356,36 @@ namespace code_editor {
         root = normalized_path(arena, first_output_line(result.output));
         message = root.empty() ? StrRef("Not a Git repository.") : StrRef();
         return !root.empty();
+    }
+
+    auto git_load_tracked_paths(Arena& arena, StrRef root, Vec<StrRef>& out) -> bool {
+        StringBuffer command = {};
+        command.init(256u + root.size(), arena.resource());
+        write_git_command(command, root);
+#if defined(_WIN32)
+        command.write_string("ls-files --cached 2>nul");
+#else
+        command.write_string("ls-files --cached 2>/dev/null");
+#endif
+        GitRunResult const result = run_capture(arena, command.str(), false);
+        if (!result.ok) {
+            return false;
+        }
+
+        size_t line_begin = 0u;
+        while (line_begin < result.output.size()) {
+            size_t line_end = line_begin;
+            while (line_end < result.output.size() && result.output[line_end] != '\n') {
+                ++line_end;
+            }
+            StrRef path =
+                result.output.slice(line_begin, line_end - line_begin).trim_end_matches('\r');
+            if (!path.empty() && !out.push_back(copy_tracked_path(arena, path))) {
+                return false;
+            }
+            line_begin = line_end + 1u;
+        }
+        return true;
     }
 
     auto git_load_status(Arena& arena, StrRef root, Vec<GitStatusItem>& out, StrRef& message)

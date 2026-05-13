@@ -27,7 +27,18 @@ set(REPOSITORY_UI_TESTBED_RELOAD_SOURCES
     ui_theme.h
 )
 
+set(REPOSITORY_UI_TESTBED_HOT_RELOAD OFF)
 if(WIN32)
+    if(CMAKE_CONFIGURATION_TYPES)
+        if("Debug" IN_LIST CMAKE_CONFIGURATION_TYPES)
+            set(REPOSITORY_UI_TESTBED_HOT_RELOAD ON)
+        endif()
+    elseif(CMAKE_BUILD_TYPE STREQUAL "Debug")
+        set(REPOSITORY_UI_TESTBED_HOT_RELOAD ON)
+    endif()
+endif()
+
+if(REPOSITORY_UI_TESTBED_HOT_RELOAD)
     add_library(repository_ui_testbed_module SHARED
         ${REPOSITORY_UI_TESTBED_RELOAD_SOURCES}
         "${CMAKE_CURRENT_BINARY_DIR}/generated/repository_ui_testbed_embedded_codicons.h"
@@ -58,7 +69,21 @@ if(WIN32)
         render::render
     )
     cpp_configure_target(repository_ui_testbed_module)
+else()
+    set(REPOSITORY_UI_TESTBED_MANIFEST_SOURCES)
+    foreach(source IN LISTS REPOSITORY_UI_TESTBED_RELOAD_SOURCES)
+        list(APPEND REPOSITORY_UI_TESTBED_MANIFEST_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/${source}")
+    endforeach()
+    gui_write_hot_reload_manifest(
+        "${CMAKE_CURRENT_BINARY_DIR}/generated/repository_ui_testbed_hot_reload_manifest.h"
+        repository_ui_testbed
+        FILES
+            ${REPOSITORY_UI_TESTBED_MANIFEST_SOURCES}
+            "${PROJECT_SOURCE_DIR}/third_party/codicons/codicon.ttf"
+    )
+endif()
 
+if(WIN32)
     add_executable(repository_ui_testbed
         host.cpp
         "${CMAKE_CURRENT_BINARY_DIR}/generated/repository_ui_testbed_embedded_codicons.h"

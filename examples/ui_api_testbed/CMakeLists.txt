@@ -32,7 +32,18 @@ set(UI_API_TESTBED_RELOAD_SOURCES
     ui_types.h
 )
 
+set(UI_API_TESTBED_HOT_RELOAD OFF)
 if(WIN32)
+    if(CMAKE_CONFIGURATION_TYPES)
+        if("Debug" IN_LIST CMAKE_CONFIGURATION_TYPES)
+            set(UI_API_TESTBED_HOT_RELOAD ON)
+        endif()
+    elseif(CMAKE_BUILD_TYPE STREQUAL "Debug")
+        set(UI_API_TESTBED_HOT_RELOAD ON)
+    endif()
+endif()
+
+if(UI_API_TESTBED_HOT_RELOAD)
     add_library(ui_api_testbed_module SHARED
         ${UI_API_TESTBED_RELOAD_SOURCES}
         "${CMAKE_CURRENT_BINARY_DIR}/generated/ui_api_testbed_embedded_texture.h"
@@ -63,6 +74,18 @@ if(WIN32)
         render::render
     )
     cpp_configure_target(ui_api_testbed_module)
+else()
+    set(UI_API_TESTBED_MANIFEST_SOURCES)
+    foreach(source IN LISTS UI_API_TESTBED_RELOAD_SOURCES)
+        list(APPEND UI_API_TESTBED_MANIFEST_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/${source}")
+    endforeach()
+    gui_write_hot_reload_manifest(
+        "${CMAKE_CURRENT_BINARY_DIR}/generated/ui_api_testbed_hot_reload_manifest.h"
+        ui_api_testbed
+        FILES
+            ${UI_API_TESTBED_MANIFEST_SOURCES}
+            "${PROJECT_SOURCE_DIR}/examples/assets/ui_api_testbed_texture.png"
+    )
 endif()
 
 add_executable(ui_api_testbed

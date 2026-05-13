@@ -64,7 +64,6 @@ namespace code_editor {
     constexpr DWORD DWM_ATTR_TEXT_COLOR = 36u;
     constexpr COLORREF WINDOW_HEADER_BACKGROUND = RGB(12, 15, 18);
     constexpr COLORREF WINDOW_HEADER_TEXT = RGB(230, 235, 239);
-    constexpr size_t GIT_PATH_LINE_CAPACITY = MAX_PATH * 4u;
     constexpr size_t GIT_WORK_QUEUE_CAPACITY = 8u;
     constexpr size_t TREE_FETCH_QUEUE_CAPACITY = 2u;
     constexpr uint64_t TREE_OPERATION_WATCHER_IGNORE_MS = 1000u;
@@ -1701,27 +1700,7 @@ namespace code_editor {
         if (!tracked_paths.init(256u, temp.arena()->resource())) {
             return;
         }
-
-        StrRef const command = fmt::tprintf("git -C \"%s\" ls-files --cached 2>nul", directory);
-        std::FILE* const pipe = _popen(command.data(), "r");
-        if (pipe == nullptr) {
-            return;
-        }
-
-        bool ok = true;
-        char line[GIT_PATH_LINE_CAPACITY] = {};
-        while (std::fgets(line, static_cast<int>(sizeof(line)), pipe) != nullptr) {
-            StrRef const path = StrRef(line).trim_end_matches('\n').trim_end_matches('\r');
-            for (size_t index = 0u; index < path.size(); ++index) {
-                if (line[index] == '/') {
-                    line[index] = '\\';
-                }
-            }
-            if (ok && !tracked_paths.push_back(arena_copy_cstr(*temp.arena(), path))) {
-                ok = false;
-            }
-        }
-        if (_pclose(pipe) != 0 || !ok) {
+        if (!git_load_tracked_paths(*temp.arena(), directory, tracked_paths)) {
             set_file_search_visible(files, true);
             return;
         }

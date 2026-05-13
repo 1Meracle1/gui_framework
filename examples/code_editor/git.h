@@ -224,6 +224,7 @@ namespace code_editor {
 
     [[nodiscard]] auto git_discover_root(Arena& arena, StrRef path, StrRef& root, StrRef& message)
         -> bool;
+    [[nodiscard]] auto git_load_tracked_paths(Arena& arena, StrRef root, Vec<StrRef>& out) -> bool;
     [[nodiscard]] auto
     git_load_status(Arena& arena, StrRef root, Vec<GitStatusItem>& out, StrRef& message) -> bool;
     [[nodiscard]] auto git_load_status_path(

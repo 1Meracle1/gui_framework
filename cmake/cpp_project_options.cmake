@@ -16,6 +16,12 @@ macro(cpp_strip_msvc_default_flag flag_pattern)
 endmacro()
 
 macro(cpp_configure_project)
+    if(MSVC OR CMAKE_CXX_SIMULATE_ID STREQUAL "MSVC")
+        set(CMAKE_MSVC_RUNTIME_LIBRARY
+            "MultiThreaded$<$<CONFIG:Debug>:Debug>$<$<NOT:$<CONFIG:Release>>:DLL>"
+        )
+    endif()
+
     if(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
         cpp_strip_msvc_default_flag("([ /-]|^)/EH[a-zA-Z-]*")
         cpp_strip_msvc_default_flag("([ /-]|^)/GR-?")
@@ -115,6 +121,25 @@ function(cpp_configure_target target_name)
         )
         if(WARNINGS_AS_ERRORS)
             target_compile_options("${target_name}" PRIVATE -Werror)
+        endif()
+
+        get_target_property(target_type "${target_name}" TYPE)
+        if(NOT target_type STREQUAL "STATIC_LIBRARY")
+            set(static_stdlib FALSE)
+            if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+                set(static_stdlib TRUE)
+            elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND NOT APPLE)
+                if(NOT CMAKE_CXX_SIMULATE_ID STREQUAL "MSVC")
+                    set(static_stdlib TRUE)
+                endif()
+            endif()
+
+            if(static_stdlib)
+                target_link_options("${target_name}" PRIVATE
+                    $<$<CONFIG:Release>:-static-libgcc>
+                    $<$<CONFIG:Release>:-static-libstdc++>
+                )
+            endif()
         endif()
     endif()
 endfunction()

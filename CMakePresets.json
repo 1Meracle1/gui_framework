@@ -50,7 +50,8 @@
       "displayName": "Windows MSVC Release",
       "inherits": "windows-msvc-base",
       "cacheVariables": {
-        "CMAKE_CONFIGURATION_TYPES": "Release"
+        "CMAKE_CONFIGURATION_TYPES": "Release",
+        "BUILD_SHARED_LIBS": "OFF"
       }
     },
     {
@@ -117,7 +118,8 @@
       "displayName": "macOS Clang Release",
       "inherits": "macos-clang-base",
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Release"
+        "CMAKE_BUILD_TYPE": "Release",
+        "BUILD_SHARED_LIBS": "OFF"
       }
     },
     {
