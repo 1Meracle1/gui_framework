@@ -19,6 +19,28 @@ namespace {
         return token.end;
     }
 
+    auto expect_line_token(
+        test::Context* context,
+        code_editor::SyntaxTokenizer tokenizer,
+        StrRef line,
+        code_editor::SyntaxTokenKind kind,
+        StrRef text
+    ) -> void {
+        bool found = false;
+        size_t index = 0u;
+        while (index < line.size()) {
+            code_editor::SyntaxToken const token =
+                code_editor::syntax_next_token(tokenizer, line, index);
+            if (line.substr(token.start, token.end - token.start) == text) {
+                TEST_EXPECT(context, token.kind == kind);
+                found = true;
+                break;
+            }
+            index = token.end;
+        }
+        TEST_EXPECT(context, found);
+    }
+
     TEST_CASE(cpp_tokenizer_classifies_common_tokens) {
         code_editor::SyntaxTokenizer const tokenizer = code_editor::cpp_syntax_tokenizer();
         StrRef const line = "auto count = 12u; // ok";
@@ -122,6 +144,149 @@ namespace {
             code_editor::syntax_next_token(text_tokenizer, cpp_line, 0u);
         TEST_EXPECT(context, text_token.kind == code_editor::SyntaxTokenKind::TEXT);
         TEST_EXPECT(context, text_token.end == cpp_line.size());
+    }
+
+    TEST_CASE(abap_tokenizer_classifies_keywords_types_strings_and_comments) {
+        code_editor::SyntaxTokenizer const tokenizer = code_editor::abap_syntax_tokenizer();
+        StrRef const line = "class-data value TYPE string VALUE 'can''t'. \" note";
+        size_t index = 0u;
+        index = expect_token(
+            context, tokenizer, line, index, code_editor::SyntaxTokenKind::KEYWORD, "class-data"
+        );
+        while (index < line.size() && line[index] != 'T') {
+            index = code_editor::syntax_next_token(tokenizer, line, index).end;
+        }
+        index = expect_token(
+            context, tokenizer, line, index, code_editor::SyntaxTokenKind::KEYWORD, "TYPE"
+        );
+        index =
+            expect_token(context, tokenizer, line, index, code_editor::SyntaxTokenKind::TEXT, " ");
+        index = expect_token(
+            context, tokenizer, line, index, code_editor::SyntaxTokenKind::TYPE, "string"
+        );
+        index =
+            expect_token(context, tokenizer, line, index, code_editor::SyntaxTokenKind::TEXT, " ");
+        index = expect_token(
+            context, tokenizer, line, index, code_editor::SyntaxTokenKind::KEYWORD, "VALUE"
+        );
+        while (index < line.size() && line[index] != '\'') {
+            index = code_editor::syntax_next_token(tokenizer, line, index).end;
+        }
+        index = expect_token(
+            context, tokenizer, line, index, code_editor::SyntaxTokenKind::STRING, "'can''t'"
+        );
+        while (index < line.size() && line[index] != '"') {
+            index = code_editor::syntax_next_token(tokenizer, line, index).end;
+        }
+        index = expect_token(
+            context, tokenizer, line, index, code_editor::SyntaxTokenKind::COMMENT, "\" note"
+        );
+        TEST_EXPECT(context, index == line.size());
+    }
+
+    TEST_CASE(abap_tokenizer_keeps_hyphenated_statement_keywords) {
+        code_editor::SyntaxTokenizer const tokenizer = code_editor::abap_syntax_tokenizer();
+        StrRef const line = "END-OF-SELECTION. TEST-INJECTION. END-TEST-SEAM.";
+        size_t index = 0u;
+        index = expect_token(
+            context,
+            tokenizer,
+            line,
+            index,
+            code_editor::SyntaxTokenKind::KEYWORD,
+            "END-OF-SELECTION"
+        );
+        while (index < line.size() && line[index] != 'T') {
+            index = code_editor::syntax_next_token(tokenizer, line, index).end;
+        }
+        index = expect_token(
+            context, tokenizer, line, index, code_editor::SyntaxTokenKind::KEYWORD, "TEST-INJECTION"
+        );
+        while (index < line.size() && line[index] != 'E') {
+            index = code_editor::syntax_next_token(tokenizer, line, index).end;
+        }
+        index = expect_token(
+            context, tokenizer, line, index, code_editor::SyntaxTokenKind::KEYWORD, "END-TEST-SEAM"
+        );
+        TEST_EXPECT(context, index < line.size());
+    }
+
+    TEST_CASE(abap_tokenizer_classifies_line_comment_and_template) {
+        code_editor::SyntaxTokenizer const tokenizer = code_editor::abap_syntax_tokenizer();
+        StrRef const comment = "* comment";
+        code_editor::SyntaxToken const comment_token =
+            code_editor::syntax_next_token(tokenizer, comment, 0u);
+        TEST_EXPECT(context, comment_token.kind == code_editor::SyntaxTokenKind::COMMENT);
+        TEST_EXPECT(context, comment_token.end == comment.size());
+
+        StrRef const line = "WRITE |sum \\| { value }|.";
+        size_t index = 0u;
+        index = expect_token(
+            context, tokenizer, line, index, code_editor::SyntaxTokenKind::KEYWORD, "WRITE"
+        );
+        while (index < line.size() && line[index] != '|') {
+            index = code_editor::syntax_next_token(tokenizer, line, index).end;
+        }
+        index = expect_token(
+            context,
+            tokenizer,
+            line,
+            index,
+            code_editor::SyntaxTokenKind::STRING,
+            "|sum \\| { value }|"
+        );
+        TEST_EXPECT(context, index < line.size());
+    }
+
+    TEST_CASE(tokenizer_selection_uses_abap_extension) {
+        code_editor::SyntaxTokenizer const tokenizer =
+            code_editor::syntax_tokenizer_for_file_name("report.abap");
+        code_editor::SyntaxToken const token =
+            code_editor::syntax_next_token(tokenizer, "select-options", 0u);
+        TEST_EXPECT(context, token.kind == code_editor::SyntaxTokenKind::KEYWORD);
+    }
+
+    TEST_CASE(abap_tokenizer_classifies_indexed_keyword_additions) {
+        code_editor::SyntaxTokenizer const tokenizer = code_editor::abap_syntax_tokenizer();
+        StrRef const select_line =
+            "SELECT DISTINCT * FROM db WHERE value BETWEEN 1 AND 2 ORDER BY key DESCENDING.";
+        expect_line_token(
+            context, tokenizer, select_line, code_editor::SyntaxTokenKind::KEYWORD, "DISTINCT"
+        );
+        expect_line_token(
+            context, tokenizer, select_line, code_editor::SyntaxTokenKind::KEYWORD, "BETWEEN"
+        );
+        expect_line_token(
+            context, tokenizer, select_line, code_editor::SyntaxTokenKind::KEYWORD, "ORDER"
+        );
+        expect_line_token(
+            context, tokenizer, select_line, code_editor::SyntaxTokenKind::KEYWORD, "DESCENDING"
+        );
+
+        StrRef const selection_line = "SELECTION-SCREEN PUSHBUTTON /1(20) text USER-COMMAND run.";
+        expect_line_token(
+            context, tokenizer, selection_line, code_editor::SyntaxTokenKind::KEYWORD, "PUSHBUTTON"
+        );
+
+        StrRef const assign_line =
+            "ASSIGN COMPONENT name OF STRUCTURE row TO FIELD-SYMBOL(<fs>) CASTING.";
+        expect_line_token(
+            context, tokenizer, assign_line, code_editor::SyntaxTokenKind::KEYWORD, "COMPONENT"
+        );
+        expect_line_token(
+            context, tokenizer, assign_line, code_editor::SyntaxTokenKind::KEYWORD, "FIELD-SYMBOL"
+        );
+        expect_line_token(
+            context, tokenizer, assign_line, code_editor::SyntaxTokenKind::KEYWORD, "CASTING"
+        );
+
+        StrRef const parameter_line = "PARAMETERS p AS CHECKBOX DEFAULT abap_true NO-DISPLAY.";
+        expect_line_token(
+            context, tokenizer, parameter_line, code_editor::SyntaxTokenKind::KEYWORD, "CHECKBOX"
+        );
+        expect_line_token(
+            context, tokenizer, parameter_line, code_editor::SyntaxTokenKind::KEYWORD, "NO-DISPLAY"
+        );
     }
 
     TEST_CASE(cpp_pair_detection_ignores_escaped_strings_and_comments) {

@@ -216,6 +216,7 @@ if(BUILD_TESTS)
     add_executable(code_editor_syntax_tests
         tests/code_editor/syntax_tests.cpp
         examples/code_editor/syntax.cpp
+        examples/code_editor/abap_tokenizer.cpp
         examples/code_editor/cpp_tokenizer.cpp
         examples/code_editor/json_tokenizer.cpp
     )

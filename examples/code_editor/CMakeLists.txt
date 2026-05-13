@@ -1,4 +1,5 @@
 set(CODE_EDITOR_RELOAD_SOURCES
+    abap_tokenizer.cpp
     app.cpp
     app.h
     cpp_tokenizer.cpp

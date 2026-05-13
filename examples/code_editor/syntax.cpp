@@ -88,7 +88,14 @@ namespace code_editor {
         return file_name.ends_with_ignore_ascii_case(".json");
     }
 
+    [[nodiscard]] auto abap_file_name(StrRef file_name) -> bool {
+        return file_name.ends_with_ignore_ascii_case(".abap");
+    }
+
     [[nodiscard]] auto syntax_tokenizer_for_file_name(StrRef file_name) -> SyntaxTokenizer {
+        if (abap_file_name(file_name)) {
+            return abap_syntax_tokenizer();
+        }
         if (cpp_file_name(file_name)) {
             return cpp_syntax_tokenizer();
         }
