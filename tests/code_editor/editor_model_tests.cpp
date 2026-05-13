@@ -1949,6 +1949,74 @@ namespace {
         TEST_EXPECT(context, selection.full_line);
     }
 
+    TEST_CASE(editor_normal_shift_v_yank_pastes_full_lines) {
+        Arena arena = {};
+        arena.init();
+
+        ClipboardCapture clipboard = {};
+        code_editor::EditorClipboard clip = {
+            .set_clipboard_text = capture_clipboard_text,
+            .get_clipboard_text = read_clipboard_text,
+            .user_data = &clipboard,
+        };
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "aaa\ncopy\ntarget\nzzz");
+        editor.cursor_line = 1u;
+        editor.cursor_column = 2u;
+        editor.preferred_column = 2u;
+
+        send_text(editor, "Vy", gui::KEY_MOD_NONE, clip);
+        TEST_EXPECT(context, StrRef(clipboard.text, clipboard.text_size) == "copy\n");
+
+        send_text(editor, "jp", gui::KEY_MOD_NONE, clip);
+        TEST_EXPECT(
+            context,
+            code_editor::text_buffer_copy(editor.text, arena) == "aaa\ncopy\ntarget\ncopy\nzzz"
+        );
+
+        code_editor::set_editor_text(editor, "aaa\ncopy\ntarget\nzzz");
+        editor.cursor_line = 2u;
+        editor.cursor_column = 3u;
+        editor.preferred_column = 3u;
+
+        send_text(editor, "P", gui::KEY_MOD_NONE, clip);
+        TEST_EXPECT(
+            context,
+            code_editor::text_buffer_copy(editor.text, arena) == "aaa\ncopy\ncopy\ntarget\nzzz"
+        );
+    }
+
+    TEST_CASE(editor_normal_shift_v_yank_last_line_pastes_full_line) {
+        Arena arena = {};
+        arena.init();
+
+        ClipboardCapture clipboard = {};
+        code_editor::EditorClipboard clip = {
+            .set_clipboard_text = capture_clipboard_text,
+            .get_clipboard_text = read_clipboard_text,
+            .user_data = &clipboard,
+        };
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "head\ntarget\nlast");
+        editor.cursor_line = 2u;
+        editor.cursor_column = 2u;
+        editor.preferred_column = 2u;
+
+        send_text(editor, "Vy", gui::KEY_MOD_NONE, clip);
+        TEST_EXPECT(context, StrRef(clipboard.text, clipboard.text_size) == "last");
+
+        editor.cursor_line = 0u;
+        editor.cursor_column = 1u;
+        editor.preferred_column = 1u;
+        send_text(editor, "p", gui::KEY_MOD_NONE, clip);
+
+        TEST_EXPECT(
+            context, code_editor::text_buffer_copy(editor.text, arena) == "head\nlast\ntarget\nlast"
+        );
+    }
+
     TEST_CASE(editor_normal_selection_insert_keys_use_selection_edges) {
         Arena arena = {};
         arena.init();

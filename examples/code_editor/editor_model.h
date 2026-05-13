@@ -523,6 +523,7 @@ namespace code_editor {
         bool git_root_checked = false;
         bool git_diff_side_by_side = true;
         bool inlay_hints_enabled = true;
+        bool clipboard_full_line = false;
         float git_loading_phase = 0.0f;
         EditorViewKind view_kind = EditorViewKind::TEXT;
         EditorSavePathError save_path_error = EditorSavePathError::NONE;

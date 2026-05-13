@@ -5421,7 +5421,9 @@ namespace code_editor {
     [[nodiscard]] auto can_delete_char(EditorState const& editor) -> bool;
     [[nodiscard]] auto can_delete_line(EditorState const& editor) -> bool;
     auto copy_selection_to_clipboard(EditorState& editor, EditorClipboard clipboard) -> void;
-    auto paste_from_clipboard(EditorState& editor, EditorClipboard clipboard) -> void;
+    auto paste_from_clipboard(
+        EditorState& editor, EditorClipboard clipboard, bool full_line = false, bool after = false
+    ) -> void;
 
     [[nodiscard]] auto selection_start(EditorSelectionRange selection) -> EditorPosition {
         return {selection.start_line, selection.start_column};
@@ -5650,9 +5652,15 @@ namespace code_editor {
     auto paste_around_selection(EditorState& editor, EditorClipboard clipboard, bool after)
         -> void {
         EditorSelectionRange const selection = editor_selection_range(editor);
+        bool const full_line = selection.full_line || editor.clipboard_full_line;
         if (selection.active) {
-            EditorPosition const position =
-                after ? selection_end(selection) : selection_start(selection);
+            EditorPosition position = after ? selection_end(selection) : selection_start(selection);
+            if (full_line) {
+                position = {
+                    after ? selection_last_line(editor, selection) : selection.start_line,
+                    0u,
+                };
+            }
             set_cursor(editor, position.line, position.column);
         } else if (after) {
             set_cursor(
@@ -5661,7 +5669,7 @@ namespace code_editor {
                 std::min(editor.cursor_column + 1u, line_size(editor, editor.cursor_line))
             );
         }
-        paste_from_clipboard(editor, clipboard);
+        paste_from_clipboard(editor, clipboard, full_line, after);
     }
 
     auto
@@ -6270,13 +6278,31 @@ namespace code_editor {
         if (clipboard.set_clipboard_text == nullptr) {
             return;
         }
+        EditorSelectionRange const selection = editor_selection_range(editor);
         StrRef const text = copy_selected_text(editor);
         if (!text.empty()) {
             clipboard.set_clipboard_text(clipboard.user_data, text);
+            editor.clipboard_full_line = selection.full_line;
         }
     }
 
-    auto paste_from_clipboard(EditorState& editor, EditorClipboard clipboard) -> void {
+    auto paste_text_full_line(EditorState& editor, StrRef text, bool after) -> void {
+        clear_extra_cursors(editor);
+        size_t const target_line = editor.cursor_line + (after ? 1u : 0u);
+        size_t const first = std::min(target_line, editor_line_count(editor));
+        size_t count = 0u;
+        for (StrRef line : text.lines()) {
+            insert_line(editor, first + count, line);
+            count += 1u;
+        }
+        if (count != 0u) {
+            set_cursor(editor, std::min(first, editor_line_count(editor) - 1u), 0u);
+        }
+    }
+
+    auto
+    paste_from_clipboard(EditorState& editor, EditorClipboard clipboard, bool full_line, bool after)
+        -> void {
         if (clipboard.get_clipboard_text == nullptr || editor.text.arena == nullptr) {
             return;
         }
@@ -6285,7 +6311,11 @@ namespace code_editor {
             return;
         }
         save_editor_undo(editor);
-        insert_text(editor, text);
+        if (full_line) {
+            paste_text_full_line(editor, text, after);
+        } else {
+            insert_text(editor, text);
+        }
     }
 
     [[nodiscard]] auto editor_json_file_name(StrRef file_name) -> bool {
