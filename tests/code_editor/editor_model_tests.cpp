@@ -1709,6 +1709,35 @@ namespace {
         TEST_EXPECT(context, selection.end_column == 13u);
     }
 
+    TEST_CASE(editor_mouse_click_accounts_for_inlay_hint_width) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(
+            arena, editor, "module, MAKEINTRESOURCEW(SOURCE_CODE_PRO_FONT_ID)"
+        );
+        gui::Rect const rect = {{0.0f, 0.0f}, {500.0f, 300.0f}};
+        float constexpr CHAR_WIDTH = 10.0f;
+        code_editor::LspInlayHint hints[] = {
+            {.position = {0u, 0u}, .label = "hModule:"},
+            {.position = {0u, 8u}, .label = "lpName:"},
+        };
+        Slice<code_editor::LspInlayHint const> const hint_slice(hints, 2u);
+        size_t constexpr PAREN_COLUMN = 24u;
+        float const text_x = code_editor::editor_text_x(editor, rect);
+        gui::Vec2 const mouse = {
+            code_editor::editor_inlay_column_x(hint_slice, 0u, PAREN_COLUMN, text_x, CHAR_WIDTH) +
+                CHAR_WIDTH * 0.25f,
+            code_editor::editor_content_rect(rect).min.y + 2.0f,
+        };
+
+        code_editor::update_cursor_from_mouse(editor, rect, mouse, CHAR_WIDTH, false, hint_slice);
+
+        TEST_EXPECT(context, editor.cursor_line == 0u);
+        TEST_EXPECT(context, editor.cursor_column == PAREN_COLUMN);
+    }
+
     TEST_CASE(editor_mouse_line_selection_selects_current_line_text) {
         Arena arena = {};
         arena.init();

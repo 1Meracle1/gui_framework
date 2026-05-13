@@ -7567,6 +7567,41 @@ namespace code_editor {
                editor_scaled_font_size(editor, LINE_NUMBER_WIDTH) - editor.scroll_x;
     }
 
+    [[nodiscard]] auto editor_inlay_hint_width(LspInlayHint const& hint, float char_width)
+        -> float {
+        float width =
+            char_width * static_cast<float>(hint.label.size()) + 2.0f * INLAY_HINT_PADDING_X;
+        if (hint.padding_left) {
+            width += char_width;
+        }
+        if (hint.padding_right) {
+            width += char_width;
+        }
+        return width;
+    }
+
+    [[nodiscard]] auto editor_inlay_shift_for_column(
+        Slice<LspInlayHint const> hints, size_t line, size_t column, float char_width
+    ) -> float {
+        float shift = 0.0f;
+        for (LspInlayHint const& hint : hints) {
+            if (hint.position.line > line) {
+                break;
+            }
+            if (hint.position.line == line && hint.position.column <= column) {
+                shift += editor_inlay_hint_width(hint, char_width);
+            }
+        }
+        return shift;
+    }
+
+    [[nodiscard]] auto editor_inlay_column_x(
+        Slice<LspInlayHint const> hints, size_t line, size_t column, float text_x, float char_width
+    ) -> float {
+        return text_x + char_width * static_cast<float>(column) +
+               editor_inlay_shift_for_column(hints, line, column, char_width);
+    }
+
     [[nodiscard]] auto editor_max_scroll(EditorState const& editor, gui::Rect rect) -> float {
         gui::Rect const content = editor_content_rect(rect);
         float const visible_height = std::max(1.0f, content.max.y - content.min.y);
@@ -7612,8 +7647,37 @@ namespace code_editor {
         clamp_scroll(editor, rect);
     }
 
+    [[nodiscard]] auto inlay_column_from_visual_x(
+        Slice<LspInlayHint const> hints, size_t line, float visual_x, float char_width
+    ) -> size_t {
+        float shift = 0.0f;
+        for (LspInlayHint const& hint : hints) {
+            if (hint.position.line > line) {
+                break;
+            }
+            if (hint.position.line != line) {
+                continue;
+            }
+
+            float const hint_x = char_width * static_cast<float>(hint.position.column) + shift;
+            float const width = editor_inlay_hint_width(hint, char_width);
+            if (visual_x < hint_x) {
+                break;
+            }
+            if (visual_x < hint_x + width) {
+                return hint.position.column;
+            }
+            shift += width;
+        }
+        return static_cast<size_t>((visual_x - shift) / char_width + 0.5f);
+    }
+
     [[nodiscard]] auto position_from_mouse(
-        EditorState const& editor, gui::Rect rect, gui::Vec2 mouse, float char_width
+        EditorState const& editor,
+        gui::Rect rect,
+        gui::Vec2 mouse,
+        float char_width,
+        Slice<LspInlayHint const> inlay_hints
     ) -> EditorPosition {
         gui::Rect const content = editor_content_rect(rect);
         float const y = std::max(0.0f, mouse.y - content.min.y + editor.scroll_y);
@@ -7623,7 +7687,7 @@ namespace code_editor {
         size_t const line = editor_visible_line_at(editor, visible_line);
         float const text_x = editor_text_x(editor, rect);
         float const column_x = std::max(editor.scroll_x, mouse.x - text_x);
-        size_t const column = static_cast<size_t>(column_x / char_width + 0.5f);
+        size_t const column = inlay_column_from_visual_x(inlay_hints, line, column_x, char_width);
         return clamp_position(editor, {line, column});
     }
 
@@ -7669,18 +7733,28 @@ namespace code_editor {
     }
 
     auto begin_multi_cursor_from_mouse(
-        EditorState& editor, gui::Rect rect, gui::Vec2 mouse, float char_width
+        EditorState& editor,
+        gui::Rect rect,
+        gui::Vec2 mouse,
+        float char_width,
+        Slice<LspInlayHint const> inlay_hints
     ) -> void {
-        EditorPosition const position = position_from_mouse(editor, rect, mouse, char_width);
+        EditorPosition const position =
+            position_from_mouse(editor, rect, mouse, char_width, inlay_hints);
         editor.multi_cursor_anchor_line = position.line;
         editor.multi_cursor_anchor_column = position.column;
         set_multi_cursor_range(editor, position);
     }
 
     auto update_multi_cursor_from_mouse(
-        EditorState& editor, gui::Rect rect, gui::Vec2 mouse, float char_width
+        EditorState& editor,
+        gui::Rect rect,
+        gui::Vec2 mouse,
+        float char_width,
+        Slice<LspInlayHint const> inlay_hints
     ) -> void {
-        EditorPosition const position = position_from_mouse(editor, rect, mouse, char_width);
+        EditorPosition const position =
+            position_from_mouse(editor, rect, mouse, char_width, inlay_hints);
         set_multi_cursor_range(editor, position);
     }
 
@@ -7727,31 +7801,52 @@ namespace code_editor {
     }
 
     auto update_cursor_from_mouse(
-        EditorState& editor, gui::Rect rect, gui::Vec2 mouse, float char_width, bool select
+        EditorState& editor,
+        gui::Rect rect,
+        gui::Vec2 mouse,
+        float char_width,
+        bool select,
+        Slice<LspInlayHint const> inlay_hints
     ) -> void {
         clear_extra_cursors(editor);
-        move_cursor_to(editor, position_from_mouse(editor, rect, mouse, char_width), select);
+        move_cursor_to(
+            editor, position_from_mouse(editor, rect, mouse, char_width, inlay_hints), select
+        );
     }
 
-    auto
-    select_word_from_mouse(EditorState& editor, gui::Rect rect, gui::Vec2 mouse, float char_width)
-        -> void {
+    auto select_word_from_mouse(
+        EditorState& editor,
+        gui::Rect rect,
+        gui::Vec2 mouse,
+        float char_width,
+        Slice<LspInlayHint const> inlay_hints
+    ) -> void {
         EditorPosition start = {};
         EditorPosition end = {};
         if (word_range_at_position(
-                editor, position_from_mouse(editor, rect, mouse, char_width), start, end
+                editor,
+                position_from_mouse(editor, rect, mouse, char_width, inlay_hints),
+                start,
+                end
             )) {
             select_range(editor, start, end);
         } else {
             clear_extra_cursors(editor);
-            move_cursor_to(editor, position_from_mouse(editor, rect, mouse, char_width), false);
+            move_cursor_to(
+                editor, position_from_mouse(editor, rect, mouse, char_width, inlay_hints), false
+            );
         }
     }
 
-    auto
-    select_line_from_mouse(EditorState& editor, gui::Rect rect, gui::Vec2 mouse, float char_width)
-        -> void {
-        EditorPosition const position = position_from_mouse(editor, rect, mouse, char_width);
+    auto select_line_from_mouse(
+        EditorState& editor,
+        gui::Rect rect,
+        gui::Vec2 mouse,
+        float char_width,
+        Slice<LspInlayHint const> inlay_hints
+    ) -> void {
+        EditorPosition const position =
+            position_from_mouse(editor, rect, mouse, char_width, inlay_hints);
         select_range(
             editor, {position.line, 0u}, {position.line, line_size(editor, position.line)}
         );

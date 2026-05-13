@@ -27,6 +27,7 @@ namespace code_editor {
     inline constexpr float EDITOR_PADDING_X = 18.0f;
     inline constexpr float EDITOR_PADDING_Y = 14.0f;
     inline constexpr float LINE_NUMBER_WIDTH = 54.0f;
+    inline constexpr float INLAY_HINT_PADDING_X = 4.0f;
     inline constexpr float SIDEBAR_DEFAULT_WIDTH_PERCENT = 340.0f / 1320.0f;
     inline constexpr float SIDEBAR_MIN_WIDTH_PERCENT = 0.12f;
     inline constexpr float SIDEBAR_MAX_WIDTH_PERCENT = 0.42f;
@@ -631,24 +632,49 @@ namespace code_editor {
     [[nodiscard]] auto editor_line_height(EditorState const& editor) -> float;
     [[nodiscard]] auto editor_content_rect(gui::Rect rect) -> gui::Rect;
     [[nodiscard]] auto editor_text_x(EditorState const& editor, gui::Rect rect) -> float;
+    [[nodiscard]] auto editor_inlay_hint_width(LspInlayHint const& hint, float char_width) -> float;
+    [[nodiscard]] auto editor_inlay_column_x(
+        Slice<LspInlayHint const> hints, size_t line, size_t column, float text_x, float char_width
+    ) -> float;
     auto clamp_scroll(EditorState& editor, gui::Rect rect) -> void;
     auto center_cursor(EditorState& editor, gui::Rect rect) -> void;
     auto reveal_cursor(EditorState& editor, gui::Rect rect, float char_width) -> void;
     auto update_cursor_from_mouse(
-        EditorState& editor, gui::Rect rect, gui::Vec2 mouse, float char_width, bool select
+        EditorState& editor,
+        gui::Rect rect,
+        gui::Vec2 mouse,
+        float char_width,
+        bool select,
+        Slice<LspInlayHint const> inlay_hints = {}
     ) -> void;
     auto begin_multi_cursor_from_mouse(
-        EditorState& editor, gui::Rect rect, gui::Vec2 mouse, float char_width
+        EditorState& editor,
+        gui::Rect rect,
+        gui::Vec2 mouse,
+        float char_width,
+        Slice<LspInlayHint const> inlay_hints = {}
     ) -> void;
     auto update_multi_cursor_from_mouse(
-        EditorState& editor, gui::Rect rect, gui::Vec2 mouse, float char_width
+        EditorState& editor,
+        gui::Rect rect,
+        gui::Vec2 mouse,
+        float char_width,
+        Slice<LspInlayHint const> inlay_hints = {}
     ) -> void;
-    auto
-    select_word_from_mouse(EditorState& editor, gui::Rect rect, gui::Vec2 mouse, float char_width)
-        -> void;
-    auto
-    select_line_from_mouse(EditorState& editor, gui::Rect rect, gui::Vec2 mouse, float char_width)
-        -> void;
+    auto select_word_from_mouse(
+        EditorState& editor,
+        gui::Rect rect,
+        gui::Vec2 mouse,
+        float char_width,
+        Slice<LspInlayHint const> inlay_hints = {}
+    ) -> void;
+    auto select_line_from_mouse(
+        EditorState& editor,
+        gui::Rect rect,
+        gui::Vec2 mouse,
+        float char_width,
+        Slice<LspInlayHint const> inlay_hints = {}
+    ) -> void;
     [[nodiscard]] auto editor_state_hash(EditorState const& editor) -> uint64_t;
     [[nodiscard]] auto editor_visible_line_count(EditorState const& editor) -> size_t;
     [[nodiscard]] auto editor_visible_line_at(EditorState const& editor, size_t index) -> size_t;

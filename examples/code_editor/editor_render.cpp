@@ -38,7 +38,6 @@ namespace code_editor {
     inline constexpr float EDITOR_SPLIT_GAP = 6.0f;
     inline constexpr float EDITOR_SPLIT_MIN_RATIO = 0.08f;
     inline constexpr float EDITOR_SPLIT_MAX_RATIO = 0.92f;
-    inline constexpr float INLAY_HINT_PADDING_X = 4.0f;
     inline constexpr float INLAY_HINT_PADDING_Y = 2.0f;
     inline constexpr float INLAY_HINT_RADIUS = 3.0f;
 
@@ -1477,37 +1476,13 @@ namespace code_editor {
     }
 
     [[nodiscard]] auto inlay_hint_width(LspInlayHint const& hint, float char_width) -> float {
-        float width =
-            char_width * static_cast<float>(hint.label.size()) + 2.0f * INLAY_HINT_PADDING_X;
-        if (hint.padding_left) {
-            width += char_width;
-        }
-        if (hint.padding_right) {
-            width += char_width;
-        }
-        return width;
-    }
-
-    [[nodiscard]] auto inlay_shift_for_column(
-        Slice<LspInlayHint const> hints, size_t line, size_t column, float char_width
-    ) -> float {
-        float shift = 0.0f;
-        for (LspInlayHint const& hint : hints) {
-            if (hint.position.line > line) {
-                break;
-            }
-            if (hint.position.line == line && hint.position.column <= column) {
-                shift += inlay_hint_width(hint, char_width);
-            }
-        }
-        return shift;
+        return editor_inlay_hint_width(hint, char_width);
     }
 
     [[nodiscard]] auto inlay_column_x(
         Slice<LspInlayHint const> hints, size_t line, size_t column, float text_x, float char_width
     ) -> float {
-        return text_x + char_width * static_cast<float>(column) +
-               inlay_shift_for_column(hints, line, column, char_width);
+        return editor_inlay_column_x(hints, line, column, text_x, char_width);
     }
 
     auto draw_token_with_inlay_hints(
@@ -2770,6 +2745,7 @@ namespace code_editor {
                                     input.mouse_down[1u];
         gui::Rect const full_content = editor_content_rect(rect);
         float const line_height = editor_line_height(editor);
+        Slice<LspInlayHint const> const inlay_hints = inlay_hints_for_editor(editor);
         size_t sticky_scope_lines[STICKY_SCOPE_MAX_LINES] = {};
         size_t sticky_scope_count = 0u;
         gui::Rect input_rect = rect;
@@ -2816,16 +2792,20 @@ namespace code_editor {
             }
         }
         if (middle_clicked && !sticky_scope_clicked) {
-            begin_multi_cursor_from_mouse(editor, input_rect, input.mouse_pos, char_width);
+            begin_multi_cursor_from_mouse(
+                editor, input_rect, input.mouse_pos, char_width, inlay_hints
+            );
             editor.set_flag(EditorFlag::MULTI_CURSOR_DRAGGING, true);
             editor.set_flag(EditorFlag::MOUSE_SELECTING, false);
         } else if (middle_dragged) {
-            update_multi_cursor_from_mouse(editor, input_rect, input.mouse_pos, char_width);
+            update_multi_cursor_from_mouse(
+                editor, input_rect, input.mouse_pos, char_width, inlay_hints
+            );
         } else if (triple_clicked) {
-            select_line_from_mouse(editor, input_rect, input.mouse_pos, char_width);
+            select_line_from_mouse(editor, input_rect, input.mouse_pos, char_width, inlay_hints);
             editor.set_flag(EditorFlag::MOUSE_SELECTING, false);
         } else if (double_clicked) {
-            select_word_from_mouse(editor, input_rect, input.mouse_pos, char_width);
+            select_word_from_mouse(editor, input_rect, input.mouse_pos, char_width, inlay_hints);
             editor.set_flag(EditorFlag::MOUSE_SELECTING, false);
         } else if (clicked && !fold_gutter_clicked) {
             update_cursor_from_mouse(
@@ -2833,11 +2813,14 @@ namespace code_editor {
                 input_rect,
                 input.mouse_pos,
                 char_width,
-                (input.key_mods & gui::KEY_MOD_SHIFT) != 0u
+                (input.key_mods & gui::KEY_MOD_SHIFT) != 0u,
+                inlay_hints
             );
             editor.set_flag(EditorFlag::MOUSE_SELECTING, true);
         } else if (dragged) {
-            update_cursor_from_mouse(editor, input_rect, input.mouse_pos, char_width, true);
+            update_cursor_from_mouse(
+                editor, input_rect, input.mouse_pos, char_width, true, inlay_hints
+            );
         }
         if (!input.mouse_down[0u]) {
             editor.set_flag(EditorFlag::MOUSE_SELECTING, false);
@@ -2880,7 +2863,6 @@ namespace code_editor {
         EditorSelectionRange const selection = editor_selection_range(editor);
         SyntaxTokenizer const tokenizer = syntax_tokenizer_for_file_name(editor.current_file_name);
         Slice<LspSemanticToken const> const semantic_tokens = semantic_tokens_for_editor(editor);
-        Slice<LspInlayHint const> const inlay_hints = inlay_hints_for_editor(editor);
         Slice<EditorGitLineChange const> const git_line_changes = current_git_line_changes(editor);
         SyntaxPairMatch syntax_pair_match = {};
         if (selection_visible) {
