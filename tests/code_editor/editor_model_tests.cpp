@@ -2059,7 +2059,9 @@ namespace {
         TEST_EXPECT(
             context, code_editor::editor_line_text(code_editor::editor_line(editor, 0u)) == "abcd"
         );
+        TEST_EXPECT(context, !code_editor::editor_selection_range(editor).active);
 
+        select_editor_range(editor, 0u, 1u, 0u, 3u);
         send_text(editor, "d", gui::KEY_MOD_NONE, clip);
         TEST_EXPECT(context, StrRef(clipboard.text, clipboard.text_size) == "bc");
         TEST_EXPECT(

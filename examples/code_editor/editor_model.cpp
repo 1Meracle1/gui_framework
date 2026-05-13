@@ -5907,6 +5907,7 @@ namespace code_editor {
                 break;
             case 'y':
                 copy_selection_to_clipboard(editor, clipboard);
+                clear_selection(editor);
                 break;
             case 'n':
                 repeat_text_search(editor, false);
@@ -6093,6 +6094,7 @@ namespace code_editor {
             break;
         case 'y':
             copy_selection_to_clipboard(editor, clipboard);
+            clear_selection(editor);
             break;
         case 'p':
             paste_around_selection(editor, clipboard, true);
