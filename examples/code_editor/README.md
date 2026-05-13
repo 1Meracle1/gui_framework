@@ -277,6 +277,21 @@ Global and local config files can define command actions. Local workspace config
 lives at `code_editor.toml` in the opened folder and overrides same-named global
 actions.
 
+Language servers are configured the same way. The editor picks the first enabled
+server whose extension list matches the current file. `executable` can be a name
+on `PATH` or a full path. `working-directory` is optional; when empty, the
+workspace root is used.
+
+```toml
+[language-servers.clangd]
+enabled = true
+name = "clangd"
+extensions = [".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx", ".inl", ".ipp"]
+executable = "clangd"
+arguments = ["--background-index"]
+working-directory = ""
+```
+
 ```toml
 [actions.build]
 keybinding = "Ctrl+Shift+B"

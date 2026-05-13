@@ -103,6 +103,29 @@ namespace {
         TEST_EXPECT(context, code_editor::lsp_utf16_column_to_byte(line, 4u) == 8u);
     }
 
+    TEST_CASE(lsp_server_selection_uses_enabled_extensions) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::LspServerConfig servers[2] = {};
+        StrRef* const cpp_extensions = arena_alloc<StrRef>(arena, 1u);
+        cpp_extensions[0u] = arena_copy_str(arena, ".cpp");
+        servers[0u].id = arena_copy_str(arena, "clangd");
+        servers[0u].extensions = Slice<StrRef>(cpp_extensions, 1u);
+        servers[0u].enabled = true;
+
+        StrRef* const rust_extensions = arena_alloc<StrRef>(arena, 1u);
+        rust_extensions[0u] = arena_copy_str(arena, ".rs");
+        servers[1u].id = arena_copy_str(arena, "disabled");
+        servers[1u].extensions = Slice<StrRef>(rust_extensions, 1u);
+        servers[1u].enabled = false;
+
+        Slice<code_editor::LspServerConfig const> const slice(servers, 2u);
+        TEST_EXPECT(context, code_editor::lsp_server_for_file(slice, "main.cpp") == &servers[0u]);
+        TEST_EXPECT(context, code_editor::lsp_server_for_file(slice, "lib.rs") == nullptr);
+        TEST_EXPECT(context, code_editor::lsp_server_for_file(slice, "README.md") == nullptr);
+    }
+
     TEST_CASE(lsp_snippet_expansion_keeps_first_placeholder_selection) {
         Arena arena = {};
         arena.init();

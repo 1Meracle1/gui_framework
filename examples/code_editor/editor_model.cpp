@@ -4838,10 +4838,23 @@ namespace code_editor {
             show_editor_notification(editor, "Language server control is unavailable.");
             return;
         }
+        LspServerConfig const* const server =
+            lsp_server_for_file(editor.lsp_servers, editor.current_file_path);
+        if (server == nullptr) {
+            show_editor_notification(
+                editor, "No enabled language server configured for this file."
+            );
+            return;
+        }
 
         char message[NOTIFICATION_TEXT_CAPACITY] = {};
         BASE_UNUSED(editor.lsp_control(
-            editor.lsp_control_user_data, kind, editor.current_file_path, message, sizeof(message)
+            editor.lsp_control_user_data,
+            kind,
+            editor.current_file_path,
+            server,
+            message,
+            sizeof(message)
         ));
         show_editor_notification(
             editor, message[0u] != '\0' ? StrRef(message) : StrRef("Language server command sent.")
@@ -6366,14 +6379,34 @@ namespace code_editor {
 
     [[nodiscard]] auto editor_lsp_file(EditorState const& editor) -> bool {
         return editor.view_kind != EditorViewKind::GIT_DIFF && !editor.current_file_path.empty() &&
-               (lsp_cpp_file_name(editor.current_file_name) ||
-                lsp_cpp_file_name(editor.current_file_path));
+               lsp_server_for_file(editor.lsp_servers, editor.current_file_path) != nullptr;
     }
 
     auto send_lsp_request(EditorState& editor, LspEditorRequest const& request) -> void {
         if (editor.lsp_send_request != nullptr) {
             editor.lsp_send_request(editor.lsp_user_data, request);
         }
+    }
+
+    auto ensure_lsp_server_started(EditorState& editor) -> void {
+        if (editor.view_kind == EditorViewKind::GIT_DIFF || editor.current_file_path.empty() ||
+            editor.lsp_control == nullptr) {
+            return;
+        }
+        LspServerConfig const* const server =
+            lsp_server_for_file(editor.lsp_servers, editor.current_file_path);
+        if (server == nullptr) {
+            return;
+        }
+        char message[1] = {};
+        BASE_UNUSED(editor.lsp_control(
+            editor.lsp_control_user_data,
+            LspControlKind::ENSURE_STARTED,
+            editor.current_file_path,
+            server,
+            message,
+            sizeof(message)
+        ));
     }
 
     [[nodiscard]] auto document_lsp_range(EditorState const& editor) -> LspRange {
@@ -6428,6 +6461,17 @@ namespace code_editor {
             return;
         }
 
+        if (editor.lsp_send_request != nullptr && !editor.lsp_synced_path.empty() &&
+            editor.lsp_synced_path != editor.current_file_path) {
+            send_lsp_request(
+                editor, {.kind = LspRequestKind::DID_CLOSE, .path = editor.lsp_synced_path}
+            );
+            editor.lsp_synced_path = {};
+            editor.lsp_synced_revision = 0u;
+            editor.lsp_inlay_hints_requested_path = {};
+            editor.lsp_inlay_hints_requested_revision = 0u;
+        }
+        ensure_lsp_server_started(editor);
         if (editor.lsp_send_request == nullptr) {
             return;
         }

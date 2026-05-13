@@ -144,6 +144,61 @@ namespace code_editor {
         return arena_copy_cstr(arena, buffer.str());
     }
 
+    [[nodiscard]] auto path_is_absolute(StrRef path) -> bool {
+        return path.starts_with("\\\\") || path.starts_with("//") ||
+               (path.size() >= 3u && path[1u] == ':' && (path[2u] == '\\' || path[2u] == '/'));
+    }
+
+    auto write_command_arg(StringBuffer& command, StrRef arg) -> void {
+        command.write_byte('"');
+        size_t slash_count = 0u;
+        for (char const ch : arg) {
+            if (ch == '\\') {
+                slash_count += 1u;
+                continue;
+            }
+            if (ch == '"') {
+                command.write_fill('\\', slash_count * 2u + 1u);
+                command.write_byte('"');
+                slash_count = 0u;
+                continue;
+            }
+            command.write_fill('\\', slash_count);
+            slash_count = 0u;
+            command.write_byte(ch);
+        }
+        command.write_fill('\\', slash_count * 2u);
+        command.write_byte('"');
+    }
+
+    auto append_command_arg(StringBuffer& command, StrRef arg) -> void {
+        if (!command.empty()) {
+            command.write_byte(' ');
+        }
+        write_command_arg(command, arg);
+    }
+
+    [[nodiscard]] auto server_is_clangd(LspServerConfig const& server) -> bool {
+        StrRef const id = server.id;
+        StrRef const executable = server.executable;
+        return id.equals_ignore_ascii_case("clangd") ||
+               executable.equals_ignore_ascii_case("clangd") ||
+               executable.equals_ignore_ascii_case("clangd.exe") ||
+               executable.ends_with_ignore_ascii_case("\\clangd.exe") ||
+               executable.ends_with_ignore_ascii_case("/clangd.exe") ||
+               executable.ends_with_ignore_ascii_case("\\clangd") ||
+               executable.ends_with_ignore_ascii_case("/clangd");
+    }
+
+    [[nodiscard]] auto server_has_compile_commands_arg(LspServerConfig const& server) -> bool {
+        for (StrRef const argument : server.arguments) {
+            if (argument.starts_with_ignore_ascii_case("--compile-commands-dir")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     [[nodiscard]] auto compile_commands_file(Arena& arena, StrRef dir) -> StrRef {
         return path_join(arena, dir, "compile_commands.json");
     }
@@ -517,7 +572,7 @@ namespace code_editor {
             !client.semantic_token_types.init(32u, client.result_arena.resource())) {
             return false;
         }
-        set_server_name(client, "clangd");
+        set_server_name(client, "LSP");
         set_status(client, LspStatusKind::OFF, "off");
         bridge_refresh(client);
         return true;
@@ -601,10 +656,15 @@ namespace code_editor {
     auto read_pipe_messages(LspClient& client) -> void;
     auto read_stderr(LspClient& client) -> void;
 
-    [[nodiscard]] auto lsp_client_start(LspClient& client, StrRef root_path, StrRef source_path)
-        -> bool {
+    [[nodiscard]] auto lsp_client_start(
+        LspClient& client, LspServerConfig const& server, StrRef root_path, StrRef source_path
+    ) -> bool {
         if (client.started) {
             return true;
+        }
+        if (!server.enabled || server.executable.empty()) {
+            set_status(client, LspStatusKind::FAILED, "server disabled");
+            return false;
         }
         if (root_path.empty()) {
             set_status(client, LspStatusKind::WARNING, "no workspace");
@@ -612,9 +672,11 @@ namespace code_editor {
         }
 
         client.root_path = arena_copy_cstr(client.arena, root_path);
+        client.server_id = arena_copy_str(client.arena, server.id);
         client.compile_commands_dir = arena_copy_cstr(
             client.arena, find_compile_commands_dir(client.arena, root_path, source_path)
         );
+        set_server_name(client, server.name.empty() ? server.id : server.name);
 
         if (!ensure_event(client.stdin_io.event) || !ensure_event(client.stdout_io.event) ||
             !ensure_event(client.stderr_io.event)) {
@@ -641,16 +703,27 @@ namespace code_editor {
         ArenaTemp temp = begin_thread_temp_arena();
         StringBuffer command = {};
         command.init(1024u, temp.arena()->resource());
-        command.write_string("clangd --background-index");
-        if (!client.compile_commands_dir.empty()) {
-            command.write_string(" --compile-commands-dir=\"");
-            command.write_string(client.compile_commands_dir);
-            command.write_byte('"');
+        append_command_arg(command, server.executable);
+        for (StrRef const argument : server.arguments) {
+            append_command_arg(command, argument);
+        }
+        bool const wants_compile_commands = server_is_clangd(server);
+        if (wants_compile_commands && !server_has_compile_commands_arg(server) &&
+            !client.compile_commands_dir.empty()) {
+            append_command_arg(
+                command, fmt::tprintf("--compile-commands-dir=%s", client.compile_commands_dir)
+            );
         }
 
+        StrRef const configured_working_dir = server.working_directory;
+        StrRef const working_dir =
+            configured_working_dir.empty() ? root_path
+            : path_is_absolute(configured_working_dir)
+                ? configured_working_dir
+                : path_join(*temp.arena(), root_path, configured_working_dir);
         wchar_t* const wide_command = make_wide(*temp.arena(), command.str());
-        wchar_t* const wide_root = make_wide(*temp.arena(), root_path);
-        if (wide_command == nullptr || wide_root == nullptr) {
+        wchar_t* const wide_working_dir = make_wide(*temp.arena(), working_dir);
+        if (wide_command == nullptr || wide_working_dir == nullptr) {
             close_handle(stdin_read);
             close_handle(stdout_write);
             close_handle(stderr_write);
@@ -658,6 +731,16 @@ namespace code_editor {
             close_handle(client.stdout_read);
             close_handle(client.stderr_read);
             set_status(client, LspStatusKind::FAILED, "bad workspace path");
+            return false;
+        }
+        if (!lsp_path_is_directory(working_dir)) {
+            close_handle(stdin_read);
+            close_handle(stdout_write);
+            close_handle(stderr_write);
+            close_handle(client.stdin_write);
+            close_handle(client.stdout_read);
+            close_handle(client.stderr_read);
+            set_status(client, LspStatusKind::FAILED, "working directory not found");
             return false;
         }
 
@@ -676,7 +759,7 @@ namespace code_editor {
             TRUE,
             CREATE_NO_WINDOW,
             nullptr,
-            lsp_path_is_directory(root_path) ? wide_root : nullptr,
+            wide_working_dir,
             &startup,
             &client.process
         );
@@ -694,10 +777,12 @@ namespace code_editor {
         client.started = true;
         read_pipe_messages(client);
         read_stderr(client);
+        bool const missing_compile_commands =
+            wants_compile_commands && client.compile_commands_dir.empty();
         set_status(
             client,
-            client.compile_commands_dir.empty() ? LspStatusKind::WARNING : LspStatusKind::STARTING,
-            client.compile_commands_dir.empty() ? "no compile_commands.json" : "starting"
+            missing_compile_commands ? LspStatusKind::WARNING : LspStatusKind::STARTING,
+            missing_compile_commands ? "no compile_commands.json" : "starting"
         );
         send_initialize(client);
         return true;

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "editor_theme.h"
+#include "lsp.h"
 
 #include <base/str_ref.h>
 #include <cstddef>
@@ -34,6 +35,7 @@ namespace code_editor {
     struct EditorConfig {
         Palette palette = {};
         EditorActionConfig actions[EDITOR_ACTION_CAPACITY] = {};
+        Slice<LspServerConfig> language_servers = {};
         size_t action_count = 0u;
         gui::font_provider::RasterPolicy raster_policy = gui::font_provider::DEFAULT_RASTER_POLICY;
         float font_size = 12.0f;
@@ -46,6 +48,7 @@ namespace code_editor {
     struct EditorConfigPatch {
         Palette palette = {};
         EditorActionConfig actions[EDITOR_ACTION_CAPACITY] = {};
+        Slice<LspServerConfig> language_servers = {};
         size_t action_count = 0u;
         uint32_t palette_mask = 0u;
         gui::font_provider::RasterPolicy raster_policy = gui::font_provider::DEFAULT_RASTER_POLICY;
@@ -83,26 +86,38 @@ namespace code_editor {
     [[nodiscard]] auto editor_local_config_path(StrRef root_path, char* buffer, size_t capacity)
         -> StrRef;
     [[nodiscard]] auto editor_default_config_template() -> StrRef;
+    auto set_editor_default_language_servers(EditorConfig& config, Arena& arena) -> void;
+    [[nodiscard]] auto copy_editor_config(Arena& arena, EditorConfig const& source) -> EditorConfig;
     auto clear_editor_config_patch(EditorConfigPatch& patch) -> void;
     auto clear_editor_config_error(EditorConfigError& error) -> void;
-    auto apply_editor_config_patch(EditorConfig& config, EditorConfigPatch const& patch) -> void;
-    auto merge_editor_config_patch(EditorConfigPatch& target, EditorConfigPatch const& source)
+    auto
+    apply_editor_config_patch(EditorConfig& config, EditorConfigPatch const& patch, Arena& arena)
         -> void;
+    auto merge_editor_config_patch(
+        EditorConfigPatch& target, EditorConfigPatch const& source, Arena& arena
+    ) -> void;
     [[nodiscard]] auto validate_editor_config_actions(
         EditorConfig const& config,
         StrRef path,
         EditorConfigErrorSource source,
         EditorConfigError& error
     ) -> bool;
+    [[nodiscard]] auto validate_editor_config_language_servers(
+        EditorConfig const& config,
+        StrRef path,
+        EditorConfigErrorSource source,
+        EditorConfigError& error
+    ) -> bool;
     [[nodiscard]] auto parse_editor_config(
+        Arena& arena,
         StrRef text,
         StrRef path,
         EditorConfigErrorSource source,
         EditorConfigPatch& patch,
         EditorConfigError& error
     ) -> bool;
-    [[nodiscard]] auto
-    parse_editor_config_override(StrRef text, EditorConfigPatch& patch, EditorConfigError& error)
-        -> bool;
+    [[nodiscard]] auto parse_editor_config_override(
+        Arena& arena, StrRef text, EditorConfigPatch& patch, EditorConfigError& error
+    ) -> bool;
 
 } // namespace code_editor

@@ -27,7 +27,7 @@ namespace code_editor {
     inline constexpr float EDITOR_PADDING_X = 18.0f;
     inline constexpr float EDITOR_PADDING_Y = 14.0f;
     inline constexpr float LINE_NUMBER_WIDTH = 54.0f;
-    inline constexpr float SIDEBAR_DEFAULT_WIDTH_PERCENT = 440.0f / 1320.0f;
+    inline constexpr float SIDEBAR_DEFAULT_WIDTH_PERCENT = 340.0f / 1320.0f;
     inline constexpr float SIDEBAR_MIN_WIDTH_PERCENT = 0.12f;
     inline constexpr float SIDEBAR_MAX_WIDTH_PERCENT = 0.42f;
     inline constexpr StrRef SCRATCH_FILE_NAME = "scratch";
@@ -461,6 +461,7 @@ namespace code_editor {
         Vec<LspFoldingRange> json_folding_ranges = {};
         LspBridge const* external_lsp_bridge = nullptr;
         LspBridge const* lsp_bridge = nullptr;
+        Slice<LspServerConfig const> lsp_servers = {};
         LspSendEditorRequestFn lsp_send_request = nullptr;
         LspControlFn lsp_control = nullptr;
         void* lsp_user_data = nullptr;

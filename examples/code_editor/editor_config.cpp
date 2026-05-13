@@ -3,6 +3,8 @@
 #include "editor_model.h"
 
 #include <base/fmt.h>
+#include <base/string_buffer.h>
+#include <base/vec.h>
 #include <charconv>
 #include <cstdlib>
 #include <cstring>
@@ -333,6 +335,108 @@ namespace code_editor {
 
             return value.copy_to(buffer, capacity - 1u) == value.size() &&
                    (buffer[value.size()] = '\0', true);
+        }
+
+        [[nodiscard]] auto parse_arena_string_value(Arena& arena, StrRef value, StrRef& out_value)
+            -> bool {
+            value = value.trim();
+            if (value.size() < 2u || value.front() != '"' || value.back() != '"') {
+                out_value = arena_copy_str(arena, value);
+                return true;
+            }
+
+            value = value.substr(1u, value.size() - 2u);
+            StringBuffer buffer = {};
+            if (!buffer.init(value.size(), arena.resource())) {
+                return false;
+            }
+            for (size_t index = 0u; index < value.size(); ++index) {
+                char ch = value[index];
+                if (ch == '\\' && index + 1u < value.size()) {
+                    char const next = value[++index];
+                    switch (next) {
+                    case '"':
+                    case '\\':
+                        ch = next;
+                        break;
+                    case 'n':
+                        ch = '\n';
+                        break;
+                    case 'r':
+                        ch = '\r';
+                        break;
+                    case 't':
+                        ch = '\t';
+                        break;
+                    default:
+                        buffer.write_byte('\\');
+                        ch = next;
+                        break;
+                    }
+                }
+                buffer.write_byte(ch);
+            }
+            out_value = buffer.str();
+            return true;
+        }
+
+        [[nodiscard]] auto
+        parse_string_list_value(Arena& arena, StrRef value, Slice<StrRef>& out_items) -> bool {
+            out_items = {};
+            value = value.trim();
+            if (value.size() < 2u || value.front() != '[' || value.back() != ']') {
+                return false;
+            }
+
+            Vec<StrRef> items = {};
+            if (!items.init(0u, arena.resource())) {
+                return false;
+            }
+            value = value.substr(1u, value.size() - 2u).trim();
+            while (!value.empty()) {
+                if (value.front() != '"') {
+                    return false;
+                }
+
+                bool escaped = false;
+                size_t end = 1u;
+                for (; end < value.size(); ++end) {
+                    char const ch = value[end];
+                    if (escaped) {
+                        escaped = false;
+                    } else if (ch == '\\') {
+                        escaped = true;
+                    } else if (ch == '"') {
+                        break;
+                    }
+                }
+                if (end >= value.size()) {
+                    return false;
+                }
+
+                StrRef item = {};
+                if (!parse_arena_string_value(arena, value.prefix(end + 1u), item) ||
+                    item.empty()) {
+                    return false;
+                }
+                if (!items.push_back(item)) {
+                    return false;
+                }
+
+                value = value.substr(end + 1u).trim();
+                if (value.empty()) {
+                    break;
+                }
+                if (value.front() != ',') {
+                    return false;
+                }
+                value = value.substr(1u).trim();
+                if (value.empty()) {
+                    return false;
+                }
+            }
+            out_items = items.slice();
+            return true;
         }
 
         [[nodiscard]] auto parse_action_key_token(StrRef token, gui::Key& out_key) -> bool {
@@ -667,6 +771,218 @@ namespace code_editor {
             return true;
         }
 
+        [[nodiscard]] auto copy_string_slice(Arena& arena, Slice<StrRef const> source)
+            -> Slice<StrRef> {
+            if (source.empty()) {
+                return {};
+            }
+            StrRef* const items = arena_alloc<StrRef>(arena, source.size());
+            for (size_t index = 0u; index < source.size(); ++index) {
+                items[index] = arena_copy_str(arena, source[index]);
+            }
+            return Slice<StrRef>(items, source.size());
+        }
+
+        [[nodiscard]] auto copy_lsp_server_config(Arena& arena, LspServerConfig const& source)
+            -> LspServerConfig {
+            return {
+                .id = arena_copy_str(arena, source.id),
+                .name = arena_copy_str(arena, source.name),
+                .extensions = copy_string_slice(arena, source.extensions),
+                .executable = arena_copy_str(arena, source.executable),
+                .arguments = copy_string_slice(arena, source.arguments),
+                .working_directory = arena_copy_str(arena, source.working_directory),
+                .enabled = source.enabled,
+                .has_enabled = source.has_enabled,
+                .has_name = source.has_name,
+                .has_extensions = source.has_extensions,
+                .has_executable = source.has_executable,
+                .has_arguments = source.has_arguments,
+                .has_working_directory = source.has_working_directory,
+            };
+        }
+
+        [[nodiscard]] auto append_language_server(
+            Arena& arena, Slice<LspServerConfig>& servers, LspServerConfig const& source
+        ) -> LspServerConfig* {
+            size_t const old_count = servers.size();
+            LspServerConfig* const items = arena_alloc<LspServerConfig>(arena, old_count + 1u);
+            for (size_t index = 0u; index < old_count; ++index) {
+                items[index] = servers[index];
+            }
+            items[old_count] = copy_lsp_server_config(arena, source);
+            servers = Slice<LspServerConfig>(items, old_count + 1u);
+            return items + old_count;
+        }
+
+        [[nodiscard]] auto find_or_add_language_server(
+            EditorConfigPatch& patch,
+            Arena& arena,
+            StrRef id,
+            EditorConfigError& error,
+            EditorConfigErrorSource source,
+            StrRef path,
+            size_t line,
+            StrRef text
+        ) -> LspServerConfig* {
+            if (!action_name_valid(id)) {
+                set_config_error(
+                    error, source, path, line, 1u, "Invalid language server id.", text
+                );
+                return nullptr;
+            }
+            for (LspServerConfig& server : patch.language_servers) {
+                if (server.id.equals_ignore_ascii_case(id)) {
+                    return &server;
+                }
+            }
+
+            LspServerConfig server = {};
+            server.id = id;
+            return append_language_server(arena, patch.language_servers, server);
+        }
+
+        [[nodiscard]] auto parse_language_server_config_value(
+            Arena& arena,
+            StrRef rest,
+            StrRef value,
+            EditorConfigPatch& patch,
+            EditorConfigError& error,
+            EditorConfigErrorSource source,
+            StrRef path,
+            size_t line,
+            size_t column,
+            StrRef text
+        ) -> bool {
+            size_t const separator = rest.rfind('.');
+            if (separator == StrRef::NPOS) {
+                set_config_error(
+                    error, source, path, line, column, "Expected language server key.", text
+                );
+                return false;
+            }
+
+            StrRef const id = rest.prefix(separator);
+            StrRef const key = rest.substr(separator + 1u);
+            LspServerConfig* const server =
+                find_or_add_language_server(patch, arena, id, error, source, path, line, text);
+            if (server == nullptr) {
+                return false;
+            }
+
+            if (key.equals_ignore_ascii_case("enabled")) {
+                bool enabled = false;
+                if (!parse_bool_value(value, enabled)) {
+                    set_value_error(error, source, path, line, column, rest, "true or false", text);
+                    return false;
+                }
+                server->enabled = enabled;
+                server->has_enabled = true;
+                return true;
+            }
+            if (key.equals_ignore_ascii_case("name")) {
+                if (!parse_arena_string_value(arena, value, server->name) || server->name.empty()) {
+                    set_value_error(
+                        error, source, path, line, column, rest, "a non-empty string", text
+                    );
+                    return false;
+                }
+                server->has_name = true;
+                return true;
+            }
+            if (key.equals_ignore_ascii_case("extensions")) {
+                if (!parse_string_list_value(arena, value, server->extensions)) {
+                    set_value_error(
+                        error,
+                        source,
+                        path,
+                        line,
+                        column,
+                        rest,
+                        "a string list like [\".cpp\", \".h\"]",
+                        text
+                    );
+                    return false;
+                }
+                server->has_extensions = true;
+                return true;
+            }
+            if (key.equals_ignore_ascii_case("executable")) {
+                if (!parse_arena_string_value(arena, value, server->executable) ||
+                    server->executable.empty()) {
+                    set_value_error(
+                        error, source, path, line, column, rest, "a non-empty string", text
+                    );
+                    return false;
+                }
+                server->has_executable = true;
+                return true;
+            }
+            if (key.equals_ignore_ascii_case("arguments")) {
+                if (!parse_string_list_value(arena, value, server->arguments)) {
+                    set_value_error(
+                        error,
+                        source,
+                        path,
+                        line,
+                        column,
+                        rest,
+                        "a string list like [\"--background-index\"]",
+                        text
+                    );
+                    return false;
+                }
+                server->has_arguments = true;
+                return true;
+            }
+            if (key.equals_ignore_ascii_case("working-directory")) {
+                if (!parse_arena_string_value(arena, value, server->working_directory)) {
+                    set_value_error(error, source, path, line, column, rest, "a string", text);
+                    return false;
+                }
+                server->has_working_directory = true;
+                return true;
+            }
+
+            char buffer[EDITOR_CONFIG_MESSAGE_CAPACITY] = {};
+            StrRef const message =
+                fmt::bprintf(buffer, sizeof(buffer), "Unknown language server key %s.", rest);
+            set_config_error(error, source, path, line, column, message, text);
+            return false;
+        }
+
+        [[nodiscard]] auto validate_language_server_list(
+            Slice<LspServerConfig const> servers,
+            StrRef path,
+            EditorConfigErrorSource source,
+            EditorConfigError& error,
+            StrRef text
+        ) -> bool {
+            for (LspServerConfig const& server : servers) {
+                if (!server.enabled) {
+                    continue;
+                }
+                StrRef const name = server.name.empty() ? server.id : server.name;
+                if (server.executable.empty()) {
+                    char buffer[EDITOR_CONFIG_MESSAGE_CAPACITY] = {};
+                    StrRef const message = fmt::bprintf(
+                        buffer, sizeof(buffer), "Language server %s must define executable.", name
+                    );
+                    set_config_error(error, source, path, 1u, 1u, message, text);
+                    return false;
+                }
+                if (server.extensions.empty()) {
+                    char buffer[EDITOR_CONFIG_MESSAGE_CAPACITY] = {};
+                    StrRef const message = fmt::bprintf(
+                        buffer, sizeof(buffer), "Language server %s must define extensions.", name
+                    );
+                    set_config_error(error, source, path, 1u, 1u, message, text);
+                    return false;
+                }
+            }
+            return true;
+        }
+
         auto set_palette_color(EditorConfigPatch& patch, ConfigColorSlot slot, gui::Color color)
             -> void {
             patch.palette_mask |= color_slot_mask(slot);
@@ -904,6 +1220,7 @@ namespace code_editor {
                    section.equals_ignore_ascii_case("theme.ui") ||
                    section.equals_ignore_ascii_case("theme.syntax") ||
                    section.equals_ignore_ascii_case("theme.mode") ||
+                   section.starts_with_ignore_ascii_case("language-servers.") ||
                    section.starts_with_ignore_ascii_case("actions.");
         }
 
@@ -925,6 +1242,7 @@ namespace code_editor {
         }
 
         [[nodiscard]] auto parse_config_value(
+            Arena& arena,
             StrRef full_key,
             StrRef value,
             EditorConfigPatch& patch,
@@ -1102,6 +1420,22 @@ namespace code_editor {
                 );
             }
 
+            StrRef language_server_key = {};
+            if (full_key.strip_prefix("language-servers.", &language_server_key)) {
+                return parse_language_server_config_value(
+                    arena,
+                    language_server_key,
+                    value,
+                    patch,
+                    error,
+                    source,
+                    path,
+                    line,
+                    column,
+                    text
+                );
+            }
+
             char buffer[EDITOR_CONFIG_MESSAGE_CAPACITY] = {};
             StrRef const message =
                 fmt::bprintf(buffer, sizeof(buffer), "Unknown config key %s.", full_key);
@@ -1110,6 +1444,7 @@ namespace code_editor {
         }
 
         [[nodiscard]] auto parse_config_lines(
+            Arena& arena,
             StrRef text,
             StrRef path,
             EditorConfigErrorSource source,
@@ -1179,7 +1514,16 @@ namespace code_editor {
                     return false;
                 }
                 if (!parse_config_value(
-                        full_key, value, patch, error, source, path, line_number, equals + 2u, text
+                        arena,
+                        full_key,
+                        value,
+                        patch,
+                        error,
+                        source,
+                        path,
+                        line_number,
+                        equals + 2u,
+                        text
                     )) {
                     return false;
                 }
@@ -1265,6 +1609,15 @@ namespace code_editor {
                "# raster-policy = \"lcd-smooth\"\n"
                "# raster-policy = \"smooth\"\n"
                "\n"
+               "# [language-servers.clangd]\n"
+               "# enabled = true\n"
+               "# name = \"clangd\"\n"
+               "# extensions = [\".c\", \".cc\", \".cpp\", \".cxx\", \".h\", \".hh\", \".hpp\", "
+               "\".hxx\", \".inl\", \".ipp\"]\n"
+               "# executable = \"clangd\"\n"
+               "# arguments = [\"--background-index\"]\n"
+               "# working-directory = \"\"\n"
+               "\n"
                "# [actions.build]\n"
                "# keybinding = \"Ctrl+Shift+B\"\n"
                "# command = \"build.bat\"\n"
@@ -1297,6 +1650,47 @@ namespace code_editor {
                "# normal = \"#52acff\"\n";
     }
 
+    auto set_editor_default_language_servers(EditorConfig& config, Arena& arena) -> void {
+        StrRef const extensions[] = {
+            ".c",
+            ".cc",
+            ".cpp",
+            ".cxx",
+            ".h",
+            ".hh",
+            ".hpp",
+            ".hxx",
+            ".inl",
+            ".ipp",
+        };
+        StrRef const arguments[] = {"--background-index"};
+        LspServerConfig clangd = {
+            .id = "clangd",
+            .name = "clangd",
+            .extensions = copy_string_slice(arena, Slice<StrRef const>(extensions)),
+            .executable = "clangd",
+            .arguments = copy_string_slice(arena, Slice<StrRef const>(arguments)),
+            .enabled = true,
+            .has_enabled = true,
+            .has_name = true,
+            .has_extensions = true,
+            .has_executable = true,
+            .has_arguments = true,
+            .has_working_directory = true,
+        };
+        BASE_UNUSED(append_language_server(arena, config.language_servers, clangd));
+    }
+
+    [[nodiscard]] auto copy_editor_config(Arena& arena, EditorConfig const& source)
+        -> EditorConfig {
+        EditorConfig copy = source;
+        copy.language_servers = {};
+        for (LspServerConfig const& server : source.language_servers) {
+            BASE_UNUSED(append_language_server(arena, copy.language_servers, server));
+        }
+        return copy;
+    }
+
     auto clear_editor_config_patch(EditorConfigPatch& patch) -> void {
         patch = {};
     }
@@ -1319,9 +1713,55 @@ namespace code_editor {
         }
     }
 
-    auto apply_editor_config_patch(EditorConfig& config, EditorConfigPatch const& patch) -> void {
+    auto merge_language_server_config(
+        LspServerConfig& target, LspServerConfig const& source, Arena& arena
+    ) -> void {
+        if (source.has_enabled) {
+            target.enabled = source.enabled;
+            target.has_enabled = true;
+        }
+        if (source.has_name) {
+            target.name = arena_copy_str(arena, source.name);
+            target.has_name = true;
+        }
+        if (source.has_extensions) {
+            target.extensions = copy_string_slice(arena, source.extensions);
+            target.has_extensions = true;
+        }
+        if (source.has_executable) {
+            target.executable = arena_copy_str(arena, source.executable);
+            target.has_executable = true;
+        }
+        if (source.has_arguments) {
+            target.arguments = copy_string_slice(arena, source.arguments);
+            target.has_arguments = true;
+        }
+        if (source.has_working_directory) {
+            target.working_directory = arena_copy_str(arena, source.working_directory);
+            target.has_working_directory = true;
+        }
+    }
+
+    auto upsert_editor_language_server(
+        Slice<LspServerConfig>& servers, LspServerConfig const& source, Arena& arena
+    ) -> void {
+        for (LspServerConfig& server : servers) {
+            if (server.id.equals_ignore_ascii_case(source.id)) {
+                merge_language_server_config(server, source, arena);
+                return;
+            }
+        }
+        BASE_UNUSED(append_language_server(arena, servers, source));
+    }
+
+    auto
+    apply_editor_config_patch(EditorConfig& config, EditorConfigPatch const& patch, Arena& arena)
+        -> void {
         for (size_t index = 0u; index < patch.action_count; ++index) {
             upsert_editor_action(config.actions, config.action_count, patch.actions[index]);
+        }
+        for (LspServerConfig const& server : patch.language_servers) {
+            upsert_editor_language_server(config.language_servers, server, arena);
         }
         if (patch.has_font_size) {
             config.font_size = patch.font_size;
@@ -1346,10 +1786,14 @@ namespace code_editor {
         }
     }
 
-    auto merge_editor_config_patch(EditorConfigPatch& target, EditorConfigPatch const& source)
-        -> void {
+    auto merge_editor_config_patch(
+        EditorConfigPatch& target, EditorConfigPatch const& source, Arena& arena
+    ) -> void {
         for (size_t index = 0u; index < source.action_count; ++index) {
             upsert_editor_action(target.actions, target.action_count, source.actions[index]);
+        }
+        for (LspServerConfig const& server : source.language_servers) {
+            upsert_editor_language_server(target.language_servers, server, arena);
         }
         if (source.has_font_size) {
             target.font_size = source.font_size;
@@ -1462,19 +1906,32 @@ namespace code_editor {
         );
     }
 
+    [[nodiscard]] auto validate_editor_config_language_servers(
+        EditorConfig const& config,
+        StrRef path,
+        EditorConfigErrorSource source,
+        EditorConfigError& error
+    ) -> bool {
+        clear_editor_config_error(error);
+        return validate_language_server_list(
+            config.language_servers, path, source, error, StrRef()
+        );
+    }
+
     [[nodiscard]] auto parse_editor_config(
+        Arena& arena,
         StrRef text,
         StrRef path,
         EditorConfigErrorSource source,
         EditorConfigPatch& patch,
         EditorConfigError& error
     ) -> bool {
-        return parse_config_lines(text, path, source, patch, error);
+        return parse_config_lines(arena, text, path, source, patch, error);
     }
 
-    [[nodiscard]] auto
-    parse_editor_config_override(StrRef text, EditorConfigPatch& patch, EditorConfigError& error)
-        -> bool {
+    [[nodiscard]] auto parse_editor_config_override(
+        Arena& arena, StrRef text, EditorConfigPatch& patch, EditorConfigError& error
+    ) -> bool {
         char buffer[COMMAND_TEXT_CAPACITY + 32u] = {};
         size_t size = 0u;
         if (!append_text(buffer, sizeof(buffer), size, text.trim())) {
@@ -1484,7 +1941,7 @@ namespace code_editor {
             return false;
         }
         return parse_config_lines(
-            StrRef(buffer, size), ":set", EditorConfigErrorSource::SESSION, patch, error
+            arena, StrRef(buffer, size), ":set", EditorConfigErrorSource::SESSION, patch, error
         );
     }
 

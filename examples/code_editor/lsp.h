@@ -45,6 +45,7 @@ namespace code_editor {
 
     enum class LspControlKind : uint8_t {
         START,
+        ENSURE_STARTED,
         STOP,
         RESTART,
     };
@@ -54,6 +55,22 @@ namespace code_editor {
         WARNING = 2u,
         INFORMATION = 3u,
         HINT = 4u,
+    };
+
+    struct LspServerConfig {
+        StrRef id = {};
+        StrRef name = {};
+        Slice<StrRef> extensions = {};
+        StrRef executable = {};
+        Slice<StrRef> arguments = {};
+        StrRef working_directory = {};
+        bool enabled = true;
+        bool has_enabled = false;
+        bool has_name = false;
+        bool has_extensions = false;
+        bool has_executable = false;
+        bool has_arguments = false;
+        bool has_working_directory = false;
     };
 
     struct LspPosition {
@@ -191,9 +208,14 @@ namespace code_editor {
 
     using LspSendEditorRequestFn = auto (*)(void* user_data, LspEditorRequest const& request)
         -> void;
-    using LspControlFn =
-        auto (*)(void* user_data, LspControlKind kind, StrRef path, char* message, size_t capacity)
-            -> bool;
+    using LspControlFn = auto (*)(
+        void* user_data,
+        LspControlKind kind,
+        StrRef path,
+        LspServerConfig const* server,
+        char* message,
+        size_t capacity
+    ) -> bool;
 
     using LspJsonKind = encoding::JsonKind;
     using LspJsonMember = encoding::JsonMember;
@@ -204,6 +226,10 @@ namespace code_editor {
     };
 
     [[nodiscard]] auto lsp_cpp_file_name(StrRef file_name) -> bool;
+    [[nodiscard]] auto lsp_server_matches_file(LspServerConfig const& server, StrRef file_name)
+        -> bool;
+    [[nodiscard]] auto lsp_server_for_file(Slice<LspServerConfig const> servers, StrRef file_name)
+        -> LspServerConfig const*;
     [[nodiscard]] auto lsp_position_less(LspPosition lhs, LspPosition rhs) -> bool;
     [[nodiscard]] auto lsp_range_valid(LspRange range) -> bool;
 

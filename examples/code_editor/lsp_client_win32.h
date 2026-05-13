@@ -71,6 +71,7 @@ namespace code_editor {
         Vec<LspInlayHint> inlay_hints = {};
         Vec<StrRef> semantic_token_types = {};
         StrRef root_path = {};
+        StrRef server_id = {};
         StrRef compile_commands_dir = {};
         StrRef current_path = {};
         StrRef current_uri = {};
@@ -87,8 +88,9 @@ namespace code_editor {
     [[nodiscard]] auto lsp_client_init(LspClient& client) -> bool;
     auto lsp_client_shutdown(LspClient& client) -> void;
     [[nodiscard]] auto lsp_client_stop(LspClient& client) -> bool;
-    [[nodiscard]] auto lsp_client_start(LspClient& client, StrRef root_path, StrRef source_path)
-        -> bool;
+    [[nodiscard]] auto lsp_client_start(
+        LspClient& client, LspServerConfig const& server, StrRef root_path, StrRef source_path
+    ) -> bool;
     auto lsp_client_poll(LspClient& client) -> void;
     auto lsp_client_send_editor_request(void* user_data, LspEditorRequest const& request) -> void;
     [[nodiscard]] auto lsp_client_bridge(LspClient& client) -> LspBridge*;

@@ -63,12 +63,6 @@ namespace code_editor {
     inline constexpr char RELOAD_FILE_KEY = 'r';
     inline constexpr char CLOSE_WITHOUT_SAVE_KEY = 'c';
     inline constexpr char SAVE_CHANGES_KEY = 's';
-    inline constexpr size_t GIT_DIFF_CELL_LIMIT = 1024u * 1024u;
-#if defined(_WIN32)
-    inline constexpr char GIT_STDERR_REDIRECT[] = "2>nul";
-#else
-    inline constexpr char GIT_STDERR_REDIRECT[] = "2>/dev/null";
-#endif
     inline constexpr char TREE_ARROW_OPEN[] = "\xEE\x9C\x8D";
     inline constexpr char TREE_ARROW_CLOSED[] = "\xEE\x9D\xAC";
     inline constexpr char GIT_BRANCH_ICON[] = "\xEE\xA9\xA8";
@@ -189,9 +183,18 @@ namespace code_editor {
 
     [[nodiscard]] auto render_workspace_relative_path(StrRef root, StrRef path) -> StrRef {
         root = render_path_without_trailing_slash(root);
-        if (root.empty() || path.size() <= root.size() ||
-            !path.starts_with_ignore_ascii_case(root)) {
+        if (root.empty() || path.size() <= root.size()) {
             return path;
+        }
+        for (size_t index = 0u; index < root.size(); ++index) {
+            char const root_ch = root[index];
+            char const path_ch = path[index];
+            if ((root_ch == '\\' || root_ch == '/') && (path_ch == '\\' || path_ch == '/')) {
+                continue;
+            }
+            if (to_ascii_lower(root_ch) != to_ascii_lower(path_ch)) {
+                return path;
+            }
         }
         char const separator = path[root.size()];
         return separator == '\\' || separator == '/' ? path.substr(root.size() + 1u) : path;
@@ -232,48 +235,6 @@ namespace code_editor {
         file = std::fopen(path.data(), "wb");
 #endif
         return file;
-    }
-
-    [[nodiscard]] auto open_process_read(StrRef command) -> std::FILE* {
-#if defined(_WIN32)
-        return _popen(command.data(), "rb");
-#else
-        return popen(command.data(), "r");
-#endif
-    }
-
-    [[nodiscard]] auto close_process_read(std::FILE* pipe) -> int {
-#if defined(_WIN32)
-        return _pclose(pipe);
-#else
-        return pclose(pipe);
-#endif
-    }
-
-    [[nodiscard]] auto read_process_output(Arena& arena, StrRef command, StrRef& out_text) -> bool {
-        out_text = {};
-        std::FILE* const pipe = open_process_read(command);
-        if (pipe == nullptr) {
-            return false;
-        }
-
-        StringBuffer buffer = {};
-        bool ok = buffer.init(4096u, arena.resource());
-        char bytes[4096] = {};
-        while (ok) {
-            size_t const read = std::fread(bytes, 1u, sizeof(bytes), pipe);
-            if (read != 0u && buffer.write_bytes(bytes, read) != read) {
-                ok = false;
-            }
-            if (read < sizeof(bytes)) {
-                ok = ok && std::feof(pipe) != 0;
-                break;
-            }
-        }
-
-        ok = close_process_read(pipe) == 0 && ok;
-        out_text = ok ? buffer.str() : StrRef();
-        return ok;
     }
 
     [[nodiscard]] auto read_tree_file_text(Arena& arena, StrRef path, StrRef& out_text) -> bool {
@@ -442,55 +403,6 @@ namespace code_editor {
         return file.git_line_changes.init(0u, editor.arena->resource());
     }
 
-    auto load_git_head_text(EditorState& editor, OpenFile& file) -> void {
-        if (file.git_head_loaded || file.git_relative_path.empty()) {
-            return;
-        }
-
-        file.git_head_loaded = true;
-        StrRef const command = fmt::tprintf(
-            "git -C \"%s\" show HEAD:\"%s\" %s",
-            editor.git_root_path,
-            file.git_relative_path,
-            GIT_STDERR_REDIRECT
-        );
-        StrRef text = {};
-        if (read_process_output(*editor.arena, command, text)) {
-            file.git_head_text = editor_display_text(*editor.arena, text);
-        }
-    }
-
-    struct GitTextLine {
-        StrRef text = {};
-        uint64_t hash = 0u;
-    };
-
-    [[nodiscard]] auto git_line_hash(StrRef text) -> uint64_t {
-        uint64_t hash = 1469598103934665603ull;
-        for (size_t index = 0u; index < text.size(); ++index) {
-            hash ^= static_cast<uint8_t>(text[index]);
-            hash *= 1099511628211ull;
-        }
-        return hash;
-    }
-
-    [[nodiscard]] auto git_lines_equal(GitTextLine const& lhs, GitTextLine const& rhs) -> bool {
-        return lhs.hash == rhs.hash && lhs.text == rhs.text;
-    }
-
-    [[nodiscard]] auto push_git_text_line(Vec<GitTextLine>& lines, StrRef text) -> bool {
-        return lines.push_back({text, git_line_hash(text)});
-    }
-
-    [[nodiscard]] auto collect_git_text_lines(StrRef text, Vec<GitTextLine>& lines) -> bool {
-        for (StrRef const line : text.lines()) {
-            if (!push_git_text_line(lines, line)) {
-                return false;
-            }
-        }
-        return true;
-    }
-
     auto push_git_line_change(
         OpenFile& file, EditorGitLineChangeKind kind, size_t line, size_t current_line_count
     ) -> void {
@@ -503,130 +415,89 @@ namespace code_editor {
         (void)ok;
     }
 
-    [[nodiscard]] auto git_added_marker_line(Slice<GitTextLine const> lines, size_t line)
-        -> size_t {
-        return line > 0u && line < lines.size() && lines[line].text.empty() &&
-                       lines[line - 1u].text.empty()
-                   ? line - 1u
-                   : line;
-    }
-
-    auto push_git_added_range(
-        OpenFile& file, Slice<GitTextLine const> lines, size_t first_line, size_t end_line
-    ) -> void {
-        for (size_t line = first_line; line < end_line; ++line) {
-            push_git_line_change(
-                file,
-                EditorGitLineChangeKind::ADDED,
-                git_added_marker_line(lines, line),
-                lines.size()
-            );
+    [[nodiscard]] auto read_git_patch_number(StrRef text, size_t& offset, size_t& out) -> bool {
+        if (offset >= text.size() || !is_ascii_digit(text[offset])) {
+            return false;
         }
+        size_t value = 0u;
+        while (offset < text.size() && is_ascii_digit(text[offset])) {
+            value = value * 10u + static_cast<size_t>(text[offset] - '0');
+            offset += 1u;
+        }
+        out = value;
+        return true;
     }
 
-    auto rebuild_git_line_changes(EditorState& editor, OpenFile& file, StrRef current_text)
+    [[nodiscard]] auto git_patch_hunk_new_line(StrRef line, size_t& out) -> bool {
+        size_t offset = line.find('+');
+        if (offset == StrRef::NPOS) {
+            return false;
+        }
+        offset += 1u;
+        if (!read_git_patch_number(line, offset, out)) {
+            return false;
+        }
+        out = out == 0u ? 0u : out - 1u;
+        return true;
+    }
+
+    auto flush_git_removed_marker(OpenFile& file, size_t& count, size_t line, size_t line_count)
         -> void {
-        ArenaTemp temp = begin_thread_temp_arena();
-        Vec<GitTextLine> old_lines = {};
-        Vec<GitTextLine> new_lines = {};
-        if (!old_lines.init(0u, temp.arena()->resource()) ||
-            !new_lines.init(0u, temp.arena()->resource()) ||
-            !collect_git_text_lines(file.git_head_text, old_lines) ||
-            !collect_git_text_lines(current_text, new_lines)) {
-            return;
+        if (count != 0u) {
+            push_git_line_change(file, EditorGitLineChangeKind::REMOVED, line, line_count);
+            count = 0u;
         }
+    }
 
-        file.git_line_changes.clear();
-
-        size_t prefix = 0u;
-        while (prefix < old_lines.size() && prefix < new_lines.size() &&
-               git_lines_equal(old_lines[prefix], new_lines[prefix])) {
-            prefix += 1u;
-        }
-
-        size_t old_end = old_lines.size();
-        size_t new_end = new_lines.size();
-        while (old_end > prefix && new_end > prefix &&
-               git_lines_equal(old_lines[old_end - 1u], new_lines[new_end - 1u])) {
-            old_end -= 1u;
-            new_end -= 1u;
-        }
-
-        size_t const old_count = old_end - prefix;
-        size_t const new_count = new_end - prefix;
-        if (old_count == 0u) {
-            push_git_added_range(file, new_lines.slice(), prefix, new_end);
-            file.git_line_change_revision = editor.text.revision;
-            return;
-        }
-        if (new_count == 0u) {
-            push_git_line_change(file, EditorGitLineChangeKind::REMOVED, prefix, new_lines.size());
-            file.git_line_change_revision = editor.text.revision;
-            return;
-        }
-        if (old_count > GIT_DIFF_CELL_LIMIT / new_count) {
-            push_git_added_range(file, new_lines.slice(), prefix, new_end);
-            push_git_line_change(file, EditorGitLineChangeKind::REMOVED, prefix, new_lines.size());
-            file.git_line_change_revision = editor.text.revision;
-            return;
-        }
-
-        size_t const width = new_count + 1u;
-        uint32_t* const lcs = arena_alloc<uint32_t>(*temp.arena(), (old_count + 1u) * width);
-        std::memset(lcs, 0, sizeof(uint32_t) * (old_count + 1u) * width);
-        for (size_t old_index = old_count; old_index > 0u; --old_index) {
-            size_t const old_line = old_index - 1u;
-            for (size_t new_index = new_count; new_index > 0u; --new_index) {
-                size_t const new_line = new_index - 1u;
-                uint32_t const down = lcs[(old_line + 1u) * width + new_line];
-                uint32_t const right = lcs[old_line * width + new_line + 1u];
-                lcs[old_line * width + new_line] =
-                    git_lines_equal(old_lines[prefix + old_line], new_lines[prefix + new_line])
-                        ? lcs[(old_line + 1u) * width + new_line + 1u] + 1u
-                        : std::max(down, right);
-            }
-        }
-
-        size_t old_line = 0u;
+    auto
+    rebuild_git_line_changes_from_patch(OpenFile& file, StrRef patch, size_t current_line_count)
+        -> void {
         size_t new_line = 0u;
-        size_t current_line = prefix;
-        while (old_line < old_count || new_line < new_count) {
-            if (old_line < old_count && new_line < new_count &&
-                git_lines_equal(old_lines[prefix + old_line], new_lines[prefix + new_line])) {
-                old_line += 1u;
-                new_line += 1u;
-                current_line += 1u;
+        size_t pending_removed = 0u;
+        bool in_hunk = false;
+        for (StrRef const line : patch.lines()) {
+            if (line.starts_with("@@ ")) {
+                flush_git_removed_marker(file, pending_removed, new_line, current_line_count);
+                in_hunk = git_patch_hunk_new_line(line, new_line);
                 continue;
             }
-
-            uint32_t const skip_old =
-                old_line < old_count ? lcs[(old_line + 1u) * width + new_line] : 0u;
-            uint32_t const skip_new =
-                new_line < new_count ? lcs[old_line * width + new_line + 1u] : 0u;
-            if (old_line < old_count && new_line < new_count && skip_old == skip_new) {
-                push_git_line_change(
-                    file, EditorGitLineChangeKind::MODIFIED, current_line, new_lines.size()
-                );
-                old_line += 1u;
-                new_line += 1u;
-                current_line += 1u;
-            } else if (new_line < new_count && (old_line == old_count || skip_new >= skip_old)) {
-                push_git_line_change(
-                    file,
-                    EditorGitLineChangeKind::ADDED,
-                    git_added_marker_line(new_lines.slice(), current_line),
-                    new_lines.size()
-                );
-                new_line += 1u;
-                current_line += 1u;
-            } else {
-                push_git_line_change(
-                    file, EditorGitLineChangeKind::REMOVED, current_line, new_lines.size()
-                );
-                old_line += 1u;
+            if (!in_hunk || line.starts_with('\\')) {
+                continue;
             }
+            if (line.starts_with('-')) {
+                pending_removed += 1u;
+                continue;
+            }
+            if (line.starts_with('+')) {
+                EditorGitLineChangeKind const kind = pending_removed != 0u
+                                                         ? EditorGitLineChangeKind::MODIFIED
+                                                         : EditorGitLineChangeKind::ADDED;
+                pending_removed = pending_removed == 0u ? 0u : pending_removed - 1u;
+                push_git_line_change(file, kind, new_line, current_line_count);
+                new_line += 1u;
+                continue;
+            }
+            flush_git_removed_marker(file, pending_removed, new_line, current_line_count);
+            new_line += 1u;
         }
+        flush_git_removed_marker(file, pending_removed, new_line, current_line_count);
+    }
 
+    auto rebuild_git_line_changes(EditorState& editor, OpenFile& file) -> void {
+        file.git_line_changes.clear();
+        ArenaTemp temp = begin_thread_temp_arena();
+        StrRef patch = {};
+        StrRef message = {};
+        if (git_status_patch(
+                *temp.arena(),
+                editor.git_root_path,
+                GitStatusScope::UNSTAGED,
+                file.git_relative_path,
+                patch,
+                message
+            )) {
+            rebuild_git_line_changes_from_patch(file, patch, editor_line_count(editor));
+        }
         file.git_line_change_revision = editor.text.revision;
     }
 
@@ -652,11 +523,8 @@ namespace code_editor {
             return {};
         }
 
-        load_git_head_text(editor, *file);
         if (file->git_line_change_revision != editor.text.revision) {
-            ArenaTemp temp = begin_thread_temp_arena();
-            StrRef const current_text = text_buffer_copy(editor.text, *temp.arena());
-            rebuild_git_line_changes(editor, *file, current_text);
+            rebuild_git_line_changes(editor, *file);
         }
         return file->git_line_changes.slice();
     }

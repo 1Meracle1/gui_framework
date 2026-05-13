@@ -200,22 +200,44 @@ namespace code_editor {
     }
 
     auto lsp_control_start(
-        LspControlContext& control, StrRef success, StrRef failure, char* message, size_t capacity
+        LspControlContext& control,
+        LspServerConfig const* server,
+        StrRef success,
+        StrRef failure,
+        bool retry_failed,
+        char* message,
+        size_t capacity
     ) -> bool {
         if (control.client == nullptr) {
             copy_message(message, capacity, "Language server control is unavailable.");
             return false;
         }
+        if (server == nullptr) {
+            copy_message(message, capacity, "No enabled language server configured for this file.");
+            return false;
+        }
         if (control.client->started) {
-            copy_message(message, capacity, "Language server is already running.");
-            return true;
+            if (control.client->server_id.equals_ignore_ascii_case(server->id)) {
+                copy_message(message, capacity, "Language server is already running.");
+                return true;
+            }
+            if (!lsp_client_stop(*control.client)) {
+                copy_message(message, capacity, "Language server start failed: reset failed.");
+                return false;
+            }
+        }
+        if (control.client->bridge.status == LspStatusKind::FAILED && !retry_failed &&
+            control.client->server_id.equals_ignore_ascii_case(server->id)) {
+            copy_message(message, capacity, "Language server start failed.");
+            return false;
         }
         if (control.client->bridge.status == LspStatusKind::FAILED &&
             !lsp_client_stop(*control.client)) {
             copy_message(message, capacity, "Language server start failed: reset failed.");
             return false;
         }
-        bool const ok = lsp_client_start(*control.client, control.root_path, control.source_path);
+        bool const ok =
+            lsp_client_start(*control.client, *server, control.root_path, control.source_path);
         if (ok) {
             copy_message(message, capacity, success);
             return true;
@@ -231,9 +253,14 @@ namespace code_editor {
         return false;
     }
 
-    [[nodiscard]] auto
-    lsp_control(void* user_data, LspControlKind kind, StrRef path, char* message, size_t capacity)
-        -> bool {
+    [[nodiscard]] auto lsp_control(
+        void* user_data,
+        LspControlKind kind,
+        StrRef path,
+        LspServerConfig const* server,
+        char* message,
+        size_t capacity
+    ) -> bool {
         BASE_UNUSED(path);
         auto* const control = static_cast<LspControlContext*>(user_data);
         if (control == nullptr || control->client == nullptr) {
@@ -244,8 +271,21 @@ namespace code_editor {
         if (kind == LspControlKind::START) {
             return lsp_control_start(
                 *control,
+                server,
                 "Language server started.",
                 "Language server start failed",
+                true,
+                message,
+                capacity
+            );
+        }
+        if (kind == LspControlKind::ENSURE_STARTED) {
+            return lsp_control_start(
+                *control,
+                server,
+                "Language server started.",
+                "Language server start failed",
+                false,
                 message,
                 capacity
             );
@@ -281,8 +321,10 @@ namespace code_editor {
         }
         return lsp_control_start(
             *control,
+            server,
             "Language server restarted.",
             "Language server restart failed",
+            true,
             message,
             capacity
         );
@@ -2934,11 +2976,6 @@ namespace code_editor {
             open_directory_watcher(launch.save_root_path, launch.tree_watcher);
         LspClient lsp_client = {};
         bool const lsp_initialized = lsp_client_init(lsp_client);
-        if (lsp_initialized) {
-            BASE_UNUSED(
-                lsp_client_start(lsp_client, launch.save_root_path, CODE_EDITOR_SOURCE_DIR)
-            );
-        }
         LspControlContext lsp_control_context = {
             .client = lsp_initialized ? &lsp_client : nullptr,
             .root_path = launch.save_root_path,

@@ -8,6 +8,14 @@
 keybinding = "Ctrl+Shift+B"
 command = "build.bat"
 
+[language-servers.clangd]
+enabled = true
+name = "clangd"
+extensions = [".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx", ".inl", ".ipp"]
+executable = "clangd"
+arguments = ["--background-index"]
+working-directory = ""
+
 [editor]
 font-size = 15
 # sidebar-visible = true

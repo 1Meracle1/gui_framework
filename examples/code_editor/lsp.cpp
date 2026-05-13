@@ -22,6 +22,37 @@ namespace code_editor {
                file_name.ends_with_ignore_ascii_case(".ipp");
     }
 
+    [[nodiscard]] auto lsp_server_matches_file(LspServerConfig const& server, StrRef file_name)
+        -> bool {
+        if (!server.enabled || file_name.empty()) {
+            return false;
+        }
+        for (StrRef const extension : server.extensions) {
+            if (extension.empty()) {
+                continue;
+            }
+            if (extension.front() == '.' && file_name.ends_with_ignore_ascii_case(extension)) {
+                return true;
+            }
+            if (extension.front() != '.' && file_name.size() > extension.size() &&
+                file_name[file_name.size() - extension.size() - 1u] == '.' &&
+                file_name.ends_with_ignore_ascii_case(extension)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    [[nodiscard]] auto lsp_server_for_file(Slice<LspServerConfig const> servers, StrRef file_name)
+        -> LspServerConfig const* {
+        for (LspServerConfig const& server : servers) {
+            if (lsp_server_matches_file(server, file_name)) {
+                return &server;
+            }
+        }
+        return nullptr;
+    }
+
     [[nodiscard]] auto lsp_position_less(LspPosition lhs, LspPosition rhs) -> bool {
         return lhs.line < rhs.line || (lhs.line == rhs.line && lhs.column < rhs.column);
     }

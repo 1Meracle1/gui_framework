@@ -107,6 +107,18 @@ namespace {
         capture->count += 1u;
     }
 
+    auto set_cpp_lsp_server(Arena& arena, code_editor::EditorState& editor) -> void {
+        StrRef* const extensions = arena_alloc<StrRef>(arena, 1u);
+        extensions[0u] = ".cpp";
+        code_editor::LspServerConfig* const servers =
+            arena_alloc<code_editor::LspServerConfig>(arena, 1u);
+        servers[0u] = {};
+        servers[0u].id = "clangd";
+        servers[0u].extensions = Slice<StrRef>(extensions, 1u);
+        servers[0u].enabled = true;
+        editor.lsp_servers = Slice<code_editor::LspServerConfig const>(servers, 1u);
+    }
+
     auto select_editor_range(
         code_editor::EditorState& editor,
         size_t start_line,
@@ -2640,6 +2652,7 @@ namespace {
         code_editor::init_editor(arena, editor, "int main() {}");
         editor.current_file_name = "main.cpp";
         editor.current_file_path = "C:\\repo\\main.cpp";
+        set_cpp_lsp_server(arena, editor);
 
         code_editor::LspBridge bridge = {.status = code_editor::LspStatusKind::READY};
         LspRequestCapture capture = {};
@@ -2958,6 +2971,7 @@ namespace {
         editor.current_file_name = "main.cpp";
         editor.current_file_path = "C:\\repo\\main.cpp";
         editor.set_flag(EditorFlag::INSERT_MODE, true);
+        set_cpp_lsp_server(arena, editor);
 
         code_editor::LspBridge bridge = {.status = code_editor::LspStatusKind::READY};
         LspRequestCapture capture = {};
@@ -2984,6 +2998,7 @@ namespace {
         code_editor::init_editor(arena, editor, "int main() {}");
         editor.current_file_name = "main.cpp";
         editor.current_file_path = "C:\\repo\\main.cpp";
+        set_cpp_lsp_server(arena, editor);
 
         code_editor::LspBridge bridge = {.status = code_editor::LspStatusKind::READY};
         LspRequestCapture capture = {};
@@ -3034,6 +3049,7 @@ namespace {
         editor.current_file_name = "main.cpp";
         editor.current_file_path = "C:\\repo\\main.cpp";
         editor.inlay_hints_enabled = false;
+        set_cpp_lsp_server(arena, editor);
 
         code_editor::LspBridge bridge = {.status = code_editor::LspStatusKind::READY};
         LspRequestCapture capture = {};

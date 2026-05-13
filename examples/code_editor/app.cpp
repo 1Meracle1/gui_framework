@@ -80,6 +80,8 @@ namespace code_editor {
     };
 
     struct RuntimeConfigState {
+        Arena session_arena = {};
+        Arena effective_arena = {};
         EditorConfig base = {};
         EditorConfig effective = {};
         EditorConfigPatch session_override = {};
@@ -927,6 +929,7 @@ namespace code_editor {
         runtime.editor.inlay_hints_enabled = runtime.config.effective.inlay_hints;
         runtime.editor.notification_seconds = runtime.config.effective.notification_seconds;
         runtime.editor.notification_right = runtime.config.effective.notification_right;
+        runtime.editor.lsp_servers = runtime.config.effective.language_servers;
         set_filesystem_panel_visible(runtime.editor, runtime.config.effective.sidebar_visible);
     }
 
@@ -943,7 +946,9 @@ namespace code_editor {
         runtime.config.local_write_stamp = local_stamp;
 
         ArenaTemp temp = begin_thread_temp_arena();
-        EditorConfig effective = runtime.config.base;
+        runtime.config.effective_arena.reset();
+        EditorConfig effective =
+            copy_editor_config(runtime.config.effective_arena, runtime.config.base);
         EditorConfigError global_error = {};
         EditorConfigError local_error = {};
 
@@ -962,9 +967,14 @@ namespace code_editor {
             } else {
                 EditorConfigPatch patch = {};
                 if (parse_editor_config(
-                        text, global_path, EditorConfigErrorSource::GLOBAL, patch, global_error
+                        *temp.arena(),
+                        text,
+                        global_path,
+                        EditorConfigErrorSource::GLOBAL,
+                        patch,
+                        global_error
                     )) {
-                    apply_editor_config_patch(effective, patch);
+                    apply_editor_config_patch(effective, patch, runtime.config.effective_arena);
                 } else {
                     append_error_note(
                         global_error, " Using built-in defaults for global settings."
@@ -989,9 +999,14 @@ namespace code_editor {
             } else {
                 EditorConfigPatch patch = {};
                 if (parse_editor_config(
-                        text, local_path, EditorConfigErrorSource::LOCAL, patch, local_error
+                        *temp.arena(),
+                        text,
+                        local_path,
+                        EditorConfigErrorSource::LOCAL,
+                        patch,
+                        local_error
                     )) {
-                    apply_editor_config_patch(effective, patch);
+                    apply_editor_config_patch(effective, patch, runtime.config.effective_arena);
                 } else if (global_error.valid) {
                     append_error_note(local_error, " Using built-in defaults instead.");
                 } else {
@@ -1000,8 +1015,11 @@ namespace code_editor {
             }
         }
 
-        apply_editor_config_patch(effective, runtime.config.session_override);
+        apply_editor_config_patch(
+            effective, runtime.config.session_override, runtime.config.effective_arena
+        );
         EditorConfigError action_error = {};
+        EditorConfigError language_server_error = {};
         StrRef const action_error_path =
             local_stamp != 0u || global_stamp == 0u ? local_path : global_path;
         EditorConfigErrorSource const action_error_source = local_stamp != 0u || global_stamp == 0u
@@ -1011,6 +1029,11 @@ namespace code_editor {
                 effective, action_error_path, action_error_source, action_error
             )) {
             effective.action_count = 0u;
+        }
+        if (!validate_editor_config_language_servers(
+                effective, action_error_path, action_error_source, language_server_error
+            )) {
+            effective.language_servers = {};
         }
         runtime.config.effective = effective;
         apply_runtime_config(runtime);
@@ -1022,6 +1045,9 @@ namespace code_editor {
             runtime.config.error_visible = true;
         } else if (action_error.valid) {
             runtime.config.error = action_error;
+            runtime.config.error_visible = true;
+        } else if (language_server_error.valid) {
+            runtime.config.error = language_server_error;
             runtime.config.error_visible = true;
         } else {
             clear_editor_config_error(runtime.config.error);
@@ -1060,8 +1086,11 @@ namespace code_editor {
             EditorConfigPatch patch = {};
             EditorConfigError error = {};
             StrRef const text(request_text, request_text_size);
-            if (parse_editor_config_override(text, patch, error)) {
-                merge_editor_config_patch(runtime.config.session_override, patch);
+            ArenaTemp temp = begin_thread_temp_arena();
+            if (parse_editor_config_override(*temp.arena(), text, patch, error)) {
+                merge_editor_config_patch(
+                    runtime.config.session_override, patch, runtime.config.session_arena
+                );
                 clear_editor_config_error(runtime.config.error);
                 runtime.config.error_visible = false;
                 reload_runtime_config(runtime, true);
@@ -2141,6 +2170,8 @@ namespace code_editor {
         if (font_provider::context_valid(runtime->provider)) {
             font_provider::destroy_context(runtime->provider);
         }
+        runtime->config.effective_arena.destroy();
+        runtime->config.session_arena.destroy();
         runtime->ui_font = {};
         runtime->editor_font = {};
         runtime->icon_font = {};
@@ -2200,6 +2231,8 @@ namespace code_editor {
         if (!runtime->action.output_text.init(ACTION_OUTPUT_CAPACITY, arena.resource())) {
             return false;
         }
+        runtime->config.session_arena.init();
+        runtime->config.effective_arena.init();
         runtime->native_window = context.native_window;
         runtime->shared_tree_root_name = context.shared_tree_root_name;
         runtime->shared_tree_files = context.shared_tree_files;
@@ -2257,6 +2290,7 @@ namespace code_editor {
             .inlay_hints = runtime->editor.inlay_hints_enabled,
             .notification_right = runtime->editor.notification_right,
         };
+        set_editor_default_language_servers(runtime->config.base, arena);
         runtime->config.effective = runtime->config.base;
         reload_runtime_config(*runtime, true);
         if (context.initial_sidebar_visible && runtime->editor.flag(EditorFlag::SIDEBAR_VISIBLE)) {
@@ -2884,6 +2918,7 @@ namespace code_editor {
         Arena arena = {};
         Runtime runtime = {};
     };
+    static_assert(sizeof(ModuleRuntime) <= MODULE_STORAGE_SIZE);
 
     auto request_window_close(Runtime& runtime) -> void {
         if (!runtime.editor.flag(EditorFlag::CLOSE_APP_CONFIRMED)) {
