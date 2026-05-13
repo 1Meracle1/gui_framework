@@ -978,6 +978,14 @@ namespace code_editor {
         }
     }
 
+    auto focus_filesystem_split(EditorState& editor) -> void {
+        size_t const split =
+            find_leaf_by_kind(editor, editor.root_split, EditorPaneKind::FILESYSTEM);
+        if (split != INVALID_INDEX) {
+            focus_editor_split(editor, split);
+        }
+    }
+
     auto ensure_filesystem_panel(EditorState& editor) -> void {
         if (filesystem_panel_visible(editor) || editor.split_nodes.empty()) {
             editor.set_flag(EditorFlag::SIDEBAR_VISIBLE, filesystem_panel_visible(editor));
@@ -1057,6 +1065,7 @@ namespace code_editor {
         }
         editor.sidebar_tab = EditorSidebarTab::FILES;
         ensure_filesystem_panel(editor);
+        focus_filesystem_split(editor);
     }
 
     auto open_git_sidebar(EditorState& editor) -> void {
@@ -1068,11 +1077,7 @@ namespace code_editor {
         editor.git_selection_focused = false;
         editor.git_control_focused = false;
         ensure_filesystem_panel(editor);
-        size_t const split =
-            find_leaf_by_kind(editor, editor.root_split, EditorPaneKind::FILESYSTEM);
-        if (split != INVALID_INDEX) {
-            focus_editor_split(editor, split);
-        }
+        focus_filesystem_split(editor);
     }
 
     auto set_filesystem_panel_visible(EditorState& editor, bool visible) -> void {

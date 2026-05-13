@@ -782,8 +782,16 @@ namespace {
         send_text(editor, " e");
         TEST_EXPECT(context, editor.flag(EditorFlag::SIDEBAR_VISIBLE));
         TEST_EXPECT(context, editor.tree_cursor == code_editor::TREE_CURSOR_ROOT);
+        TEST_EXPECT(
+            context,
+            code_editor::editor_focused_pane_kind(editor) == code_editor::EditorPaneKind::FILESYSTEM
+        );
         send_text(editor, " e");
         TEST_EXPECT(context, !editor.flag(EditorFlag::SIDEBAR_VISIBLE));
+        TEST_EXPECT(
+            context,
+            code_editor::editor_focused_pane_kind(editor) == code_editor::EditorPaneKind::CODE
+        );
     }
 
     TEST_CASE(editor_insert_mode_space_e_does_not_toggle_sidebar) {
@@ -3262,6 +3270,7 @@ namespace {
             context,
             code_editor::editor_split_pane_kind(editor, right) == code_editor::EditorPaneKind::CODE
         );
+        code_editor::focus_editor_split(editor, right);
 
         send_text(editor, " wH");
 
@@ -3602,8 +3611,9 @@ namespace {
         TEST_EXPECT(context, code_editor::editor_split_leaf_count(editor) == 2u);
         TEST_EXPECT(
             context,
-            code_editor::editor_focused_pane_kind(editor) == code_editor::EditorPaneKind::CODE
+            code_editor::editor_focused_pane_kind(editor) == code_editor::EditorPaneKind::FILESYSTEM
         );
+        code_editor::focus_editor_split(editor, editor.split_nodes[editor.root_split].second);
 
         send_text(editor, " wq");
 
