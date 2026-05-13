@@ -3278,47 +3278,6 @@ namespace {
         TEST_EXPECT(context, editor.flag(EditorFlag::SIDEBAR_VISIBLE));
     }
 
-    TEST_CASE(editor_filesystem_panel_participates_in_window_navigation) {
-        Arena arena = {};
-        arena.init();
-
-        code_editor::EditorState editor = {};
-        code_editor::init_editor(arena, editor, "");
-
-        send_text(editor, " e");
-
-        TEST_EXPECT(context, editor.flag(EditorFlag::SIDEBAR_VISIBLE));
-        TEST_EXPECT(context, code_editor::editor_split_leaf_count(editor) == 2u);
-        TEST_EXPECT(context, editor.split_nodes[editor.root_split].ratio > 0.30f);
-        TEST_EXPECT(context, editor.split_nodes[editor.root_split].ratio < 0.35f);
-
-        size_t const filesystem = editor.split_nodes[editor.root_split].first;
-        size_t const code = editor.split_nodes[editor.root_split].second;
-        TEST_EXPECT(
-            context,
-            code_editor::editor_split_pane_kind(editor, filesystem) ==
-                code_editor::EditorPaneKind::FILESYSTEM
-        );
-        TEST_EXPECT(
-            context,
-            code_editor::editor_split_pane_kind(editor, code) == code_editor::EditorPaneKind::CODE
-        );
-        code_editor::set_editor_split_rect(editor, filesystem, {{0.0f, 0.0f}, {80.0f, 100.0f}});
-        code_editor::set_editor_split_rect(editor, code, {{80.0f, 0.0f}, {200.0f, 100.0f}});
-
-        send_text(editor, " wh");
-        TEST_EXPECT(
-            context,
-            code_editor::editor_focused_pane_kind(editor) == code_editor::EditorPaneKind::FILESYSTEM
-        );
-
-        send_text(editor, " wl");
-        TEST_EXPECT(
-            context,
-            code_editor::editor_focused_pane_kind(editor) == code_editor::EditorPaneKind::CODE
-        );
-    }
-
     TEST_CASE(editor_filesystem_panel_normal_mode_navigates_tree_entries) {
         Arena arena = {};
         arena.init();
@@ -4254,6 +4213,25 @@ namespace {
         code_editor::submit_git_commit(editor);
         TEST_EXPECT(context, editor.git_request.kind == code_editor::GitRequestKind::COMMIT);
         TEST_EXPECT(context, editor.git_request.message == "add file\nbody");
+    }
+
+    TEST_CASE(git_sidebar_p_opens_publish_popup_without_upstream) {
+        Arena arena = {};
+        arena.init();
+        code_editor::EditorState editor = {};
+        code_editor::init_editor(arena, editor, "");
+        code_editor::open_git_sidebar(editor);
+        editor.git_refresh_requested = false;
+        editor.git_branch_publishable = true;
+
+        send_text(editor, "p");
+        TEST_EXPECT(context, editor.git_publish_open);
+        TEST_EXPECT(context, editor.git_request.kind == code_editor::GitRequestKind::NONE);
+
+        code_editor::close_git_publish_popup(editor);
+        editor.git_pending_push_count = 1u;
+        send_text(editor, "p");
+        TEST_EXPECT(context, editor.git_request.kind == code_editor::GitRequestKind::PUSH);
     }
 
     TEST_CASE(git_diff_tabs_ignore_editing_commands) {

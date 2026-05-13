@@ -1336,7 +1336,21 @@ namespace code_editor {
         if (!request.branch.empty()) {
             request.branch = arena_copy_cstr(*editor.arena, request.branch);
         }
+        if (!request.remote_url.empty()) {
+            request.remote_url = arena_copy_cstr(*editor.arena, request.remote_url);
+        }
         editor.git_request = request;
+    }
+
+    auto open_git_publish_popup(EditorState& editor) -> void {
+        editor.git_publish_open = true;
+        editor.git_publish_url_text[0u] = '\0';
+        editor.git_publish_url_text_size = 0u;
+        editor.git_status_text = {};
+    }
+
+    auto close_git_publish_popup(EditorState& editor) -> void {
+        editor.git_publish_open = false;
     }
 
     auto submit_git_commit(EditorState& editor) -> void {
@@ -1448,7 +1462,11 @@ namespace code_editor {
             }
         } break;
         case 'p':
-            set_git_request(editor, {.kind = GitRequestKind::PUSH});
+            if (editor.git_branch_publishable && editor.git_pending_push_count == 0u) {
+                open_git_publish_popup(editor);
+            } else {
+                set_git_request(editor, {.kind = GitRequestKind::PUSH});
+            }
             break;
         default:
             break;
@@ -7448,7 +7466,7 @@ namespace code_editor {
         if (input.key_events == nullptr) {
             return;
         }
-        if (editor.flag(EditorFlag::SAVE_PATH_OPEN)) {
+        if (editor.flag(EditorFlag::SAVE_PATH_OPEN) || editor.git_publish_open) {
             return;
         }
         bool const git_sidebar_focused = editor.sidebar_tab == EditorSidebarTab::GIT &&
@@ -7843,10 +7861,16 @@ namespace code_editor {
         hash = hash_bytes(hash, &editor.git_changes_open, sizeof(editor.git_changes_open));
         hash = hash_bytes(hash, &editor.git_graph_open, sizeof(editor.git_graph_open));
         hash = hash_bytes(hash, &editor.git_branches_open, sizeof(editor.git_branches_open));
+        hash = hash_bytes(hash, &editor.git_root_checked, sizeof(editor.git_root_checked));
+        size_t const git_root_path_size = editor.git_root_path.size();
+        hash = hash_bytes(hash, &git_root_path_size, sizeof(git_root_path_size));
+        hash = hash_bytes(hash, editor.git_root_path.data(), editor.git_root_path.size());
         hash =
             hash_bytes(hash, &editor.git_pending_pull_count, sizeof(editor.git_pending_pull_count));
         hash =
             hash_bytes(hash, &editor.git_pending_push_count, sizeof(editor.git_pending_push_count));
+        hash =
+            hash_bytes(hash, &editor.git_branch_publishable, sizeof(editor.git_branch_publishable));
         hash = hash_bytes(hash, &editor.git_operation_state, sizeof(editor.git_operation_state));
         hash = hash_bytes(hash, &editor.git_error_visible, sizeof(editor.git_error_visible));
         hash =
@@ -7858,6 +7882,7 @@ namespace code_editor {
         hash = hash_bytes(hash, &editor.git_commits_loading, sizeof(editor.git_commits_loading));
         hash =
             hash_bytes(hash, &editor.git_operation_pending, sizeof(editor.git_operation_pending));
+        hash = hash_bytes(hash, &editor.git_publish_open, sizeof(editor.git_publish_open));
         hash = hash_bytes(
             hash, &editor.git_pending_operation_kind, sizeof(editor.git_pending_operation_kind)
         );
@@ -7888,6 +7913,7 @@ namespace code_editor {
             hash, editor.git_commit_search_text, cstr_len(editor.git_commit_search_text)
         );
         hash = hash_bytes(hash, editor.git_action_ref_text, cstr_len(editor.git_action_ref_text));
+        hash = hash_bytes(hash, editor.git_publish_url_text, editor.git_publish_url_text_size);
         size_t const git_status_count = editor.git_status_items.size();
         hash = hash_bytes(hash, &git_status_count, sizeof(git_status_count));
         size_t const git_commit_count = editor.git_commits.size();

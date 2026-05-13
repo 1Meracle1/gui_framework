@@ -46,6 +46,7 @@ namespace code_editor {
     inline constexpr size_t NOTIFICATION_TEXT_CAPACITY = 256u;
     inline constexpr size_t TEXT_SEARCH_TEXT_CAPACITY = 256u;
     inline constexpr size_t GIT_SEARCH_TEXT_CAPACITY = 128u;
+    inline constexpr size_t GIT_REMOTE_URL_CAPACITY = 1024u;
     inline constexpr size_t GIT_COMMIT_POPUP_NONE = static_cast<size_t>(-1);
     struct EditorCommand {
         StrRef name = {};
@@ -409,6 +410,7 @@ namespace code_editor {
         char git_branch_search_text[GIT_SEARCH_TEXT_CAPACITY] = {};
         char git_commit_search_text[GIT_SEARCH_TEXT_CAPACITY] = {};
         char git_action_ref_text[GIT_SEARCH_TEXT_CAPACITY] = {};
+        char git_publish_url_text[GIT_REMOTE_URL_CAPACITY] = {};
         gui::Vec2 file_search_mouse_pos = {};
         size_t file_search_text_size = 0u;
         size_t command_text_size = 0u;
@@ -417,6 +419,7 @@ namespace code_editor {
         size_t git_branch_search_text_size = 0u;
         size_t git_commit_search_text_size = 0u;
         size_t git_action_ref_text_size = 0u;
+        size_t git_publish_url_text_size = 0u;
         size_t text_search_origin_line = 0u;
         size_t multi_cursor_anchor_line = 0u;
         size_t multi_cursor_anchor_column = 0u;
@@ -516,6 +519,8 @@ namespace code_editor {
         bool git_commit_load_more_requested = false;
         bool git_commit_popup_keyboard = false;
         bool git_commit_popup_mouse_known = false;
+        bool git_publish_open = false;
+        bool git_branch_publishable = false;
         bool notification_visible = false;
         bool notification_right = true;
         bool git_error_visible = false;
@@ -552,6 +557,8 @@ namespace code_editor {
     auto close_save_path_popup(EditorState& editor) -> void;
     auto ensure_filesystem_panel(EditorState& editor) -> void;
     auto open_git_sidebar(EditorState& editor) -> void;
+    auto open_git_publish_popup(EditorState& editor) -> void;
+    auto close_git_publish_popup(EditorState& editor) -> void;
     auto submit_git_commit(EditorState& editor) -> void;
     auto set_git_diff_view_text(EditorState& editor) -> void;
     auto set_filesystem_panel_visible(EditorState& editor, bool visible) -> void;

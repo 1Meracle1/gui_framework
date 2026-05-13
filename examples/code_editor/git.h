@@ -123,12 +123,14 @@ namespace code_editor {
     enum class GitRequestKind : uint8_t {
         NONE,
         REFRESH,
+        INIT_REPOSITORY,
         STAGE,
         STAGE_ALL,
         UNSTAGE,
         UNSTAGE_ALL,
         COMMIT,
         PUSH,
+        PUBLISH_BRANCH,
         PULL,
         FETCH,
         MERGE_BRANCH,
@@ -152,6 +154,7 @@ namespace code_editor {
         StrRef commit_oid = {};
         StrRef message = {};
         StrRef branch = {};
+        StrRef remote_url = {};
     };
 
     struct GitRunResult {
@@ -245,6 +248,7 @@ namespace code_editor {
     [[nodiscard]] auto
     git_load_operation_state(Arena& arena, StrRef root, GitOperationState& state, StrRef& message)
         -> bool;
+    [[nodiscard]] auto git_init(Arena& arena, StrRef path, StrRef& message) -> bool;
     [[nodiscard]] auto git_stage_path(Arena& arena, StrRef root, StrRef path, StrRef& message)
         -> bool;
     [[nodiscard]] auto git_stage_all(Arena& arena, StrRef root, StrRef& message) -> bool;
@@ -254,6 +258,9 @@ namespace code_editor {
     [[nodiscard]] auto git_commit(Arena& arena, StrRef root, StrRef message_text, StrRef& message)
         -> bool;
     [[nodiscard]] auto git_push(Arena& arena, StrRef root, StrRef& message) -> bool;
+    [[nodiscard]] auto git_branch_publishable(Arena& arena, StrRef root) -> bool;
+    [[nodiscard]] auto
+    git_publish_branch(Arena& arena, StrRef root, StrRef remote_url, StrRef& message) -> bool;
     [[nodiscard]] auto git_pull(Arena& arena, StrRef root, StrRef& message) -> bool;
     [[nodiscard]] auto git_fetch(Arena& arena, StrRef root, StrRef& message) -> bool;
     [[nodiscard]] auto git_merge_branch(Arena& arena, StrRef root, StrRef branch, StrRef& message)

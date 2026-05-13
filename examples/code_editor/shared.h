@@ -152,12 +152,14 @@ namespace code_editor {
         REFRESH,
         COMMIT_PAGE,
         COMMIT_FILES,
+        INIT_REPOSITORY,
         STAGE,
         STAGE_ALL,
         UNSTAGE,
         UNSTAGE_ALL,
         COMMIT,
         PUSH,
+        PUBLISH_BRANCH,
         PULL,
         FETCH,
         MERGE_BRANCH,
@@ -186,6 +188,7 @@ namespace code_editor {
         StrRef commit_oid = {};
         StrRef message_text = {};
         StrRef branch = {};
+        StrRef remote_url = {};
     };
 
     struct GitWorkResult {
@@ -210,6 +213,7 @@ namespace code_editor {
         Vec<GitBranch> branches = {};
         bool ok = false;
         bool log_loaded = false;
+        bool branch_publishable = false;
     };
 
     struct ModuleRuntimeContext {

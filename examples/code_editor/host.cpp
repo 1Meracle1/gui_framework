@@ -2104,11 +2104,24 @@ namespace code_editor {
         };
         BASE_UNUSED(init_git_result_vecs(arena, result));
 
-        StrRef root = {};
         StrRef message = {};
+        if (request.kind == GitWorkKind::INIT_REPOSITORY) {
+            result.ok = !request.save_root.empty() && git_init(arena, request.save_root, message);
+            if (result.ok && !git_discover_root(arena, request.save_root, result.root, message)) {
+                result.ok = false;
+            }
+            result.message = message;
+            return result;
+        }
+
+        StrRef root = {};
         if (!git_work_root(arena, request, root, message)) {
             result.root = root;
             result.message = message;
+            result.ok = request.kind == GitWorkKind::REFRESH && message == "Not a Git repository.";
+            if (result.ok) {
+                result.message = {};
+            }
             return result;
         }
         result.root = root;
@@ -2121,6 +2134,7 @@ namespace code_editor {
                 git_load_pending_pull_count(arena, root, result.pending_pull_count, message) &&
                 git_load_pending_push_count(arena, root, result.pending_push_count, message) &&
                 git_load_operation_state(arena, root, result.operation_state, message);
+            result.branch_publishable = result.ok && git_branch_publishable(arena, root);
             result.log_loaded = result.ok && request.count != 0u;
             if (result.log_loaded) {
                 result.ok =
@@ -2156,6 +2170,9 @@ namespace code_editor {
             break;
         case GitWorkKind::PUSH:
             result.ok = git_push(arena, root, message);
+            break;
+        case GitWorkKind::PUBLISH_BRANCH:
+            result.ok = git_publish_branch(arena, root, request.remote_url, message);
             break;
         case GitWorkKind::PULL:
             result.ok = git_pull(arena, root, message);

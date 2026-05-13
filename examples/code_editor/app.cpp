@@ -421,6 +421,7 @@ namespace code_editor {
         editor.git_current_branch = arena_copy_cstr(*editor.arena, result.current_branch);
         editor.git_pending_pull_count = result.pending_pull_count;
         editor.git_pending_push_count = result.pending_push_count;
+        editor.git_branch_publishable = result.branch_publishable;
         editor.git_operation_state = result.operation_state;
         if (result.log_loaded) {
             copy_git_commits(editor, result.commits);
@@ -518,14 +519,15 @@ namespace code_editor {
         set_git_status_text(editor, result.message);
         editor.git_refresh_requested = true;
         if (result.kind == GitWorkKind::COMMIT || result.kind == GitWorkKind::PUSH ||
-            result.kind == GitWorkKind::PULL || result.kind == GitWorkKind::MERGE_BRANCH ||
-            result.kind == GitWorkKind::REBASE_BRANCH || result.kind == GitWorkKind::CHERRY_PICK ||
-            result.kind == GitWorkKind::MERGE_ABORT ||
+            result.kind == GitWorkKind::PUBLISH_BRANCH || result.kind == GitWorkKind::PULL ||
+            result.kind == GitWorkKind::MERGE_BRANCH || result.kind == GitWorkKind::REBASE_BRANCH ||
+            result.kind == GitWorkKind::CHERRY_PICK || result.kind == GitWorkKind::MERGE_ABORT ||
             result.kind == GitWorkKind::REBASE_CONTINUE ||
             result.kind == GitWorkKind::REBASE_ABORT ||
             result.kind == GitWorkKind::CHERRY_PICK_CONTINUE ||
             result.kind == GitWorkKind::CHERRY_PICK_ABORT ||
-            result.kind == GitWorkKind::CHECKOUT_BRANCH) {
+            result.kind == GitWorkKind::CHECKOUT_BRANCH ||
+            result.kind == GitWorkKind::INIT_REPOSITORY) {
             editor.git_log_refresh_requested = true;
         }
     }
@@ -555,6 +557,8 @@ namespace code_editor {
 
     [[nodiscard]] auto git_work_kind_from_request(GitRequestKind kind) -> GitWorkKind {
         switch (kind) {
+        case GitRequestKind::INIT_REPOSITORY:
+            return GitWorkKind::INIT_REPOSITORY;
         case GitRequestKind::STAGE:
             return GitWorkKind::STAGE;
         case GitRequestKind::STAGE_ALL:
@@ -567,6 +571,8 @@ namespace code_editor {
             return GitWorkKind::COMMIT;
         case GitRequestKind::PUSH:
             return GitWorkKind::PUSH;
+        case GitRequestKind::PUBLISH_BRANCH:
+            return GitWorkKind::PUBLISH_BRANCH;
         case GitRequestKind::PULL:
             return GitWorkKind::PULL;
         case GitRequestKind::FETCH:
@@ -642,6 +648,7 @@ namespace code_editor {
             .commit_oid = request.commit_oid,
             .message_text = request.message,
             .branch = request.branch,
+            .remote_url = request.remote_url,
         };
         fill_git_root_request(editor, work);
         StrRef const status =
@@ -2886,7 +2893,8 @@ namespace code_editor {
         }
         gui::render_frame_base(ui, runtime->draw_context);
         bool const editor_selection_visible = !search_open && !text_reference_mode_enabled();
-        if (!runtime->editor.flag(EditorFlag::SAVE_PATH_OPEN)) {
+        if (!runtime->editor.flag(EditorFlag::SAVE_PATH_OPEN) &&
+            !runtime->editor.git_publish_open) {
             draw_editor_surface(
                 runtime->draw_context,
                 runtime->editor_font,

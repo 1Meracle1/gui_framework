@@ -4333,6 +4333,10 @@ namespace code_editor {
         return StrRef(editor.git_action_ref_text).trim();
     }
 
+    [[nodiscard]] auto git_publish_url(EditorState const& editor) -> StrRef {
+        return StrRef(editor.git_publish_url_text).trim();
+    }
+
     [[nodiscard]] auto git_matching_branch_count(EditorState const& editor) -> size_t {
         size_t count = 0u;
         StrRef const query = git_branch_search_query(editor);
@@ -4365,7 +4369,8 @@ namespace code_editor {
         EditorState& editor,
         Palette const& palette,
         gui::Size width,
-        float height
+        float height,
+        bool edit_on_enter = true
     ) -> gui::Signal {
         gui::Signal signal = {};
         if (auto box = ui.overlay(
@@ -4427,7 +4432,7 @@ namespace code_editor {
                                     .font_size = editor.font_size,
                                 },
                         },
-                    .edit_on_enter = true,
+                    .edit_on_enter = edit_on_enter,
                 }
             );
             if (signal.focused) {
@@ -4440,6 +4445,63 @@ namespace code_editor {
     }
 
     auto sync_git_control_focus(EditorState& editor, gui::Signal signal) -> void;
+
+    [[nodiscard]] auto git_repository_missing(EditorState const& editor) -> bool {
+        return editor.git_root_checked && editor.git_root_path.empty();
+    }
+
+    auto draw_git_missing_repository_panel(
+        gui::Frame& ui, EditorState& editor, Palette const& palette, float row_width
+    ) -> void {
+        if (auto panel = ui.column(
+                gui::id("git_missing_repository_panel"),
+                {
+                    .layout =
+                        {
+                            .width = row_width > 0.0f ? gui::px(row_width) : gui::fill(),
+                            .height = gui::children(),
+                            .gap = 12.0f,
+                        },
+                    .debug_name = "git_missing_repository_panel",
+                }
+            )) {
+            BASE_UNUSED(panel);
+            ui.label(
+                gui::id("git_missing_repository_label"),
+                "The folder currently open doesn't have a Git repository. You can initialize a "
+                "repository which will enable source control features powered by Git.",
+                {
+                    .layout = {.width = gui::fill(), .height = gui::text(), .word_wrap = true},
+                    .style = {.foreground = palette.text, .font_size = editor.font_size},
+                }
+            );
+            bool const enabled = !editor.git_operation_pending && !editor.save_root_path.empty();
+            gui::BoxDesc const button_desc = {
+                .layout =
+                    {
+                        .width = gui::fill(),
+                        .height = gui::px(24.0f),
+                        .padding = gui::insets(0.0f, 10.0f),
+                    },
+                .style =
+                    {
+                        .background = enabled ? gui::rgb(143, 190, 205) : palette.panel,
+                        .foreground = enabled ? palette.panel : palette.faint,
+                        .border = enabled ? gui::rgb(143, 190, 205) : palette.border,
+                        .border_thickness = 1.0f,
+                        .radius = 4.0f,
+                        .font_size = editor.font_size,
+                    },
+                .flags = enabled ? gui::BOX_FLAG_NONE : gui::BOX_FLAG_DISABLED,
+            };
+            gui::Signal const init =
+                ui.button(gui::id("git_init_repository"), "Initialize Repository", button_desc);
+            sync_git_control_focus(editor, init);
+            if (init.activated) {
+                editor.git_request = {.kind = GitRequestKind::INIT_REPOSITORY};
+            }
+        }
+    }
 
     auto draw_git_panel_header(
         gui::Frame& ui,
@@ -4842,7 +4904,9 @@ namespace code_editor {
         if (commit_button.activated) {
             submit_git_commit(editor);
         }
-        if (editor.git_pending_push_count != 0u) {
+        bool const publish_visible =
+            editor.git_branch_publishable && editor.git_pending_push_count == 0u;
+        if (editor.git_pending_push_count != 0u || publish_visible) {
             bool const push_enabled = !editor.git_operation_pending &&
                                       editor.git_operation_state == GitOperationState::NONE;
             gui::BoxDesc push_desc = button_desc;
@@ -4852,12 +4916,17 @@ namespace code_editor {
             push_desc.flags = push_enabled ? gui::BOX_FLAG_NONE : gui::BOX_FLAG_DISABLED;
             gui::Signal const push = ui.button(
                 gui::id("git_push_changes"),
-                fmt::tprintf("Push (%zu)", editor.git_pending_push_count),
+                publish_visible ? StrRef("Publish Branch")
+                                : fmt::tprintf("Push (%zu)", editor.git_pending_push_count),
                 push_desc
             );
             sync_git_control_focus(editor, push);
             if (push.activated) {
-                editor.git_request = {.kind = GitRequestKind::PUSH};
+                if (publish_visible) {
+                    open_git_publish_popup(editor);
+                } else {
+                    editor.git_request = {.kind = GitRequestKind::PUSH};
+                }
             }
         }
     }
@@ -6371,6 +6440,10 @@ namespace code_editor {
         editor.git_action_ref_focused = false;
         editor.git_control_focused = false;
         editor.git_text_editing = false;
+        if (git_repository_missing(editor)) {
+            draw_git_missing_repository_panel(ui, editor, palette, row_width);
+            return;
+        }
         size_t row_index = 0u;
         draw_git_panel_header(ui, editor, palette, icon_font, branch_icon_font, row_width);
         draw_git_branch_list(ui, editor, palette, sidebar_content_height);
@@ -6505,7 +6578,8 @@ namespace code_editor {
         bool const git_tab = editor.sidebar_tab == EditorSidebarTab::GIT;
         float const panel_padding_y = git_tab ? GIT_PANEL_PADDING_Y : 14.0f;
         gui::Rect const split_rect = editor.split_nodes[split].rect;
-        if (!focused && input.mouse_down[0u] && !editor.flag(EditorFlag::MOUSE_WAS_DOWN) &&
+        if (selection_visible && !focused && input.mouse_down[0u] &&
+            !editor.flag(EditorFlag::MOUSE_WAS_DOWN) &&
             point_in_rect(split_rect, input.mouse_pos)) {
             focus_editor_split(editor, split);
             focused = selection_visible && split == editor.focused_split;
@@ -6534,7 +6608,7 @@ namespace code_editor {
                     .debug_name = "filesystem_surface",
                 }
             )) {
-            if (sidebar.signal().pressed_left) {
+            if (selection_visible && sidebar.signal().pressed_left) {
                 focus_editor_split(editor, split);
             }
             if (git_tab) {
@@ -9286,6 +9360,129 @@ namespace code_editor {
         }
     }
 
+    auto draw_git_publish_modal(
+        gui::Frame& ui,
+        EditorState& editor,
+        Palette const& palette,
+        float client_width,
+        gui::InputState const& input
+    ) -> void {
+        if (!editor.git_publish_open) {
+            return;
+        }
+
+        bool cancel = key_pressed(input, gui::Key::ESCAPE);
+        bool publish = false;
+        float const width = std::clamp(client_width - 48.0f, 320.0f, 620.0f);
+        if (auto modal = ui.modal(
+                gui::id("git_publish_modal"),
+                {
+                    .layout =
+                        {
+                            .padding = gui::insets(58.0f, 24.0f, 24.0f, 24.0f),
+                            .align_x = gui::Align::CENTER,
+                            .align_y = gui::Align::START,
+                        },
+                    .style = {.background = gui::rgba(0, 0, 0, 82)},
+                    .debug_name = "git_publish_modal",
+                }
+            )) {
+            BASE_UNUSED(modal);
+            if (auto dialog = ui.column(
+                    gui::id("git_publish_dialog"),
+                    {
+                        .layout =
+                            {
+                                .width = gui::px(width),
+                                .height = gui::children(),
+                                .padding = gui::insets(12.0f),
+                                .gap = 10.0f,
+                                .align_x = gui::Align::STRETCH,
+                            },
+                        .style = {
+                            .background = palette.panel,
+                            .border = palette.border,
+                            .border_thickness = 1.0f,
+                            .radius = 6.0f,
+                        },
+                    }
+                )) {
+                BASE_UNUSED(dialog);
+                ui.label(
+                    "Publish Branch",
+                    {
+                        .layout = {.width = gui::fill(), .height = gui::px(24.0f)},
+                        .style = {.foreground = palette.text, .font_size = editor.font_size},
+                    }
+                );
+                ui.request_focus(gui::id("git_publish_url_input"));
+                gui::Signal const url = draw_git_text_input(
+                    ui,
+                    gui::id("git_publish_url_box"),
+                    gui::id("git_publish_url_input"),
+                    "Remote URL",
+                    editor.git_publish_url_text,
+                    GIT_REMOTE_URL_CAPACITY,
+                    editor,
+                    palette,
+                    gui::fill(),
+                    34.0f,
+                    false
+                );
+                if (url.changed) {
+                    editor.git_publish_url_text_size = cstr_len(editor.git_publish_url_text);
+                    editor.git_status_text = {};
+                }
+                bool const enabled =
+                    !git_publish_url(editor).empty() && !editor.git_operation_pending;
+                publish = url.activated && enabled;
+                if (auto row = ui.row(
+                        gui::id("git_publish_buttons"),
+                        {.layout = {.width = gui::fill(), .height = gui::px(28.0f), .gap = 8.0f}}
+                    )) {
+                    BASE_UNUSED(row);
+                    gui::BoxDesc button_desc = {
+                        .layout =
+                            {
+                                .width = gui::px(92.0f),
+                                .height = gui::fill(),
+                                .padding = gui::insets(0.0f, 10.0f),
+                            },
+                        .style = {
+                            .background = palette.panel_raised,
+                            .foreground = palette.text,
+                            .border = palette.border,
+                            .border_thickness = 1.0f,
+                            .radius = 4.0f,
+                            .font_size = editor.font_size,
+                        },
+                    };
+                    ui.spacer({.layout = {.width = gui::fill(), .height = gui::px(1.0f)}});
+                    cancel =
+                        ui.button(gui::id("git_publish_cancel"), "Cancel", button_desc).activated ||
+                        cancel;
+                    button_desc.style.background = enabled ? palette.cursor : palette.panel;
+                    button_desc.style.foreground = enabled ? palette.text : palette.faint;
+                    button_desc.style.border = enabled ? palette.cursor : palette.border;
+                    button_desc.flags = enabled ? gui::BOX_FLAG_NONE : gui::BOX_FLAG_DISABLED;
+                    publish = ui.button(gui::id("git_publish_confirm"), "Publish", button_desc)
+                                  .activated ||
+                              publish;
+                }
+            }
+        }
+
+        if (cancel) {
+            close_git_publish_popup(editor);
+        } else if (publish) {
+            editor.git_request = {
+                .kind = GitRequestKind::PUBLISH_BRANCH,
+                .remote_url = git_publish_url(editor),
+            };
+            close_git_publish_popup(editor);
+        }
+    }
+
     auto draw_git_error_modal(
         gui::Frame& ui,
         EditorState& editor,
@@ -9949,7 +10146,7 @@ namespace code_editor {
                 );
                 return;
             }
-            bool const pressed = !editor.flag(EditorFlag::SIDEBAR_RESIZING) &&
+            bool const pressed = selection_visible && !editor.flag(EditorFlag::SIDEBAR_RESIZING) &&
                                  input.mouse_down[0u] && !editor.flag(EditorFlag::MOUSE_WAS_DOWN) &&
                                  point_in_rect(editor.split_nodes[split].rect, input.mouse_pos);
             if (pressed) {
@@ -9985,7 +10182,7 @@ namespace code_editor {
                         .debug_name = "editor_surface",
                     }
                 )) {
-                if (editor_panel.signal().pressed_left) {
+                if (selection_visible && editor_panel.signal().pressed_left) {
                     focus_editor_split(editor, split);
                 }
                 if (focused) {
@@ -10189,7 +10386,8 @@ namespace code_editor {
         bool const picker_open = editor.flag(EditorFlag::FILE_SEARCH_OPEN) ||
                                  editor.flag(EditorFlag::BUFFER_SEARCH_OPEN) ||
                                  editor.flag(EditorFlag::JUMP_LIST_OPEN) ||
-                                 editor.git_error_visible;
+                                 editor.flag(EditorFlag::SAVE_PATH_OPEN) ||
+                                 editor.git_publish_open || editor.git_error_visible;
         if (editor.flag(EditorFlag::SIDEBAR_VISIBLE)) {
             ensure_filesystem_panel(editor);
         }
@@ -10550,6 +10748,9 @@ namespace code_editor {
             if (editor.flag(EditorFlag::SAVE_PATH_OPEN)) {
                 draw_save_path_picker(ui, editor, palette, input);
             }
+            if (editor.git_publish_open) {
+                draw_git_publish_modal(ui, editor, palette, client_width, input);
+            }
             handle_editor_save_request(editor);
             handle_editor_write_quit_request(editor);
         }
@@ -10557,7 +10758,8 @@ namespace code_editor {
         if (!editor.flag(EditorFlag::FILE_SEARCH_OPEN) &&
             !editor.flag(EditorFlag::BUFFER_SEARCH_OPEN) &&
             !editor.flag(EditorFlag::JUMP_LIST_OPEN) && !editor.flag(EditorFlag::SAVE_PATH_OPEN) &&
-            editor.close_intent == EditorCloseIntent::NONE && !editor.git_error_visible) {
+            !editor.git_publish_open && editor.close_intent == EditorCloseIntent::NONE &&
+            !editor.git_error_visible) {
             draw_lsp_hover_popup(ui, editor_font, editor, char_width, palette, input);
         }
         draw_lsp_rename_popup(ui, editor, palette, char_width, client_width, client_height);

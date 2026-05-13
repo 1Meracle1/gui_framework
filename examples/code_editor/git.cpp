@@ -166,6 +166,10 @@ namespace code_editor {
             message = text;
         }
 
+        [[nodiscard]] auto git_output_is_not_repository(StrRef output) -> bool {
+            return git_text_contains_ignore_ascii_case(output, "not a git repository");
+        }
+
         [[nodiscard]] auto command_with_path(Arena& arena, StrRef first, StrRef path) -> StrRef {
             StringBuffer command = {};
             command.init(first.size() + path.size() + 16u, arena.resource());
@@ -1223,7 +1227,11 @@ namespace code_editor {
         command.write_string(" rev-parse --show-toplevel 2>&1");
         GitRunResult const result = run_capture(arena, command.str(), false);
         if (!result.ok) {
-            set_message(result.output, "Not a Git repository.", message);
+            if (git_output_is_not_repository(result.output)) {
+                message = "Not a Git repository.";
+            } else {
+                set_message(result.output, "Not a Git repository.", message);
+            }
             return false;
         }
         root = normalized_path(arena, first_output_line(result.output));
@@ -1404,6 +1412,14 @@ namespace code_editor {
         return true;
     }
 
+    auto git_init(Arena& arena, StrRef path, StrRef& message) -> bool {
+        GitRunResult const result = run_git(arena, path, "init", false);
+        set_message(
+            result.output, result.ok ? "Initialized repository." : "git init failed.", message
+        );
+        return result.ok;
+    }
+
     auto git_stage_path(Arena& arena, StrRef root, StrRef path, StrRef& message) -> bool {
         GitRunResult const result =
             run_git(arena, root, command_with_path(arena, "add", path), false);
@@ -1443,6 +1459,49 @@ namespace code_editor {
         GitRunResult const result = run_git(arena, root, "push", false);
         set_message(result.output, result.ok ? "Pushed." : "git push failed.", message);
         return result.ok;
+    }
+
+    auto git_branch_publishable(Arena& arena, StrRef root) -> bool {
+        GitRunResult const branch = run_git(arena, root, "branch --show-current", false);
+        return branch.ok && !first_output_line(branch.output).empty() &&
+               git_ref_exists(arena, root, "HEAD") && !git_has_upstream(arena, root);
+    }
+
+    auto git_publish_branch(Arena& arena, StrRef root, StrRef remote_url, StrRef& message) -> bool {
+        remote_url = remote_url.trim();
+        if (remote_url.empty()) {
+            message = "Remote URL required.";
+            return false;
+        }
+
+        GitRunResult const branch_result = run_git(arena, root, "branch --show-current", false);
+        StrRef const branch = first_output_line(branch_result.output);
+        if (!branch_result.ok || branch.empty()) {
+            message = "Current branch required.";
+            return false;
+        }
+
+        GitRunResult const remote_result = run_git(arena, root, "remote get-url origin", false);
+        GitRunResult const remote_set =
+            remote_result.ok
+                ? run_git(
+                      arena,
+                      root,
+                      command_with_ref(arena, "remote set-url origin", remote_url),
+                      false
+                  )
+                : run_git(
+                      arena, root, command_with_ref(arena, "remote add origin", remote_url), false
+                  );
+        if (!remote_set.ok) {
+            set_message(remote_set.output, "git remote failed.", message);
+            return false;
+        }
+
+        GitRunResult const push =
+            run_git(arena, root, command_with_ref(arena, "push -u origin", branch), false);
+        set_message(push.output, push.ok ? "Published branch." : "git push failed.", message);
+        return push.ok;
     }
 
     auto git_pull(Arena& arena, StrRef root, StrRef& message) -> bool {
