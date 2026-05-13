@@ -1,5 +1,6 @@
 #include <base/config.h>
 #include <gui/gui.h>
+#include <gui/input.h>
 #include <test/test.h>
 
 namespace {
@@ -180,6 +181,45 @@ namespace {
             }
         }
         return nullptr;
+    }
+
+    TEST_CASE(input_helpers_queue_events_and_clear_frame_transients) {
+        gui::InputState input = {};
+        gui::KeyEvent events[2] = {};
+        gui::InputEventBuffer const buffer = {.events = events, .capacity = 2u};
+
+        TEST_EXPECT(
+            context,
+            gui::input_push_key_event(
+                input, buffer, gui::Key::SPACE, gui::KeyEventKind::PRESS, gui::KEY_MOD_CTRL
+            )
+        );
+        TEST_EXPECT(context, gui::input_push_text_event(input, buffer, 'x', gui::KEY_MOD_SHIFT));
+        TEST_EXPECT(
+            context,
+            !gui::input_push_key_event(
+                input, buffer, gui::Key::ENTER, gui::KeyEventKind::PRESS, gui::KEY_MOD_NONE
+            )
+        );
+        TEST_EXPECT(context, input.key_event_count == 2u);
+        TEST_EXPECT(context, events[0u].key == gui::Key::SPACE);
+        TEST_EXPECT(context, events[0u].mods == gui::KEY_MOD_CTRL);
+        TEST_EXPECT(context, events[1u].kind == gui::KeyEventKind::TEXT);
+        TEST_EXPECT(context, events[1u].codepoint == 'x');
+
+        gui::input_set_mouse_down(input, 0u, {2.0f, 3.0f}, true);
+        gui::input_add_scroll_y(input, {4.0f, 5.0f}, 12.0f, gui::KEY_MOD_ALT);
+        input.mouse_double_clicked[0u] = true;
+        input.mouse_triple_clicked[0u] = true;
+        gui::input_clear_frame_events(input, buffer);
+
+        TEST_EXPECT(context, input.key_events == events);
+        TEST_EXPECT(context, input.key_event_count == 0u);
+        TEST_EXPECT(context, input.scroll_delta_y == 0.0f);
+        TEST_EXPECT(context, input.mouse_down[0u]);
+        TEST_EXPECT(context, !input.mouse_double_clicked[0u]);
+        TEST_EXPECT(context, !input.mouse_triple_clicked[0u]);
+        expect_vec(context, input.mouse_pos, 4.0f, 5.0f);
     }
 
     TEST_CASE(version_is_available) {

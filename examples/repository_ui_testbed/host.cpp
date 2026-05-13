@@ -17,6 +17,8 @@
 #include <dwmapi.h>
 #include <gui/gui.h>
 #include <gui/hot_reload_overlay.h>
+#include <gui/input.h>
+#include <gui/input_win32.h>
 #include <render/render.h>
 #include <repository_ui_testbed_hot_reload_manifest.h>
 #include <windows.h>
@@ -215,37 +217,12 @@ namespace repository_ui_testbed {
         return box != nullptr ? box->id : gui::Id{};
     }
 
-    [[nodiscard]] auto current_key_mods() -> gui::KeyMods {
-        gui::KeyMods mods = gui::KEY_MOD_NONE;
-        if ((GetKeyState(VK_SHIFT) & 0x8000) != 0) {
-            mods |= gui::KEY_MOD_SHIFT;
-        }
-        if ((GetKeyState(VK_CONTROL) & 0x8000) != 0) {
-            mods |= gui::KEY_MOD_CTRL;
-        }
-        if ((GetKeyState(VK_MENU) & 0x8000) != 0) {
-            mods |= gui::KEY_MOD_ALT;
-        }
-        if ((GetKeyState(VK_LWIN) & 0x8000) != 0 || (GetKeyState(VK_RWIN) & 0x8000) != 0) {
-            mods |= gui::KEY_MOD_SUPER;
-        }
-        return mods;
-    }
-
     [[nodiscard]] auto loword_u32(LPARAM value) -> uint32_t {
         return static_cast<uint32_t>(static_cast<uint16_t>(value & 0xffff));
     }
 
     [[nodiscard]] auto hiword_u32(LPARAM value) -> uint32_t {
         return static_cast<uint32_t>(static_cast<uint16_t>((value >> 16) & 0xffff));
-    }
-
-    [[nodiscard]] auto loword_i32(LPARAM value) -> int32_t {
-        return static_cast<int32_t>(static_cast<int16_t>(value & 0xffff));
-    }
-
-    [[nodiscard]] auto hiword_i32(LPARAM value) -> int32_t {
-        return static_cast<int32_t>(static_cast<int16_t>((value >> 16) & 0xffff));
     }
 
     auto log_render_result(char const* operation, render::Result result) -> void {
@@ -283,16 +260,13 @@ namespace repository_ui_testbed {
             return 0;
         case WM_MOUSEMOVE:
             if (global_app_state != nullptr) {
-                gui::Vec2 const pos = {
-                    static_cast<float>(loword_i32(lparam)),
-                    static_cast<float>(hiword_i32(lparam)),
-                };
+                gui::Vec2 const pos = gui::win32_lparam_pos(lparam);
                 gui::Id const hit_id = frame_hit_id(global_app_state->last_frame, pos);
                 bool const needs_frame = global_app_state->redraw_pending ||
                                          !frame_ready(global_app_state->last_frame) ||
                                          global_app_state->input.mouse_down[0u] ||
                                          hit_id.value != global_app_state->mouse_hit_id.value;
-                global_app_state->input.mouse_pos = pos;
+                gui::input_set_mouse_pos(global_app_state->input, pos);
                 global_app_state->mouse_hit_id = hit_id;
                 if (needs_frame) {
                     request_redraw(global_app_state);
@@ -301,29 +275,20 @@ namespace repository_ui_testbed {
             return 0;
         case WM_MOUSEWHEEL:
             if (global_app_state != nullptr) {
-                POINT point = {
-                    static_cast<LONG>(loword_i32(lparam)),
-                    static_cast<LONG>(hiword_i32(lparam)),
-                };
-                BASE_UNUSED(ScreenToClient(hwnd, &point));
-                global_app_state->input.mouse_pos = {
-                    static_cast<float>(point.x),
-                    static_cast<float>(point.y),
-                };
-                global_app_state->input.scroll_delta_y +=
-                    static_cast<float>(GET_WHEEL_DELTA_WPARAM(wparam)) /
-                    static_cast<float>(WHEEL_DELTA) * 72.0f;
-                global_app_state->input.key_mods = current_key_mods();
+                gui::input_add_scroll_y(
+                    global_app_state->input,
+                    gui::win32_lparam_screen_to_client_pos(hwnd, lparam),
+                    gui::win32_wheel_delta_y(wparam, 72.0f),
+                    gui::win32_current_key_mods()
+                );
                 request_redraw(global_app_state);
             }
             return 0;
         case WM_LBUTTONDOWN:
             if (global_app_state != nullptr) {
-                global_app_state->input.mouse_pos = {
-                    static_cast<float>(loword_i32(lparam)),
-                    static_cast<float>(hiword_i32(lparam)),
-                };
-                global_app_state->input.mouse_down[0u] = true;
+                gui::input_set_mouse_down(
+                    global_app_state->input, 0u, gui::win32_lparam_pos(lparam), true
+                );
                 request_redraw(global_app_state);
             }
             SetCapture(hwnd);
@@ -331,11 +296,9 @@ namespace repository_ui_testbed {
             return 0;
         case WM_LBUTTONUP:
             if (global_app_state != nullptr) {
-                global_app_state->input.mouse_pos = {
-                    static_cast<float>(loword_i32(lparam)),
-                    static_cast<float>(hiword_i32(lparam)),
-                };
-                global_app_state->input.mouse_down[0u] = false;
+                gui::input_set_mouse_down(
+                    global_app_state->input, 0u, gui::win32_lparam_pos(lparam), false
+                );
                 request_redraw(global_app_state);
             }
             if (GetCapture() == hwnd) {
@@ -602,7 +565,7 @@ namespace repository_ui_testbed {
             float const delta_time = static_cast<float>(ticks - previous_ticks) * 0.001f;
             previous_ticks = ticks;
             app_state.redraw_pending = false;
-            app_state.input.key_mods = current_key_mods();
+            app_state.input.key_mods = gui::win32_current_key_mods();
             gui::InputState module_input = app_state.input;
 #if BASE_DEBUG
             if (hot_reload_overlay_ready) {
@@ -650,7 +613,7 @@ namespace repository_ui_testbed {
 
             result = render::present_window(render_context, render_window);
             app_state.redraw_pending = frame_result.redraw_pending;
-            app_state.input.scroll_delta_y = 0.0f;
+            gui::input_clear_frame_events(app_state.input, {});
             if (result == render::Result::OCCLUDED) {
                 Sleep(16u);
             } else if (render::result_failed(result)) {

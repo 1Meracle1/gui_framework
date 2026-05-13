@@ -28,6 +28,8 @@
 #include <gui/gui.h>
 #include <gui/hot_reload_app.h>
 #include <gui/hot_reload_overlay.h>
+#include <gui/input.h>
+#include <gui/input_win32.h>
 #include <render/render.h>
 #include <shellapi.h>
 #include <windows.h>
@@ -410,73 +412,8 @@ namespace code_editor {
         return static_cast<uint32_t>(static_cast<uint16_t>((value >> 16) & 0xffff));
     }
 
-    [[nodiscard]] auto lparam_x(LPARAM value) -> float {
-        return static_cast<float>(static_cast<int16_t>(value & 0xffff));
-    }
-
-    [[nodiscard]] auto lparam_y(LPARAM value) -> float {
-        return static_cast<float>(static_cast<int16_t>((value >> 16) & 0xffff));
-    }
-
-    [[nodiscard]] auto current_key_mods() -> gui::KeyMods {
-        gui::KeyMods mods = gui::KEY_MOD_NONE;
-        if ((GetKeyState(VK_SHIFT) & 0x8000) != 0) {
-            mods |= gui::KEY_MOD_SHIFT;
-        }
-        if ((GetKeyState(VK_CONTROL) & 0x8000) != 0) {
-            mods |= gui::KEY_MOD_CTRL;
-        }
-        if ((GetKeyState(VK_MENU) & 0x8000) != 0) {
-            mods |= gui::KEY_MOD_ALT;
-        }
-        if ((GetKeyState(VK_LWIN) & 0x8000) != 0 || (GetKeyState(VK_RWIN) & 0x8000) != 0) {
-            mods |= gui::KEY_MOD_SUPER;
-        }
-        return mods;
-    }
-
-    [[nodiscard]] auto key_mod_from_virtual_key(WPARAM value) -> gui::KeyMods {
-        switch (value) {
-        case VK_SHIFT:
-        case VK_LSHIFT:
-        case VK_RSHIFT:
-            return gui::KEY_MOD_SHIFT;
-        case VK_CONTROL:
-        case VK_LCONTROL:
-        case VK_RCONTROL:
-            return gui::KEY_MOD_CTRL;
-        case VK_MENU:
-        case VK_LMENU:
-        case VK_RMENU:
-            return gui::KEY_MOD_ALT;
-        case VK_LWIN:
-        case VK_RWIN:
-            return gui::KEY_MOD_SUPER;
-        default:
-            return gui::KEY_MOD_NONE;
-        }
-    }
-
-    auto update_posted_key_mods(AppState* state, WPARAM value, bool down) -> void {
-        if (state == nullptr) {
-            return;
-        }
-        gui::KeyMods const mod = key_mod_from_virtual_key(value);
-        if (mod == gui::KEY_MOD_NONE) {
-            return;
-        }
-        if (down) {
-            state->posted_key_mods |= mod;
-        } else {
-            state->posted_key_mods = static_cast<gui::KeyMods>(state->posted_key_mods & ~mod);
-        }
-        state->input.key_mods =
-            static_cast<gui::KeyMods>(current_key_mods() | state->posted_key_mods);
-    }
-
-    [[nodiscard]] auto combined_key_mods(AppState const* state) -> gui::KeyMods {
-        gui::KeyMods const posted = state != nullptr ? state->posted_key_mods : gui::KEY_MOD_NONE;
-        return static_cast<gui::KeyMods>(current_key_mods() | posted);
+    [[nodiscard]] auto input_events(AppState& state) -> gui::InputEventBuffer {
+        return {.events = state.key_events, .capacity = MAX_KEY_EVENTS_PER_FRAME};
     }
 
     [[nodiscard]] auto watcher_valid(DirectoryWatcher const& watcher) -> bool {
@@ -656,8 +593,7 @@ namespace code_editor {
         }
 
         uint64_t const ticks = GetTickCount64();
-        state->input.mouse_down[0u] = true;
-        state->input.mouse_pos = pos;
+        gui::input_set_mouse_down(state->input, 0u, pos, true);
         if (double_click) {
             state->click_count = 2u;
             state->input.mouse_double_clicked[0u] = true;
@@ -677,8 +613,7 @@ namespace code_editor {
         if (state == nullptr) {
             return;
         }
-        state->input.mouse_down[1u] = true;
-        state->input.mouse_pos = pos;
+        gui::input_set_mouse_down(state->input, 1u, pos, true);
         request_redraw(state);
     }
 
@@ -697,87 +632,6 @@ namespace code_editor {
             .storage_alignment = MODULE_STORAGE_ALIGNMENT,
             .user_data = context,
         };
-    }
-
-    [[nodiscard]] auto key_from_virtual_key(WPARAM value) -> gui::Key {
-        if (value >= 'A' && value <= 'Z') {
-            return static_cast<gui::Key>(
-                static_cast<uint16_t>(gui::Key::A) + static_cast<uint16_t>(value - 'A')
-            );
-        }
-        if (value >= '0' && value <= '9') {
-            return static_cast<gui::Key>(
-                static_cast<uint16_t>(gui::Key::NUM_0) + static_cast<uint16_t>(value - '0')
-            );
-        }
-
-        switch (value) {
-        case VK_TAB:
-            return gui::Key::TAB;
-        case VK_RETURN:
-            return gui::Key::ENTER;
-        case VK_ESCAPE:
-            return gui::Key::ESCAPE;
-        case VK_SPACE:
-            return gui::Key::SPACE;
-        case VK_LEFT:
-            return gui::Key::LEFT;
-        case VK_RIGHT:
-            return gui::Key::RIGHT;
-        case VK_UP:
-            return gui::Key::UP;
-        case VK_DOWN:
-            return gui::Key::DOWN;
-        case VK_HOME:
-            return gui::Key::HOME;
-        case VK_END:
-            return gui::Key::END;
-        case VK_BACK:
-            return gui::Key::BACKSPACE;
-        case VK_DELETE:
-            return gui::Key::DELETE_KEY;
-        case VK_OEM_PLUS:
-        case VK_ADD:
-            return gui::Key::PLUS;
-        case VK_OEM_MINUS:
-        case VK_SUBTRACT:
-            return gui::Key::MINUS;
-        case VK_OEM_2:
-        case VK_DIVIDE:
-            return gui::Key::SLASH;
-        default:
-            return gui::Key::UNKNOWN;
-        }
-    }
-
-    [[nodiscard]] auto key_down_kind(LPARAM lparam) -> gui::KeyEventKind {
-        return (lparam & (1ll << 30)) != 0 ? gui::KeyEventKind::REPEAT : gui::KeyEventKind::PRESS;
-    }
-
-    auto push_key_event(AppState* state, gui::Key key, gui::KeyEventKind kind, gui::KeyMods mods)
-        -> void {
-        if (state == nullptr || key == gui::Key::UNKNOWN ||
-            state->input.key_event_count >= MAX_KEY_EVENTS_PER_FRAME) {
-            return;
-        }
-
-        size_t const index = state->input.key_event_count;
-        state->key_events[index] = {.key = key, .kind = kind, .mods = mods};
-        state->input.key_events = state->key_events;
-        state->input.key_event_count += 1u;
-    }
-
-    auto push_text_event(AppState* state, uint32_t codepoint, gui::KeyMods mods) -> void {
-        if (state == nullptr || state->input.key_event_count >= MAX_KEY_EVENTS_PER_FRAME) {
-            return;
-        }
-
-        size_t const index = state->input.key_event_count;
-        state->key_events[index] = {
-            .kind = gui::KeyEventKind::TEXT, .mods = mods, .codepoint = codepoint
-        };
-        state->input.key_events = state->key_events;
-        state->input.key_event_count += 1u;
     }
 
     static auto log_render_result(char const* operation, render::Result result) -> void {
@@ -1218,14 +1072,14 @@ namespace code_editor {
             return 0;
         case WM_MOUSEMOVE:
             if (global_app_state != nullptr) {
-                gui::Vec2 const pos = {lparam_x(lparam), lparam_y(lparam)};
+                gui::Vec2 const pos = gui::win32_lparam_pos(lparam);
                 gui::Id const hit_id = frame_hit_id(global_app_state->last_frame, pos);
                 bool const needs_frame = global_app_state->redraw_pending ||
                                          !frame_ready(global_app_state->last_frame) ||
                                          global_app_state->input.mouse_down[0u] ||
                                          global_app_state->input.mouse_down[1u] ||
                                          hit_id.value != global_app_state->mouse_hit_id.value;
-                global_app_state->input.mouse_pos = pos;
+                gui::input_set_mouse_pos(global_app_state->input, pos);
                 global_app_state->mouse_hit_id = hit_id;
                 if (needs_frame) {
                     request_redraw(global_app_state);
@@ -1233,19 +1087,20 @@ namespace code_editor {
             }
             return 0;
         case WM_LBUTTONDOWN:
-            push_mouse_down(global_app_state, {lparam_x(lparam), lparam_y(lparam)}, false);
+            push_mouse_down(global_app_state, gui::win32_lparam_pos(lparam), false);
             SetCapture(hwnd);
             SetFocus(hwnd);
             return 0;
         case WM_LBUTTONDBLCLK:
-            push_mouse_down(global_app_state, {lparam_x(lparam), lparam_y(lparam)}, true);
+            push_mouse_down(global_app_state, gui::win32_lparam_pos(lparam), true);
             SetCapture(hwnd);
             SetFocus(hwnd);
             return 0;
         case WM_LBUTTONUP:
             if (global_app_state != nullptr) {
-                global_app_state->input.mouse_down[0u] = false;
-                global_app_state->input.mouse_pos = {lparam_x(lparam), lparam_y(lparam)};
+                gui::input_set_mouse_down(
+                    global_app_state->input, 0u, gui::win32_lparam_pos(lparam), false
+                );
                 request_redraw(global_app_state);
             }
             if ((global_app_state == nullptr || !global_app_state->input.mouse_down[1u]) &&
@@ -1254,14 +1109,15 @@ namespace code_editor {
             }
             return 0;
         case WM_MBUTTONDOWN:
-            push_middle_mouse_down(global_app_state, {lparam_x(lparam), lparam_y(lparam)});
+            push_middle_mouse_down(global_app_state, gui::win32_lparam_pos(lparam));
             SetCapture(hwnd);
             SetFocus(hwnd);
             return 0;
         case WM_MBUTTONUP:
             if (global_app_state != nullptr) {
-                global_app_state->input.mouse_down[1u] = false;
-                global_app_state->input.mouse_pos = {lparam_x(lparam), lparam_y(lparam)};
+                gui::input_set_mouse_down(
+                    global_app_state->input, 1u, gui::win32_lparam_pos(lparam), false
+                );
                 request_redraw(global_app_state);
             }
             if (global_app_state == nullptr || (!global_app_state->input.mouse_down[0u] &&
@@ -1273,18 +1129,12 @@ namespace code_editor {
             return 0;
         case WM_MOUSEWHEEL:
             if (global_app_state != nullptr) {
-                POINT point = {
-                    static_cast<LONG>(lparam_x(lparam)),
-                    static_cast<LONG>(lparam_y(lparam)),
-                };
-                BASE_UNUSED(ScreenToClient(hwnd, &point));
-                global_app_state->input.mouse_pos = {
-                    static_cast<float>(point.x), static_cast<float>(point.y)
-                };
-                global_app_state->input.scroll_delta_y +=
-                    static_cast<float>(GET_WHEEL_DELTA_WPARAM(wparam)) /
-                    static_cast<float>(WHEEL_DELTA) * 72.0f;
-                global_app_state->input.key_mods = combined_key_mods(global_app_state);
+                gui::input_add_scroll_y(
+                    global_app_state->input,
+                    gui::win32_lparam_screen_to_client_pos(hwnd, lparam),
+                    gui::win32_wheel_delta_y(wparam, 72.0f),
+                    gui::win32_combined_key_mods(global_app_state->posted_key_mods)
+                );
                 request_redraw(global_app_state);
             }
             return 0;
@@ -1298,19 +1148,28 @@ namespace code_editor {
         }
         case WM_KEYDOWN:
         case WM_SYSKEYDOWN: {
-            update_posted_key_mods(global_app_state, wparam, true);
-            gui::Key const key = key_from_virtual_key(wparam);
-            if (key != gui::Key::UNKNOWN) {
-                push_key_event(
-                    global_app_state,
-                    key,
-                    key_down_kind(lparam),
-                    combined_key_mods(global_app_state)
+            if (global_app_state != nullptr) {
+                gui::win32_update_posted_key_mods(
+                    global_app_state->posted_key_mods, global_app_state->input, wparam, true
                 );
+            }
+            gui::Key const key = gui::win32_key_from_message(wparam, lparam);
+            if (key != gui::Key::UNKNOWN) {
+                if (global_app_state != nullptr) {
+                    BASE_UNUSED(
+                        gui::input_push_key_event(
+                            global_app_state->input,
+                            input_events(*global_app_state),
+                            key,
+                            gui::win32_key_event_kind(lparam),
+                            gui::win32_combined_key_mods(global_app_state->posted_key_mods)
+                        )
+                    );
+                }
                 request_redraw(global_app_state);
                 return 0;
             }
-            if (key_mod_from_virtual_key(wparam) != gui::KEY_MOD_NONE) {
+            if (gui::win32_key_mod_from_virtual_key(wparam) != gui::KEY_MOD_NONE) {
                 request_redraw(global_app_state);
                 return 0;
             }
@@ -1318,16 +1177,23 @@ namespace code_editor {
         }
         case WM_KEYUP:
         case WM_SYSKEYUP:
-            update_posted_key_mods(global_app_state, wparam, false);
+            if (global_app_state != nullptr) {
+                gui::win32_update_posted_key_mods(
+                    global_app_state->posted_key_mods, global_app_state->input, wparam, false
+                );
+            }
             request_redraw(global_app_state);
             return 0;
         case WM_CHAR:
         case WM_SYSCHAR:
             if (global_app_state != nullptr && wparam >= 32u && wparam != 127u) {
-                push_text_event(
-                    global_app_state,
-                    static_cast<uint32_t>(wparam),
-                    combined_key_mods(global_app_state)
+                BASE_UNUSED(
+                    gui::input_push_text_event(
+                        global_app_state->input,
+                        input_events(*global_app_state),
+                        static_cast<uint32_t>(wparam),
+                        gui::win32_combined_key_mods(global_app_state->posted_key_mods)
+                    )
                 );
                 request_redraw(global_app_state);
             }
@@ -1335,7 +1201,7 @@ namespace code_editor {
         case WM_KILLFOCUS:
             if (global_app_state != nullptr) {
                 global_app_state->posted_key_mods = gui::KEY_MOD_NONE;
-                global_app_state->input.key_mods = current_key_mods();
+                global_app_state->input.key_mods = gui::win32_current_key_mods();
             }
             return 0;
         case WM_CLOSE:
@@ -3218,7 +3084,7 @@ namespace code_editor {
             float const delta_time = static_cast<float>(ticks - previous_ticks) * 0.001f;
             previous_ticks = ticks;
             app_state.redraw_pending = false;
-            app_state.input.key_mods = combined_key_mods(&app_state);
+            app_state.input.key_mods = gui::win32_combined_key_mods(app_state.posted_key_mods);
             gui::InputState module_input = app_state.input;
 #if BASE_DEBUG
             if (hot_reload_overlay_ready) {
@@ -3273,11 +3139,7 @@ namespace code_editor {
 
             result = render::present_window(render_context, render_window);
             app_state.redraw_pending = frame_result.redraw_pending;
-            app_state.input.scroll_delta_y = 0.0f;
-            app_state.input.mouse_double_clicked[0u] = false;
-            app_state.input.mouse_triple_clicked[0u] = false;
-            app_state.input.key_events = app_state.key_events;
-            app_state.input.key_event_count = 0u;
+            gui::input_clear_frame_events(app_state.input, input_events(app_state));
             if (result == render::Result::OCCLUDED) {
                 Sleep(16u);
             } else if (render::result_failed(result)) {

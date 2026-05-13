@@ -3,6 +3,7 @@ target_sources(gui_framework PRIVATE
     src/hot_reload.cpp
     src/hot_reload_app.cpp
     src/hot_reload_overlay.cpp
+    src/input.cpp
     src/version.cpp
 )
 
@@ -27,3 +28,12 @@ target_compile_definitions(gui_framework
         "GUI_VERSION_PATCH=${PROJECT_VERSION_PATCH}"
         "GUI_VERSION_STRING=\"${PROJECT_VERSION}\""
 )
+
+if(WIN32)
+    target_sources(gui_framework PRIVATE
+        src/input_win32.cpp
+    )
+    set_source_files_properties(src/input_win32.cpp PROPERTIES
+        COMPILE_DEFINITIONS "WIN32_LEAN_AND_MEAN;NOMINMAX"
+    )
+endif()

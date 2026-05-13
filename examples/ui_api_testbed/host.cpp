@@ -25,6 +25,8 @@
 #endif
 #include <gui/gui.h>
 #include <gui/hot_reload_overlay.h>
+#include <gui/input.h>
+#include <gui/input_win32.h>
 
 #ifndef UI_API_TESTBED_SOURCE_DIR
 #define UI_API_TESTBED_SOURCE_DIR "."
@@ -264,12 +266,8 @@ namespace ui_api_testbed {
         return static_cast<uint32_t>(static_cast<uint16_t>((value >> 16) & 0xffff));
     }
 
-    [[nodiscard]] auto lparam_x(LPARAM value) -> float {
-        return static_cast<float>(static_cast<int16_t>(value & 0xffff));
-    }
-
-    [[nodiscard]] auto lparam_y(LPARAM value) -> float {
-        return static_cast<float>(static_cast<int16_t>((value >> 16) & 0xffff));
+    [[nodiscard]] auto input_events(AppState& state) -> gui::InputEventBuffer {
+        return {.events = state.key_events, .capacity = MAX_KEY_EVENTS_PER_FRAME};
     }
 
     [[nodiscard]] auto left_triple_click(AppState const& state, gui::Vec2 pos) -> bool {
@@ -305,110 +303,6 @@ namespace ui_api_testbed {
         };
     }
 
-    [[nodiscard]] auto key_from_virtual_key(WPARAM value) -> gui::Key {
-        switch (value) {
-        case VK_TAB:
-            return gui::Key::TAB;
-        case VK_RETURN:
-            return gui::Key::ENTER;
-        case VK_ESCAPE:
-            return gui::Key::ESCAPE;
-        case VK_SPACE:
-            return gui::Key::SPACE;
-        case VK_LEFT:
-            return gui::Key::LEFT;
-        case VK_RIGHT:
-            return gui::Key::RIGHT;
-        case VK_UP:
-            return gui::Key::UP;
-        case VK_DOWN:
-            return gui::Key::DOWN;
-        case VK_HOME:
-            return gui::Key::HOME;
-        case VK_END:
-            return gui::Key::END;
-        case VK_BACK:
-            return gui::Key::BACKSPACE;
-        case VK_DELETE:
-            return gui::Key::DELETE_KEY;
-        case 'A':
-            return gui::Key::A;
-        case 'C':
-            return gui::Key::C;
-        case 'V':
-            return gui::Key::V;
-        case 'X':
-            return gui::Key::X;
-        case 'Z':
-            return gui::Key::Z;
-        default:
-            return gui::Key::UNKNOWN;
-        }
-    }
-
-    [[nodiscard]] auto current_key_mods() -> gui::KeyMods {
-        gui::KeyMods mods = gui::KEY_MOD_NONE;
-        if ((GetKeyState(VK_SHIFT) & 0x8000) != 0) {
-            mods |= gui::KEY_MOD_SHIFT;
-        }
-        if ((GetKeyState(VK_CONTROL) & 0x8000) != 0) {
-            mods |= gui::KEY_MOD_CTRL;
-        }
-        if ((GetKeyState(VK_MENU) & 0x8000) != 0) {
-            mods |= gui::KEY_MOD_ALT;
-        }
-        if ((GetKeyState(VK_LWIN) & 0x8000) != 0 || (GetKeyState(VK_RWIN) & 0x8000) != 0) {
-            mods |= gui::KEY_MOD_SUPER;
-        }
-        return mods;
-    }
-
-    auto push_key_event(AppState* state, gui::Key key, gui::KeyEventKind kind, gui::KeyMods mods)
-        -> void {
-        if (state == nullptr || key == gui::Key::UNKNOWN) {
-            return;
-        }
-        if (state->input.key_event_count >= MAX_KEY_EVENTS_PER_FRAME) {
-#if BASE_DEBUG
-            fmt::eprintf("dropped key event\n");
-#endif
-            return;
-        }
-
-        size_t const index = state->input.key_event_count;
-        state->key_events[index] = {.key = key, .kind = kind, .mods = mods};
-        state->input.key_events = state->key_events;
-        state->input.key_event_count += 1u;
-
-#if BASE_DEBUG
-        if (kind == gui::KeyEventKind::PRESS || kind == gui::KeyEventKind::REPEAT) {
-            fmt::printf(
-                "key %s: %u mods=0x%02x\n",
-                kind == gui::KeyEventKind::REPEAT ? "repeat" : "press",
-                static_cast<unsigned>(key),
-                static_cast<unsigned>(state->key_events[index].mods)
-            );
-        }
-#endif
-    }
-
-    auto push_text_event(AppState* state, uint32_t codepoint, gui::KeyMods mods) -> void {
-        if (state == nullptr || state->input.key_event_count >= MAX_KEY_EVENTS_PER_FRAME) {
-            return;
-        }
-
-        size_t const index = state->input.key_event_count;
-        state->key_events[index] = {
-            .kind = gui::KeyEventKind::TEXT, .mods = mods, .codepoint = codepoint
-        };
-        state->input.key_events = state->key_events;
-        state->input.key_event_count += 1u;
-    }
-
-    [[nodiscard]] auto key_down_kind(LPARAM lparam) -> gui::KeyEventKind {
-        return (lparam & (1ll << 30)) != 0 ? gui::KeyEventKind::REPEAT : gui::KeyEventKind::PRESS;
-    }
-
     auto window_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) -> LRESULT {
         switch (message) {
         case WM_SIZE:
@@ -424,13 +318,13 @@ namespace ui_api_testbed {
 
         case WM_MOUSEMOVE:
             if (global_app_state != nullptr) {
-                gui::Vec2 const pos = {lparam_x(lparam), lparam_y(lparam)};
+                gui::Vec2 const pos = gui::win32_lparam_pos(lparam);
                 gui::Id const hit_id = frame_hit_id(global_app_state->last_frame, pos);
                 bool const needs_frame = global_app_state->redraw_pending ||
                                          !frame_ready(global_app_state->last_frame) ||
                                          global_app_state->input.mouse_down[0u] ||
                                          hit_id.value != global_app_state->mouse_hit_id.value;
-                global_app_state->input.mouse_pos = pos;
+                gui::input_set_mouse_pos(global_app_state->input, pos);
                 global_app_state->mouse_hit_id = hit_id;
                 if (needs_frame) {
                     request_redraw(global_app_state);
@@ -440,9 +334,8 @@ namespace ui_api_testbed {
 
         case WM_LBUTTONDOWN:
             if (global_app_state != nullptr) {
-                gui::Vec2 const pos = {lparam_x(lparam), lparam_y(lparam)};
-                global_app_state->input.mouse_down[0u] = true;
-                global_app_state->input.mouse_pos = pos;
+                gui::Vec2 const pos = gui::win32_lparam_pos(lparam);
+                gui::input_set_mouse_down(global_app_state->input, 0u, pos, true);
                 global_app_state->input.mouse_triple_clicked[0u] =
                     left_triple_click(*global_app_state, pos);
                 global_app_state->left_double_click_pending = false;
@@ -454,8 +347,9 @@ namespace ui_api_testbed {
 
         case WM_LBUTTONUP:
             if (global_app_state != nullptr) {
-                global_app_state->input.mouse_down[0u] = false;
-                global_app_state->input.mouse_pos = {lparam_x(lparam), lparam_y(lparam)};
+                gui::input_set_mouse_down(
+                    global_app_state->input, 0u, gui::win32_lparam_pos(lparam), false
+                );
                 request_redraw(global_app_state);
             }
             if (GetCapture() == hwnd) {
@@ -465,10 +359,9 @@ namespace ui_api_testbed {
 
         case WM_LBUTTONDBLCLK:
             if (global_app_state != nullptr) {
-                gui::Vec2 const pos = {lparam_x(lparam), lparam_y(lparam)};
-                global_app_state->input.mouse_down[0u] = true;
+                gui::Vec2 const pos = gui::win32_lparam_pos(lparam);
+                gui::input_set_mouse_down(global_app_state->input, 0u, pos, true);
                 global_app_state->input.mouse_double_clicked[0u] = true;
-                global_app_state->input.mouse_pos = pos;
                 global_app_state->left_double_click_pos = pos;
                 global_app_state->left_double_click_ticks = GetTickCount64();
                 global_app_state->left_double_click_pending = true;
@@ -480,30 +373,32 @@ namespace ui_api_testbed {
 
         case WM_MOUSEWHEEL:
             if (global_app_state != nullptr) {
-                POINT point = {
-                    static_cast<LONG>(lparam_x(lparam)),
-                    static_cast<LONG>(lparam_y(lparam)),
-                };
-                BASE_UNUSED(ScreenToClient(hwnd, &point));
-                global_app_state->input.mouse_pos = {
-                    static_cast<float>(point.x), static_cast<float>(point.y)
-                };
-                global_app_state->input.scroll_delta_y +=
-                    static_cast<float>(GET_WHEEL_DELTA_WPARAM(wparam)) /
-                    static_cast<float>(WHEEL_DELTA) * 36.0f;
-                global_app_state->input.key_mods = current_key_mods();
+                gui::input_add_scroll_y(
+                    global_app_state->input,
+                    gui::win32_lparam_screen_to_client_pos(hwnd, lparam),
+                    gui::win32_wheel_delta_y(wparam, 36.0f),
+                    gui::win32_current_key_mods()
+                );
                 request_redraw(global_app_state);
             }
             return 0;
 
         case WM_KEYDOWN:
         case WM_SYSKEYDOWN: {
-            gui::Key const key = key_from_virtual_key(wparam);
+            gui::Key const key = gui::win32_key_from_message(wparam, lparam);
             if (key != gui::Key::UNKNOWN) {
-                gui::KeyMods const mods = current_key_mods();
+                gui::KeyMods const mods = gui::win32_current_key_mods();
                 if (global_app_state != nullptr &&
                     key_event_needs_frame(*global_app_state, key, mods)) {
-                    push_key_event(global_app_state, key, key_down_kind(lparam), mods);
+                    BASE_UNUSED(
+                        gui::input_push_key_event(
+                            global_app_state->input,
+                            input_events(*global_app_state),
+                            key,
+                            gui::win32_key_event_kind(lparam),
+                            mods
+                        )
+                    );
                     request_redraw(global_app_state);
                 }
                 return 0;
@@ -514,8 +409,13 @@ namespace ui_api_testbed {
         case WM_CHAR:
             if (global_app_state != nullptr) {
                 if (text_event_needs_frame(*global_app_state)) {
-                    push_text_event(
-                        global_app_state, static_cast<uint32_t>(wparam), current_key_mods()
+                    BASE_UNUSED(
+                        gui::input_push_text_event(
+                            global_app_state->input,
+                            input_events(*global_app_state),
+                            static_cast<uint32_t>(wparam),
+                            gui::win32_current_key_mods()
+                        )
                     );
                     request_redraw(global_app_state);
                 }
@@ -847,7 +747,7 @@ namespace ui_api_testbed {
                 float const delta_time = static_cast<float>(ticks - previous_ticks) * 0.001f;
                 previous_ticks = ticks;
                 app_state.redraw_pending = false;
-                app_state.input.key_mods = current_key_mods();
+                app_state.input.key_mods = gui::win32_current_key_mods();
                 gui::InputState module_input = app_state.input;
 #if BASE_DEBUG
                 if (hot_reload_overlay_ready) {
@@ -909,11 +809,7 @@ namespace ui_api_testbed {
                     result = render::present_window(render_context, render_window);
                 }
                 app_state.redraw_pending = frame_result.redraw_pending;
-                app_state.input.scroll_delta_y = 0.0f;
-                app_state.input.mouse_double_clicked[0u] = false;
-                app_state.input.mouse_triple_clicked[0u] = false;
-                app_state.input.key_events = app_state.key_events;
-                app_state.input.key_event_count = 0u;
+                gui::input_clear_frame_events(app_state.input, input_events(app_state));
                 if (result == render::Result::OCCLUDED) {
                     TRACE_SCOPE(&trace, "idle_wait");
                     Sleep(16u);
