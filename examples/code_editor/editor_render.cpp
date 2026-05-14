@@ -2325,6 +2325,132 @@ namespace code_editor {
         );
     }
 
+    struct SymbolHighlight {
+        StrRef text = {};
+        bool abap = false;
+        bool active = false;
+    };
+
+    [[nodiscard]] auto symbol_byte(char ch, bool abap) -> bool {
+        uint8_t const byte = static_cast<uint8_t>(ch);
+        return is_ascii_alphanumeric(ch) || ch == '_' || byte >= 0x80u ||
+               (abap && (ch == '/' || ch == '<' || ch == '>'));
+    }
+
+    [[nodiscard]] auto symbol_start_byte(char ch, bool abap) -> bool {
+        uint8_t const byte = static_cast<uint8_t>(ch);
+        return is_ascii_alpha(ch) || ch == '_' || byte >= 0x80u ||
+               (abap && (ch == '/' || ch == '<'));
+    }
+
+    [[nodiscard]] auto symbol_token(SyntaxTokenKind kind) -> bool {
+        return kind == SyntaxTokenKind::TEXT || kind == SyntaxTokenKind::TYPE ||
+               kind == SyntaxTokenKind::FUNCTION;
+    }
+
+    [[nodiscard]] auto
+    syntax_token_at(SyntaxTokenizer tokenizer, StrRef line, size_t column, SyntaxToken& out_token)
+        -> bool {
+        size_t index = 0u;
+        while (index < line.size()) {
+            SyntaxToken const token = syntax_next_token(tokenizer, line, index);
+            if (column < token.end) {
+                out_token = token;
+                return true;
+            }
+            index = token.end;
+        }
+        return false;
+    }
+
+    [[nodiscard]] auto cursor_symbol_highlight(EditorState const& editor, SyntaxTokenizer tokenizer)
+        -> SymbolHighlight {
+        if (editor.view_kind == EditorViewKind::GIT_DIFF ||
+            editor.cursor_line >= editor_line_count(editor)) {
+            return {};
+        }
+
+        StrRef const line = editor_line_text(editor_line(editor, editor.cursor_line));
+        bool const abap = editor.current_file_name.ends_with_ignore_ascii_case(".abap");
+        size_t column = std::min(editor.cursor_column, line.size());
+        if (column == line.size() || !symbol_byte(line[column], abap)) {
+            if (column == 0u) {
+                return {};
+            }
+            column -= 1u;
+            if (!symbol_byte(line[column], abap)) {
+                return {};
+            }
+        }
+
+        SyntaxToken token = {};
+        if (!syntax_token_at(tokenizer, line, column, token) || !symbol_token(token.kind)) {
+            return {};
+        }
+
+        size_t start = column;
+        size_t end = column + 1u;
+        while (start > token.start && symbol_byte(line[start - 1u], abap)) {
+            start -= 1u;
+        }
+        while (end < token.end && symbol_byte(line[end], abap)) {
+            end += 1u;
+        }
+        if (start == end || !symbol_start_byte(line[start], abap)) {
+            return {};
+        }
+        return {.text = line.substr(start, end - start), .abap = abap, .active = true};
+    }
+
+    auto draw_symbol_highlights_for_line(
+        draw::Context context,
+        SyntaxTokenizer tokenizer,
+        SymbolHighlight highlight,
+        EditorLine const& editor_line_value,
+        size_t line,
+        float text_x,
+        float y,
+        float line_height,
+        float char_width,
+        Palette const& palette,
+        Slice<LspInlayHint const> inlay_hints
+    ) -> void {
+        if (!highlight.active || highlight.text.empty()) {
+            return;
+        }
+
+        StrRef const text = editor_line_text(editor_line_value);
+        size_t index = 0u;
+        while (index < text.size()) {
+            SyntaxToken const token = syntax_next_token(tokenizer, text, index);
+            if (symbol_token(token.kind)) {
+                size_t column = token.start;
+                while (column < token.end) {
+                    while (column < token.end && !symbol_byte(text[column], highlight.abap)) {
+                        column += 1u;
+                    }
+                    size_t const start = column;
+                    while (column < token.end && symbol_byte(text[column], highlight.abap)) {
+                        column += 1u;
+                    }
+                    size_t const end = column;
+                    if (end > start && StrRef(text.data() + start, end - start) == highlight.text) {
+                        float const x0 =
+                            inlay_column_x(inlay_hints, line, start, text_x, char_width);
+                        float const x1 = inlay_column_x(inlay_hints, line, end, text_x, char_width);
+                        draw::draw_rect_filled(
+                            context,
+                            {{std::round(x0), y + 2.0f}, {std::round(x1), y + line_height - 2.0f}},
+                            to_draw_color(gui::color_alpha(palette.text, 0.14f)),
+                            1.0f
+                        );
+                    }
+                }
+            }
+            index = token.end;
+        }
+    }
+
     struct SyntaxPairPosition {
         size_t line = 0u;
         size_t column = 0u;
@@ -2881,6 +3007,8 @@ namespace code_editor {
         Slice<LspSemanticToken const> const semantic_tokens = semantic_tokens_for_editor(editor);
         Slice<EditorGitLineChange const> const git_line_changes = current_git_line_changes(editor);
         SyntaxPairMatch syntax_pair_match = {};
+        SymbolHighlight const symbol_highlight =
+            selection_visible ? cursor_symbol_highlight(editor, tokenizer) : SymbolHighlight{};
         if (selection_visible) {
             BASE_UNUSED(find_syntax_pair_match(editor, tokenizer, syntax_pair_match));
         }
@@ -2934,6 +3062,19 @@ namespace code_editor {
             }
 
             draw::push_clip_rect(draw_context, text_clip);
+            draw_symbol_highlights_for_line(
+                draw_context,
+                tokenizer,
+                symbol_highlight,
+                text_line,
+                line,
+                text_x,
+                y,
+                line_height,
+                char_width,
+                palette,
+                inlay_hints
+            );
             if (selection_visible) {
                 draw_editor_selection(
                     draw_context,

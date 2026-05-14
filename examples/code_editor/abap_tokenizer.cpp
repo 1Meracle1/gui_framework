@@ -12,6 +12,45 @@ namespace code_editor {
         return is_ascii_alphanumeric(ch) || ch == '_' || ch == '-';
     }
 
+    [[nodiscard]] auto is_abap_symbol_char(char ch) -> bool {
+        return is_ascii_alphanumeric(ch) || ch == '_';
+    }
+
+    [[nodiscard]] auto abap_field_symbol_end(StrRef line, size_t index) -> size_t {
+        if (line[index] != '<' || index + 2u >= line.size() ||
+            !is_abap_symbol_char(line[index + 1u])) {
+            return index;
+        }
+
+        size_t end = index + 2u;
+        while (end < line.size() && is_abap_symbol_char(line[end])) {
+            ++end;
+        }
+        return end < line.size() && line[end] == '>' ? end + 1u : index;
+    }
+
+    [[nodiscard]] auto abap_class_name_end(StrRef line, size_t index) -> size_t {
+        if (line[index] != '/' || index + 3u >= line.size() ||
+            !is_abap_word_start(line[index + 1u])) {
+            return index;
+        }
+
+        size_t end = index + 2u;
+        while (end < line.size() && is_abap_symbol_char(line[end])) {
+            ++end;
+        }
+        if (end >= line.size() || line[end] != '/' || end + 1u >= line.size() ||
+            !is_abap_word_start(line[end + 1u])) {
+            return index;
+        }
+
+        end += 2u;
+        while (end < line.size() && is_abap_symbol_char(line[end])) {
+            ++end;
+        }
+        return end;
+    }
+
     [[nodiscard]] auto is_abap_keyword(StrRef token) -> bool {
         constexpr StrRef KEYWORDS[] = {
             "ABSTRACT",
@@ -648,6 +687,12 @@ namespace code_editor {
         } else if (is_ascii_digit(ch)) {
             end = abap_number_end(line, index);
             kind = SyntaxTokenKind::NUMBER;
+        } else if (size_t const field_symbol_end = abap_field_symbol_end(line, index);
+                   field_symbol_end != index) {
+            end = field_symbol_end;
+        } else if (size_t const class_name_end = abap_class_name_end(line, index);
+                   class_name_end != index) {
+            end = class_name_end;
         } else if (is_abap_word_start(ch)) {
             while (end < line.size() && is_abap_word_char(line[end])) {
                 ++end;

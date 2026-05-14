@@ -211,6 +211,65 @@ namespace {
         TEST_EXPECT(context, index < line.size());
     }
 
+    TEST_CASE(abap_tokenizer_keeps_slash_classes_and_field_symbols) {
+        code_editor::SyntaxTokenizer const tokenizer = code_editor::abap_syntax_tokenizer();
+        StrRef const class_line = "/FOO/CL_BAR=>factory( ).";
+        size_t index = expect_token(
+            context, tokenizer, class_line, 0u, code_editor::SyntaxTokenKind::TEXT, "/FOO/CL_BAR"
+        );
+        TEST_EXPECT(context, index < class_line.size());
+
+        StrRef const selector_line = "/FOO/CL_BAR-method( ).";
+        index = expect_token(
+            context, tokenizer, selector_line, 0u, code_editor::SyntaxTokenKind::TEXT, "/FOO/CL_BAR"
+        );
+        index = expect_token(
+            context, tokenizer, selector_line, index, code_editor::SyntaxTokenKind::PUNCTUATION, "-"
+        );
+        TEST_EXPECT(context, index < selector_line.size());
+
+        StrRef const field_symbol_line = "<fs_item> = <fs_item>.";
+        index = expect_token(
+            context,
+            tokenizer,
+            field_symbol_line,
+            0u,
+            code_editor::SyntaxTokenKind::TEXT,
+            "<fs_item>"
+        );
+        while (index < field_symbol_line.size() && field_symbol_line[index] != '<') {
+            index = code_editor::syntax_next_token(tokenizer, field_symbol_line, index).end;
+        }
+        index = expect_token(
+            context,
+            tokenizer,
+            field_symbol_line,
+            index,
+            code_editor::SyntaxTokenKind::TEXT,
+            "<fs_item>"
+        );
+        TEST_EXPECT(context, index < field_symbol_line.size());
+
+        StrRef const field_selector_line = "<fs_item>-component.";
+        index = expect_token(
+            context,
+            tokenizer,
+            field_selector_line,
+            0u,
+            code_editor::SyntaxTokenKind::TEXT,
+            "<fs_item>"
+        );
+        index = expect_token(
+            context,
+            tokenizer,
+            field_selector_line,
+            index,
+            code_editor::SyntaxTokenKind::PUNCTUATION,
+            "-"
+        );
+        TEST_EXPECT(context, index < field_selector_line.size());
+    }
+
     TEST_CASE(abap_tokenizer_classifies_line_comment_and_template) {
         code_editor::SyntaxTokenizer const tokenizer = code_editor::abap_syntax_tokenizer();
         StrRef const comment = "* comment";

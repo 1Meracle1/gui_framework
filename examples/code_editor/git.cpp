@@ -76,6 +76,31 @@ namespace code_editor {
             return true;
         }
 
+        [[nodiscard]] auto drain_capture_pipe(HANDLE pipe, StringBuffer& output) -> bool {
+            // Concurrent child launches can inherit the pipe writer, so EOF is not reliable.
+            for (;;) {
+                DWORD available = 0u;
+                if (!PeekNamedPipe(pipe, nullptr, 0u, nullptr, &available, nullptr)) {
+                    return GetLastError() == ERROR_BROKEN_PIPE;
+                }
+                if (available == 0u) {
+                    return true;
+                }
+
+                char buffer[4096] = {};
+                DWORD const read_size =
+                    std::min<DWORD>(available, static_cast<DWORD>(sizeof(buffer)));
+                DWORD read = 0u;
+                if (!ReadFile(pipe, buffer, read_size, &read, nullptr)) {
+                    return GetLastError() == ERROR_BROKEN_PIPE;
+                }
+                if (read == 0u) {
+                    return true;
+                }
+                output.write_bytes(buffer, read);
+            }
+        }
+
         [[nodiscard]] auto
         run_capture_windows(Arena& arena, StrRef command_text, StringBuffer& output, int& exit_code)
             -> bool {
@@ -127,14 +152,28 @@ namespace code_editor {
                 return false;
             }
 
-            char buffer[4096] = {};
-            DWORD read = 0u;
-            while (ReadFile(output_read, buffer, sizeof(buffer), &read, nullptr) && read != 0u) {
-                output.write_bytes(buffer, read);
+            for (;;) {
+                if (!drain_capture_pipe(output_read, output)) {
+                    close_handle(&output_read);
+                    CloseHandle(process.hThread);
+                    CloseHandle(process.hProcess);
+                    return false;
+                }
+                DWORD const wait = WaitForSingleObject(process.hProcess, 10u);
+                if (wait == WAIT_OBJECT_0) {
+                    break;
+                }
+                if (wait != WAIT_TIMEOUT) {
+                    close_handle(&output_read);
+                    CloseHandle(process.hThread);
+                    CloseHandle(process.hProcess);
+                    return false;
+                }
             }
+
+            BASE_UNUSED(drain_capture_pipe(output_read, output));
             close_handle(&output_read);
 
-            WaitForSingleObject(process.hProcess, INFINITE);
             DWORD process_exit_code = 1u;
             BASE_UNUSED(GetExitCodeProcess(process.hProcess, &process_exit_code));
             CloseHandle(process.hThread);
