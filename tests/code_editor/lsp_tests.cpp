@@ -92,6 +92,17 @@ namespace {
         TEST_EXPECT(context, code_editor::lsp_file_uri_to_path(arena, uri) == path);
     }
 
+    TEST_CASE(lsp_non_file_uri_stays_encoded) {
+        Arena arena = {};
+        arena.init();
+
+        StrRef const uri =
+            "abapls-cache:///sttp_e_evtid.abap?workspace=file%3A%2F%2F%2Fd%3A%2Fdev%2Fabap%"
+            "2FZATTP_OBD_EPCIS_REPROC&artifact=545&name=%2Fsttp%2Fe_evtid&kind=ddic-data-"
+            "element";
+        TEST_EXPECT(context, code_editor::lsp_file_uri_to_path(arena, uri) == uri);
+    }
+
     TEST_CASE(lsp_utf16_columns_convert_utf8_text) {
         StrRef const line = "a"
                             "\xe2\x82\xac"

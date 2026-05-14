@@ -41,6 +41,7 @@ namespace code_editor {
         SEMANTIC_TOKENS,
         FOLDING_RANGE,
         INLAY_HINTS,
+        READ_DEPENDENCY_DOCUMENT,
     };
 
     enum class LspControlKind : uint8_t {
@@ -172,6 +173,8 @@ namespace code_editor {
         Slice<LspFoldingRange> folding_ranges = {};
         Slice<LspInlayHint> inlay_hints = {};
         LspHover hover = {};
+        StrRef dependency_document_uri = {};
+        StrRef dependency_document_text = {};
         StrRef progress_text = {};
         StrRef semantic_tokens_path = {};
         StrRef folding_ranges_path = {};
@@ -194,6 +197,8 @@ namespace code_editor {
         uint64_t semantic_tokens_generation = 0u;
         uint64_t folding_ranges_generation = 0u;
         uint64_t inlay_hints_generation = 0u;
+        uint64_t dependency_document_generation = 0u;
+        bool dependency_document_valid = false;
     };
 
     struct LspEditorRequest {

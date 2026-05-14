@@ -1565,6 +1565,17 @@ namespace code_editor {
         bridge_refresh(client);
     }
 
+    auto parse_dependency_document_response(
+        LspClient& client, LspJsonValue const* result, LspClientPendingRequest const& pending
+    ) -> void {
+        StrRef text = {};
+        bool const valid = json_member_string(result, "sourceText", text);
+        client.bridge.dependency_document_uri = copy_result(client, pending.path);
+        client.bridge.dependency_document_text = valid ? copy_result(client, text) : StrRef();
+        client.bridge.dependency_document_valid = valid;
+        client.bridge.dependency_document_generation += 1u;
+    }
+
     auto send_initialized(LspClient& client) -> void {
         send_notification_json(client, "initialized", "{}");
         set_status(
@@ -1619,6 +1630,9 @@ namespace code_editor {
             break;
         case LspRequestKind::INLAY_HINTS:
             parse_inlay_hints_response(client, result, pending);
+            break;
+        case LspRequestKind::READ_DEPENDENCY_DOCUMENT:
+            parse_dependency_document_response(client, result, pending);
             break;
         default:
             break;
@@ -1983,6 +1997,23 @@ namespace code_editor {
         );
     }
 
+    auto send_dependency_document_request(LspClient& client, LspEditorRequest const& request)
+        -> void {
+        ArenaTemp temp = begin_thread_temp_arena();
+        StringBuffer params = {};
+        params.init(request.path.size() + 32u, temp.arena()->resource());
+        params.write_string("{\"uri\":");
+        lsp_json_write_escaped_string(params, request.path);
+        params.write_byte('}');
+        send_request_json(
+            client,
+            LspRequestKind::READ_DEPENDENCY_DOCUMENT,
+            request.path,
+            "abapls/readDependencyDocument",
+            params.str()
+        );
+    }
+
     auto lsp_client_send_editor_request(void* user_data, LspEditorRequest const& request) -> void {
         auto* const client = static_cast<LspClient*>(user_data);
         if (client == nullptr || !client->started) {
@@ -2039,6 +2070,9 @@ namespace code_editor {
             break;
         case LspRequestKind::INLAY_HINTS:
             send_inlay_hints_request(*client, request);
+            break;
+        case LspRequestKind::READ_DEPENDENCY_DOCUMENT:
+            send_dependency_document_request(*client, request);
             break;
         default:
             break;

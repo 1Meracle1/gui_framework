@@ -458,8 +458,11 @@ namespace code_editor {
         uint64_t lsp_seen_symbols_generation = 0u;
         uint64_t lsp_seen_text_edits_generation = 0u;
         uint64_t lsp_seen_folding_ranges_generation = 0u;
+        uint64_t lsp_seen_dependency_document_generation = 0u;
         StrRef lsp_synced_path = {};
         StrRef lsp_inlay_hints_requested_path = {};
+        StrRef lsp_pending_dependency_document_uri = {};
+        LspRange lsp_pending_dependency_document_range = {};
         StrRef json_analysis_path = {};
         StrRef git_status_text = {};
         StrRef git_error_text = {};

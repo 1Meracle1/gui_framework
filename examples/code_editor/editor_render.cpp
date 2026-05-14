@@ -688,6 +688,11 @@ namespace code_editor {
         return true;
     }
 
+    [[nodiscard]] auto virtual_document_name(StrRef uri) -> StrRef {
+        size_t const query = uri.find_first_of("?#");
+        return render_path_leaf(query == StrRef::NPOS ? uri : uri.prefix(query));
+    }
+
     auto open_tree_file(EditorState& editor, FileTreeEntry const& file) -> void {
         BASE_UNUSED(open_file(editor, file.name, file.path));
     }
@@ -7288,7 +7293,41 @@ namespace code_editor {
         }
         record_current_jump(editor);
         focus_code_split_for_open(editor);
-        StrRef const name = render_path_leaf(location.path);
+        bool const dependency_document =
+            location.path.starts_with_ignore_ascii_case("abapls-cache:");
+        StrRef const name = dependency_document ? virtual_document_name(location.path)
+                                                : render_path_leaf(location.path);
+        if (dependency_document) {
+            StrRef const open_name = name.empty() ? location.path : name;
+            OpenFile const* const open = find_open_file(editor, open_name, location.path);
+            if ((same_file(
+                     open_name, location.path, editor.current_file_name, editor.current_file_path
+                 ) ||
+                 (open != nullptr && open->text_valid)) &&
+                open_file(editor, open_name, location.path)) {
+                set_editor_cursor(editor, location.range.start.line, location.range.start.column);
+                center_current_cursor(editor);
+                record_editor_jump(
+                    editor,
+                    open_name,
+                    location.path,
+                    location.range.start.line,
+                    location.range.start.column
+                );
+                return;
+            }
+            if (editor.lsp_send_request == nullptr || editor.arena == nullptr) {
+                return;
+            }
+            editor.lsp_pending_dependency_document_uri =
+                arena_copy_cstr(*editor.arena, location.path);
+            editor.lsp_pending_dependency_document_range = location.range;
+            editor.lsp_send_request(
+                editor.lsp_user_data,
+                {.kind = LspRequestKind::READ_DEPENDENCY_DOCUMENT, .path = location.path}
+            );
+            return;
+        }
         if (open_file(editor, name.empty() ? location.path : name, location.path)) {
             set_editor_cursor(editor, location.range.start.line, location.range.start.column);
             center_current_cursor(editor);
@@ -7430,6 +7469,48 @@ namespace code_editor {
         if (editor.lsp_seen_text_edits_generation != editor.lsp_bridge->text_edits_generation) {
             editor.lsp_seen_text_edits_generation = editor.lsp_bridge->text_edits_generation;
             apply_lsp_workspace_edits(editor, editor.lsp_bridge->text_edits);
+        }
+        if (editor.lsp_seen_dependency_document_generation !=
+            editor.lsp_bridge->dependency_document_generation) {
+            editor.lsp_seen_dependency_document_generation =
+                editor.lsp_bridge->dependency_document_generation;
+            if (!editor.lsp_pending_dependency_document_uri.empty() &&
+                editor.lsp_bridge->dependency_document_uri ==
+                    editor.lsp_pending_dependency_document_uri) {
+                StrRef const uri = editor.lsp_pending_dependency_document_uri;
+                LspRange const range = editor.lsp_pending_dependency_document_range;
+                editor.lsp_pending_dependency_document_uri = {};
+                editor.lsp_pending_dependency_document_range = {};
+                if (editor.lsp_bridge->dependency_document_valid && editor.arena != nullptr) {
+                    StrRef const name = virtual_document_name(uri);
+                    StrRef const open_name = name.empty() ? uri : name;
+                    StrRef const text = arena_copy_str(
+                        *editor.arena,
+                        editor_display_text(
+                            *editor.arena, editor.lsp_bridge->dependency_document_text
+                        )
+                    );
+                    remember_open_file(editor, open_name, uri);
+                    OpenFile* const open = find_open_file(editor, open_name, uri);
+                    if (open != nullptr) {
+                        open->text = text;
+                        open->saved_text = text;
+                        open->file_write_stamp = 0u;
+                        open->text_valid = true;
+                        open->dirty = false;
+                        open->external_change_pending = false;
+                        open->file_deleted_on_disk = false;
+                        open->view_kind = EditorViewKind::TEXT;
+                    }
+                    if (open_file(editor, open_name, uri)) {
+                        set_editor_cursor(editor, range.start.line, range.start.column);
+                        center_current_cursor(editor);
+                        record_editor_jump(
+                            editor, open_name, uri, range.start.line, range.start.column
+                        );
+                    }
+                }
+            }
         }
         if (editor.lsp_open_location_index != LSP_NO_SELECTION) {
             size_t const index = editor.lsp_open_location_index;

@@ -497,6 +497,8 @@ namespace code_editor {
             text.remove_prefix(8u);
         } else if (text.starts_with_ignore_ascii_case("file://")) {
             text.remove_prefix(7u);
+        } else {
+            return arena_copy_cstr(arena, uri);
         }
 
         StringBuffer buffer = {};
