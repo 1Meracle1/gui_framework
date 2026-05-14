@@ -1775,13 +1775,18 @@ namespace code_editor {
         client.current_uri = lsp_path_to_file_uri(client.document_arena, request.path);
         client.current_text = arena_copy_str(client.document_arena, request.text);
         client.current_revision = request.revision;
+        bool const abap_document = request.path.ends_with_ignore_ascii_case(".abap") ||
+                                   request.path.starts_with_ignore_ascii_case("abapls-cache:");
+        StrRef const language_id = abap_document ? StrRef("abap") : StrRef("cpp");
 
         ArenaTemp temp = begin_thread_temp_arena();
         StringBuffer params = {};
         params.init(request.text.size() + request.path.size() + 256u, temp.arena()->resource());
         params.write_string("{\"textDocument\":{\"uri\":");
         lsp_json_write_escaped_string(params, client.current_uri);
-        params.write_string(",\"languageId\":\"cpp\",\"version\":");
+        params.write_string(",\"languageId\":");
+        lsp_json_write_escaped_string(params, language_id);
+        params.write_string(",\"version\":");
         params.write_string(
             fmt::tprintf("%llu", static_cast<unsigned long long>(request.revision))
         );

@@ -100,6 +100,7 @@ namespace {
             "abapls-cache:///sttp_e_evtid.abap?workspace=file%3A%2F%2F%2Fd%3A%2Fdev%2Fabap%"
             "2FZATTP_OBD_EPCIS_REPROC&artifact=545&name=%2Fsttp%2Fe_evtid&kind=ddic-data-"
             "element";
+        TEST_EXPECT(context, code_editor::lsp_path_to_file_uri(arena, uri) == uri);
         TEST_EXPECT(context, code_editor::lsp_file_uri_to_path(arena, uri) == uri);
     }
 
@@ -118,21 +119,31 @@ namespace {
         Arena arena = {};
         arena.init();
 
-        code_editor::LspServerConfig servers[2] = {};
+        code_editor::LspServerConfig servers[3] = {};
         StrRef* const cpp_extensions = arena_alloc<StrRef>(arena, 1u);
         cpp_extensions[0u] = arena_copy_str(arena, ".cpp");
         servers[0u].id = arena_copy_str(arena, "clangd");
         servers[0u].extensions = Slice<StrRef>(cpp_extensions, 1u);
         servers[0u].enabled = true;
 
+        StrRef* const abap_extensions = arena_alloc<StrRef>(arena, 1u);
+        abap_extensions[0u] = arena_copy_str(arena, ".abap");
+        servers[1u].id = arena_copy_str(arena, "abap-lsp");
+        servers[1u].extensions = Slice<StrRef>(abap_extensions, 1u);
+        servers[1u].enabled = true;
+
         StrRef* const rust_extensions = arena_alloc<StrRef>(arena, 1u);
         rust_extensions[0u] = arena_copy_str(arena, ".rs");
-        servers[1u].id = arena_copy_str(arena, "disabled");
-        servers[1u].extensions = Slice<StrRef>(rust_extensions, 1u);
-        servers[1u].enabled = false;
+        servers[2u].id = arena_copy_str(arena, "disabled");
+        servers[2u].extensions = Slice<StrRef>(rust_extensions, 1u);
+        servers[2u].enabled = false;
 
-        Slice<code_editor::LspServerConfig const> const slice(servers, 2u);
+        Slice<code_editor::LspServerConfig const> const slice(servers, 3u);
+        StrRef const dependency_uri = "abapls-cache:///sttp_dm_trn_evt.abap?kind=table";
         TEST_EXPECT(context, code_editor::lsp_server_for_file(slice, "main.cpp") == &servers[0u]);
+        TEST_EXPECT(
+            context, code_editor::lsp_server_for_file(slice, dependency_uri) == &servers[1u]
+        );
         TEST_EXPECT(context, code_editor::lsp_server_for_file(slice, "lib.rs") == nullptr);
         TEST_EXPECT(context, code_editor::lsp_server_for_file(slice, "README.md") == nullptr);
     }

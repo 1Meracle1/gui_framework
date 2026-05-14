@@ -27,9 +27,14 @@ namespace code_editor {
         if (!server.enabled || file_name.empty()) {
             return false;
         }
+        bool const abap_dependency = file_name.starts_with_ignore_ascii_case("abapls-cache:");
         for (StrRef const extension : server.extensions) {
             if (extension.empty()) {
                 continue;
+            }
+            if (abap_dependency && (extension.equals_ignore_ascii_case(".abap") ||
+                                    extension.equals_ignore_ascii_case("abap"))) {
+                return true;
             }
             if (extension.front() == '.' && file_name.ends_with_ignore_ascii_case(extension)) {
                 return true;
@@ -477,6 +482,9 @@ namespace code_editor {
     }
 
     [[nodiscard]] auto lsp_path_to_file_uri(Arena& arena, StrRef path) -> StrRef {
+        if (path.starts_with_ignore_ascii_case("abapls-cache:")) {
+            return arena_copy_cstr(arena, path);
+        }
         StringBuffer buffer = {};
         buffer.init(path.size() * 3u + 16u, arena.resource());
         buffer.write_string("file:///");
