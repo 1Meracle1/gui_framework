@@ -7017,6 +7017,11 @@ namespace code_editor {
         if (event.kind != gui::KeyEventKind::PRESS && event.kind != gui::KeyEventKind::REPEAT) {
             return true;
         }
+        if (editor.lsp_popup == EditorLspPopupKind::COMPLETION &&
+            (event.key == gui::Key::BACKSPACE || event.key == gui::Key::DELETE_KEY)) {
+            close_editor_lsp_popup(editor);
+            return false;
+        }
         if (event.key == gui::Key::ESCAPE) {
             close_editor_lsp_popup(editor);
         } else if (event.key == gui::Key::ENTER || event.key == gui::Key::TAB) {

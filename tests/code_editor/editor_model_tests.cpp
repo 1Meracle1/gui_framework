@@ -3089,6 +3089,39 @@ namespace {
         TEST_EXPECT(context, selection.end_column == 11u);
     }
 
+    TEST_CASE(editor_lsp_completion_backspace_and_delete_edit_text) {
+        Arena arena = {};
+        arena.init();
+
+        code_editor::EditorState backspace_editor = {};
+        code_editor::init_editor(arena, backspace_editor, "abc");
+        backspace_editor.cursor_column = 2u;
+        backspace_editor.set_flag(EditorFlag::INSERT_MODE, true);
+        backspace_editor.lsp_popup = code_editor::EditorLspPopupKind::COMPLETION;
+
+        press_key(backspace_editor, gui::Key::BACKSPACE);
+
+        TEST_EXPECT(context, backspace_editor.lsp_popup == code_editor::EditorLspPopupKind::NONE);
+        TEST_EXPECT(
+            context,
+            code_editor::editor_line_text(code_editor::editor_line(backspace_editor, 0u)) == "ac"
+        );
+
+        code_editor::EditorState delete_editor = {};
+        code_editor::init_editor(arena, delete_editor, "abc");
+        delete_editor.cursor_column = 1u;
+        delete_editor.set_flag(EditorFlag::INSERT_MODE, true);
+        delete_editor.lsp_popup = code_editor::EditorLspPopupKind::COMPLETION;
+
+        press_key(delete_editor, gui::Key::DELETE_KEY);
+
+        TEST_EXPECT(context, delete_editor.lsp_popup == code_editor::EditorLspPopupKind::NONE);
+        TEST_EXPECT(
+            context,
+            code_editor::editor_line_text(code_editor::editor_line(delete_editor, 0u)) == "ac"
+        );
+    }
+
     TEST_CASE(editor_insert_mode_typing_identifier_requests_lsp_completion) {
         Arena arena = {};
         arena.init();
