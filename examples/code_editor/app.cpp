@@ -2388,6 +2388,20 @@ namespace code_editor {
         return false;
     }
 
+    [[nodiscard]] auto code_insert_input_active(EditorState const& editor) -> bool {
+        return editor_focused_pane_kind(editor) == EditorPaneKind::CODE &&
+               editor.flag(EditorFlag::INSERT_MODE) && !editor.flag(EditorFlag::FILE_SEARCH_OPEN) &&
+               !editor.flag(EditorFlag::BUFFER_SEARCH_OPEN) &&
+               !editor.flag(EditorFlag::JUMP_LIST_OPEN) &&
+               !editor.flag(EditorFlag::TEXT_SEARCH_ACTIVE) &&
+               !editor.flag(EditorFlag::GLOBAL_SEARCH_ACTIVE) &&
+               !editor.flag(EditorFlag::COMMAND_LINE_ACTIVE) &&
+               !editor.flag(EditorFlag::SAVE_PATH_OPEN) &&
+               !editor.flag(EditorFlag::EXTERNAL_CHANGE_PENDING) &&
+               !editor.flag(EditorFlag::FILE_DELETED_ON_DISK) && !editor.git_publish_open &&
+               !editor.git_error_visible && editor.close_intent == EditorCloseIntent::NONE;
+    }
+
     [[nodiscard]] auto text_reference_mode_enabled() -> bool {
         char value[8] = {};
         DWORD const size = GetEnvironmentVariableA(
@@ -2834,6 +2848,7 @@ namespace code_editor {
                                 (runtime->editor.flag(EditorFlag::EXTERNAL_CHANGE_PENDING) ||
                                  runtime->editor.flag(EditorFlag::FILE_DELETED_ON_DISK) ||
                                  runtime->editor.close_intent != EditorCloseIntent::NONE);
+        bool const code_insert_input = code_insert_input_active(runtime->editor);
         bool const suppress_git_control_space =
             !popup_open && git_control_space_input(runtime->editor, editor_input);
         if (!popup_open) {
@@ -2850,7 +2865,7 @@ namespace code_editor {
             update_editor_lsp_document(runtime->editor);
         }
         gui::InputState ui_input = input;
-        if (suppress_git_control_space || action_key_consumed) {
+        if (suppress_git_control_space || action_key_consumed || code_insert_input) {
             ui_input.key_event_count = 0u;
         }
         submit_git_worker_requests(*runtime, window_size.height);
